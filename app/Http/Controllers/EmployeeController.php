@@ -79,7 +79,7 @@ class EmployeeController extends Controller
             $employee = Employee::create([
                 'nama_lengkap' => $validated['nama_lengkap'],
                 'nik' => $validated['nik'],
-                'nip' => $validated['nip'] ?? null, // Fix: Default to null if not present
+                'nip' => $validated['nip'] ?? null,
                 'tanggal_lahir' => $validated['tanggal_lahir'],
                 'jenis_kelamin' => $validated['jenis_kelamin'],
                 'alamat' => $validated['alamat'],
@@ -233,7 +233,7 @@ class EmployeeController extends Controller
             $employee->update([
                 'nama_lengkap' => $validated['nama_lengkap'],
                 'nik' => $validated['nik'],
-                'nip' => $validated['nip'],
+                'nip' => $validated['nip'] ?? null,
                 'tanggal_lahir' => $validated['tanggal_lahir'],
                 'jenis_kelamin' => $validated['jenis_kelamin'],
                 'alamat' => $validated['alamat'],
@@ -244,11 +244,11 @@ class EmployeeController extends Controller
                 'gaji_pokok' => $validated['gaji_pokok'],
                 'tunjangan' => $validated['tunjangan'] ?? 0,
                 'bonus' => $validated['bonus'] ?? 0,
-                'nomor_bpjs_kesehatan' => $validated['nomor_bpjs_kesehatan'],
-                'nomor_bpjs_ketenagakerjaan' => $validated['nomor_bpjs_ketenagakerjaan'],
-                'npwp' => $validated['npwp'],
-                'nomor_kontrak' => $validated['nomor_kontrak'],
-                'tanggal_kontrak_berakhir' => $validated['tanggal_kontrak_berakhir'],
+                'nomor_bpjs_kesehatan' => $validated['nomor_bpjs_kesehatan'] ?? null,
+                'nomor_bpjs_ketenagakerjaan' => $validated['nomor_bpjs_ketenagakerjaan'] ?? null,
+                'npwp' => $validated['npwp'] ?? null,
+                'nomor_kontrak' => $validated['nomor_kontrak'] ?? null,
+                'tanggal_kontrak_berakhir' => $validated['tanggal_kontrak_berakhir'] ?? null,
             ]);
 
             if ($request->hasFile('documents')) {
