@@ -79,7 +79,7 @@ class EmployeeController extends Controller
             $employee = Employee::create([
                 'nama_lengkap' => $validated['nama_lengkap'],
                 'nik' => $validated['nik'],
-                'nip' => $validated['nip'],
+                'nip' => $validated['nip'] ?? null, // Fix: Default to null if not present
                 'tanggal_lahir' => $validated['tanggal_lahir'],
                 'jenis_kelamin' => $validated['jenis_kelamin'],
                 'alamat' => $validated['alamat'],
@@ -90,11 +90,11 @@ class EmployeeController extends Controller
                 'gaji_pokok' => $validated['gaji_pokok'],
                 'tunjangan' => $validated['tunjangan'] ?? 0,
                 'bonus' => $validated['bonus'] ?? 0,
-                'nomor_bpjs_kesehatan' => $validated['nomor_bpjs_kesehatan'],
-                'nomor_bpjs_ketenagakerjaan' => $validated['nomor_bpjs_ketenagakerjaan'],
-                'npwp' => $validated['npwp'],
-                'nomor_kontrak' => $validated['nomor_kontrak'],
-                'tanggal_kontrak_berakhir' => $validated['tanggal_kontrak_berakhir'],
+                'nomor_bpjs_kesehatan' => $validated['nomor_bpjs_kesehatan'] ?? null,
+                'nomor_bpjs_ketenagakerjaan' => $validated['nomor_bpjs_ketenagakerjaan'] ?? null,
+                'npwp' => $validated['npwp'] ?? null,
+                'nomor_kontrak' => $validated['nomor_kontrak'] ?? null,
+                'tanggal_kontrak_berakhir' => $validated['tanggal_kontrak_berakhir'] ?? null,
             ]);
 
             if ($request->hasFile('documents')) {
@@ -185,23 +185,6 @@ class EmployeeController extends Controller
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
             ], 500);
-        }
-    }
-
-    public function show($id)
-    {
-        try {
-            $employee = Employee::with([
-                'documents',
-                'employmentHistories',
-                'promotionHistories',
-                'trainings',
-                'benefits'
-            ])->findOrFail($id);
-            return response()->json($employee);
-        } catch (\Exception $e) {
-            \Log::error('Error in show: ' . $e->getMessage());
-            return response()->json(['error' => 'Failed to fetch employee: ' . $e->getMessage()], 500);
         }
     }
 
