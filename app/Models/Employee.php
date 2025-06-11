@@ -20,13 +20,38 @@ class Employee extends Model
         'jabatan_saat_ini',
         'tanggal_mulai_kerja',
         'tingkat_pendidikan',
-        'gaji',
-        'nomor_bpjs',
+        'gaji_pokok',
+        'tunjangan',
+        'bonus',
+        'nomor_bpjs_kesehatan',
+        'nomor_bpjs_ketenagakerjaan',
         'npwp',
+        'nomor_kontrak',
+        'tanggal_kontrak_berakhir',
     ];
 
     public function documents()
     {
         return $this->hasMany(EmployeeDocument::class);
+    }
+
+    public function employmentHistories()
+    {
+        return $this->hasMany(EmploymentHistory::class);
+    }
+
+    public function promotionHistories()
+    {
+        return $this->hasMany(PromotionHistory::class);
+    }
+
+    public function trainings()
+    {
+        return $this->hasMany(Training::class);
+    }
+
+    public function benefits()
+    {
+        return $this->hasMany(Benefit::class);
     }
 }
