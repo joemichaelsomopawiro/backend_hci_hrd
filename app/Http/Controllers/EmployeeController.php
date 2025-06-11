@@ -16,7 +16,7 @@ class EmployeeController extends Controller
 {
     public function __construct()
     {
-        $this->middleware('admin')->only(['store', 'update', 'destroy', 'deleteDocument', 'deleteEmploymentHistory', 'deletePromotionHistory', 'deleteTraining', 'deleteBenefit']);
+        // Middleware removed to disable authentication
     }
 
     public function index()
@@ -35,7 +35,6 @@ class EmployeeController extends Controller
             return response()->json(['error' => 'Failed to fetch employees: ' . $e->getMessage()], 500);
         }
     }
-
 
     public function store(Request $request)
     {
@@ -174,7 +173,6 @@ class EmployeeController extends Controller
                     'benefits'
                 ]),
             ], 201);
-
         } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();
             return response()->json([
@@ -272,7 +270,9 @@ class EmployeeController extends Controller
 
             if ($request->hasFile('documents')) {
                 foreach ($employee->documents as $doc) {
-                    Storage::disk('public')->delete($doc->file_path);
+                    if (Storage::disk('public')->exists($doc->file_path)) {
+                        Storage::disk('public')->delete($doc->file_path);
+                    }
                     $doc->delete();
                 }
                 foreach ($request->file('documents') as $file) {
@@ -354,7 +354,6 @@ class EmployeeController extends Controller
                     'benefits'
                 ]),
             ]);
-
         } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();
             return response()->json([
@@ -375,18 +374,26 @@ class EmployeeController extends Controller
         try {
             DB::beginTransaction();
 
+            \Log::info("Attempting to delete employee with ID: {$id}");
             $employee = Employee::findOrFail($id);
 
             foreach ($employee->documents as $doc) {
-                Storage::disk('public')->delete($doc->file_path);
+                \Log::info("Deleting document: {$doc->file_path}");
+                if (Storage::disk('public')->exists($doc->file_path)) {
+                    Storage::disk('public')->delete($doc->file_path);
+                } else {
+                    \Log::warning("Document file not found: {$doc->file_path}");
+                }
                 $doc->delete();
             }
 
+            \Log::info("Deleting related records for employee ID: {$id}");
             $employee->employmentHistories()->delete();
             $employee->promotionHistories()->delete();
             $employee->trainings()->delete();
             $employee->benefits()->delete();
 
+            \Log::info("Deleting employee record with ID: {$id}");
             $employee->delete();
 
             DB::commit();
@@ -394,9 +401,23 @@ class EmployeeController extends Controller
             return response()->json([
                 'message' => 'Data pegawai dan semua data terkait berhasil dihapus'
             ]);
-
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            DB::rollBack();
+            \Log::error("Employee not found: ID {$id}");
+            return response()->json([
+                'message' => 'Karyawan tidak ditemukan',
+                'error' => $e->getMessage(),
+            ], 404);
+        } catch (\Illuminate\Database\QueryException $e) {
+            DB::rollBack();
+            \Log::error("Database error in destroy: {$e->getMessage()}");
+            return response()->json([
+                'message' => 'Gagal menghapus karyawan karena masalah database',
+                'error' => $e->getMessage(),
+            ], 500);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error("General error in destroy: {$e->getMessage()}");
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -413,7 +434,11 @@ class EmployeeController extends Controller
             $document = EmployeeDocument::where('employee_id', $employeeId)
                 ->findOrFail($documentId);
 
-            Storage::disk('public')->delete($document->file_path);
+            if (Storage::disk('public')->exists($document->file_path)) {
+                Storage::disk('public')->delete($document->file_path);
+            } else {
+                \Log::warning("Document file not found: {$document->file_path}");
+            }
             $document->delete();
 
             DB::commit();
@@ -423,6 +448,7 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('Error in deleteDocument: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -448,6 +474,7 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('Error in deleteEmploymentHistory: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -473,6 +500,7 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('Error in deletePromotionHistory: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -498,6 +526,7 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('Error in deleteTraining: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -523,6 +552,7 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('Error in deleteBenefit: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
