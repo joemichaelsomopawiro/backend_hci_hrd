@@ -11,34 +11,32 @@ use App\Models\Benefit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Auth;
 
 class EmployeeController extends Controller
 {
     public function __construct()
     {
-        $this->middleware('auth:api');
         $this->middleware('admin')->only(['store', 'update', 'destroy', 'deleteDocument', 'deleteEmploymentHistory', 'deletePromotionHistory', 'deleteTraining', 'deleteBenefit']);
     }
 
-    /**
-     * Display a listing of all employees with their documents and related data.
-     */
     public function index()
     {
-        $employees = Employee::with([
-            'documents',
-            'employmentHistories',
-            'promotionHistories',
-            'trainings',
-            'benefits'
-        ])->get();
-        return response()->json($employees);
+        try {
+            $employees = Employee::with([
+                'documents',
+                'employmentHistories',
+                'promotionHistories',
+                'trainings',
+                'benefits'
+            ])->get();
+            return response()->json($employees);
+        } catch (\Exception $e) {
+            \Log::error('Error in index: ' . $e->getMessage());
+            return response()->json(['error' => 'Failed to fetch employees: ' . $e->getMessage()], 500);
+        }
     }
 
-    /**
-     * Store a newly created employee in storage.
-     */
+
     public function store(Request $request)
     {
         try {
@@ -100,7 +98,6 @@ class EmployeeController extends Controller
                 'tanggal_kontrak_berakhir' => $validated['tanggal_kontrak_berakhir'],
             ]);
 
-            // Store documents
             if ($request->hasFile('documents')) {
                 foreach ($request->file('documents') as $file) {
                     $path = $file->store('documents', 'public');
@@ -112,7 +109,6 @@ class EmployeeController extends Controller
                 }
             }
 
-            // Store employment histories
             if (isset($validated['employment_histories'])) {
                 foreach ($validated['employment_histories'] as $history) {
                     if (!empty($history['company_name'])) {
@@ -127,7 +123,6 @@ class EmployeeController extends Controller
                 }
             }
 
-            // Store promotion histories
             if (isset($validated['promotion_histories'])) {
                 foreach ($validated['promotion_histories'] as $promotion) {
                     if (!empty($promotion['position'])) {
@@ -140,7 +135,6 @@ class EmployeeController extends Controller
                 }
             }
 
-            // Store trainings
             if (isset($validated['trainings'])) {
                 foreach ($validated['trainings'] as $training) {
                     if (!empty($training['training_name'])) {
@@ -155,7 +149,6 @@ class EmployeeController extends Controller
                 }
             }
 
-            // Store benefits
             if (isset($validated['benefits'])) {
                 foreach ($validated['benefits'] as $benefit) {
                     if (!empty($benefit['benefit_type'])) {
@@ -197,24 +190,23 @@ class EmployeeController extends Controller
         }
     }
 
-    /**
-     * Display the specified employee.
-     */
     public function show($id)
     {
-        $employee = Employee::with([
-            'documents',
-            'employmentHistories',
-            'promotionHistories',
-            'trainings',
-            'benefits'
-        ])->findOrFail($id);
-        return response()->json($employee);
+        try {
+            $employee = Employee::with([
+                'documents',
+                'employmentHistories',
+                'promotionHistories',
+                'trainings',
+                'benefits'
+            ])->findOrFail($id);
+            return response()->json($employee);
+        } catch (\Exception $e) {
+            \Log::error('Error in show: ' . $e->getMessage());
+            return response()->json(['error' => 'Failed to fetch employee: ' . $e->getMessage()], 500);
+        }
     }
 
-    /**
-     * Update the specified employee in storage.
-     */
     public function update(Request $request, $id)
     {
         try {
@@ -278,14 +270,11 @@ class EmployeeController extends Controller
                 'tanggal_kontrak_berakhir' => $validated['tanggal_kontrak_berakhir'],
             ]);
 
-            // Update documents
             if ($request->hasFile('documents')) {
-                // Delete old documents
                 foreach ($employee->documents as $doc) {
                     Storage::disk('public')->delete($doc->file_path);
                     $doc->delete();
                 }
-                // Store new documents
                 foreach ($request->file('documents') as $file) {
                     $path = $file->store('documents', 'public');
                     EmployeeDocument::create([
@@ -296,7 +285,6 @@ class EmployeeController extends Controller
                 }
             }
 
-            // Update employment histories
             if (isset($validated['employment_histories'])) {
                 $employee->employmentHistories()->delete();
                 foreach ($validated['employment_histories'] as $history) {
@@ -312,7 +300,6 @@ class EmployeeController extends Controller
                 }
             }
 
-            // Update promotion histories
             if (isset($validated['promotion_histories'])) {
                 $employee->promotionHistories()->delete();
                 foreach ($validated['promotion_histories'] as $promotion) {
@@ -326,7 +313,6 @@ class EmployeeController extends Controller
                 }
             }
 
-            // Update trainings
             if (isset($validated['trainings'])) {
                 $employee->trainings()->delete();
                 foreach ($validated['trainings'] as $training) {
@@ -342,7 +328,6 @@ class EmployeeController extends Controller
                 }
             }
 
-            // Update benefits
             if (isset($validated['benefits'])) {
                 $employee->benefits()->delete();
                 foreach ($validated['benefits'] as $benefit) {
@@ -385,9 +370,6 @@ class EmployeeController extends Controller
         }
     }
 
-    /**
-     * Remove the specified employee and all associated data from storage.
-     */
     public function destroy($id)
     {
         try {
@@ -395,19 +377,16 @@ class EmployeeController extends Controller
 
             $employee = Employee::findOrFail($id);
 
-            // Delete associated documents and their files
             foreach ($employee->documents as $doc) {
                 Storage::disk('public')->delete($doc->file_path);
                 $doc->delete();
             }
 
-            // Delete related data
             $employee->employmentHistories()->delete();
             $employee->promotionHistories()->delete();
             $employee->trainings()->delete();
             $employee->benefits()->delete();
 
-            // Delete employee
             $employee->delete();
 
             DB::commit();
@@ -425,9 +404,6 @@ class EmployeeController extends Controller
         }
     }
 
-    /**
-     * Delete a specific employee document.
-     */
     public function deleteDocument($employeeId, $documentId)
     {
         try {
@@ -437,9 +413,7 @@ class EmployeeController extends Controller
             $document = EmployeeDocument::where('employee_id', $employeeId)
                 ->findOrFail($documentId);
 
-            // Delete the file from storage
             Storage::disk('public')->delete($document->file_path);
-            // Delete the document record
             $document->delete();
 
             DB::commit();
@@ -456,9 +430,6 @@ class EmployeeController extends Controller
         }
     }
 
-    /**
-     * Delete a specific employment history.
-     */
     public function deleteEmploymentHistory($employeeId, $historyId)
     {
         try {
@@ -484,9 +455,6 @@ class EmployeeController extends Controller
         }
     }
 
-    /**
-     * Delete a specific promotion history.
-     */
     public function deletePromotionHistory($employeeId, $promotionId)
     {
         try {
@@ -512,9 +480,6 @@ class EmployeeController extends Controller
         }
     }
 
-    /**
-     * Delete a specific training record.
-     */
     public function deleteTraining($employeeId, $trainingId)
     {
         try {
@@ -540,9 +505,6 @@ class EmployeeController extends Controller
         }
     }
 
-    /**
-     * Delete a specific benefit record.
-     */
     public function deleteBenefit($employeeId, $benefitId)
     {
         try {

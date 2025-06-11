@@ -10,12 +10,13 @@ class CreateEmploymentHistoriesTable extends Migration
     {
         Schema::create('employment_histories', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained()->onDelete('cascade');
-            $table->string('company_name', 255);
-            $table->string('position', 100);
+            $table->unsignedBigInteger('employee_id');
+            $table->string('company_name', 255)->nullable();
+            $table->string('position', 100)->nullable();
             $table->date('start_date')->nullable();
             $table->date('end_date')->nullable();
             $table->timestamps();
+            $table->foreign('employee_id')->references('id')->on('employees')->onDelete('cascade');
         });
     }
 

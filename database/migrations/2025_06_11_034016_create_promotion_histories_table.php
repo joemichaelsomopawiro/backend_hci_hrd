@@ -10,10 +10,11 @@ class CreatePromotionHistoriesTable extends Migration
     {
         Schema::create('promotion_histories', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained()->onDelete('cascade');
-            $table->string('position', 100);
-            $table->date('promotion_date');
+            $table->unsignedBigInteger('employee_id');
+            $table->string('position', 100)->nullable();
+            $table->date('promotion_date')->nullable();
             $table->timestamps();
+            $table->foreign('employee_id')->references('id')->on('employees')->onDelete('cascade');
         });
     }
 

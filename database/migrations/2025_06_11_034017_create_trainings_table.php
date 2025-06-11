@@ -10,12 +10,13 @@ class CreateTrainingsTable extends Migration
     {
         Schema::create('trainings', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained()->onDelete('cascade');
-            $table->string('training_name', 255);
-            $table->string('institution', 255);
+            $table->unsignedBigInteger('employee_id');
+            $table->string('training_name', 255)->nullable();
+            $table->string('institution', 255)->nullable();
             $table->date('completion_date')->nullable();
             $table->string('certificate_number', 100)->nullable();
             $table->timestamps();
+            $table->foreign('employee_id')->references('id')->on('employees')->onDelete('cascade');
         });
     }
 

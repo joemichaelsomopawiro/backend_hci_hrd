@@ -10,11 +10,12 @@ class CreateBenefitsTable extends Migration
     {
         Schema::create('benefits', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained()->onDelete('cascade');
-            $table->string('benefit_type', 100);
-            $table->decimal('amount', 15, 2);
+            $table->unsignedBigInteger('employee_id');
+            $table->string('benefit_type', 100)->nullable();
+            $table->decimal('amount', 15, 2)->nullable();
             $table->date('start_date')->nullable();
             $table->timestamps();
+            $table->foreign('employee_id')->references('id')->on('employees')->onDelete('cascade');
         });
     }
 
@@ -22,4 +23,4 @@ class CreateBenefitsTable extends Migration
     {
         Schema::dropIfExists('benefits');
     }
-}
+};
