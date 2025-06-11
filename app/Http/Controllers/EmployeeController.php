@@ -1,5 +1,5 @@
 <?php
-//terbaru
+
 namespace App\Http\Controllers;
 
 use App\Models\Employee;
@@ -11,6 +11,7 @@ use App\Models\Benefit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class EmployeeController extends Controller
 {
@@ -31,8 +32,46 @@ class EmployeeController extends Controller
             ])->get();
             return response()->json($employees);
         } catch (\Exception $e) {
-            \Log::error('Error in index: ' . $e->getMessage());
+            try {
+                Log::error('Error in index: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json(['error' => 'Failed to fetch employees: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function show($id)
+    {
+        try {
+            $employee = Employee::with([
+                'documents',
+                'employmentHistories',
+                'promotionHistories',
+                'trainings',
+                'benefits'
+            ])->findOrFail($id);
+            return response()->json($employee);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            try {
+                Log::error("Employee not found: ID {$id}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+            return response()->json([
+                'message' => 'Karyawan tidak ditemukan',
+                'error' => $e->getMessage(),
+            ], 404);
+        } catch (\Exception $e) {
+            try {
+                Log::error('Error in show: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+            return response()->json([
+                'message' => 'Terjadi kesalahan',
+                'error' => $e->getMessage(),
+            ], 500);
         }
     }
 
@@ -135,14 +174,14 @@ class EmployeeController extends Controller
             }
 
             if (isset($validated['trainings'])) {
-                foreach ($validated['trainings'] as $training) {
-                    if (!empty($training['training_name'])) {
+                foreach ($validated['trainings'] as $history) {
+                    if (!empty($history['training_name'])) {
                         Training::create([
                             'employee_id' => $employee->id,
-                            'training_name' => $training['training_name'],
-                            'institution' => $training['institution'],
-                            'completion_date' => $training['completion_date'],
-                            'certificate_number' => $training['certificate_number'],
+                            'training_name' => $history['training_name'],
+                            'institution' => $history['institution'],
+                            'completion_date' => $history['completion_date'],
+                            'certificate_number' => $history['certificate_number'],
                         ]);
                     }
                 }
@@ -175,12 +214,22 @@ class EmployeeController extends Controller
             ], 201);
         } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();
+            try {
+                Log::error('Validation error in store: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Validasi gagal',
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             DB::rollBack();
+            try {
+                Log::error('Error in store: ' . $ee->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -339,12 +388,22 @@ class EmployeeController extends Controller
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();
+            try {
+                Log::error('Validation error in update: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Validasi gagal',
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             DB::rollBack();
+            try {
+                Log::error('Error in update: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -357,26 +416,46 @@ class EmployeeController extends Controller
         try {
             DB::beginTransaction();
 
-            \Log::info("Attempting to delete employee with ID: {$id}");
+            try {
+                Log::info("Attempting to delete employee with ID: {$id}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             $employee = Employee::findOrFail($id);
 
             foreach ($employee->documents as $doc) {
-                \Log::info("Deleting document: {$doc->file_path}");
+                try {
+                    Log::info("Deleting document: {$doc->file_path}");
+                } catch (\Exception $logException) {
+                    // Silently ignore logging failure
+                }
                 if (Storage::disk('public')->exists($doc->file_path)) {
                     Storage::disk('public')->delete($doc->file_path);
                 } else {
-                    \Log::warning("Document file not found: {$doc->file_path}");
+                    try {
+                        Log::warning("Document file not found: {$doc->file_path}");
+                    } catch (\Exception $logException) {
+                        // Silently ignore logging failure
+                    }
                 }
                 $doc->delete();
             }
 
-            \Log::info("Deleting related records for employee ID: {$id}");
+            try {
+                Log::info("Deleting related records for employee ID: {$id}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             $employee->employmentHistories()->delete();
             $employee->promotionHistories()->delete();
             $employee->trainings()->delete();
             $employee->benefits()->delete();
 
-            \Log::info("Deleting employee record with ID: {$id}");
+            try {
+                Log::info("Deleting employee record with ID: {$id}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             $employee->delete();
 
             DB::commit();
@@ -386,21 +465,33 @@ class EmployeeController extends Controller
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             DB::rollBack();
-            \Log::error("Employee not found: ID {$id}");
+            try {
+                Log::error("Employee not found: ID {$id}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Karyawan tidak ditemukan',
                 'error' => $e->getMessage(),
             ], 404);
         } catch (\Illuminate\Database\QueryException $e) {
             DB::rollBack();
-            \Log::error("Database error in destroy: {$e->getMessage()}");
+            try {
+                Log::error("Database error in destroy: {$e->getMessage()}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Gagal menghapus karyawan karena masalah database',
                 'error' => $e->getMessage(),
             ], 500);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error("General error in destroy: {$e->getMessage()}");
+            try {
+                Log::error("General error in destroy: {$e->getMessage()}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -420,7 +511,11 @@ class EmployeeController extends Controller
             if (Storage::disk('public')->exists($document->file_path)) {
                 Storage::disk('public')->delete($document->file_path);
             } else {
-                \Log::warning("Document file not found: {$document->file_path}");
+                try {
+                    Log::warning("Document file not found: {$document->file_path}");
+                } catch (\Exception $logException) {
+                    // Silently ignore logging failure
+                }
             }
             $document->delete();
 
@@ -431,7 +526,11 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error in deleteDocument: ' . $e->getMessage());
+            try {
+                Log::error('Error in deleteDocument: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -457,7 +556,11 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error in deleteEmploymentHistory: ' . $e->getMessage());
+            try {
+                Log::error('Error in deleteEmploymentHistory: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -483,7 +586,11 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error in deletePromotionHistory: ' . $e->getMessage());
+            try {
+                Log::error('Error in deletePromotionHistory: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -509,7 +616,11 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error in deleteTraining: ' . $e->getMessage());
+            try {
+                Log::error('Error in deleteTraining: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
@@ -535,7 +646,11 @@ class EmployeeController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error in deleteBenefit: ' . $e->getMessage());
+            try {
+                Log::error('Error in deleteBenefit: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
                 'error' => $e->getMessage(),
