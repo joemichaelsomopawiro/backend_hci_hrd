@@ -54,4 +54,24 @@ class Employee extends Model
     {
         return $this->hasMany(Benefit::class);
     }
+
+    public function leaveQuotas()
+    {
+        return $this->hasMany(LeaveQuota::class);
+    }
+    
+    public function leaveRequests()
+    {
+        return $this->hasMany(LeaveRequest::class);
+    }
+    
+    public function attendances()
+    {
+        return $this->hasMany(Attendance::class);
+    }
+    
+    public function approvedLeaveRequests()
+    {
+        return $this->hasMany(LeaveRequest::class, 'approved_by');
+    }
 }
