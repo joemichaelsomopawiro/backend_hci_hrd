@@ -226,7 +226,7 @@ class EmployeeController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             try {
-                Log::error('Error in store: ' . $ee->getMessage());
+                Log::error('Error in store: ' . $e->getMessage());
             } catch (\Exception $logException) {
                 // Silently ignore logging failure
             }
