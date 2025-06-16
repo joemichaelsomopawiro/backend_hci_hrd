@@ -48,6 +48,7 @@ Route::prefix('attendances')->group(function () {
 Route::prefix('auth')->group(function () {
     // Register
     Route::post('/send-register-otp', [AuthController::class, 'sendRegisterOtp']);
+    Route::post('/verify-otp', [AuthController::class, 'verifyOtp']); // Route baru
     Route::post('/register', [AuthController::class, 'register']);
     
     // Login
