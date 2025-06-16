@@ -104,7 +104,19 @@ class AuthController extends Controller
 
         // Cek apakah nomor sudah diverifikasi OTP (opsional - bisa ditambahkan validasi tambahan)
         // Untuk saat ini, kita asumsikan frontend sudah memverifikasi OTP sebelumnya
-        
+        // Di dalam method register, sebelum create user
+$recentOtp = \App\Models\Otp::where('phone', $request->phone)
+->where('type', 'register')
+->where('is_used', true)
+->where('created_at', '>=', Carbon::now()->subMinutes(10))
+->first();
+
+if (!$recentOtp) {
+return response()->json([
+    'success' => false,
+    'message' => 'Silakan verifikasi OTP terlebih dahulu'
+], 422);
+}
         // Create user
         $user = User::create([
             'name' => $request->name,
