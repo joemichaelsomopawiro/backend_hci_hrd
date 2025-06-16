@@ -1,7 +1,9 @@
 <?php
 
-use App\Http\Controllers\EmployeeController;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\EmployeeController;
 
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
@@ -40,4 +42,24 @@ Route::prefix('attendances')->group(function () {
     Route::post('/check-out', [App\Http\Controllers\AttendanceController::class, 'checkOut']);
     Route::get('/summary', [App\Http\Controllers\AttendanceController::class, 'workHoursSummary']);
     Route::get('/dashboard', [App\Http\Controllers\AttendanceController::class, 'dashboard']);
+});
+
+// Auth routes
+Route::prefix('auth')->group(function () {
+    // Register
+    Route::post('/send-register-otp', [AuthController::class, 'sendRegisterOtp']);
+    Route::post('/register', [AuthController::class, 'register']);
+    
+    // Login
+    Route::post('/login', [AuthController::class, 'login']);
+    
+    // Forgot Password
+    Route::post('/send-forgot-password-otp', [AuthController::class, 'sendForgotPasswordOtp']);
+    Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+    
+    // Protected routes
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('/logout', [AuthController::class, 'logout']);
+        Route::get('/me', [AuthController::class, 'me']);
+    });
 });
