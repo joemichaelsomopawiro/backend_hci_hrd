@@ -254,4 +254,74 @@ class AuthController extends Controller
             'data' => $request->user()
         ]);
     }
+    
+    public function resendOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/',
+            'type' => 'required|string|in:register,forgot_password'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Cek apakah ada OTP yang masih aktif (belum expired)
+        $existingOtp = \App\Models\Otp::where('phone', $request->phone)
+            ->where('type', $request->type)
+            ->where('expires_at', '>', Carbon::now())
+            ->where('is_used', false)
+            ->first();
+
+        if ($existingOtp) {
+            // Jika masih ada OTP aktif, beri tahu user untuk menunggu
+            $remainingTime = Carbon::now()->diffInSeconds($existingOtp->expires_at);
+            return response()->json([
+                'success' => false,
+                'message' => "Masih ada kode OTP aktif. Silakan tunggu {$remainingTime} detik atau gunakan kode yang sudah dikirim.",
+                'remaining_time' => $remainingTime
+            ], 429); // Too Many Requests
+        }
+
+        // Validasi tambahan berdasarkan type
+        if ($request->type === 'register') {
+            // Untuk register, pastikan nomor belum terdaftar
+            $existingUser = User::where('phone', $request->phone)->first();
+            if ($existingUser) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Nomor handphone sudah terdaftar'
+                ], 422);
+            }
+        } elseif ($request->type === 'forgot_password') {
+            // Untuk forgot password, pastikan nomor sudah terdaftar
+            $existingUser = User::where('phone', $request->phone)->first();
+            if (!$existingUser) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Nomor handphone tidak terdaftar'
+                ], 422);
+            }
+        }
+
+        // Generate OTP baru
+        $result = $this->otpService->generateOtp($request->phone, $request->type);
+
+        if ($result['success']) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Kode OTP berhasil dikirim ulang ke nomor handphone Anda',
+                'otp_id' => $result['otp_id']
+            ]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal mengirim ulang kode OTP. Silakan coba lagi.'
+        ], 500);
+    }
 }
