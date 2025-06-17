@@ -136,6 +136,23 @@ class EmployeeController extends Controller
                 'tanggal_kontrak_berakhir' => $validated['tanggal_kontrak_berakhir'] ?? null,
             ]);
 
+            // 🔥 LOGIKA BARU: Otomatis cari dan hubungkan dengan user yang sudah ada
+            $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
+                                        ->whereNull('employee_id')
+                                        ->first();
+            
+            $userLinked = false;
+            if ($matchingUser) {
+                $matchingUser->update(['employee_id' => $employee->id]);
+                $userLinked = true;
+                
+                try {
+                    Log::info("User '{$matchingUser->name}' (ID: {$matchingUser->id}) berhasil dihubungkan dengan employee '{$employee->nama_lengkap}' (ID: {$employee->id})");
+                } catch (\Exception $logException) {
+                    // Silently ignore logging failure
+                }
+            }
+
             if ($request->hasFile('documents')) {
                 foreach ($request->file('documents') as $file) {
                     $path = $file->store('documents', 'public');
@@ -202,16 +219,29 @@ class EmployeeController extends Controller
 
             DB::commit();
 
-            return response()->json([
+            // Response dengan informasi tambahan tentang user linking
+            $responseData = [
                 'message' => 'Data pegawai berhasil disimpan',
                 'employee' => $employee->load([
                     'documents',
                     'employmentHistories',
                     'promotionHistories',
                     'trainings',
-                    'benefits'
+                    'benefits',
+                    'user' // Load relationship user jika ada
                 ]),
-            ], 201);
+                'user_linked' => $userLinked
+            ];
+            
+            if ($userLinked) {
+                $responseData['linked_user'] = $matchingUser;
+                $responseData['message_detail'] = "Data karyawan berhasil dibuat dan otomatis terhubung dengan akun user '{$matchingUser->name}'";
+            } else {
+                $responseData['message_detail'] = 'Data karyawan berhasil dibuat, namun belum ada akun user yang cocok';
+            }
+
+            return response()->json($responseData, 201);
+            
         } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();
             try {
@@ -221,7 +251,7 @@ class EmployeeController extends Controller
             }
             return response()->json([
                 'message' => 'Validasi gagal',
-                'errors' => $e->errors(),
+                'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -231,8 +261,8 @@ class EmployeeController extends Controller
                 // Silently ignore logging failure
             }
             return response()->json([
-                'message' => 'Terjadi kesalahan',
-                'error' => $e->getMessage(),
+                'message' => 'Terjadi kesalahan saat menyimpan data',
+                'error' => $e->getMessage()
             ], 500);
         }
     }
