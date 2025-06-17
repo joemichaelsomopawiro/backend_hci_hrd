@@ -17,6 +17,7 @@ class User extends Authenticatable
         'phone',
         'password',
         'phone_verified_at',
+        'profile_picture',
     ];
 
     protected $hidden = [
@@ -33,5 +34,13 @@ class User extends Authenticatable
     public function isPhoneVerified()
     {
         return !is_null($this->phone_verified_at);
+    }
+
+    public function getProfilePictureUrlAttribute()
+    {
+        if ($this->profile_picture) {
+            return asset('storage/' . $this->profile_picture);
+        }
+        return null;
     }
 }

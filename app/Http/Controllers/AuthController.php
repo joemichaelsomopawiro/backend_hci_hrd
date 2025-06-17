@@ -10,7 +10,6 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\ValidationException;
 use Carbon\Carbon;
 
 class AuthController extends Controller
@@ -67,9 +66,8 @@ class AuthController extends Controller
             ], 422);
         }
 
-        // Verify OTP
         $otpResult = $this->otpService->verifyOtp($request->phone, $request->otp_code, 'register');
-        
+
         if (!$otpResult['success']) {
             return response()->json([
                 'success' => false,
@@ -104,22 +102,19 @@ class AuthController extends Controller
             ], 422);
         }
 
-        // Cek apakah nomor sudah diverifikasi OTP (opsional - bisa ditambahkan validasi tambahan)
-        // Untuk saat ini, kita asumsikan frontend sudah memverifikasi OTP sebelumnya
-        // Di dalam method register, sebelum create user
-$recentOtp = \App\Models\Otp::where('phone', $request->phone)
-->where('type', 'register')
-->where('is_used', true)
-->where('created_at', '>=', Carbon::now()->subMinutes(10))
-->first();
+        $recentOtp = Otp::where('phone', $request->phone)
+            ->where('type', 'register')
+            ->where('is_used', true)
+            ->where('created_at', '>=', Carbon::now()->subMinutes(10))
+            ->first();
 
-if (!$recentOtp) {
-return response()->json([
-    'success' => false,
-    'message' => 'Silakan verifikasi OTP terlebih dahulu'
-], 422);
-}
-        // Create user
+        if (!$recentOtp) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Silakan verifikasi OTP terlebih dahulu'
+            ], 422);
+        }
+
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
@@ -128,7 +123,6 @@ return response()->json([
             'phone_verified_at' => Carbon::now(),
         ]);
 
-        // Create token
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -145,7 +139,7 @@ return response()->json([
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'login' => 'required|string', // bisa email atau phone
+            'login' => 'required|string',
             'password' => 'required|string',
         ]);
 
@@ -157,7 +151,6 @@ return response()->json([
             ], 422);
         }
 
-        // Cek apakah login menggunakan email atau phone
         $loginField = filter_var($request->login, FILTER_VALIDATE_EMAIL) ? 'email' : 'phone';
         
         $user = User::where($loginField, $request->login)->first();
@@ -169,7 +162,6 @@ return response()->json([
             ], 401);
         }
 
-        // Create token
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -229,7 +221,6 @@ return response()->json([
             ], 422);
         }
 
-        // Verify OTP
         $otpResult = $this->otpService->verifyOtp($request->phone, $request->otp_code, 'forgot_password');
         
         if (!$otpResult['success']) {
@@ -239,7 +230,6 @@ return response()->json([
             ], 422);
         }
 
-        // Update password
         $user = User::where('phone', $request->phone)->first();
         $user->update([
             'password' => Hash::make($request->password)
@@ -264,8 +254,14 @@ return response()->json([
     public function me(Request $request)
     {
         $user = Auth::user();
-        $user->profile_picture_url = $user->profile_picture_url;
         
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pengguna tidak terautentikasi'
+            ], 401);
+        }
+
         return response()->json([
             'success' => true,
             'data' => $user
@@ -277,75 +273,122 @@ return response()->json([
         $validator = Validator::make($request->all(), [
             'profile_picture' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048'
         ]);
-
+    
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed',
+                'message' => 'Validasi gagal',
                 'errors' => $validator->errors()
             ], 422);
         }
-
+    
         try {
             $user = Auth::user();
-            
-            // Hapus foto lama jika ada
+    
+            // Debug: Log user details
+            \Illuminate\Support\Facades\Log::info('User object', [
+                'user' => $user,
+                'class' => is_object($user) ? get_class($user) : 'null',
+                'is_user_model' => $user instanceof \App\Models\User
+            ]);
+    
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengguna tidak terautentikasi'
+                ], 401);
+            }
+    
+            if (!$user instanceof \App\Models\User) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User object is not an instance of User model'
+                ], 500);
+            }
+    
+            // Delete old photo if exists
             if ($user->profile_picture) {
                 Storage::disk('public')->delete($user->profile_picture);
             }
-
-            // Upload foto baru
+    
+            // Upload new photo
             $file = $request->file('profile_picture');
-            $filename = 'profile_pictures/' . time() . '_' . $user->id . '.' . $file->getClientOriginalExtension();
-            $path = $file->storeAs('profile_pictures', time() . '_' . $user->id . '.' . $file->getClientOriginalExtension(), 'public');
-
+            $filename = time() . '_' . $user->id . '.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('profile_pictures', $filename, 'public');
+    
             // Update user
             $user->update(['profile_picture' => $path]);
-
+    
             return response()->json([
                 'success' => true,
-                'message' => 'Profile picture uploaded successfully',
+                'message' => 'Foto profil berhasil diunggah',
                 'data' => [
-                    'profile_picture_url' => asset('storage/' . $path)
+                    'profile_picture_url' => $user->profile_picture_url
                 ]
             ]);
-
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Upload profile picture error', ['error' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to upload profile picture',
+                'message' => 'Gagal mengunggah foto profil',
                 'error' => $e->getMessage()
             ], 500);
         }
     }
-
-    public function deleteProfilePicture()
+    
+    public function deleteProfilePicture(Request $request)
     {
         try {
             $user = Auth::user();
-            
-            if ($user->profile_picture) {
-                // Hapus file dari storage
-                Storage::disk('public')->delete($user->profile_picture);
-                
-                // Update database
+    
+            // Debug: Log user details
+            \Illuminate\Support\Facades\Log::info('User object', [
+                'user' => $user,
+                'class' => is_object($user) ? get_class($user) : 'null',
+                'is_user_model' => $user instanceof \App\Models\User
+            ]);
+    
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengguna tidak terautentikasi'
+                ], 401);
+            }
+    
+            if (!$user instanceof \App\Models\User) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User object is not an instance of User model'
+                ], 500);
+            }
+    
+            if (!$user->profile_picture) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tidak ada foto profil untuk dihapus'
+                ], 404);
+            }
+    
+            // Delete file from storage
+            if (Storage::disk('public')->delete($user->profile_picture)) {
+                // Update user
                 $user->update(['profile_picture' => null]);
-                
+    
                 return response()->json([
                     'success' => true,
-                    'message' => 'Profile picture deleted successfully'
+                    'message' => 'Foto profil berhasil dihapus'
                 ]);
             }
-
+    
             return response()->json([
                 'success' => false,
-                'message' => 'No profile picture to delete'
-            ], 404);
-
+                'message' => 'Gagal menghapus foto profil dari penyimpanan'
+            ], 500);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Delete profile picture error', ['error' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to delete profile picture',
+                'message' => 'Gagal menghapus foto profil',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -366,26 +409,22 @@ return response()->json([
             ], 422);
         }
 
-        // Cek apakah ada OTP yang masih aktif (belum expired)
-        $existingOtp = \App\Models\Otp::where('phone', $request->phone)
+        $existingOtp = Otp::where('phone', $request->phone)
             ->where('type', $request->type)
             ->where('expires_at', '>', Carbon::now())
             ->where('is_used', false)
             ->first();
 
         if ($existingOtp) {
-            // Jika masih ada OTP aktif, beri tahu user untuk menunggu
             $remainingTime = Carbon::now()->diffInSeconds($existingOtp->expires_at);
             return response()->json([
                 'success' => false,
                 'message' => "Masih ada kode OTP aktif. Silakan tunggu {$remainingTime} detik atau gunakan kode yang sudah dikirim.",
                 'remaining_time' => $remainingTime
-            ], 429); // Too Many Requests
+            ], 429);
         }
 
-        // Validasi tambahan berdasarkan type
         if ($request->type === 'register') {
-            // Untuk register, pastikan nomor belum terdaftar
             $existingUser = User::where('phone', $request->phone)->first();
             if ($existingUser) {
                 return response()->json([
@@ -394,7 +433,6 @@ return response()->json([
                 ], 422);
             }
         } elseif ($request->type === 'forgot_password') {
-            // Untuk forgot password, pastikan nomor sudah terdaftar
             $existingUser = User::where('phone', $request->phone)->first();
             if (!$existingUser) {
                 return response()->json([
@@ -404,7 +442,6 @@ return response()->json([
             }
         }
 
-        // Generate OTP baru
         $result = $this->otpService->generateOtp($request->phone, $request->type);
 
         if ($result['success']) {
