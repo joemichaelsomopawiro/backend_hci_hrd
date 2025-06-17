@@ -457,4 +457,17 @@ class AuthController extends Controller
             'message' => 'Gagal mengirim ulang kode OTP. Silakan coba lagi.'
         ], 500);
     }
+    
+    public function getProfile(Request $request)
+    {
+        $user = $request->user()->load('employee');
+        
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'user' => $user,
+                'employee_data' => $user->employee
+            ]
+        ]);
+    }
 }

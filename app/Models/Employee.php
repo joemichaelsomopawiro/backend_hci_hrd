@@ -74,4 +74,9 @@ class Employee extends Model
     {
         return $this->hasMany(LeaveRequest::class, 'approved_by');
     }
+
+    public function user()
+    {
+        return $this->hasOne(User::class);
+    }
 }

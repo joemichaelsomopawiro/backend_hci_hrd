@@ -18,6 +18,7 @@ class User extends Authenticatable
         'password',
         'phone_verified_at',
         'profile_picture',
+        'employee_id',
     ];
 
     protected $hidden = [
@@ -42,5 +43,15 @@ class User extends Authenticatable
             return asset('storage/' . $this->profile_picture);
         }
         return null;
+    }
+
+    public function employee()
+    {
+        return $this->belongsTo(Employee::class);
+    }
+
+    public function getEmployeeDataAttribute()
+    {
+        return $this->employee;
     }
 }
