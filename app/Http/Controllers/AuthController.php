@@ -2,13 +2,15 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Otp;
 use App\Services\OtpService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 use Carbon\Carbon;
 
 class AuthController extends Controller
@@ -261,12 +263,94 @@ return response()->json([
 
     public function me(Request $request)
     {
+        $user = Auth::user();
+        $user->profile_picture_url = $user->profile_picture_url;
+        
         return response()->json([
             'success' => true,
-            'data' => $request->user()
+            'data' => $user
         ]);
     }
-    
+
+    public function uploadProfilePicture(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'profile_picture' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $user = Auth::user();
+            
+            // Hapus foto lama jika ada
+            if ($user->profile_picture) {
+                Storage::disk('public')->delete($user->profile_picture);
+            }
+
+            // Upload foto baru
+            $file = $request->file('profile_picture');
+            $filename = 'profile_pictures/' . time() . '_' . $user->id . '.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('profile_pictures', time() . '_' . $user->id . '.' . $file->getClientOriginalExtension(), 'public');
+
+            // Update user
+            $user->update(['profile_picture' => $path]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile picture uploaded successfully',
+                'data' => [
+                    'profile_picture_url' => asset('storage/' . $path)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload profile picture',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function deleteProfilePicture()
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->profile_picture) {
+                // Hapus file dari storage
+                Storage::disk('public')->delete($user->profile_picture);
+                
+                // Update database
+                $user->update(['profile_picture' => null]);
+                
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Profile picture deleted successfully'
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'No profile picture to delete'
+            ], 404);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete profile picture',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function resendOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [

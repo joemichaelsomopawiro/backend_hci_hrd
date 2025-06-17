@@ -49,7 +49,7 @@ Route::prefix('auth')->group(function () {
     // Register
     Route::post('/send-register-otp', [AuthController::class, 'sendRegisterOtp']);
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
-    Route::post('/resend-otp', [AuthController::class, 'resendOtp']); // Route baru
+    Route::post('/resend-otp', [AuthController::class, 'resendOtp']);
     Route::post('/register', [AuthController::class, 'register']);
     
     // Login
@@ -63,5 +63,9 @@ Route::prefix('auth')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
+        
+        // Profile Picture routes
+        Route::post('/upload-profile-picture', [AuthController::class, 'uploadProfilePicture']);
+        Route::delete('/delete-profile-picture', [AuthController::class, 'deleteProfilePicture']);
     });
 });
