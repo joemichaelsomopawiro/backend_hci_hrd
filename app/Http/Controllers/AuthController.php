@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\Otp;
+use App\Models\Employee;
 use App\Services\OtpService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -115,12 +116,17 @@ class AuthController extends Controller
             ], 422);
         }
 
+        // AUTO-LINKING: Cari employee dengan nama yang sama
+        $employee = Employee::where('nama_lengkap', $request->name)->first();
+        $employee_id = $employee ? $employee->id : null;
+
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
             'phone' => $request->phone,
             'password' => Hash::make($request->password),
             'phone_verified_at' => Carbon::now(),
+            'employee_id' => $employee_id, // Tambahkan ini!
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -131,7 +137,8 @@ class AuthController extends Controller
             'data' => [
                 'user' => $user,
                 'token' => $token,
-                'token_type' => 'Bearer'
+                'token_type' => 'Bearer',
+                'linked_to_employee' => $employee_id ? true : false // Info tambahan
             ]
         ]);
     }

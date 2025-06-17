@@ -26,12 +26,24 @@ Route::prefix('leave-quotas')->group(function () {
     Route::delete('/{id}', [App\Http\Controllers\LeaveQuotaController::class, 'destroy']);
 });
 
-// Leave Request Routes
-Route::prefix('leave-requests')->group(function () {
+// Leave Request Routes dengan role-based access
+Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
+    // Semua role bisa melihat (dengan filtering internal)
     Route::get('/', [App\Http\Controllers\LeaveRequestController::class, 'index']);
-    Route::post('/', [App\Http\Controllers\LeaveRequestController::class, 'store']);
-    Route::put('/{id}/approve', [App\Http\Controllers\LeaveRequestController::class, 'approve']);
-    Route::put('/{id}/reject', [App\Http\Controllers\LeaveRequestController::class, 'reject']);
+    
+    // Hanya Employee yang bisa mengajukan cuti
+    Route::post('/', [App\Http\Controllers\LeaveRequestController::class, 'store'])
+         ->middleware('role:Employee');
+    
+    // Hanya Manager dan HR yang bisa approve/reject
+    Route::put('/{id}/approve', [App\Http\Controllers\LeaveRequestController::class, 'approve'])
+         ->middleware('role:Manager,HR');
+    Route::put('/{id}/reject', [App\Http\Controllers\LeaveRequestController::class, 'reject'])
+         ->middleware('role:Manager,HR');
+    
+    // Endpoint khusus HR untuk melihat semua cuti yang sudah di-approve
+    Route::get('/approved', [App\Http\Controllers\LeaveRequestController::class, 'getApprovedLeaves'])
+         ->middleware('role:HR');
 });
 
 // Attendance Routes

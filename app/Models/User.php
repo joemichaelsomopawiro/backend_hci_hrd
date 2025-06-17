@@ -19,6 +19,7 @@ class User extends Authenticatable
         'phone_verified_at',
         'profile_picture',
         'employee_id',
+        'role',
     ];
 
     protected $hidden = [
@@ -53,5 +54,36 @@ class User extends Authenticatable
     public function getEmployeeDataAttribute()
     {
         return $this->employee;
+    }
+
+    // Helper methods untuk role
+    public function isHR()
+    {
+        return $this->role === 'HR';
+    }
+
+    public function isManager()
+    {
+        return $this->role === 'Manager';
+    }
+
+    public function isEmployee()
+    {
+        return $this->role === 'Employee';
+    }
+
+    public function isGA()
+    {
+        return $this->role === 'GA';
+    }
+
+    public function canApproveLeave()
+    {
+        return in_array($this->role, ['Manager', 'HR']);
+    }
+
+    public function canViewAllLeaveRequests()
+    {
+        return in_array($this->role, ['HR', 'Manager']);
     }
 }
