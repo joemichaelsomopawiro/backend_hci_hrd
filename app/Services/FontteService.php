@@ -30,7 +30,10 @@ class FontteService
                 'token_exists' => !empty($this->token)
             ]);
             
-            $response = Http::withHeaders([
+            // Temporarily disable SSL verification for local development (REMOVE IN PRODUCTION)
+            $response = Http::withOptions([
+                'verify' => false, // Bypasses SSL certificate verification to resolve cURL error 60
+            ])->withHeaders([
                 'Authorization' => $this->token,
             ])->post($this->apiUrl, [
                 'target' => $formattedPhone,
