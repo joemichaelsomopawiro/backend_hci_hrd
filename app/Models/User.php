@@ -62,6 +62,20 @@ class User extends Authenticatable
         return $this->role === 'HR';
     }
 
+    public function isProgramManager()
+    {
+        return $this->role === 'Manager' && 
+               $this->employee && 
+               in_array($this->employee->department, ['Producer', 'Creative', 'Production', 'Editor']);
+    }
+
+    public function isDistributionManager()
+    {
+        return $this->role === 'Manager' && 
+               $this->employee && 
+               in_array($this->employee->department, ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care']);
+    }
+
     public function isManager()
     {
         return $this->role === 'Manager';
@@ -72,18 +86,24 @@ class User extends Authenticatable
         return $this->role === 'Employee';
     }
 
-    public function isGA()
+    public function canViewEmployee($employeeId)
     {
-        return $this->role === 'GA';
+        if (!$this->employee) return false;
+        
+        $subordinates = $this->employee->getSubordinatesByDepartment();
+        return $subordinates->contains('id', $employeeId);
     }
 
-    public function canApproveLeave()
+    public function canApproveLeave($employeeId = null)
     {
+        if ($employeeId && $this->employee) {
+            return $this->employee->canApproveLeaveFor($employeeId);
+        }
         return in_array($this->role, ['Manager', 'HR']);
     }
 
     public function canViewAllLeaveRequests()
     {
-        return in_array($this->role, ['HR', 'Manager']);
+        return $this->role === 'HR';
     }
 }

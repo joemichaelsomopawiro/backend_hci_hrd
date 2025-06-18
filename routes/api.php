@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EmployeeController;
+use App\Http\Controllers\ManagerController;
 
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
@@ -79,5 +80,16 @@ Route::prefix('auth')->group(function () {
         // Profile Picture routes
         Route::post('/upload-profile-picture', [AuthController::class, 'uploadProfilePicture']);
         Route::delete('/delete-profile-picture', [AuthController::class, 'deleteProfilePicture']);
+    });
+});
+
+// Manager routes
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Routes untuk manager
+    Route::prefix('manager')->group(function () {
+        Route::get('/subordinates', [ManagerController::class, 'getSubordinates']);
+        Route::get('/subordinates/{employeeId}', [ManagerController::class, 'getSubordinateDetail']);
+        Route::get('/leave-requests', [ManagerController::class, 'getSubordinateLeaveRequests']);
+        Route::post('/leave-requests/{leaveRequestId}/process', [ManagerController::class, 'processLeaveRequest']);
     });
 });
