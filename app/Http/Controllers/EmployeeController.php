@@ -409,6 +409,7 @@ class EmployeeController extends Controller
             $userLinked = false;
             $linkedUser = null;
             
+            // Pengecekan 1: Jika nama berubah
             if ($oldNamaLengkap !== $validated['nama_lengkap']) {
                 // Jika employee sudah punya user, update nama user-nya
                 if ($employee->user) {
@@ -437,6 +438,25 @@ class EmployeeController extends Controller
                         } catch (\Exception $logException) {
                             // Silently ignore logging failure
                         }
+                    }
+                }
+            }
+            // Pengecekan 2: Jika nama tidak berubah tapi employee belum punya user
+            else if (!$employee->user) {
+                // Cari user yang namanya sama dengan nama employee saat ini
+                $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
+                                            ->whereNull('employee_id')
+                                            ->first();
+                
+                if ($matchingUser) {
+                    $matchingUser->update(['employee_id' => $employee->id]);
+                    $userLinked = true;
+                    $linkedUser = $matchingUser;
+                    
+                    try {
+                        Log::info("User '{$matchingUser->name}' (ID: {$matchingUser->id}) berhasil dihubungkan dengan employee '{$employee->nama_lengkap}' (ID: {$employee->id}) saat update tanpa perubahan nama");
+                    } catch (\Exception $logException) {
+                        // Silently ignore logging failure
                     }
                 }
             }
