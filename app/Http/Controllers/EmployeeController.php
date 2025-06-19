@@ -81,7 +81,19 @@ class EmployeeController extends Controller
             DB::beginTransaction();
 
             $validated = $request->validate([
-                'nama_lengkap' => 'required|string|max:255',
+                'nama_lengkap' => [
+                    'required',
+                    'string',
+                    'max:255',
+                    'unique:employees,nama_lengkap',
+                    function ($attribute, $value, $fail) {
+                        // Cek apakah nama sudah ada di tabel users
+                        $existingUser = \App\Models\User::where('name', $value)->first();
+                        if ($existingUser) {
+                            $fail('Nama tersebut sudah terdaftar sebagai user. Silakan gunakan nama yang berbeda.');
+                        }
+                    },
+                ],
                 'nik' => 'required|string|max:16|unique:employees,nik',
                 'nip' => 'nullable|string|max:20|unique:employees,nip',
                 'tanggal_lahir' => 'required|date',
