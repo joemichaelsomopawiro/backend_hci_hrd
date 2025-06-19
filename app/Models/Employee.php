@@ -32,6 +32,7 @@ class Employee extends Model
         'tanggal_kontrak_berakhir',
     ];
 
+    // Relationships
     public function documents()
     {
         return $this->hasMany(EmployeeDocument::class);
@@ -59,12 +60,12 @@ class Employee extends Model
 
     public function leaveQuotas()
     {
-        return $this->hasMany(LeaveQuota::class);
+        return $this->hasMany(LeaveQuota::class, 'employee_id');
     }
     
     public function leaveRequests()
     {
-        return $this->hasMany(LeaveRequest::class);
+        return $this->hasMany(LeaveRequest::class, 'employee_id');
     }
     
     public function attendances()
@@ -79,42 +80,37 @@ class Employee extends Model
 
     public function user()
     {
-        return $this->hasOne(User::class);
+        return $this->hasOne(User::class, 'employee_id');
     }
 
-    // Relasi untuk manager
+    // Manager hierarchy relationships
     public function manager()
     {
         return $this->belongsTo(Employee::class, 'manager_id');
     }
 
-    // Relasi untuk subordinates (bawahan)
     public function subordinates()
     {
         return $this->hasMany(Employee::class, 'manager_id');
     }
 
-    // Method untuk mendapatkan semua bawahan berdasarkan department
-    public function getSubordinatesByDepartment()
+    // Method untuk mendapatkan semua bawahan berdasarkan role
+    public function getSubordinatesByRole()
     {
         $userRole = $this->user->role ?? null;
         
         if ($userRole === 'HR') {
-            // HR bisa lihat Finance, General Affairs, Office Assistant
-            return Employee::whereIn('department', ['Finance', 'General Affairs', 'Office Assistant'])->get();
-        } elseif ($userRole === 'Manager') {
-            $userDepartment = $this->department;
-            
-            // Program Manager
-            if (in_array($userDepartment, ['Producer', 'Creative', 'Production', 'Editor'])) {
-                return Employee::whereIn('department', ['Producer', 'Creative', 'Production', 'Editor'])
-                    ->where('id', '!=', $this->id)->get();
-            }
-            // Distribution Manager
-            elseif (in_array($userDepartment, ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care'])) {
-                return Employee::whereIn('department', ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care'])
-                    ->where('id', '!=', $this->id)->get();
-            }
+            return Employee::whereIn('department', ['Finance', 'General Affairs', 'Office Assistant'])
+                          ->where('id', '!=', $this->id)
+                          ->get();
+        } elseif ($userRole === 'Program Manager') {
+            return Employee::whereIn('department', ['Producer', 'Creative', 'Production', 'Editor'])
+                          ->where('id', '!=', $this->id)
+                          ->get();
+        } elseif ($userRole === 'Distribution Manager') {
+            return Employee::whereIn('department', ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care'])
+                          ->where('id', '!=', $this->id)
+                          ->get();
         }
         
         return collect();
@@ -129,21 +125,57 @@ class Employee extends Model
         if (!$targetEmployee) return false;
         
         if ($userRole === 'HR') {
-            // HR bisa approve untuk Finance, General Affairs, Office Assistant
             return in_array($targetEmployee->department, ['Finance', 'General Affairs', 'Office Assistant']);
-        } elseif ($userRole === 'Manager') {
-            $userDepartment = $this->department;
-            
-            // Program Manager
-            if (in_array($userDepartment, ['Producer', 'Creative', 'Production', 'Editor'])) {
-                return in_array($targetEmployee->department, ['Producer', 'Creative', 'Production', 'Editor']);
-            }
-            // Distribution Manager
-            elseif (in_array($userDepartment, ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care'])) {
-                return in_array($targetEmployee->department, ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care']);
-            }
+        } elseif ($userRole === 'Program Manager') {
+            return in_array($targetEmployee->department, ['Producer', 'Creative', 'Production', 'Editor']);
+        } elseif ($userRole === 'Distribution Manager') {
+            return in_array($targetEmployee->department, ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care']);
         }
         
         return false;
+    }
+
+    // Get current year leave quota
+    public function getCurrentLeaveQuota()
+    {
+        return $this->leaveQuotas()->where('year', date('Y'))->first();
+    }
+
+    // Check if employee can take leave
+    public function canTakeLeave($leaveType, $days)
+    {
+        $quota = $this->getCurrentLeaveQuota();
+        if (!$quota) return false;
+        
+        switch ($leaveType) {
+            case 'annual':
+                return ($quota->annual_leave_used + $days) <= $quota->annual_leave_quota;
+            case 'sick':
+                return ($quota->sick_leave_used + $days) <= $quota->sick_leave_quota;
+            case 'emergency':
+                return ($quota->emergency_leave_used + $days) <= $quota->emergency_leave_quota;
+            default:
+                return false;
+        }
+    }
+
+    // Update leave quota when leave is approved
+    public function updateLeaveQuota($leaveType, $days)
+    {
+        $quota = $this->getCurrentLeaveQuota();
+        if ($quota) {
+            switch ($leaveType) {
+                case 'annual':
+                    $quota->annual_leave_used += $days;
+                    break;
+                case 'sick':
+                    $quota->sick_leave_used += $days;
+                    break;
+                case 'emergency':
+                    $quota->emergency_leave_used += $days;
+                    break;
+            }
+            $quota->save();
+        }
     }
 }
