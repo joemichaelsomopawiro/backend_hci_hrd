@@ -9,6 +9,23 @@ class RoleHierarchyService
         return ['HR', 'Program Manager', 'Distribution Manager'];
     }
     
+    public static function getEmployeeRoles()
+    {
+        return [
+            'Finance', 
+            'General Affairs', 
+            'Office Assistant', 
+            'Producer', 
+            'Creative', 
+            'Production', 
+            'Editor', 
+            'Social Media', 
+            'Promotion', 
+            'Graphic Design', 
+            'Hopeline Care'
+        ];
+    }
+    
     public static function getSubordinateRoles($managerRole)
     {
         $hierarchy = [
@@ -42,6 +59,11 @@ class RoleHierarchyService
     public static function isManager($role)
     {
         return in_array($role, self::getManagerRoles());
+    }
+    
+    public static function isEmployee($role)
+    {
+        return in_array($role, self::getEmployeeRoles());
     }
     
     public static function canApproveLeave($userRole, $employeeRole)
