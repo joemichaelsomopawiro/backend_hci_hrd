@@ -32,7 +32,39 @@ class LeaveRequest extends Model
 
     public function employee()
     {
-        return $this->belongsTo(Employee::class);
+        return $this->belongsTo(Employee::class, 'employee_id');
+    }
+
+    public function managerApprovedBy()
+    {
+        return $this->belongsTo(Employee::class, 'manager_approved_by');
+    }
+
+    public function hrApprovedBy()
+    {
+        return $this->belongsTo(Employee::class, 'hr_approved_by');
+    }
+
+    // Update leave quota when approved
+    public function updateLeaveQuota()
+    {
+        if ($this->overall_status === 'approved') {
+            $quota = $this->employee->getCurrentLeaveQuota();
+            if ($quota) {
+                switch ($this->leave_type) {
+                    case 'annual':
+                        $quota->annual_leave_used += $this->total_days;
+                        break;
+                    case 'sick':
+                        $quota->sick_leave_used += $this->total_days;
+                        break;
+                    case 'emergency':
+                        $quota->emergency_leave_used += $this->total_days;
+                        break;
+                }
+                $quota->save();
+            }
+        }
     }
 
     public function approver()
