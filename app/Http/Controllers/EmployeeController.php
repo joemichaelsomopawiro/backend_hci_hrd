@@ -406,11 +406,14 @@ class EmployeeController extends Controller
             }
 
             // 🔥 LOGIKA BARU: Sinkronisasi nama ketika nama_lengkap berubah
+            // 🔥 LOGIKA SINKRONISASI NAMA - DIPERBAIKI
             $userLinked = false;
             $linkedUser = null;
             
-            // Pengecekan 1: Jika nama berubah
+            // Selalu periksa dan sinkronkan nama setiap kali update
             if ($oldNamaLengkap !== $validated['nama_lengkap']) {
+                // Nama berubah - perlu sinkronisasi
+                
                 // Jika employee sudah punya user, update nama user-nya
                 if ($employee->user) {
                     $employee->user->update(['name' => $validated['nama_lengkap']]);
@@ -423,7 +426,7 @@ class EmployeeController extends Controller
                         // Silently ignore logging failure
                     }
                 } else {
-                    // Jika employee belum punya user, cari user yang namanya sama dengan nama baru
+                    // Employee belum punya user, cari user yang namanya sama dengan nama baru
                     $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
                                                 ->whereNull('employee_id')
                                                 ->first();
@@ -440,23 +443,37 @@ class EmployeeController extends Controller
                         }
                     }
                 }
-            }
-            // Pengecekan 2: Jika nama tidak berubah tapi employee belum punya user
-            else if (!$employee->user) {
-                // Cari user yang namanya sama dengan nama employee saat ini
-                $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
-                                            ->whereNull('employee_id')
-                                            ->first();
                 
-                if ($matchingUser) {
-                    $matchingUser->update(['employee_id' => $employee->id]);
-                    $userLinked = true;
-                    $linkedUser = $matchingUser;
-                    
+                // TAMBAHAN: Putuskan hubungan user lama jika ada yang namanya sama dengan nama lama
+                $oldUser = \App\Models\User::where('name', $oldNamaLengkap)
+                                        ->where('employee_id', $employee->id)
+                                        ->first();
+                if ($oldUser) {
+                    $oldUser->update(['employee_id' => null]);
                     try {
-                        Log::info("User '{$matchingUser->name}' (ID: {$matchingUser->id}) berhasil dihubungkan dengan employee '{$employee->nama_lengkap}' (ID: {$employee->id}) saat update tanpa perubahan nama");
+                        Log::info("Disconnected old user '{$oldUser->name}' (ID: {$oldUser->id}) from employee ID: {$employee->id}");
                     } catch (\Exception $logException) {
                         // Silently ignore logging failure
+                    }
+                }
+            } else {
+                // Nama tidak berubah, tapi tetap periksa apakah perlu sinkronisasi
+                if (!$employee->user) {
+                    // Employee belum punya user, cari user yang namanya sama
+                    $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
+                                                ->whereNull('employee_id')
+                                                ->first();
+                    
+                    if ($matchingUser) {
+                        $matchingUser->update(['employee_id' => $employee->id]);
+                        $userLinked = true;
+                        $linkedUser = $matchingUser;
+                        
+                        try {
+                            Log::info("User '{$matchingUser->name}' (ID: {$matchingUser->id}) berhasil dihubungkan dengan employee '{$employee->nama_lengkap}' (ID: {$employee->id}) saat update tanpa perubahan nama");
+                        } catch (\Exception $logException) {
+                            // Silently ignore logging failure
+                        }
                     }
                 }
             }
