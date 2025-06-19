@@ -273,6 +273,7 @@ class EmployeeController extends Controller
             DB::beginTransaction();
 
             $employee = Employee::findOrFail($id);
+            $oldNamaLengkap = $employee->nama_lengkap; // Simpan nama lama untuk perbandingan
 
             $validated = $request->validate([
                 'nama_lengkap' => 'required|string|max:255',
@@ -404,18 +405,67 @@ class EmployeeController extends Controller
                 }
             }
 
+            // 🔥 LOGIKA BARU: Sinkronisasi nama ketika nama_lengkap berubah
+            $userLinked = false;
+            $linkedUser = null;
+            
+            if ($oldNamaLengkap !== $validated['nama_lengkap']) {
+                // Jika employee sudah punya user, update nama user-nya
+                if ($employee->user) {
+                    $employee->user->update(['name' => $validated['nama_lengkap']]);
+                    $userLinked = true;
+                    $linkedUser = $employee->user;
+                    
+                    try {
+                        Log::info("Updated user name from '{$oldNamaLengkap}' to '{$validated['nama_lengkap']}' for employee ID: {$employee->id}");
+                    } catch (\Exception $logException) {
+                        // Silently ignore logging failure
+                    }
+                } else {
+                    // Jika employee belum punya user, cari user yang namanya sama dengan nama baru
+                    $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
+                                                ->whereNull('employee_id')
+                                                ->first();
+                    
+                    if ($matchingUser) {
+                        $matchingUser->update(['employee_id' => $employee->id]);
+                        $userLinked = true;
+                        $linkedUser = $matchingUser;
+                        
+                        try {
+                            Log::info("User '{$matchingUser->name}' (ID: {$matchingUser->id}) berhasil dihubungkan dengan employee '{$employee->nama_lengkap}' (ID: {$employee->id}) saat update nama");
+                        } catch (\Exception $logException) {
+                            // Silently ignore logging failure
+                        }
+                    }
+                }
+            }
+
             DB::commit();
 
-            return response()->json([
+            // Response dengan informasi tambahan tentang user linking
+            $responseData = [
                 'message' => 'Data pegawai berhasil diperbarui',
                 'employee' => $employee->load([
                     'documents',
-                    'employmentHistories',
+                    'employmentHistories', 
                     'promotionHistories',
                     'trainings',
-                    'benefits'
+                    'benefits',
+                    'user' // Load relationship user jika ada
                 ]),
-            ]);
+                'user_linked' => $userLinked
+            ];
+            
+            if ($userLinked && $linkedUser) {
+                $responseData['linked_user'] = $linkedUser;
+                if ($oldNamaLengkap !== $validated['nama_lengkap']) {
+                    $responseData['message_detail'] = "Data karyawan berhasil diperbarui dan nama user telah disinkronkan";
+                }
+            }
+
+            return response()->json($responseData);
+            
         } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();
             try {
