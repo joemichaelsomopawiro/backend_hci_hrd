@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\LeaveRequest;
 use App\Models\LeaveQuota;
+use App\Services\RoleHierarchyService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
@@ -23,6 +24,22 @@ class LeaveRequestController extends Controller
         }
         
         $query = LeaveRequest::with(['employee', 'approver']);
+        
+        // Role-based filtering dengan pengecekan menggunakan RoleHierarchyService
+        if (RoleHierarchyService::isEmployee($user->role)) {
+            // Employee roles hanya bisa melihat cuti mereka sendiri
+            $query->where('employee_id', $user->employee_id);
+        } elseif ($user->role === 'Manager') {
+            // Manager bisa melihat semua cuti yang perlu di-approve dan yang sudah di-approve olehnya
+            if ($request->has('for_approval')) {
+                $query->where('status', 'pending');
+            } else {
+                $query->where(function($q) use ($user) {
+                    $q->where('approved_by', $user->employee_id)
+                      ->orWhere('status', 'pending');
+                });
+            }
+        }
         
         // Role-based filtering dengan pengecekan string langsung
         if ($user->role === 'Employee') {
