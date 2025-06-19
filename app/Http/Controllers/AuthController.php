@@ -90,7 +90,19 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|unique:users,phone',
-            'name' => 'required|string|max:255',
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+                'unique:users,name', // Nama tidak boleh sama dengan user lain
+                function ($attribute, $value, $fail) {
+                    // Cek apakah nama sudah ada di tabel employees
+                    $existingEmployee = \App\Models\Employee::where('nama_lengkap', $value)->first();
+                    if ($existingEmployee) {
+                        $fail('Nama tersebut sudah terdaftar sebagai karyawan. Silakan gunakan nama yang berbeda.');
+                    }
+                },
+            ],
             'email' => 'required|string|email|max:255|unique:users,email',
             'password' => 'required|string|min:8|confirmed',
         ]);
@@ -116,17 +128,14 @@ class AuthController extends Controller
             ], 422);
         }
 
-        // AUTO-LINKING: Cari employee dengan nama yang sama
-        $employee = Employee::where('nama_lengkap', $request->name)->first();
-        $employee_id = $employee ? $employee->id : null;
-
+        // Hapus auto-linking karena sekarang nama harus unik
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
             'phone' => $request->phone,
             'password' => Hash::make($request->password),
             'phone_verified_at' => Carbon::now(),
-            'employee_id' => $employee_id, // Tambahkan ini!
+            'employee_id' => null, // Set null karena nama harus unik
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -137,8 +146,7 @@ class AuthController extends Controller
             'data' => [
                 'user' => $user,
                 'token' => $token,
-                'token_type' => 'Bearer',
-                'linked_to_employee' => $employee_id ? true : false // Info tambahan
+                'token_type' => 'Bearer'
             ]
         ]);
     }
