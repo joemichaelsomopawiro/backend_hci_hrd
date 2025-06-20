@@ -46,6 +46,9 @@ Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     
     // Endpoint untuk HR melihat semua cuti yang sudah di-approve
     Route::get('/approved', [App\Http\Controllers\LeaveRequestController::class, 'getApprovedLeaves']);
+    
+    // Endpoint khusus untuk HR Dashboard - melihat SEMUA data cuti
+    Route::get('/hr-dashboard', [App\Http\Controllers\LeaveRequestController::class, 'getAllLeavesForHR']);
 });
 
 // Attendance Routes
