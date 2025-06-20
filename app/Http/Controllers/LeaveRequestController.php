@@ -29,8 +29,11 @@ class LeaveRequestController extends Controller
         if (RoleHierarchyService::isEmployee($user->role)) {
             // Employee roles hanya bisa melihat cuti mereka sendiri
             $query->where('employee_id', $user->employee_id);
+        } elseif ($user->role === 'HR') {
+            // HR bisa melihat SEMUA data cuti dari semua employee
+            // Tidak ada filter tambahan - HR dapat akses penuh
         } elseif (RoleHierarchyService::isManager($user->role)) {
-            // Manager bisa melihat cuti dari subordinates mereka
+            // Manager lain bisa melihat cuti dari subordinates mereka
             $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
             
             if ($request->has('for_approval')) {
@@ -302,6 +305,84 @@ class LeaveRequestController extends Controller
                 'total_approved' => $approvedLeaves->count(),
                 'total_days' => $approvedLeaves->sum('total_days')
             ]
+        ]);
+    }
+
+    /**
+     * HR Dashboard - Melihat semua data cuti dengan summary lengkap
+     * Endpoint khusus untuk HR melihat overview semua data cuti
+     */
+    public function getAllLeavesForHR(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        // Hanya HR yang bisa mengakses endpoint ini
+        if (!$user || $user->role !== 'HR') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akses ditolak. Hanya HR yang dapat melihat data ini'
+            ], 403);
+        }
+
+        $query = LeaveRequest::with(['employee.user', 'approver.user']);
+        
+        // Filter berdasarkan parameter
+        if ($request->has('year')) {
+            $query->whereYear('start_date', $request->year);
+        }
+        
+        if ($request->has('month')) {
+            $query->whereMonth('start_date', $request->month);
+        }
+        
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        }
+        
+        if ($request->has('leave_type')) {
+            $query->where('leave_type', $request->leave_type);
+        }
+        
+        if ($request->has('employee_id')) {
+            $query->where('employee_id', $request->employee_id);
+        }
+        
+        if ($request->has('department')) {
+            $query->whereHas('employee.user', function($q) use ($request) {
+                $q->where('role', $request->department);
+            });
+        }
+        
+        $allLeaves = $query->orderBy('created_at', 'desc')->get();
+        
+        // Summary data untuk HR dashboard
+        $summary = [
+            'total_requests' => $allLeaves->count(),
+            'pending_requests' => $allLeaves->where('status', 'pending')->count(),
+            'approved_requests' => $allLeaves->where('status', 'approved')->count(),
+            'rejected_requests' => $allLeaves->where('status', 'rejected')->count(),
+            'total_days_requested' => $allLeaves->sum('total_days'),
+            'total_days_approved' => $allLeaves->where('status', 'approved')->sum('total_days'),
+            'by_leave_type' => [
+                'annual' => $allLeaves->where('leave_type', 'annual')->count(),
+                'sick' => $allLeaves->where('leave_type', 'sick')->count(),
+                'emergency' => $allLeaves->where('leave_type', 'emergency')->count(),
+                'maternity' => $allLeaves->where('leave_type', 'maternity')->count(),
+                'paternity' => $allLeaves->where('leave_type', 'paternity')->count(),
+                'marriage' => $allLeaves->where('leave_type', 'marriage')->count(),
+                'bereavement' => $allLeaves->where('leave_type', 'bereavement')->count(),
+            ],
+            'by_department' => $allLeaves->groupBy('employee.user.role')->map(function($group) {
+                return $group->count();
+            }),
+            'recent_requests' => $allLeaves->take(10)->values()
+        ];
+        
+        return response()->json([
+            'success' => true,
+            'data' => $allLeaves,
+            'summary' => $summary,
+            'message' => 'Data semua cuti berhasil diambil untuk HR dashboard'
         ]);
     }
 }
