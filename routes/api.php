@@ -27,24 +27,20 @@ Route::prefix('leave-quotas')->group(function () {
     Route::delete('/{id}', [App\Http\Controllers\LeaveQuotaController::class, 'destroy']);
 });
 
-// Leave Request Routes dengan role-based access
+// Leave Request Routes - Authorization handled by controller
 Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
-    // Semua role bisa melihat (dengan filtering internal)
+    // Semua authenticated user bisa melihat (filtering dilakukan di controller)
     Route::get('/', [App\Http\Controllers\LeaveRequestController::class, 'index']);
     
-    // Hanya Employee yang bisa mengajukan cuti
-    Route::post('/', [App\Http\Controllers\LeaveRequestController::class, 'store'])
-         ->middleware('role:Employee');
+    // Semua authenticated user bisa mengajukan cuti (validasi role di controller)
+    Route::post('/', [App\Http\Controllers\LeaveRequestController::class, 'store']);
     
-    // Hanya Manager dan HR yang bisa approve/reject
-    Route::put('/{id}/approve', [App\Http\Controllers\LeaveRequestController::class, 'approve'])
-         ->middleware('role:Manager,HR');
-    Route::put('/{id}/reject', [App\Http\Controllers\LeaveRequestController::class, 'reject'])
-         ->middleware('role:Manager,HR');
+    // Approve/reject cuti (validasi hierarki di controller)
+    Route::put('/{id}/approve', [App\Http\Controllers\LeaveRequestController::class, 'approve']);
+    Route::put('/{id}/reject', [App\Http\Controllers\LeaveRequestController::class, 'reject']);
     
-    // Endpoint khusus HR untuk melihat semua cuti yang sudah di-approve
-    Route::get('/approved', [App\Http\Controllers\LeaveRequestController::class, 'getApprovedLeaves'])
-         ->middleware('role:HR');
+    // Endpoint untuk HR melihat semua cuti yang sudah di-approve
+    Route::get('/approved', [App\Http\Controllers\LeaveRequestController::class, 'getApprovedLeaves']);
 });
 
 // Attendance Routes
@@ -83,7 +79,8 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-// Manager routes
+// Manager routes - Commented out as functionality is handled by LeaveRequestController
+/*
 Route::middleware(['auth:sanctum'])->group(function () {
     // Routes untuk manager
     Route::prefix('manager')->group(function () {
@@ -93,3 +90,4 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/leave-requests/{leaveRequestId}/process', [ManagerController::class, 'processLeaveRequest']);
     });
 });
+*/

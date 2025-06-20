@@ -64,26 +64,22 @@ class User extends Authenticatable
 
     public function isProgramManager()
     {
-        return $this->role === 'Manager' && 
-               $this->employee && 
-               in_array($this->employee->department, ['Producer', 'Creative', 'Production', 'Editor']);
+        return $this->role === 'Program Manager';
     }
 
     public function isDistributionManager()
     {
-        return $this->role === 'Manager' && 
-               $this->employee && 
-               in_array($this->employee->department, ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care']);
+        return $this->role === 'Distribution Manager';
     }
 
     public function isManager()
     {
-        return $this->role === 'Manager';
+        return \App\Services\RoleHierarchyService::isManager($this->role);
     }
 
     public function isEmployee()
     {
-        return $this->role === 'Employee';
+        return \App\Services\RoleHierarchyService::isEmployee($this->role);
     }
 
     public function canViewEmployee($employeeId)

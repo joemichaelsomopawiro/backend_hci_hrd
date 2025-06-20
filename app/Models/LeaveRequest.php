@@ -35,15 +35,8 @@ class LeaveRequest extends Model
         return $this->belongsTo(Employee::class, 'employee_id');
     }
 
-    public function managerApprovedBy()
-    {
-        return $this->belongsTo(Employee::class, 'manager_approved_by');
-    }
-
-    public function hrApprovedBy()
-    {
-        return $this->belongsTo(Employee::class, 'hr_approved_by');
-    }
+    // Removed unused relations: managerApprovedBy and hrApprovedBy
+    // Using single 'approved_by' field with 'approver' relation instead
 
     // Update leave quota when approved
     public function updateLeaveQuota()
