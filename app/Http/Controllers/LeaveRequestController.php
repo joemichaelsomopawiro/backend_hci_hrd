@@ -101,7 +101,7 @@ class LeaveRequestController extends Controller
         }
 
         $request->validate([
-            'leave_type' => 'required|in:annual,sick,emergency,maternity,paternity',
+            'leave_type' => 'required|in:annual,sick,emergency,maternity,paternity,marriage,bereavement',
             'start_date' => 'required|date|after_or_equal:today',
             'end_date' => 'required|date|after_or_equal:start_date',
             'reason' => 'required|string|max:1000',
@@ -112,8 +112,8 @@ class LeaveRequestController extends Controller
         $endDate = Carbon::parse($request->end_date);
         $totalDays = $startDate->diffInDays($endDate) + 1;
 
-        // Cek quota jika bukan cuti sakit
-        if (in_array($request->leave_type, ['annual', 'emergency'])) {
+        // Cek quota untuk semua jenis cuti kecuali sick (unlimited)
+        if (in_array($request->leave_type, ['annual', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
             $year = $startDate->year;
             $quota = LeaveQuota::where('employee_id', $user->employee_id)
                               ->where('year', $year)
@@ -187,8 +187,8 @@ class LeaveRequestController extends Controller
             ], 403);
         }
 
-        // Update quota jika disetujui
-        if (in_array($leaveRequest->leave_type, ['annual', 'emergency'])) {
+        // Update quota jika disetujui (untuk semua jenis cuti kecuali sick)
+        if (in_array($leaveRequest->leave_type, ['annual', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
             $year = Carbon::parse($leaveRequest->start_date)->year;
             $quota = LeaveQuota::where('employee_id', $leaveRequest->employee_id)
                               ->where('year', $year)

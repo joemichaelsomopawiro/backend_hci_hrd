@@ -41,7 +41,7 @@ class LeaveRequest extends Model
     // Update leave quota when approved
     public function updateLeaveQuota()
     {
-        if ($this->overall_status === 'approved') {
+        if ($this->status === 'approved') {
             $quota = $this->employee->getCurrentLeaveQuota();
             if ($quota) {
                 switch ($this->leave_type) {
@@ -53,6 +53,18 @@ class LeaveRequest extends Model
                         break;
                     case 'emergency':
                         $quota->emergency_leave_used += $this->total_days;
+                        break;
+                    case 'maternity':
+                        $quota->maternity_leave_used += $this->total_days;
+                        break;
+                    case 'paternity':
+                        $quota->paternity_leave_used += $this->total_days;
+                        break;
+                    case 'marriage':
+                        $quota->marriage_leave_used += $this->total_days;
+                        break;
+                    case 'bereavement':
+                        $quota->bereavement_leave_used += $this->total_days;
                         break;
                 }
                 $quota->save();

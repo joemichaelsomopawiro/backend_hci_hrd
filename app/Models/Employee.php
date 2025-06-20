@@ -149,6 +149,14 @@ class Employee extends Model
                 return ($quota->sick_leave_used + $days) <= $quota->sick_leave_quota;
             case 'emergency':
                 return ($quota->emergency_leave_used + $days) <= $quota->emergency_leave_quota;
+            case 'maternity':
+                return ($quota->maternity_leave_used + $days) <= $quota->maternity_leave_quota;
+            case 'paternity':
+                return ($quota->paternity_leave_used + $days) <= $quota->paternity_leave_quota;
+            case 'marriage':
+                return ($quota->marriage_leave_used + $days) <= $quota->marriage_leave_quota;
+            case 'bereavement':
+                return ($quota->bereavement_leave_used + $days) <= $quota->bereavement_leave_quota;
             default:
                 return false;
         }
@@ -168,6 +176,18 @@ class Employee extends Model
                     break;
                 case 'emergency':
                     $quota->emergency_leave_used += $days;
+                    break;
+                case 'maternity':
+                    $quota->maternity_leave_used += $days;
+                    break;
+                case 'paternity':
+                    $quota->paternity_leave_used += $days;
+                    break;
+                case 'marriage':
+                    $quota->marriage_leave_used += $days;
+                    break;
+                case 'bereavement':
+                    $quota->bereavement_leave_used += $days;
                     break;
             }
             $quota->save();

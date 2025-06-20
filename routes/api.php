@@ -25,6 +25,11 @@ Route::prefix('leave-quotas')->group(function () {
     Route::get('/{id}', [App\Http\Controllers\LeaveQuotaController::class, 'show']);
     Route::put('/{id}', [App\Http\Controllers\LeaveQuotaController::class, 'update']);
     Route::delete('/{id}', [App\Http\Controllers\LeaveQuotaController::class, 'destroy']);
+    
+    // Endpoint khusus untuk HR
+    Route::post('/bulk-update', [App\Http\Controllers\LeaveQuotaController::class, 'bulkUpdate']);
+    Route::post('/reset-annual', [App\Http\Controllers\LeaveQuotaController::class, 'resetAnnualQuotas']);
+    Route::get('/usage-summary', [App\Http\Controllers\LeaveQuotaController::class, 'getUsageSummary']);
 });
 
 // Leave Request Routes - Authorization handled by controller
