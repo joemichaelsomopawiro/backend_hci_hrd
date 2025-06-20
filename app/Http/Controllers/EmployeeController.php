@@ -101,7 +101,7 @@ class EmployeeController extends Controller
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
                 'alamat' => 'required|string',
                 'status_pernikahan' => 'required|in:Belum Menikah,Menikah,Cerai',
-                'jabatan_saat_ini' => 'required|string|max:100',
+                'jabatan_saat_ini' => 'required|in:HR,Manager,Employee,GA',
                 'tanggal_mulai_kerja' => 'required|date',
                 'tingkat_pendidikan' => 'required|string|max:50',
                 'gaji_pokok' => 'required|numeric|min:0',
@@ -149,18 +149,21 @@ class EmployeeController extends Controller
                 'tanggal_kontrak_berakhir' => $validated['tanggal_kontrak_berakhir'] ?? null,
             ]);
 
-            // 🔥 LOGIKA BARU: Otomatis cari dan hubungkan dengan user yang sudah ada
+            // 🔥 LOGIKA BARU: Otomatis cari dan hubungkan dengan user yang sudah ada + sinkronisasi role
             $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
                                         ->whereNull('employee_id')
                                         ->first();
             
             $userLinked = false;
             if ($matchingUser) {
-                $matchingUser->update(['employee_id' => $employee->id]);
+                $matchingUser->update([
+                    'employee_id' => $employee->id,
+                    'role' => $validated['jabatan_saat_ini'] // Sinkronisasi role
+                ]);
                 $userLinked = true;
                 
                 try {
-                    Log::info("User '{$matchingUser->name}' (ID: {$matchingUser->id}) berhasil dihubungkan dengan employee '{$employee->nama_lengkap}' (ID: {$employee->id})");
+                    Log::info("User '{$matchingUser->name}' (ID: {$matchingUser->id}) berhasil dihubungkan dengan employee '{$employee->nama_lengkap}' (ID: {$employee->id}) dan role disinkronkan ke '{$validated['jabatan_saat_ini']}'.");
                 } catch (\Exception $logException) {
                     // Silently ignore logging failure
                 }
@@ -325,7 +328,7 @@ class EmployeeController extends Controller
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
                 'alamat' => 'required|string',
                 'status_pernikahan' => 'required|in:Belum Menikah,Menikah,Cerai',
-                'jabatan_saat_ini' => 'required|string|max:100',
+                'jabatan_saat_ini' => 'required|in:HR,Manager,Employee,GA',
                 'tanggal_mulai_kerja' => 'required|date',
                 'tingkat_pendidikan' => 'required|string|max:50',
                 'gaji_pokok' => 'required|numeric|min:0',
@@ -456,9 +459,12 @@ class EmployeeController extends Controller
             if ($oldNamaLengkap !== $validated['nama_lengkap']) {
                 // Nama berubah - perlu sinkronisasi
                 
-                // Jika employee sudah punya user, update nama user-nya
+                // Jika employee sudah punya user, update nama dan role user-nya
                 if ($employee->user) {
-                    $employee->user->update(['name' => $validated['nama_lengkap']]);
+                    $employee->user->update([
+                        'name' => $validated['nama_lengkap'],
+                        'role' => $validated['jabatan_saat_ini'] // Sinkronisasi role
+                    ]);
                     $userLinked = true;
                     $linkedUser = $employee->user;
                     
@@ -474,7 +480,10 @@ class EmployeeController extends Controller
                                                 ->first();
                     
                     if ($matchingUser) {
-                        $matchingUser->update(['employee_id' => $employee->id]);
+                        $matchingUser->update([
+                            'employee_id' => $employee->id,
+                            'role' => $validated['jabatan_saat_ini'] // Sinkronisasi role
+                        ]);
                         $userLinked = true;
                         $linkedUser = $matchingUser;
                         
@@ -499,15 +508,29 @@ class EmployeeController extends Controller
                     }
                 }
             } else {
-                // Nama tidak berubah, tapi tetap periksa apakah perlu sinkronisasi
-                if (!$employee->user) {
+                // Nama tidak berubah, tapi tetap periksa apakah perlu sinkronisasi role
+                if ($employee->user) {
+                    // Employee sudah punya user, update role-nya
+                    $employee->user->update(['role' => $validated['jabatan_saat_ini']]);
+                    $userLinked = true;
+                    $linkedUser = $employee->user;
+                    
+                    try {
+                        Log::info("Role user '{$employee->user->name}' (ID: {$employee->user->id}) disinkronkan ke '{$validated['jabatan_saat_ini']}' untuk employee ID: {$employee->id}");
+                    } catch (\Exception $logException) {
+                        // Silently ignore logging failure
+                    }
+                } else {
                     // Employee belum punya user, cari user yang namanya sama
                     $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
                                                 ->whereNull('employee_id')
                                                 ->first();
                     
                     if ($matchingUser) {
-                        $matchingUser->update(['employee_id' => $employee->id]);
+                        $matchingUser->update([
+                            'employee_id' => $employee->id,
+                            'role' => $validated['jabatan_saat_ini'] // Sinkronisasi role
+                        ]);
                         $userLinked = true;
                         $linkedUser = $matchingUser;
                         

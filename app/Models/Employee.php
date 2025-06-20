@@ -32,6 +32,11 @@ class Employee extends Model
         'tanggal_kontrak_berakhir',
     ];
 
+    // Cast jabatan_saat_ini sebagai enum untuk validasi
+    protected $casts = [
+        'jabatan_saat_ini' => 'string',
+    ];
+
     // Relationships
     public function documents()
     {
