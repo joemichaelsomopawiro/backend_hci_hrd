@@ -99,21 +99,21 @@ class Employee extends Model
     {
         $userRole = $this->user->role ?? null;
         
-        if ($userRole === 'HR') {
-            return Employee::whereIn('department', ['Finance', 'General Affairs', 'Office Assistant'])
-                          ->where('id', '!=', $this->id)
-                          ->get();
-        } elseif ($userRole === 'Program Manager') {
-            return Employee::whereIn('department', ['Producer', 'Creative', 'Production', 'Editor'])
-                          ->where('id', '!=', $this->id)
-                          ->get();
-        } elseif ($userRole === 'Distribution Manager') {
-            return Employee::whereIn('department', ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care'])
-                          ->where('id', '!=', $this->id)
-                          ->get();
+        if (!\App\Services\RoleHierarchyService::isManager($userRole)) {
+            return collect();
         }
         
-        return collect();
+        $subordinateRoles = \App\Services\RoleHierarchyService::getSubordinateRoles($userRole);
+        
+        return Employee::whereHas('user', function($query) use ($subordinateRoles) {
+            $query->whereIn('role', $subordinateRoles);
+        })->where('id', '!=', $this->id)->get();
+    }
+    
+    // Alias method untuk konsistensi
+    public function getSubordinatesByDepartment()
+    {
+        return $this->getSubordinatesByRole();
     }
 
     // Method untuk cek apakah user bisa approve leave request
@@ -122,17 +122,12 @@ class Employee extends Model
         $userRole = $this->user->role ?? null;
         $targetEmployee = Employee::find($employeeId);
         
-        if (!$targetEmployee) return false;
+        if (!$targetEmployee || !$targetEmployee->user) return false;
         
-        if ($userRole === 'HR') {
-            return in_array($targetEmployee->department, ['Finance', 'General Affairs', 'Office Assistant']);
-        } elseif ($userRole === 'Program Manager') {
-            return in_array($targetEmployee->department, ['Producer', 'Creative', 'Production', 'Editor']);
-        } elseif ($userRole === 'Distribution Manager') {
-            return in_array($targetEmployee->department, ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care']);
-        }
+        $targetEmployeeRole = $targetEmployee->user->role;
         
-        return false;
+        // Gunakan RoleHierarchyService untuk cek approval
+        return \App\Services\RoleHierarchyService::canApproveLeave($userRole, $targetEmployeeRole);
     }
 
     // Get current year leave quota
