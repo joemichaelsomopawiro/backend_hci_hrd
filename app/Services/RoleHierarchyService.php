@@ -68,21 +68,8 @@ class RoleHierarchyService
     
     public static function canApproveLeave($userRole, $employeeRole)
     {
-        // HR can approve for their subordinates
-        if ($userRole === 'HR') {
-            return in_array($employeeRole, self::getSubordinateRoles('HR'));
-        }
-        
-        // Program Manager can approve for their subordinates
-        if ($userRole === 'Program Manager') {
-            return in_array($employeeRole, self::getSubordinateRoles('Program Manager'));
-        }
-        
-        // Distribution Manager can approve for their subordinates
-        if ($userRole === 'Distribution Manager') {
-            return in_array($employeeRole, self::getSubordinateRoles('Distribution Manager'));
-        }
-        
-        return false;
+        // Cek apakah user adalah manager dari employee role tersebut
+        $managerForEmployee = self::getManagerForRole($employeeRole);
+        return $userRole === $managerForEmployee;
     }
 }
