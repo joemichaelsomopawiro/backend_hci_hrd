@@ -8,6 +8,7 @@ use App\Models\EmploymentHistory;
 use App\Models\PromotionHistory;
 use App\Models\Training;
 use App\Models\Benefit;
+use App\Models\LeaveQuota;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
@@ -229,9 +230,36 @@ class EmployeeController extends Controller
                 }
             }
 
+            // 🔥 LOGIKA BARU: Otomatis buat default leave quota untuk employee baru
+            $currentYear = date('Y');
+            LeaveQuota::create([
+                'employee_id' => $employee->id,
+                'year' => $currentYear,
+                'annual_leave_quota' => 12, // Default 12 hari cuti tahunan
+                'annual_leave_used' => 0,
+                'sick_leave_quota' => 12, // Default 12 hari cuti sakit
+                'sick_leave_used' => 0,
+                'emergency_leave_quota' => 2, // Default 2 hari cuti darurat
+                'emergency_leave_used' => 0,
+                'maternity_leave_quota' => 90, // Default 90 hari cuti melahirkan
+                'maternity_leave_used' => 0,
+                'paternity_leave_quota' => 2, // Default 2 hari cuti ayah
+                'paternity_leave_used' => 0,
+                'marriage_leave_quota' => 3, // Default 3 hari cuti nikah
+                'marriage_leave_used' => 0,
+                'bereavement_leave_quota' => 3, // Default 3 hari cuti duka
+                'bereavement_leave_used' => 0,
+            ]);
+
+            try {
+                Log::info("Default leave quota berhasil dibuat untuk employee '{$employee->nama_lengkap}' (ID: {$employee->id}) tahun {$currentYear}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+
             DB::commit();
 
-            // Response dengan informasi tambahan tentang user linking
+            // Response dengan informasi tambahan tentang user linking dan leave quota
             $responseData = [
                 'message' => 'Data pegawai berhasil disimpan',
                 'employee' => $employee->load([
@@ -242,14 +270,16 @@ class EmployeeController extends Controller
                     'benefits',
                     'user' // Load relationship user jika ada
                 ]),
-                'user_linked' => $userLinked
+                'user_linked' => $userLinked,
+                'leave_quota_created' => true,
+                'default_leave_quota_year' => $currentYear
             ];
             
             if ($userLinked) {
                 $responseData['linked_user'] = $matchingUser;
-                $responseData['message_detail'] = "Data karyawan berhasil dibuat dan otomatis terhubung dengan akun user '{$matchingUser->name}'";
+                $responseData['message_detail'] = "Data karyawan berhasil dibuat, otomatis terhubung dengan akun user '{$matchingUser->name}', dan default jatah cuti tahun {$currentYear} telah dibuat";
             } else {
-                $responseData['message_detail'] = 'Data karyawan berhasil dibuat, namun belum ada akun user yang cocok';
+                $responseData['message_detail'] = "Data karyawan berhasil dibuat dan default jatah cuti tahun {$currentYear} telah dibuat. Belum ada akun user yang cocok";
             }
 
             return response()->json($responseData, 201);

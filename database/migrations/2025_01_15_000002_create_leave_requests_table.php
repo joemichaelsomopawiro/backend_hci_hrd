@@ -12,7 +12,7 @@ class CreateLeaveRequestsTable extends Migration
             $table->id();
             $table->foreignId('employee_id')->constrained('employees')->onDelete('cascade');
             $table->foreignId('approved_by')->nullable()->constrained('employees')->onDelete('set null');
-            $table->enum('leave_type', ['annual', 'sick', 'emergency', 'maternity', 'paternity']);
+            $table->enum('leave_type', ['annual', 'sick', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement']);
             $table->date('start_date');
             $table->date('end_date');
             $table->integer('total_days');
