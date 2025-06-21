@@ -13,6 +13,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+// --- TAMBAHAN ---
+use App\Services\RoleHierarchyService;
+use Illuminate\Validation\Rule;
+// --- AKHIR TAMBAHAN ---
 
 class EmployeeController extends Controller
 {
@@ -81,6 +85,12 @@ class EmployeeController extends Controller
         try {
             DB::beginTransaction();
 
+            // --- PERUBAHAN VALIDASI DIMULAI DARI SINI ---
+            $allValidRoles = array_merge(
+                RoleHierarchyService::getManagerRoles(),
+                RoleHierarchyService::getEmployeeRoles()
+            );
+
             $validated = $request->validate([
                 'nama_lengkap' => [
                     'required',
@@ -101,7 +111,7 @@ class EmployeeController extends Controller
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
                 'alamat' => 'required|string',
                 'status_pernikahan' => 'required|in:Belum Menikah,Menikah,Cerai',
-                'jabatan_saat_ini' => 'required|in:HR,Manager,Employee,GA',
+                'jabatan_saat_ini' => ['required', 'string', Rule::in($allValidRoles)], // ATURAN YANG DIPERBARUI
                 'tanggal_mulai_kerja' => 'required|date',
                 'tingkat_pendidikan' => 'required|string|max:50',
                 'gaji_pokok' => 'required|numeric|min:0',
@@ -127,6 +137,7 @@ class EmployeeController extends Controller
                 'benefits.*.amount' => 'nullable|numeric|min:0',
                 'benefits.*.start_date' => 'nullable|date',
             ]);
+            // --- AKHIR PERUBAHAN VALIDASI ---
 
             $employee = Employee::create([
                 'nama_lengkap' => $validated['nama_lengkap'],
@@ -151,8 +162,8 @@ class EmployeeController extends Controller
 
             // 🔥 LOGIKA BARU: Otomatis cari dan hubungkan dengan user yang sudah ada + sinkronisasi role
             $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
-                                        ->whereNull('employee_id')
-                                        ->first();
+                                            ->whereNull('employee_id')
+                                            ->first();
             
             $userLinked = false;
             if ($matchingUser) {
@@ -320,6 +331,12 @@ class EmployeeController extends Controller
             $employee = Employee::findOrFail($id);
             $oldNamaLengkap = $employee->nama_lengkap; // Simpan nama lama untuk perbandingan
 
+            // --- PERUBAHAN VALIDASI DIMULAI DARI SINI ---
+            $allValidRoles = array_merge(
+                RoleHierarchyService::getManagerRoles(),
+                RoleHierarchyService::getEmployeeRoles()
+            );
+
             $validated = $request->validate([
                 'nama_lengkap' => 'required|string|max:255',
                 'nik' => 'required|string|max:16|unique:employees,nik,' . $employee->id,
@@ -328,7 +345,7 @@ class EmployeeController extends Controller
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
                 'alamat' => 'required|string',
                 'status_pernikahan' => 'required|in:Belum Menikah,Menikah,Cerai',
-                'jabatan_saat_ini' => 'required|in:HR,Manager,Employee,GA',
+                'jabatan_saat_ini' => ['required', 'string', Rule::in($allValidRoles)], // ATURAN YANG DIPERBARUI
                 'tanggal_mulai_kerja' => 'required|date',
                 'tingkat_pendidikan' => 'required|string|max:50',
                 'gaji_pokok' => 'required|numeric|min:0',
@@ -354,6 +371,7 @@ class EmployeeController extends Controller
                 'benefits.*.amount' => 'nullable|numeric|min:0',
                 'benefits.*.start_date' => 'nullable|date',
             ]);
+            // --- AKHIR PERUBAHAN VALIDASI ---
 
             $employee->update([
                 'nama_lengkap' => $validated['nama_lengkap'],
@@ -476,8 +494,8 @@ class EmployeeController extends Controller
                 } else {
                     // Employee belum punya user, cari user yang namanya sama dengan nama baru
                     $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
-                                                ->whereNull('employee_id')
-                                                ->first();
+                                                    ->whereNull('employee_id')
+                                                    ->first();
                     
                     if ($matchingUser) {
                         $matchingUser->update([
@@ -497,8 +515,8 @@ class EmployeeController extends Controller
                 
                 // TAMBAHAN: Putuskan hubungan user lama jika ada yang namanya sama dengan nama lama
                 $oldUser = \App\Models\User::where('name', $oldNamaLengkap)
-                                        ->where('employee_id', $employee->id)
-                                        ->first();
+                                            ->where('employee_id', $employee->id)
+                                            ->first();
                 if ($oldUser) {
                     $oldUser->update(['employee_id' => null]);
                     try {
@@ -523,8 +541,8 @@ class EmployeeController extends Controller
                 } else {
                     // Employee belum punya user, cari user yang namanya sama
                     $matchingUser = \App\Models\User::where('name', $validated['nama_lengkap'])
-                                                ->whereNull('employee_id')
-                                                ->first();
+                                                    ->whereNull('employee_id')
+                                                    ->first();
                     
                     if ($matchingUser) {
                         $matchingUser->update([
