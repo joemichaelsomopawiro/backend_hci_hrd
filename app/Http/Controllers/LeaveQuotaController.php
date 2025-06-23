@@ -220,6 +220,83 @@ class LeaveQuotaController extends Controller
         ]);
     }
 
+    // Endpoint untuk mendapatkan jatah cuti user yang sedang login
+    public function getMyCurrentQuotas(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!$user || !$user->employee_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User tidak terautentikasi atau tidak memiliki employee_id'
+            ], 401);
+        }
+        
+        $year = $request->get('year', date('Y'));
+        
+        $quota = LeaveQuota::with('employee')
+                          ->where('employee_id', $user->employee_id)
+                          ->where('year', $year)
+                          ->first();
+        
+        if (!$quota) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Jatah cuti tidak ditemukan untuk tahun ' . $year
+            ], 404);
+        }
+        
+        // Hitung sisa jatah untuk setiap jenis cuti
+        $quotaData = [
+            'id' => $quota->id,
+            'employee_id' => $quota->employee_id,
+            'year' => $quota->year,
+            'employee' => $quota->employee,
+            'leave_types' => [
+                'annual' => [
+                    'quota' => $quota->annual_leave_quota,
+                    'used' => $quota->annual_leave_used,
+                    'remaining' => $quota->annual_leave_quota - $quota->annual_leave_used
+                ],
+                'sick' => [
+                    'quota' => $quota->sick_leave_quota,
+                    'used' => $quota->sick_leave_used,
+                    'remaining' => $quota->sick_leave_quota - $quota->sick_leave_used
+                ],
+                'emergency' => [
+                    'quota' => $quota->emergency_leave_quota,
+                    'used' => $quota->emergency_leave_used,
+                    'remaining' => $quota->emergency_leave_quota - $quota->emergency_leave_used
+                ],
+                'maternity' => [
+                    'quota' => $quota->maternity_leave_quota,
+                    'used' => $quota->maternity_leave_used,
+                    'remaining' => $quota->maternity_leave_quota - $quota->maternity_leave_used
+                ],
+                'paternity' => [
+                    'quota' => $quota->paternity_leave_quota,
+                    'used' => $quota->paternity_leave_used,
+                    'remaining' => $quota->paternity_leave_quota - $quota->paternity_leave_used
+                ],
+                'marriage' => [
+                    'quota' => $quota->marriage_leave_quota,
+                    'used' => $quota->marriage_leave_used,
+                    'remaining' => $quota->marriage_leave_quota - $quota->marriage_leave_used
+                ],
+                'bereavement' => [
+                    'quota' => $quota->bereavement_leave_quota,
+                    'used' => $quota->bereavement_leave_used,
+                    'remaining' => $quota->bereavement_leave_quota - $quota->bereavement_leave_used
+                ]
+            ]
+        ];
+        
+        return response()->json([
+            'success' => true,
+            'data' => $quotaData
+        ]);
+    }
+
     // Endpoint untuk mendapatkan ringkasan penggunaan cuti
     public function getUsageSummary(Request $request): JsonResponse
     {

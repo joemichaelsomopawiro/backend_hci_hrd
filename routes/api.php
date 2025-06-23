@@ -26,12 +26,15 @@ Route::prefix('leave-quotas')->group(function () {
     Route::put('/{id}', [App\Http\Controllers\LeaveQuotaController::class, 'update']);
     Route::delete('/{id}', [App\Http\Controllers\LeaveQuotaController::class, 'destroy']);
     
+    // Endpoint untuk mendapatkan jatah cuti user yang sedang login
+    Route::middleware('auth:sanctum')->get('/my-current', [App\Http\Controllers\LeaveQuotaController::class, 'getMyCurrentQuotas']);
+    
     // Endpoint khusus untuk HR
     Route::post('/bulk-update', [App\Http\Controllers\LeaveQuotaController::class, 'bulkUpdate']);
     Route::post('/reset-annual', [App\Http\Controllers\LeaveQuotaController::class, 'resetAnnualQuotas']);
     Route::get('/usage-summary', [App\Http\Controllers\LeaveQuotaController::class, 'getUsageSummary']);
     // Tambahkan route ini di bagian leave quota
-    Route::get('/leave-quotas/employees-without-quota', [App\Http\Controllers\LeaveQuotaController::class, 'getEmployeesWithoutQuota']);
+    Route::get('/employees-without-quota', [App\Http\Controllers\LeaveQuotaController::class, 'getEmployeesWithoutQuota']);
 });
 
 // Leave Request Routes - Authorization handled by controller
