@@ -245,23 +245,24 @@ class EmployeeController extends Controller
             }
 
             // 🔥 LOGIKA BARU: Otomatis buat default leave quota untuk employee baru
+            // Di dalam method store, setelah employee berhasil dibuat, tambahkan:
             $currentYear = date('Y');
-            LeaveQuota::create([
+            \App\Models\LeaveQuota::create([
                 'employee_id' => $employee->id,
                 'year' => $currentYear,
-                'annual_leave_quota' => 12, // Default 12 hari cuti tahunan
+                'annual_leave_quota' => 12,
                 'annual_leave_used' => 0,
-                'sick_leave_quota' => 12, // Default 12 hari cuti sakit
+                'sick_leave_quota' => 12,
                 'sick_leave_used' => 0,
-                'emergency_leave_quota' => 2, // Default 2 hari cuti darurat
+                'emergency_leave_quota' => 2,
                 'emergency_leave_used' => 0,
-                'maternity_leave_quota' => 90, // Default 90 hari cuti melahirkan
+                'maternity_leave_quota' => $validated['jenis_kelamin'] === 'Perempuan' ? 90 : 0,
                 'maternity_leave_used' => 0,
-                'paternity_leave_quota' => 2, // Default 2 hari cuti ayah
+                'paternity_leave_quota' => $validated['jenis_kelamin'] === 'Laki-laki' ? 2 : 0,
                 'paternity_leave_used' => 0,
-                'marriage_leave_quota' => 3, // Default 3 hari cuti nikah
+                'marriage_leave_quota' => 2,
                 'marriage_leave_used' => 0,
-                'bereavement_leave_quota' => 3, // Default 3 hari cuti duka
+                'bereavement_leave_quota' => 2,
                 'bereavement_leave_used' => 0,
             ]);
 

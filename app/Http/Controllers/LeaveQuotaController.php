@@ -43,6 +43,18 @@ class LeaveQuotaController extends Controller
             'bereavement_leave_quota' => 'integer|min:0',
         ]);
 
+        // PEMBATASAN: Cek apakah employee sudah memiliki jatah cuti untuk tahun tersebut
+        $existingQuota = LeaveQuota::where('employee_id', $request->employee_id)
+                                  ->where('year', $request->year)
+                                  ->first();
+        
+        if ($existingQuota) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Karyawan sudah memiliki jatah cuti untuk tahun tersebut. Gunakan fitur edit untuk mengubah data.'
+            ], 422);
+        }
+
         $quota = LeaveQuota::create($request->all());
         
         return response()->json([
@@ -50,6 +62,23 @@ class LeaveQuotaController extends Controller
             'message' => 'Jatah cuti berhasil ditambahkan',
             'data' => $quota->load('employee')
         ], 201);
+    }
+
+    // Tambahkan method untuk mendapatkan employee yang belum punya jatah cuti
+    public function getEmployeesWithoutQuota(Request $request): JsonResponse
+    {
+        $year = $request->get('year', date('Y'));
+        
+        $employeesWithoutQuota = \App\Models\Employee::whereDoesntHave('leaveQuotas', function($query) use ($year) {
+            $query->where('year', $year);
+        })->select('id', 'nama_lengkap', 'jabatan_saat_ini', 'department')
+          ->get();
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Daftar karyawan yang belum memiliki jatah cuti',
+            'data' => $employeesWithoutQuota
+        ]);
     }
 
     public function show($id): JsonResponse

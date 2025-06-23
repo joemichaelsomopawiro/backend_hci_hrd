@@ -96,10 +96,17 @@ class AuthController extends Controller
                 'max:255',
                 'unique:users,name', // Nama tidak boleh sama dengan user lain
                 function ($attribute, $value, $fail) {
-                    // Cek apakah nama sudah ada di tabel employees
+                    // PERUBAHAN: Cek apakah nama ADA di tabel employees dan belum terhubung ke user
                     $existingEmployee = \App\Models\Employee::where('nama_lengkap', $value)->first();
-                    if ($existingEmployee) {
-                        $fail('Nama tersebut sudah terdaftar sebagai karyawan. Silakan gunakan nama yang berbeda.');
+                    if (!$existingEmployee) {
+                        $fail('Nama tersebut belum terdaftar sebagai karyawan. Silakan hubungi HR untuk mendaftarkan data karyawan terlebih dahulu.');
+                        return;
+                    }
+                    
+                    // Cek apakah employee sudah terhubung dengan user lain
+                    $linkedUser = \App\Models\User::where('employee_id', $existingEmployee->id)->first();
+                    if ($linkedUser) {
+                        $fail('Karyawan dengan nama tersebut sudah memiliki akun user.');
                     }
                 },
             ],
@@ -128,23 +135,54 @@ class AuthController extends Controller
             ], 422);
         }
 
-        // Hapus auto-linking karena sekarang nama harus unik
+        // Cari employee berdasarkan nama
+        $employee = \App\Models\Employee::where('nama_lengkap', $request->name)->first();
+        
+        // Buat user dan hubungkan dengan employee
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
             'phone' => $request->phone,
             'password' => Hash::make($request->password),
             'phone_verified_at' => Carbon::now(),
-            'employee_id' => null, // Set null karena nama harus unik
+            'employee_id' => $employee->id,
+            'role' => $employee->jabatan_saat_ini, // Set role sesuai jabatan
         ]);
-
+    
+        // AUTO-CREATE JATAH CUTI DEFAULT
+        $currentYear = date('Y');
+        $existingQuota = \App\Models\LeaveQuota::where('employee_id', $employee->id)
+                                          ->where('year', $currentYear)
+                                          ->first();
+        
+        if (!$existingQuota) {
+            \App\Models\LeaveQuota::create([
+                'employee_id' => $employee->id,
+                'year' => $currentYear,
+                'annual_leave_quota' => 12, // Default 12 hari cuti tahunan
+                'annual_leave_used' => 0,
+                'sick_leave_quota' => 12, // Default 12 hari cuti sakit
+                'sick_leave_used' => 0,
+                'emergency_leave_quota' => 2, // Default 2 hari cuti darurat
+                'emergency_leave_used' => 0,
+                'maternity_leave_quota' => $employee->jenis_kelamin === 'Perempuan' ? 90 : 0, // 90 hari untuk perempuan
+                'maternity_leave_used' => 0,
+                'paternity_leave_quota' => $employee->jenis_kelamin === 'Laki-laki' ? 2 : 0, // 2 hari untuk laki-laki
+                'paternity_leave_used' => 0,
+                'marriage_leave_quota' => 2, // Default 2 hari cuti menikah
+                'marriage_leave_used' => 0,
+                'bereavement_leave_quota' => 2, // Default 2 hari cuti duka
+                'bereavement_leave_used' => 0,
+            ]);
+        }
+    
         $token = $user->createToken('auth_token')->plainTextToken;
-
+    
         return response()->json([
             'success' => true,
-            'message' => 'Registrasi berhasil',
+            'message' => 'Registrasi berhasil dan jatah cuti telah dibuat',
             'data' => [
-                'user' => $user,
+                'user' => $user->load('employee'),
                 'token' => $token,
                 'token_type' => 'Bearer'
             ]

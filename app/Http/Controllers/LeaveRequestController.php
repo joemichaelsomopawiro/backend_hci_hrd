@@ -115,12 +115,12 @@ class LeaveRequestController extends Controller
         $endDate = Carbon::parse($request->end_date);
         $totalDays = $startDate->diffInDays($endDate) + 1;
 
-        // Cek quota untuk semua jenis cuti kecuali sick (unlimited)
-        if (in_array($request->leave_type, ['annual', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
+        // Cek quota untuk SEMUA jenis cuti (termasuk sick)
+        if (in_array($request->leave_type, ['annual', 'sick', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
             $year = $startDate->year;
             $quota = LeaveQuota::where('employee_id', $user->employee_id)
-                              ->where('year', $year)
-                              ->first();
+                          ->where('year', $year)
+                          ->first();
             
             if (!$quota) {
                 return response()->json([
@@ -135,7 +135,7 @@ class LeaveRequestController extends Controller
             if (($quota->$usedField + $totalDays) > $quota->$quotaField) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Jatah cuti tidak mencukupi'
+                    'message' => 'Jatah cuti tidak mencukupi. Sisa: ' . ($quota->$quotaField - $quota->$usedField) . ' hari'
                 ], 400);
             }
         }
@@ -190,16 +190,19 @@ class LeaveRequestController extends Controller
             ], 403);
         }
 
-        // Update quota jika disetujui (untuk semua jenis cuti kecuali sick)
-        if (in_array($leaveRequest->leave_type, ['annual', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
+        // Update quota untuk SEMUA jenis cuti saat disetujui
+        if (in_array($leaveRequest->leave_type, ['annual', 'sick', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
             $year = Carbon::parse($leaveRequest->start_date)->year;
             $quota = LeaveQuota::where('employee_id', $leaveRequest->employee_id)
-                              ->where('year', $year)
-                              ->first();
+                          ->where('year', $year)
+                          ->first();
             
             if ($quota) {
                 $usedField = $leaveRequest->leave_type . '_leave_used';
                 $quota->increment($usedField, $leaveRequest->total_days);
+                
+                // Log untuk debugging
+                \Illuminate\Support\Facades\Log::info("Updated {$usedField} for employee {$leaveRequest->employee_id}: +{$leaveRequest->total_days} days");
             }
         }
 
