@@ -15,7 +15,6 @@ class LeaveRequestController extends Controller
     {
         $user = auth()->user();
         
-        // Pengecekan jika user tidak ada atau tidak memiliki role
         if (!$user || !$user->role) {
             return response()->json([
                 'success' => false,
@@ -23,35 +22,37 @@ class LeaveRequestController extends Controller
             ], 401);
         }
         
-        $query = LeaveRequest::with(['employee.user', 'approver.user']);
+        $query = LeaveRequest::with(['employee.user', 'managerApprovedBy.user', 'hrApprovedBy.user']);
         
-        // Role-based filtering menggunakan RoleHierarchyService
+        // Role-based filtering
         if (RoleHierarchyService::isEmployee($user->role)) {
-            // Employee roles hanya bisa melihat cuti mereka sendiri
+            // Employee hanya bisa melihat cuti mereka sendiri
             $query->where('employee_id', $user->employee_id);
         } elseif ($user->role === 'HR') {
             // HR bisa melihat SEMUA data cuti dari semua employee
             // Tidak ada filter tambahan - HR dapat akses penuh
         } elseif (RoleHierarchyService::isManager($user->role)) {
-            // Manager lain bisa melihat cuti dari subordinates mereka
+            // Manager bisa melihat cuti dari subordinates mereka
             $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
             
-            if ($request->has('for_approval')) {
-                $query->where('status', 'pending')
-                      ->whereHas('employee.user', function($q) use ($subordinateRoles) {
-                          $q->whereIn('role', $subordinateRoles);
-                      });
-            } else {
-                $query->where(function($q) use ($user, $subordinateRoles) {
-                    $q->where('approved_by', $user->employee_id)
-                      ->orWhere(function($subQ) use ($subordinateRoles) {
-                          $subQ->where('status', 'pending')
-                               ->whereHas('employee.user', function($userQ) use ($subordinateRoles) {
-                                   $userQ->whereIn('role', $subordinateRoles);
-                               });
-                      });
-                });
-            }
+            $query->where(function($q) use ($user, $subordinateRoles) {
+                // Cuti yang sudah di-approve oleh manager ini
+                $q->where('manager_approved_by', $user->employee_id)
+                  // Atau cuti dari subordinates yang masih pending manager approval
+                  ->orWhere(function($subQ) use ($subordinateRoles) {
+                      $subQ->where('overall_status', 'pending_manager')
+                           ->whereHas('employee.user', function($userQ) use ($subordinateRoles) {
+                               $userQ->whereIn('role', $subordinateRoles);
+                           });
+                  })
+                  // Atau cuti dari subordinates yang sudah di-approve manager tapi pending HR
+                  ->orWhere(function($subQ) use ($subordinateRoles) {
+                      $subQ->where('overall_status', 'pending_hr')
+                           ->whereHas('employee.user', function($userQ) use ($subordinateRoles) {
+                               $userQ->whereIn('role', $subordinateRoles);
+                           });
+                  });
+            });
         }
         
         // Filter tambahan
@@ -59,8 +60,8 @@ class LeaveRequestController extends Controller
             $query->where('employee_id', $request->employee_id);
         }
         
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
+        if ($request->has('overall_status')) {
+            $query->where('overall_status', $request->overall_status);
         }
         
         if ($request->has('leave_type')) {
@@ -79,7 +80,6 @@ class LeaveRequestController extends Controller
     {
         $user = auth()->user();
         
-        // Pengecekan user dan role
         if (!$user || !$user->role) {
             return response()->json([
                 'success' => false,
@@ -95,7 +95,6 @@ class LeaveRequestController extends Controller
             ], 403);
         }
         
-        // Pastikan user memiliki employee_id
         if (!$user->employee_id) {
             return response()->json([
                 'success' => false,
@@ -115,7 +114,7 @@ class LeaveRequestController extends Controller
         $endDate = Carbon::parse($request->end_date);
         $totalDays = $startDate->diffInDays($endDate) + 1;
 
-        // Cek quota untuk SEMUA jenis cuti (termasuk sick)
+        // Cek quota
         if (in_array($request->leave_type, ['annual', 'sick', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
             $year = $startDate->year;
             $quota = LeaveQuota::where('employee_id', $user->employee_id)
@@ -148,12 +147,13 @@ class LeaveRequestController extends Controller
             'total_days' => $totalDays,
             'reason' => $request->reason,
             'notes' => $request->notes,
+            'overall_status' => 'pending_manager', // Start dengan pending manager
         ]);
         
         return response()->json([
             'success' => true,
             'message' => 'Permohonan cuti berhasil diajukan',
-            'data' => $leaveRequest->load(['employee', 'approver'])
+            'data' => $leaveRequest->load(['employee', 'managerApprovedBy', 'hrApprovedBy'])
         ], 201);
     }
 
@@ -161,118 +161,171 @@ class LeaveRequestController extends Controller
     {
         $user = auth()->user();
         
-        // Cek apakah user adalah manager
-        if (!RoleHierarchyService::isManager($user->role)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Anda tidak memiliki akses untuk menyetujui cuti'
-            ], 403);
-        }
-
         $request->validate([
             'notes' => 'nullable|string|max:1000',
         ]);
 
         $leaveRequest = LeaveRequest::findOrFail($id);
         
-        if ($leaveRequest->status !== 'pending') {
+        // Cek status saat ini
+        if (!in_array($leaveRequest->overall_status, ['pending_manager', 'pending_hr'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Permohonan cuti sudah diproses'
             ], 400);
         }
         
-        // Cek apakah user bisa approve leave request ini - gunakan Employee model
-        if (!$user->employee || !$user->employee->canApproveLeaveFor($leaveRequest->employee_id)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Anda tidak memiliki akses untuk menyetujui cuti karyawan ini'
-            ], 403);
-        }
-
-        // Update quota untuk SEMUA jenis cuti saat disetujui
-        if (in_array($leaveRequest->leave_type, ['annual', 'sick', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
-            $year = Carbon::parse($leaveRequest->start_date)->year;
-            $quota = LeaveQuota::where('employee_id', $leaveRequest->employee_id)
-                          ->where('year', $year)
-                          ->first();
-            
-            if ($quota) {
-                $usedField = $leaveRequest->leave_type . '_leave_used';
-                $quota->increment($usedField, $leaveRequest->total_days);
-                
-                // Log untuk debugging
-                \Illuminate\Support\Facades\Log::info("Updated {$usedField} for employee {$leaveRequest->employee_id}: +{$leaveRequest->total_days} days");
+        // Manager Approval
+        if (RoleHierarchyService::isManager($user->role) && $user->role !== 'HR') {
+            if ($leaveRequest->overall_status !== 'pending_manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Permohonan cuti tidak dalam status pending manager'
+                ], 400);
             }
-        }
+            
+            // Cek apakah user bisa approve leave request ini
+            if (!$user->employee || !$user->employee->canApproveLeaveFor($leaveRequest->employee_id)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Anda tidak memiliki akses untuk menyetujui cuti karyawan ini'
+                ], 403);
+            }
 
-        $leaveRequest->update([
-            'status' => 'approved',
-            'approved_by' => $user->employee_id,
-            'approved_at' => now(),
-            'notes' => $request->notes,
-        ]);
+            $leaveRequest->update([
+                'manager_status' => 'approved',
+                'manager_approved_by' => $user->employee_id,
+                'manager_approved_at' => now(),
+                'overall_status' => 'pending_hr', // Lanjut ke HR approval
+                'notes' => $request->notes,
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Permohonan cuti disetujui oleh manager. Menunggu approval HR.',
+                'data' => $leaveRequest->load(['employee', 'managerApprovedBy', 'hrApprovedBy'])
+            ]);
+        }
+        
+        // HR Approval
+        if ($user->role === 'HR') {
+            if ($leaveRequest->overall_status !== 'pending_hr') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Permohonan cuti tidak dalam status pending HR'
+                ], 400);
+            }
+
+            // Update quota saat HR approve
+            if (in_array($leaveRequest->leave_type, ['annual', 'sick', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) {
+                $year = Carbon::parse($leaveRequest->start_date)->year;
+                $quota = LeaveQuota::where('employee_id', $leaveRequest->employee_id)
+                              ->where('year', $year)
+                              ->first();
+                
+                if ($quota) {
+                    $usedField = $leaveRequest->leave_type . '_leave_used';
+                    $quota->increment($usedField, $leaveRequest->total_days);
+                }
+            }
+
+            $leaveRequest->update([
+                'hr_status' => 'approved',
+                'hr_approved_by' => $user->employee_id,
+                'hr_approved_at' => now(),
+                'overall_status' => 'approved', // Final approval
+                'notes' => $request->notes,
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Permohonan cuti disetujui oleh HR. Cuti telah disetujui sepenuhnya.',
+                'data' => $leaveRequest->load(['employee', 'managerApprovedBy', 'hrApprovedBy'])
+            ]);
+        }
         
         return response()->json([
-            'success' => true,
-            'message' => 'Permohonan cuti disetujui',
-            'data' => $leaveRequest->load(['employee', 'approver'])
-        ]);
+            'success' => false,
+            'message' => 'Anda tidak memiliki akses untuk menyetujui cuti'
+        ], 403);
     }
 
     public function reject(Request $request, $id): JsonResponse
     {
         $user = auth()->user();
         
-        // Pengecekan user dan role
-        if (!$user || !$user->role) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User not authenticated or role not set'
-            ], 401);
-        }
-        
-        // Hanya Manager yang bisa reject menggunakan RoleHierarchyService
-        if (!RoleHierarchyService::isManager($user->role)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Anda tidak memiliki akses untuk menolak cuti'
-            ], 403);
-        }
-
         $request->validate([
             'rejection_reason' => 'required|string|max:1000',
         ]);
 
         $leaveRequest = LeaveRequest::findOrFail($id);
         
-        if ($leaveRequest->status !== 'pending') {
+        if (!in_array($leaveRequest->overall_status, ['pending_manager', 'pending_hr'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Permohonan cuti sudah diproses'
             ], 400);
         }
         
-        // Cek apakah user bisa reject leave request ini
-        if (!$user->employee || !$user->employee->canApproveLeaveFor($leaveRequest->employee_id)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Anda tidak memiliki akses untuk menolak cuti karyawan ini'
-            ], 403);
-        }
+        // Manager Rejection
+        if (RoleHierarchyService::isManager($user->role) && $user->role !== 'HR') {
+            if ($leaveRequest->overall_status !== 'pending_manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Permohonan cuti tidak dalam status pending manager'
+                ], 400);
+            }
+            
+            if (!$user->employee || !$user->employee->canApproveLeaveFor($leaveRequest->employee_id)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Anda tidak memiliki akses untuk menolak cuti karyawan ini'
+                ], 403);
+            }
 
-        $leaveRequest->update([
-            'status' => 'rejected',
-            'approved_by' => $user->employee_id,
-            'approved_at' => now(),
-            'rejection_reason' => $request->rejection_reason,
-        ]);
+            $leaveRequest->update([
+                'manager_status' => 'rejected',
+                'manager_approved_by' => $user->employee_id,
+                'manager_approved_at' => now(),
+                'manager_rejection_reason' => $request->rejection_reason,
+                'overall_status' => 'rejected', // Final rejection
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Permohonan cuti ditolak oleh manager',
+                'data' => $leaveRequest->load(['employee', 'managerApprovedBy', 'hrApprovedBy'])
+            ]);
+        }
+        
+        // HR Rejection
+        if ($user->role === 'HR') {
+            if ($leaveRequest->overall_status !== 'pending_hr') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Permohonan cuti tidak dalam status pending HR'
+                ], 400);
+            }
+
+            $leaveRequest->update([
+                'hr_status' => 'rejected',
+                'hr_approved_by' => $user->employee_id,
+                'hr_approved_at' => now(),
+                'hr_rejection_reason' => $request->rejection_reason,
+                'overall_status' => 'rejected', // Final rejection
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Permohonan cuti ditolak oleh HR',
+                'data' => $leaveRequest->load(['employee', 'managerApprovedBy', 'hrApprovedBy'])
+            ]);
+        }
         
         return response()->json([
-            'success' => true,
-            'message' => 'Permohonan cuti ditolak',
-            'data' => $leaveRequest->load(['employee', 'approver'])
-        ]);
+            'success' => false,
+            'message' => 'Anda tidak memiliki akses untuk menolak cuti'
+        ], 403);
     }
 
     // Endpoint khusus untuk HR melihat semua cuti yang sudah di-approve
@@ -280,7 +333,6 @@ class LeaveRequestController extends Controller
     {
         $user = auth()->user();
         
-        // Pengecekan user dan role menggunakan RoleHierarchyService
         if (!$user || $user->role !== 'HR') {
             return response()->json([
                 'success' => false,
@@ -288,8 +340,8 @@ class LeaveRequestController extends Controller
             ], 403);
         }
 
-        $query = LeaveRequest::with(['employee.user', 'approver.user'])
-                           ->where('status', 'approved');
+        $query = LeaveRequest::with(['employee.user', 'managerApprovedBy.user', 'hrApprovedBy.user'])
+                           ->where('overall_status', 'approved');
         
         if ($request->has('year')) {
             $query->whereYear('start_date', $request->year);
@@ -299,27 +351,19 @@ class LeaveRequestController extends Controller
             $query->whereMonth('start_date', $request->month);
         }
         
-        $approvedLeaves = $query->orderBy('approved_at', 'desc')->get();
+        $requests = $query->orderBy('created_at', 'desc')->get();
         
         return response()->json([
             'success' => true,
-            'data' => $approvedLeaves,
-            'summary' => [
-                'total_approved' => $approvedLeaves->count(),
-                'total_days' => $approvedLeaves->sum('total_days')
-            ]
+            'data' => $requests
         ]);
     }
 
-    /**
-     * HR Dashboard - Melihat semua data cuti dengan summary lengkap
-     * Endpoint khusus untuk HR melihat overview semua data cuti
-     */
+    // Endpoint khusus untuk HR Dashboard - melihat SEMUA data cuti
     public function getAllLeavesForHR(Request $request): JsonResponse
     {
         $user = auth()->user();
         
-        // Hanya HR yang bisa mengakses endpoint ini
         if (!$user || $user->role !== 'HR') {
             return response()->json([
                 'success' => false,
@@ -327,9 +371,13 @@ class LeaveRequestController extends Controller
             ], 403);
         }
 
-        $query = LeaveRequest::with(['employee.user', 'approver.user']);
+        $query = LeaveRequest::with(['employee.user', 'managerApprovedBy.user', 'hrApprovedBy.user']);
         
-        // Filter berdasarkan parameter
+        // Filter berdasarkan status jika diminta
+        if ($request->has('overall_status')) {
+            $query->where('overall_status', $request->overall_status);
+        }
+        
         if ($request->has('year')) {
             $query->whereYear('start_date', $request->year);
         }
@@ -338,162 +386,37 @@ class LeaveRequestController extends Controller
             $query->whereMonth('start_date', $request->month);
         }
         
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-        
-        if ($request->has('leave_type')) {
-            $query->where('leave_type', $request->leave_type);
-        }
-        
-        if ($request->has('employee_id')) {
-            $query->where('employee_id', $request->employee_id);
-        }
-        
-        if ($request->has('department')) {
-            $query->whereHas('employee.user', function($q) use ($request) {
-                $q->where('role', $request->department);
-            });
-        }
-        
-        $allLeaves = $query->orderBy('created_at', 'desc')->get();
-        
-        // Summary data untuk HR dashboard
-        $summary = [
-            'total_requests' => $allLeaves->count(),
-            'pending_requests' => $allLeaves->where('status', 'pending')->count(),
-            'approved_requests' => $allLeaves->where('status', 'approved')->count(),
-            'rejected_requests' => $allLeaves->where('status', 'rejected')->count(),
-            'total_days_requested' => $allLeaves->sum('total_days'),
-            'total_days_approved' => $allLeaves->where('status', 'approved')->sum('total_days'),
-            'by_leave_type' => [
-                'annual' => $allLeaves->where('leave_type', 'annual')->count(),
-                'sick' => $allLeaves->where('leave_type', 'sick')->count(),
-                'emergency' => $allLeaves->where('leave_type', 'emergency')->count(),
-                'maternity' => $allLeaves->where('leave_type', 'maternity')->count(),
-                'paternity' => $allLeaves->where('leave_type', 'paternity')->count(),
-                'marriage' => $allLeaves->where('leave_type', 'marriage')->count(),
-                'bereavement' => $allLeaves->where('leave_type', 'bereavement')->count(),
-            ],
-            'by_department' => $allLeaves->groupBy('employee.user.role')->map(function($group) {
-                return $group->count();
-            }),
-            'recent_requests' => $allLeaves->take(10)->values()
-        ];
+        $requests = $query->orderBy('created_at', 'desc')->get();
         
         return response()->json([
             'success' => true,
-            'data' => $allLeaves,
-            'summary' => $summary,
-            'message' => 'Data semua cuti berhasil diambil untuk HR dashboard'
+            'data' => $requests
         ]);
     }
 
-    /**
-     * Dashboard untuk Manager - Melihat summary dan detail cuti subordinates
-     */
+    // Endpoint untuk Manager Dashboard
     public function getManagerDashboard(Request $request): JsonResponse
     {
         $user = auth()->user();
         
-        // Pastikan user adalah manager
-        if (!$user || !RoleHierarchyService::isManager($user->role)) {
+        if (!$user || !RoleHierarchyService::isManager($user->role) || $user->role === 'HR') {
             return response()->json([
                 'success' => false,
                 'message' => 'Akses ditolak. Hanya manager yang dapat melihat data ini'
             ], 403);
         }
-        
-        // Get subordinate roles
+
         $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
         
-        $query = LeaveRequest::with(['employee.user', 'approver.user'])
-                            ->whereHas('employee.user', function($q) use ($subordinateRoles) {
-                                $q->whereIn('role', $subordinateRoles);
-                            });
+        $query = LeaveRequest::with(['employee.user', 'managerApprovedBy.user', 'hrApprovedBy.user'])
+                           ->whereHas('employee.user', function($q) use ($subordinateRoles) {
+                               $q->whereIn('role', $subordinateRoles);
+                           });
         
-        // Apply filters
-        if ($request->has('year')) {
-            $query->whereYear('start_date', $request->year);
+        // Filter berdasarkan status jika diminta
+        if ($request->has('overall_status')) {
+            $query->where('overall_status', $request->overall_status);
         }
-        
-        if ($request->has('month')) {
-            $query->whereMonth('start_date', $request->month);
-        }
-        
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-        
-        if ($request->has('leave_type')) {
-            $query->where('leave_type', $request->leave_type);
-        }
-        
-        if ($request->has('employee_id')) {
-            $query->where('employee_id', $request->employee_id);
-        }
-        
-        $allLeaves = $query->orderBy('created_at', 'desc')->get();
-        
-        // Summary data untuk Manager dashboard
-        $summary = [
-            'total_requests' => $allLeaves->count(),
-            'pending_requests' => $allLeaves->where('status', 'pending')->count(),
-            'approved_requests' => $allLeaves->where('status', 'approved')->count(),
-            'rejected_requests' => $allLeaves->where('status', 'rejected')->count(),
-            'total_days_requested' => $allLeaves->sum('total_days'),
-            'total_days_approved' => $allLeaves->where('status', 'approved')->sum('total_days'),
-            'by_leave_type' => [
-                'annual' => $allLeaves->where('leave_type', 'annual')->count(),
-                'sick' => $allLeaves->where('leave_type', 'sick')->count(),
-                'emergency' => $allLeaves->where('leave_type', 'emergency')->count(),
-                'maternity' => $allLeaves->where('leave_type', 'maternity')->count(),
-                'paternity' => $allLeaves->where('leave_type', 'paternity')->count(),
-                'marriage' => $allLeaves->where('leave_type', 'marriage')->count(),
-                'bereavement' => $allLeaves->where('leave_type', 'bereavement')->count(),
-            ],
-            'by_employee' => $allLeaves->groupBy('employee.nama_lengkap')->map(function($group) {
-                return [
-                    'count' => $group->count(),
-                    'total_days' => $group->sum('total_days'),
-                    'approved' => $group->where('status', 'approved')->count(),
-                    'pending' => $group->where('status', 'pending')->count(),
-                    'rejected' => $group->where('status', 'rejected')->count()
-                ];
-            }),
-            'recent_requests' => $allLeaves->take(10)->values(),
-            'subordinate_roles' => $subordinateRoles
-        ];
-        
-        return response()->json([
-            'success' => true,
-            'data' => $allLeaves,
-            'summary' => $summary,
-            'message' => 'Data cuti subordinates berhasil diambil untuk Manager dashboard'
-        ]);
-    }
-
-    /**
-     * Get approved leaves summary untuk Manager
-     */
-    public function getManagerApprovedLeaves(Request $request): JsonResponse
-    {
-        $user = auth()->user();
-        
-        if (!$user || !RoleHierarchyService::isManager($user->role)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Akses ditolak. Hanya manager yang dapat melihat data ini'
-            ], 403);
-        }
-        
-        $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
-        
-        $query = LeaveRequest::with(['employee.user', 'approver.user'])
-                            ->where('status', 'approved')
-                            ->whereHas('employee.user', function($q) use ($subordinateRoles) {
-                                $q->whereIn('role', $subordinateRoles);
-                            });
         
         if ($request->has('year')) {
             $query->whereYear('start_date', $request->year);
@@ -503,189 +426,11 @@ class LeaveRequestController extends Controller
             $query->whereMonth('start_date', $request->month);
         }
         
-        $approvedLeaves = $query->orderBy('created_at', 'desc')->get();
+        $requests = $query->orderBy('created_at', 'desc')->get();
         
         return response()->json([
             'success' => true,
-            'data' => $approvedLeaves,
-            'summary' => [
-                'total_approved' => $approvedLeaves->count(),
-                'total_days' => $approvedLeaves->sum('total_days'),
-                'by_leave_type' => [
-                    'annual' => $approvedLeaves->where('leave_type', 'annual')->count(),
-                    'sick' => $approvedLeaves->where('leave_type', 'sick')->count(),
-                    'emergency' => $approvedLeaves->where('leave_type', 'emergency')->count(),
-                    'maternity' => $approvedLeaves->where('leave_type', 'maternity')->count(),
-                    'paternity' => $approvedLeaves->where('leave_type', 'paternity')->count(),
-                    'marriage' => $approvedLeaves->where('leave_type', 'marriage')->count(),
-                    'bereavement' => $approvedLeaves->where('leave_type', 'bereavement')->count(),
-                ]
-            ],
-            'message' => 'Data cuti yang disetujui berhasil diambil'
-        ]);
-    }
-
-    /**
-     * Get rejected leaves summary untuk Manager
-     */
-    public function getManagerRejectedLeaves(Request $request): JsonResponse
-    {
-        $user = auth()->user();
-        
-        if (!$user || !RoleHierarchyService::isManager($user->role)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Akses ditolak. Hanya manager yang dapat melihat data ini'
-            ], 403);
-        }
-        
-        $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
-        
-        $query = LeaveRequest::with(['employee.user', 'approver.user'])
-                            ->where('status', 'rejected')
-                            ->whereHas('employee.user', function($q) use ($subordinateRoles) {
-                                $q->whereIn('role', $subordinateRoles);
-                            });
-        
-        if ($request->has('year')) {
-            $query->whereYear('start_date', $request->year);
-        }
-        
-        if ($request->has('month')) {
-            $query->whereMonth('start_date', $request->month);
-        }
-        
-        $rejectedLeaves = $query->orderBy('created_at', 'desc')->get();
-        
-        return response()->json([
-            'success' => true,
-            'data' => $rejectedLeaves,
-            'summary' => [
-                'total_rejected' => $rejectedLeaves->count(),
-                'total_days' => $rejectedLeaves->sum('total_days'),
-                'by_leave_type' => [
-                    'annual' => $rejectedLeaves->where('leave_type', 'annual')->count(),
-                    'sick' => $rejectedLeaves->where('leave_type', 'sick')->count(),
-                    'emergency' => $rejectedLeaves->where('leave_type', 'emergency')->count(),
-                    'maternity' => $rejectedLeaves->where('leave_type', 'maternity')->count(),
-                    'paternity' => $rejectedLeaves->where('leave_type', 'paternity')->count(),
-                    'marriage' => $rejectedLeaves->where('leave_type', 'marriage')->count(),
-                    'bereavement' => $rejectedLeaves->where('leave_type', 'bereavement')->count(),
-                ]
-            ],
-            'message' => 'Data cuti yang ditolak berhasil diambil'
-        ]);
-    }
-
-    /**
-     * Get approved leaves summary untuk HR
-     */
-    public function getHRApprovedLeaves(Request $request): JsonResponse
-    {
-        $user = auth()->user();
-        
-        if (!$user || $user->role !== 'HR') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Akses ditolak. Hanya HR yang dapat melihat data ini'
-            ], 403);
-        }
-        
-        $query = LeaveRequest::with(['employee.user', 'approver.user'])
-                            ->where('status', 'approved');
-        
-        if ($request->has('year')) {
-            $query->whereYear('start_date', $request->year);
-        }
-        
-        if ($request->has('month')) {
-            $query->whereMonth('start_date', $request->month);
-        }
-        
-        if ($request->has('department')) {
-            $query->whereHas('employee.user', function($q) use ($request) {
-                $q->where('role', $request->department);
-            });
-        }
-        
-        $approvedLeaves = $query->orderBy('created_at', 'desc')->get();
-        
-        return response()->json([
-            'success' => true,
-            'data' => $approvedLeaves,
-            'summary' => [
-                'total_approved' => $approvedLeaves->count(),
-                'total_days' => $approvedLeaves->sum('total_days'),
-                'by_leave_type' => [
-                    'annual' => $approvedLeaves->where('leave_type', 'annual')->count(),
-                    'sick' => $approvedLeaves->where('leave_type', 'sick')->count(),
-                    'emergency' => $approvedLeaves->where('leave_type', 'emergency')->count(),
-                    'maternity' => $approvedLeaves->where('leave_type', 'maternity')->count(),
-                    'paternity' => $approvedLeaves->where('leave_type', 'paternity')->count(),
-                    'marriage' => $approvedLeaves->where('leave_type', 'marriage')->count(),
-                    'bereavement' => $approvedLeaves->where('leave_type', 'bereavement')->count(),
-                ],
-                'by_department' => $approvedLeaves->groupBy('employee.user.role')->map(function($group) {
-                    return $group->count();
-                })
-            ],
-            'message' => 'Data cuti yang disetujui berhasil diambil'
-        ]);
-    }
-
-    /**
-     * Get rejected leaves summary untuk HR
-     */
-    public function getHRRejectedLeaves(Request $request): JsonResponse
-    {
-        $user = auth()->user();
-        
-        if (!$user || $user->role !== 'HR') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Akses ditolak. Hanya HR yang dapat melihat data ini'
-            ], 403);
-        }
-        
-        $query = LeaveRequest::with(['employee.user', 'approver.user'])
-                            ->where('status', 'rejected');
-        
-        if ($request->has('year')) {
-            $query->whereYear('start_date', $request->year);
-        }
-        
-        if ($request->has('month')) {
-            $query->whereMonth('start_date', $request->month);
-        }
-        
-        if ($request->has('department')) {
-            $query->whereHas('employee.user', function($q) use ($request) {
-                $q->where('role', $request->department);
-            });
-        }
-        
-        $rejectedLeaves = $query->orderBy('created_at', 'desc')->get();
-        
-        return response()->json([
-            'success' => true,
-            'data' => $rejectedLeaves,
-            'summary' => [
-                'total_rejected' => $rejectedLeaves->count(),
-                'total_days' => $rejectedLeaves->sum('total_days'),
-                'by_leave_type' => [
-                    'annual' => $rejectedLeaves->where('leave_type', 'annual')->count(),
-                    'sick' => $rejectedLeaves->where('leave_type', 'sick')->count(),
-                    'emergency' => $rejectedLeaves->where('leave_type', 'emergency')->count(),
-                    'maternity' => $rejectedLeaves->where('leave_type', 'maternity')->count(),
-                    'paternity' => $rejectedLeaves->where('leave_type', 'paternity')->count(),
-                    'marriage' => $rejectedLeaves->where('leave_type', 'marriage')->count(),
-                    'bereavement' => $rejectedLeaves->where('leave_type', 'bereavement')->count(),
-                ],
-                'by_department' => $rejectedLeaves->groupBy('employee.user.role')->map(function($group) {
-                    return $group->count();
-                })
-            ],
-            'message' => 'Data cuti yang ditolak berhasil diambil'
+            'data' => $requests
         ]);
     }
 }

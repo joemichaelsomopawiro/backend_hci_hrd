@@ -12,22 +12,35 @@ class LeaveRequest extends Model
 
     protected $fillable = [
         'employee_id',
-        'approved_by',
         'leave_type',
         'start_date',
         'end_date',
         'total_days',
         'reason',
         'notes',
-        'status',
-        'approved_at',
-        'rejection_reason',
+        // Remove old fields
+        // 'status',
+        // 'approved_by',
+        // 'approved_at',
+        // 'rejection_reason',
+        
+        // Add new hierarchy fields
+        'manager_approved_by',
+        'manager_status',
+        'manager_approved_at',
+        'manager_rejection_reason',
+        'hr_approved_by',
+        'hr_status',
+        'hr_approved_at',
+        'hr_rejection_reason',
+        'overall_status',
     ];
 
     protected $casts = [
         'start_date' => 'date',
         'end_date' => 'date',
-        'approved_at' => 'datetime',
+        'manager_approved_at' => 'datetime',
+        'hr_approved_at' => 'datetime',
     ];
 
     public function employee()
@@ -35,13 +48,20 @@ class LeaveRequest extends Model
         return $this->belongsTo(Employee::class, 'employee_id');
     }
 
-    // Removed unused relations: managerApprovedBy and hrApprovedBy
-    // Using single 'approved_by' field with 'approver' relation instead
+    public function managerApprovedBy()
+    {
+        return $this->belongsTo(Employee::class, 'manager_approved_by');
+    }
 
-    // Update leave quota when approved
+    public function hrApprovedBy()
+    {
+        return $this->belongsTo(Employee::class, 'hr_approved_by');
+    }
+
+    // Update leave quota when fully approved
     public function updateLeaveQuota()
     {
-        if ($this->status === 'approved') {
+        if ($this->overall_status === 'approved') {
             $quota = $this->employee->getCurrentLeaveQuota();
             if ($quota) {
                 switch ($this->leave_type) {
@@ -70,11 +90,6 @@ class LeaveRequest extends Model
                 $quota->save();
             }
         }
-    }
-
-    public function approver()
-    {
-        return $this->belongsTo(Employee::class, 'approved_by');
     }
 
     // Hitung total hari kerja (exclude weekend)
