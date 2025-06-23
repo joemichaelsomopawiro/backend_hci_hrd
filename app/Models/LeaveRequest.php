@@ -12,35 +12,22 @@ class LeaveRequest extends Model
 
     protected $fillable = [
         'employee_id',
+        'approved_by',
         'leave_type',
         'start_date',
         'end_date',
         'total_days',
         'reason',
         'notes',
-        // Remove old fields
-        // 'status',
-        // 'approved_by',
-        // 'approved_at',
-        // 'rejection_reason',
-        
-        // Add new hierarchy fields
-        'manager_approved_by',
-        'manager_status',
-        'manager_approved_at',
-        'manager_rejection_reason',
-        'hr_approved_by',
-        'hr_status',
-        'hr_approved_at',
-        'hr_rejection_reason',
-        'overall_status',
+        'status',
+        'approved_at',
+        'rejection_reason',
     ];
 
     protected $casts = [
         'start_date' => 'date',
         'end_date' => 'date',
-        'manager_approved_at' => 'datetime',
-        'hr_approved_at' => 'datetime',
+        'approved_at' => 'datetime',
     ];
 
     public function employee()
@@ -48,20 +35,15 @@ class LeaveRequest extends Model
         return $this->belongsTo(Employee::class, 'employee_id');
     }
 
-    public function managerApprovedBy()
+    public function approvedBy()
     {
-        return $this->belongsTo(Employee::class, 'manager_approved_by');
+        return $this->belongsTo(Employee::class, 'approved_by');
     }
 
-    public function hrApprovedBy()
-    {
-        return $this->belongsTo(Employee::class, 'hr_approved_by');
-    }
-
-    // Update leave quota when fully approved
+    // Update leave quota when approved
     public function updateLeaveQuota()
     {
-        if ($this->overall_status === 'approved') {
+        if ($this->status === 'approved') {
             $quota = $this->employee->getCurrentLeaveQuota();
             if ($quota) {
                 switch ($this->leave_type) {
@@ -92,20 +74,14 @@ class LeaveRequest extends Model
         }
     }
 
-    // Hitung total hari kerja (exclude weekend)
-    public function calculateWorkingDays()
+    // Get status badge color
+    public function getStatusBadgeAttribute()
     {
-        $start = Carbon::parse($this->start_date);
-        $end = Carbon::parse($this->end_date);
-        
-        $workingDays = 0;
-        while ($start->lte($end)) {
-            if (!$start->isWeekend()) {
-                $workingDays++;
-            }
-            $start->addDay();
-        }
-        
-        return $workingDays;
+        return match($this->status) {
+            'pending' => 'warning',
+            'approved' => 'success',
+            'rejected' => 'danger',
+            default => 'secondary'
+        };
     }
 }
