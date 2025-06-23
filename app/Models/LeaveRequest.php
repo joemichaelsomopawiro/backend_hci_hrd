@@ -19,7 +19,7 @@ class LeaveRequest extends Model
         'total_days',
         'reason',
         'notes',
-        'status',
+        'overall_status',  // Tambahkan ini
         'approved_at',
         'rejection_reason',
     ];
@@ -43,7 +43,7 @@ class LeaveRequest extends Model
     // Update leave quota when approved
     public function updateLeaveQuota()
     {
-        if ($this->status === 'approved') {
+        if ($this->overall_status === 'approved') {  // Ubah dari 'status' ke 'overall_status'
             $quota = $this->employee->getCurrentLeaveQuota();
             if ($quota) {
                 switch ($this->leave_type) {
