@@ -51,4 +51,15 @@ class RoleHierarchyService
         $subordinates = self::getSubordinateRoles($approverRole);
         return in_array($employeeRole, $subordinates);
     }
+    
+    // TAMBAHKAN METHOD INI:
+    public static function getManagerRoles(): array
+    {
+        return array_keys(self::$hierarchy);
+    }
+    
+    public static function getEmployeeRoles(): array
+    {
+        return array_merge(...array_values(self::$hierarchy));
+    }
 }
