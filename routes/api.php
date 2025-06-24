@@ -32,6 +32,18 @@ Route::prefix('ga')->group(function () {
     // Dashboard routes (read-only, no rate limiting needed)
     Route::get('/morning-reflections', [GeneralAffairController::class, 'getMorningReflections']);
     Route::get('/leaves', [GeneralAffairController::class, 'getLeaves']);
+    
+    // ========== NEW DASHBOARD GA ROUTES ==========
+    // Bagian B: Dashboard GA - Tampilkan semua data absensi dan cuti
+    Route::get('/dashboard/attendances', [GeneralAffairController::class, 'getAllAttendances']);
+    Route::get('/dashboard/leave-requests', [GeneralAffairController::class, 'getAllLeaveRequests']);
+    
+    // Dashboard statistik
+    Route::get('/dashboard/attendance-statistics', [GeneralAffairController::class, 'getAttendanceStatistics']);
+    Route::get('/dashboard/leave-statistics', [GeneralAffairController::class, 'getLeaveStatistics']);
+    
+    // Bagian A: Riwayat kehadiran harian renungan pagi
+    Route::get('/dashboard/morning-reflection-history', [GeneralAffairController::class, 'getDailyMorningReflectionHistory']);
 });
 
 // Leave Quota Routes
