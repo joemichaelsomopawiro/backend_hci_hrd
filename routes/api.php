@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\ManagerController;
+use App\Http\Controllers\Api\GeneralAffairController;
 
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
@@ -17,6 +18,21 @@ Route::delete('/employees/{employeeId}/employment-histories/{historyId}', [Emplo
 Route::delete('/employees/{employeeId}/promotion-histories/{promotionId}', [EmployeeController::class, 'deletePromotionHistory']);
 Route::delete('/employees/{employeeId}/trainings/{trainingId}', [EmployeeController::class, 'deleteTraining']);
 Route::delete('/employees/{employeeId}/benefits/{benefitId}', [EmployeeController::class, 'deleteBenefit']);
+
+// General Affair Routes
+Route::prefix('ga')->group(function () {
+    Route::get('/employees', [GeneralAffairController::class, 'getEmployees']);
+    
+    // Protected attendance routes with rate limiting
+    Route::middleware(['attendance.rate.limit'])->group(function () {
+        Route::post('/morning-reflections', [GeneralAffairController::class, 'storeMorningReflection']);
+        Route::post('/zoom-join', [GeneralAffairController::class, 'recordZoomJoin']);
+    });
+    
+    // Dashboard routes (read-only, no rate limiting needed)
+    Route::get('/morning-reflections', [GeneralAffairController::class, 'getMorningReflections']);
+    Route::get('/leaves', [GeneralAffairController::class, 'getLeaves']);
+});
 
 // Leave Quota Routes
 Route::prefix('leave-quotas')->group(function () {
