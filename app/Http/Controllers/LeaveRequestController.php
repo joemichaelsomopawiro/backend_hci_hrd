@@ -20,21 +20,40 @@ class LeaveRequestController extends Controller
         $user = auth()->user();
         $query = LeaveRequest::with(['employee.user', 'approvedBy.user']);
 
-        // Filter berdasarkan role yang sedang login
-        if (RoleHierarchyService::isEmployee($user->role)) {
-            // Jika role adalah employee, hanya tampilkan permohonan miliknya sendiri
-            $query->where('employee_id', $user->employee_id);
+        // DIUBAH: Logika filter berdasarkan role yang login
+        if (RoleHierarchyService::isHrManager($user->role)) {
+            // KHUSUS HR MANAGER:
+            // Tampilkan (A) SEMUA permohonan yang sudah final ('approved'/'rejected') DARI SEMUA DEPARTEMEN
+            // ATAU (B) permohonan 'pending' yang hanya berasal DARI BAWAHANNYA LANGSUNG.
+            $query->where(function ($q) {
+                // Kondisi A: Semua yang statusnya sudah final
+                $q->whereIn('overall_status', ['approved', 'rejected']);
 
-        } elseif (RoleHierarchyService::isManager($user->role)) {
-            // Jika role adalah manager (Program, Distribution, HR), tampilkan permohonan dari bawahannya
+                // Kondisi B: Permohonan 'pending' dari bawahannya
+                $hrSubordinates = RoleHierarchyService::getSubordinateRoles('HR Manager');
+                $q->orWhere(function ($subQ) use ($hrSubordinates) {
+                    $subQ->where('overall_status', 'pending')
+                         ->whereHas('employee.user', function ($employeeQuery) use ($hrSubordinates) {
+                             $employeeQuery->whereIn('role', $hrSubordinates);
+                         });
+                });
+            });
+
+        } elseif (RoleHierarchyService::isOtherManager($user->role)) {
+            // UNTUK PROGRAM & DISTRIBUTION MANAGER:
+            // Hanya tampilkan permohonan dari bawahannya langsung.
             $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
             $query->whereHas('employee.user', function ($q) use ($subordinateRoles) {
                 $q->whereIn('role', $subordinateRoles);
             });
-        }
-        // Jika tidak ada kondisi di atas (misal: role tidak terdefinisi), tidak akan menampilkan apa-apa
 
-        // Filter tambahan dari request frontend
+        } elseif (RoleHierarchyService::isEmployee($user->role)) {
+            // UNTUK KARYAWAN:
+            // Hanya tampilkan permohonan miliknya sendiri.
+            $query->where('employee_id', $user->employee_id);
+        }
+
+        // Filter tambahan dari request frontend (jika ada)
         if ($request->filled('status')) {
             $query->where('overall_status', $request->status);
         }
@@ -50,7 +69,6 @@ class LeaveRequestController extends Controller
             'data' => $requests
         ]);
     }
-
 
     /**
      * Store a newly created resource in storage.
@@ -192,6 +210,37 @@ class LeaveRequestController extends Controller
             'data' => $leaveRequest->load(['employee.user', 'approvedBy.user'])
         ]);
     }
+
+    public function destroy($id): JsonResponse
+    {
+        $user = auth()->user();
+        $leaveRequest = LeaveRequest::findOrFail($id);
+
+        // Otorisasi: Pastikan yang menghapus adalah pemilik request
+        if ($user->employee_id !== $leaveRequest->employee_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak memiliki wewenang untuk membatalkan permohonan ini.'
+            ], 403); // 403 Forbidden
+        }
+
+        // Validasi Status: Hanya permohonan 'pending' yang bisa dibatalkan
+        if ($leaveRequest->overall_status !== 'pending') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permohonan ini sudah diproses dan tidak dapat dibatalkan.'
+            ], 400); // 400 Bad Request
+        }
+
+        // Hapus permohonan cuti
+        $leaveRequest->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Permohonan cuti berhasil dibatalkan.'
+        ]);
+    }
+    
 
     // Endpoint khusus untuk HR melihat semua cuti yang sudah di-approve
     public function getApprovedLeaves(Request $request): JsonResponse

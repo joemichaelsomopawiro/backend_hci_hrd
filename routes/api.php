@@ -48,7 +48,8 @@ Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     // Approve/reject cuti (validasi hierarki di controller)
     Route::put('/{id}/approve', [App\Http\Controllers\LeaveRequestController::class, 'approve']);
     Route::put('/{id}/reject', [App\Http\Controllers\LeaveRequestController::class, 'reject']);
-    
+    Route::delete('/{id}', [App\Http\Controllers\LeaveRequestController::class, 'destroy']);
+
     // Endpoint untuk HR melihat semua cuti yang sudah di-approve
     Route::get('/approved', [App\Http\Controllers\LeaveRequestController::class, 'getApprovedLeaves']);
     
