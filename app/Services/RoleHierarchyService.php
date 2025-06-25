@@ -6,7 +6,7 @@ namespace App\Services;
 class RoleHierarchyService
 {
     protected static $hierarchy = [
-        'HR Manager' => ['Finance', 'General Affairs', 'Office Assistant'],
+        'HR' => ['Finance', 'General Affairs', 'Office Assistant'], // UBAH dari 'HR Manager' ke 'HR'
         'Program Manager' => ['Producer', 'Creative', 'Production', 'Editor'],
         'Distribution Manager' => ['Social Media', 'Promotion', 'Graphic Design', 'Hopeline Care'],
     ];
@@ -14,7 +14,7 @@ class RoleHierarchyService
     // BARU: Fungsi untuk mengecek apakah role adalah HR Manager
     public static function isHrManager($role): bool
     {
-        return $role === 'HR Manager';
+        return $role === 'HR'; // UBAH dari 'HR Manager' ke 'HR'
     }
 
     // BARU: Fungsi untuk mengecek apakah role adalah manager non-HR
