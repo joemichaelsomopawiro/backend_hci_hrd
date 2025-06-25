@@ -71,7 +71,7 @@ class LeaveQuotaController extends Controller
         
         $employeesWithoutQuota = \App\Models\Employee::whereDoesntHave('leaveQuotas', function($query) use ($year) {
             $query->where('year', $year);
-        })->select('id', 'nama_lengkap', 'jabatan_saat_ini', 'department')
+        })->select('id', 'nama_lengkap', 'jabatan_saat_ini')
           ->get();
         
         return response()->json([
