@@ -1,10 +1,11 @@
 <?php
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\MorningReflection;
 use App\Models\LeaveRequest;
 use App\Models\Attendance;
+use App\Services\RoleHierarchyService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -218,7 +219,44 @@ class GeneralAffairController extends Controller
     // Get all leaves for dashboard (Bagian C)
     public function getLeaves()
     {
-        $leaves = LeaveRequest::with('employee')->get();
+        // Pastikan user sudah login
+        $user = auth()->user();
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User tidak terautentikasi'
+            ], 401);
+        }
+
+        $query = LeaveRequest::with('employee');
+        
+        // Otorisasi berdasarkan role - sama seperti di LeaveRequestController
+        if (RoleHierarchyService::isHrManager($user->role)) {
+            // HR hanya dapat melihat permohonan dari bawahannya langsung (Finance, General Affairs, Office Assistant)
+            $hrSubordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
+            if (!empty($hrSubordinateRoles)) {
+                $query->whereHas('employee.user', function ($q) use ($hrSubordinateRoles) {
+                    $q->whereIn('role', $hrSubordinateRoles);
+                });
+            } else {
+                return response()->json(['success' => true, 'data' => []]);
+            }
+        } elseif (RoleHierarchyService::isOtherManager($user->role)) {
+            // Manager lain (Program/Distribution) hanya bisa melihat bawahannya
+            $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
+            if (!empty($subordinateRoles)) {
+                $query->whereHas('employee.user', function ($q) use ($subordinateRoles) {
+                    $q->whereIn('role', $subordinateRoles);
+                });
+            } else {
+                return response()->json(['success' => true, 'data' => []]);
+            }
+        } else {
+            // Karyawan biasa hanya bisa melihat permohonannya sendiri
+            $query->where('employee_id', $user->employee_id);
+        }
+        
+        $leaves = $query->get();
         return response()->json(['data' => $leaves], 200);
     }
     

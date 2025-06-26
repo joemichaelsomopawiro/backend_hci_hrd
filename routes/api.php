@@ -8,7 +8,7 @@ use App\Http\Controllers\ManagerController;
 use App\Http\Controllers\LeaveRequestController;
 use App\Http\Controllers\LeaveQuotaController;
 use App\Http\Controllers\AttendanceController;
-use App\Http\Controllers\Api\GeneralAffairController;
+use App\Http\Controllers\GeneralAffairController;
 use App\Http\Controllers\AttendanceMachineController;
 
 /*
@@ -45,12 +45,12 @@ Route::prefix('ga')->group(function () {
     });
     
     Route::get('/morning-reflections', [GeneralAffairController::class, 'getMorningReflections']);
-    Route::get('/leaves', [GeneralAffairController::class, 'getLeaves']);
     Route::get('/dashboard/attendances', [GeneralAffairController::class, 'getAllAttendances']);
     Route::get('/dashboard/leave-requests', [GeneralAffairController::class, 'getAllLeaveRequests']);
     Route::get('/dashboard/attendance-statistics', [GeneralAffairController::class, 'getAttendanceStatistics']);
     Route::get('/dashboard/leave-statistics', [GeneralAffairController::class, 'getLeaveStatistics']);
-    Route::get('/dashboard/morning-reflection-history', [GeneralAffairController::class, 'getDailyMorningReflectionHistory']);
+    Route::get('/daily-morning-reflection-history', [GeneralAffairController::class, 'getDailyMorningReflectionHistory']);
+    Route::get('/leaves', [GeneralAffairController::class, 'getLeaves']);
 });
 
 // Leave Quota Routes

@@ -22,8 +22,17 @@ class LeaveRequestController extends Controller
 
         // ========== BAGIAN 1: OTORISASI (Siapa boleh lihat apa) ========== 
         if (RoleHierarchyService::isHrManager($user->role)) { 
-            // HR Manager dapat melihat SEMUA permohonan dari SEMUA departemen. 
-            // Tidak perlu filter tambahan di sini, HR berkuasa penuh. 
+            // HR hanya dapat melihat permohonan dari bawahannya langsung (Finance, General Affairs, Office Assistant)
+            // Tidak bisa melihat permohonan dari Program Manager atau Distribution Manager
+            $hrSubordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role); 
+            if (!empty($hrSubordinateRoles)) { 
+                $query->whereHas('employee.user', function ($q) use ($hrSubordinateRoles) { 
+                    $q->whereIn('role', $hrSubordinateRoles); 
+                }); 
+            } else { 
+                // Jika HR tidak punya bawahan, kembalikan data kosong. 
+                return response()->json(['success' => true, 'data' => []]); 
+            } 
         } elseif (RoleHierarchyService::isOtherManager($user->role)) { 
             // Manager lain (Program/Distribution) hanya bisa melihat bawahannya. 
             $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role); 
