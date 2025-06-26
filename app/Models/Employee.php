@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Employee extends Model
 {
@@ -72,11 +74,27 @@ class Employee extends Model
         return $this->hasMany(LeaveRequest::class, 'employee_id');
     }
     
-    public function attendances()
+    // Tambahkan relationship untuk attendance machines
+    public function attendances(): HasMany
     {
         return $this->hasMany(Attendance::class);
     }
-    
+
+    public function attendanceMachineUsers(): HasMany
+    {
+        return $this->hasMany(AttendanceMachineUser::class);
+    }
+
+    public function manager(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class, 'manager_id');
+    }
+
+    public function subordinates(): HasMany
+    {
+        return $this->hasMany(Employee::class, 'manager_id');
+    }
+
     public function approvedLeaveRequests()
     {
         return $this->hasMany(LeaveRequest::class, 'approved_by');
@@ -85,17 +103,6 @@ class Employee extends Model
     public function user()
     {
         return $this->hasOne(User::class, 'employee_id');
-    }
-
-    // Manager hierarchy relationships
-    public function manager()
-    {
-        return $this->belongsTo(Employee::class, 'manager_id');
-    }
-
-    public function subordinates()
-    {
-        return $this->hasMany(Employee::class, 'manager_id');
     }
 
     // Method untuk mendapatkan semua bawahan berdasarkan role
@@ -196,5 +203,25 @@ class Employee extends Model
             }
             $quota->save();
         }
+    }
+
+    public function machineUsers(): HasMany
+    {
+        return $this->hasMany(AttendanceMachineUser::class);
+    }
+
+    public function isSyncedToMachine(AttendanceMachine $machine): bool
+    {
+        return $this->machineUsers()
+            ->where('attendance_machine_id', $machine->id)
+            ->where('status', 'synced')
+            ->exists();
+    }
+
+    public function getMachineUser(AttendanceMachine $machine): ?AttendanceMachineUser
+    {
+        return $this->machineUsers()
+            ->where('attendance_machine_id', $machine->id)
+            ->first();
     }
 }

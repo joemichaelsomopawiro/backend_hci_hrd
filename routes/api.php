@@ -6,6 +6,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\ManagerController;
 use App\Http\Controllers\Api\GeneralAffairController;
+use App\Http\Controllers\AttendanceMachineController;
 
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
@@ -106,6 +107,35 @@ Route::prefix('attendances')->group(function () {
     Route::get('/dashboard', [App\Http\Controllers\AttendanceController::class, 'dashboard']);
 });
 
+// Attendance Machine Management Routes
+Route::prefix('attendance-machines')->middleware('auth:sanctum')->group(function () {
+    // CRUD operations
+    Route::get('/', [AttendanceMachineController::class, 'index']);
+    Route::post('/', [AttendanceMachineController::class, 'store']);
+    Route::get('/{id}', [AttendanceMachineController::class, 'show']);
+    Route::put('/{id}', [AttendanceMachineController::class, 'update']);
+    Route::delete('/{id}', [AttendanceMachineController::class, 'destroy']);
+    
+    // Machine operations
+    Route::post('/{id}/test-connection', [AttendanceMachineController::class, 'testConnection']);
+    Route::post('/{id}/pull-attendance', [AttendanceMachineController::class, 'pullAttendanceData']);
+    Route::post('/{id}/pull-attendance-process', [AttendanceMachineController::class, 'pullAndProcessAttendanceData']);
+    
+    // User synchronization
+    Route::post('/{id}/sync-user/{employeeId}', [AttendanceMachineController::class, 'syncSpecificUser']);
+    Route::post('/{id}/sync-all-users', [AttendanceMachineController::class, 'syncAllUsers']);
+    Route::delete('/{id}/remove-user/{employeeId}', [AttendanceMachineController::class, 'removeUser']);
+    
+    // Machine management
+    Route::post('/{id}/restart', [AttendanceMachineController::class, 'restartMachine']);
+    Route::post('/{id}/clear-data', [AttendanceMachineController::class, 'clearAttendanceData']);
+    Route::post('/{id}/sync-time', [AttendanceMachineController::class, 'syncTime']);
+    
+    // Logs and monitoring
+    Route::get('/{id}/sync-logs', [AttendanceMachineController::class, 'getSyncLogs']);
+    Route::get('/dashboard', [AttendanceMachineController::class, 'getDashboard']);
+});
+
 // Auth routes
 Route::prefix('auth')->group(function () {
     // Register
@@ -144,3 +174,26 @@ Route::middleware(['auth:sanctum'])->group(function () {
     });
 });
 */
+
+// Attendance Machine Management Routes
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Attendance Machines
+    Route::prefix('attendance-machines')->group(function () {
+        Route::get('/', [AttendanceMachineController::class, 'index']);
+        Route::post('/', [AttendanceMachineController::class, 'store']);
+        Route::get('/{id}', [AttendanceMachineController::class, 'show']);
+        Route::put('/{id}', [AttendanceMachineController::class, 'update']);
+        Route::delete('/{id}', [AttendanceMachineController::class, 'destroy']);
+        
+        // Machine Operations
+        Route::post('/{id}/test-connection', [AttendanceMachineController::class, 'testConnection']);
+        Route::post('/{id}/pull-attendance', [AttendanceMachineController::class, 'pullAttendanceData']);
+        Route::post('/{id}/sync-users', [AttendanceMachineController::class, 'syncAllUsers']);
+        Route::post('/{id}/restart', [AttendanceMachineController::class, 'restart']);
+        Route::post('/{id}/clear-data', [AttendanceMachineController::class, 'clearData']);
+        Route::post('/{id}/sync-time', [AttendanceMachineController::class, 'syncTime']);
+        
+        // Sync Logs
+        Route::get('/{id}/sync-logs', [AttendanceMachineController::class, 'syncLogs']);
+    });
+});
