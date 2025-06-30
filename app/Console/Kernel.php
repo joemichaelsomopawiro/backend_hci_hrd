@@ -13,9 +13,7 @@ class Kernel extends ConsoleKernel
      * @var array
      */
     protected $commands = [
-        \App\Console\Commands\SyncAttendanceData::class,
-        \App\Console\Commands\SyncUsersToMachines::class,
-        \App\Console\Commands\AttendanceMachineStatus::class,
+       
     ];
 
     /**
