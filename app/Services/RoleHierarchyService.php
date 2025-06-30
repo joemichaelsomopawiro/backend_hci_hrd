@@ -48,6 +48,14 @@ class RoleHierarchyService
             return false;
         }
 
+        // HR hanya bisa approve cuti dari bawahannya langsung
+        // Tidak bisa approve cuti dari Program Manager atau Distribution Manager
+        if ($approverRole === 'HR') {
+            $hrSubordinates = self::getSubordinateRoles('HR');
+            return in_array($employeeRole, $hrSubordinates);
+        }
+
+        // Manager lain (Program Manager, Distribution Manager) hanya bisa approve bawahannya
         $subordinates = self::getSubordinateRoles($approverRole);
         return in_array($employeeRole, $subordinates);
     }

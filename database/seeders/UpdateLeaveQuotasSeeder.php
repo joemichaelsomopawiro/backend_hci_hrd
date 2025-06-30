@@ -22,8 +22,14 @@ class UpdateLeaveQuotasSeeder extends Seeder
                                      ->first();
             
             if ($existingQuota) {
-                // Update existing quota with new leave types if they don't exist
+                // Update existing quota with all leave types, ensuring no null values
                 $existingQuota->update([
+                    'annual_leave_quota' => $existingQuota->annual_leave_quota ?? 12,
+                    'annual_leave_used' => $existingQuota->annual_leave_used ?? 0,
+                    'sick_leave_quota' => $existingQuota->sick_leave_quota ?? 12,
+                    'sick_leave_used' => $existingQuota->sick_leave_used ?? 0,
+                    'emergency_leave_quota' => $existingQuota->emergency_leave_quota ?? 2,
+                    'emergency_leave_used' => $existingQuota->emergency_leave_used ?? 0,
                     'maternity_leave_quota' => $existingQuota->maternity_leave_quota ?? 90,
                     'maternity_leave_used' => $existingQuota->maternity_leave_used ?? 0,
                     'paternity_leave_quota' => $existingQuota->paternity_leave_quota ?? 7,

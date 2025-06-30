@@ -147,4 +147,45 @@ class ManagerController extends Controller
             'data' => $leaveRequest->load(['employee.user', 'approver.user'])
         ]);
     }
+
+    /**
+     * Mendapatkan daftar jatah cuti dari bawahan langsung manajer dengan status kehadiran.
+     */
+    public function getSubordinateLeaveQuotas(Request $request): JsonResponse
+    {
+        $manager = auth()->user();
+        $currentYear = 2025; // Tetap gunakan tahun 2025 untuk konsistensi data
+
+        if (!$manager->employee) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data karyawan untuk akun manajer ini tidak ditemukan.'
+            ], 404);
+        }
+
+        // ===================================================================
+        // INI ADALAH PERUBAHAN UTAMA
+        // Sekarang, kode ini secara spesifik mengambil BAWAHAN LANGSUNG
+        // dari manajer yang login, menggunakan relasi 'subordinates()'
+        // yang bergantung pada kolom 'manager_id'.
+        // ===================================================================
+        $subordinates = $manager->employee->subordinates()
+            ->with([
+                'leaveQuotas' => function ($query) use ($currentYear) {
+                    $query->where('year', $currentYear);
+                },
+                'todaysAttendance',
+                'approvedLeaveForToday'
+            ])
+            ->orderBy('nama_lengkap', 'asc')
+            ->get();
+
+        // Pastikan accessor 'current_status' tetap ditambahkan
+        $subordinates->each->append('current_status');
+        
+        return response()->json([
+            'success' => true,
+            'data' => $subordinates
+        ]);
+    }
 }

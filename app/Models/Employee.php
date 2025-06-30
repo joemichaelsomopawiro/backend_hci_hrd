@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Employee extends Model
 {
@@ -103,6 +104,25 @@ class Employee extends Model
     public function user()
     {
         return $this->hasOne(User::class, 'employee_id');
+    }
+
+    /**
+     * Relasi untuk mendapatkan data absensi HARI INI saja.
+     */
+    public function todaysAttendance(): HasOne
+    {
+        return $this->hasOne(Attendance::class)->whereDate('check_in', today());
+    }
+
+    /**
+     * Relasi untuk mendapatkan data cuti yang disetujui dan aktif HARI INI.
+     */
+    public function approvedLeaveForToday(): HasOne
+    {
+        return $this->hasOne(LeaveRequest::class)
+                    ->where('overall_status', 'approved')
+                    ->where('start_date', '<=', today())
+                    ->where('end_date', '>=', today());
     }
 
     // Method untuk mendapatkan semua bawahan berdasarkan role
@@ -223,5 +243,25 @@ class Employee extends Model
         return $this->machineUsers()
             ->where('attendance_machine_id', $machine->id)
             ->first();
+    }
+
+    /**
+     * Accessor untuk mendapatkan status kehadiran karyawan saat ini.
+     * Ini akan bisa diakses seperti kolom biasa: $employee->current_status
+     */
+    public function getCurrentStatusAttribute(): string
+    {
+        // Prioritas 1: Cek apakah karyawan sedang cuti
+        if ($this->approvedLeaveForToday) {
+            return 'Cuti';
+        }
+
+        // Prioritas 2: Cek apakah karyawan sudah check-in hari ini
+        if ($this->todaysAttendance) {
+            return 'Hadir';
+        }
+
+        // Jika tidak keduanya, maka dianggap absen
+        return 'Absen';
     }
 }

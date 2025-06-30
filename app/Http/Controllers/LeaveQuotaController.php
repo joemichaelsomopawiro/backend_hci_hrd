@@ -223,77 +223,38 @@ class LeaveQuotaController extends Controller
     // Endpoint untuk mendapatkan jatah cuti user yang sedang login
     public function getMyCurrentQuotas(Request $request): JsonResponse
     {
+        // 1. Ambil user yang terotentikasi
         $user = auth()->user();
         
+        // 2. Lakukan pengecekan paling penting di awal
         if (!$user || !$user->employee_id) {
+            // Jika tidak ada user atau user tidak punya employee_id, langsung hentikan
             return response()->json([
                 'success' => false,
-                'message' => 'User tidak terautentikasi atau tidak memiliki employee_id'
-            ], 401);
+                'message' => 'Sesi tidak valid atau user tidak terhubung dengan data karyawan.'
+            ], 401); // 401 Unauthorized lebih tepat
         }
         
-        $year = $request->get('year', date('Y'));
+        // 3. Tentukan tahun, paksa ke 2025 agar sesuai dengan data yang ada
+        $year = 2025;
         
-        $quota = LeaveQuota::with('employee')
-                          ->where('employee_id', $user->employee_id)
+        // 4. Jalankan query ke database
+        $quota = LeaveQuota::where('employee_id', $user->employee_id)
                           ->where('year', $year)
                           ->first();
         
+        // 5. Jika query tidak menemukan data, kembalikan response yang jelas
         if (!$quota) {
             return response()->json([
                 'success' => false,
-                'message' => 'Jatah cuti tidak ditemukan untuk tahun ' . $year
-            ], 404);
+                'message' => 'Data jatah cuti untuk Anda di tahun ' . $year . ' belum diatur oleh HR.'
+            ], 404); // 404 Not Found
         }
         
-        // Hitung sisa jatah untuk setiap jenis cuti
-        $quotaData = [
-            'id' => $quota->id,
-            'employee_id' => $quota->employee_id,
-            'year' => $quota->year,
-            'employee' => $quota->employee,
-            'leave_types' => [
-                'annual' => [
-                    'quota' => $quota->annual_leave_quota,
-                    'used' => $quota->annual_leave_used,
-                    'remaining' => $quota->annual_leave_quota - $quota->annual_leave_used
-                ],
-                'sick' => [
-                    'quota' => $quota->sick_leave_quota,
-                    'used' => $quota->sick_leave_used,
-                    'remaining' => $quota->sick_leave_quota - $quota->sick_leave_used
-                ],
-                'emergency' => [
-                    'quota' => $quota->emergency_leave_quota,
-                    'used' => $quota->emergency_leave_used,
-                    'remaining' => $quota->emergency_leave_quota - $quota->emergency_leave_used
-                ],
-                'maternity' => [
-                    'quota' => $quota->maternity_leave_quota,
-                    'used' => $quota->maternity_leave_used,
-                    'remaining' => $quota->maternity_leave_quota - $quota->maternity_leave_used
-                ],
-                'paternity' => [
-                    'quota' => $quota->paternity_leave_quota,
-                    'used' => $quota->paternity_leave_used,
-                    'remaining' => $quota->paternity_leave_quota - $quota->paternity_leave_used
-                ],
-                'marriage' => [
-                    'quota' => $quota->marriage_leave_quota,
-                    'used' => $quota->marriage_leave_used,
-                    'remaining' => $quota->marriage_leave_quota - $quota->marriage_leave_used
-                ],
-                'bereavement' => [
-                    'quota' => $quota->bereavement_leave_quota,
-                    'used' => $quota->bereavement_leave_used,
-                    'remaining' => $quota->bereavement_leave_quota - $quota->bereavement_leave_used
-                ]
-            ]
-        ];
-        
+        // 6. Jika semua berhasil, kembalikan data yang ditemukan
         return response()->json([
             'success' => true,
-            'data' => $quotaData
+            'data' => $quota
         ]);
     }
 

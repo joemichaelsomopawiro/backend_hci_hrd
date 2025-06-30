@@ -10,6 +10,8 @@ use App\Http\Controllers\LeaveQuotaController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\GeneralAffairController;
 use App\Http\Controllers\AttendanceMachineController;
+use App\Http\Controllers\WorshipAttendanceController;
+use App\Http\Controllers\MorningReflectionController;
 
 /*
 |--------------------------------------------------------------------------
@@ -51,25 +53,44 @@ Route::prefix('ga')->group(function () {
     Route::get('/dashboard/leave-statistics', [GeneralAffairController::class, 'getLeaveStatistics']);
     Route::get('/daily-morning-reflection-history', [GeneralAffairController::class, 'getDailyMorningReflectionHistory']);
     Route::get('/leaves', [GeneralAffairController::class, 'getLeaves']);
+
+    // ===== ABSENSI RENUNGAN PAGI - ROUTES BARU =====
+    Route::middleware(['auth:sanctum', 'role:ga'])->group(function () {
+        // Dashboard untuk absensi renungan pagi
+        Route::get('/dashboard/morning-reflection', [GeneralAffairController::class, 'morningReflectionDashboard']);
+        Route::get('/dashboard/morning-reflection-statistics', [GeneralAffairController::class, 'getMorningReflectionStatistics']);
+        Route::get('/dashboard/absent-employees-today', [GeneralAffairController::class, 'getAbsentEmployeesToday']);
+        
+        // Data karyawan
+        Route::get('/employees/all', [GeneralAffairController::class, 'getAllEmployees']);
+        
+        // CRUD absensi renungan pagi
+        Route::get('/morning-reflection-history', [GeneralAffairController::class, 'getMorningReflectionHistory']);
+        Route::post('/morning-reflection-attendance', [GeneralAffairController::class, 'storeMorningReflectionAttendance']);
+        Route::put('/morning-reflection-attendance/{id}', [GeneralAffairController::class, 'updateMorningReflectionAttendance']);
+        Route::delete('/morning-reflection-attendance/{id}', [GeneralAffairController::class, 'deleteMorningReflectionAttendance']);
+    });
 });
 
-// Leave Quota Routes
+// Leave Quota Routes -- BLOK YANG DIPERBAIKI --
 Route::prefix('leave-quotas')->group(function () {
+    // Rute umum non-parameter
     Route::get('/', [LeaveQuotaController::class, 'index']);
     Route::post('/', [LeaveQuotaController::class, 'store']);
-    Route::get('/{id}', [LeaveQuotaController::class, 'show']);
-    Route::put('/{id}', [LeaveQuotaController::class, 'update']);
-    Route::delete('/{id}', [LeaveQuotaController::class, 'destroy']);
-    
+
+    // Rute SPESIFIK yang dilindungi otentikasi diletakkan di atas
     Route::middleware('auth:sanctum')->group(function() {
-        // PERUBAHAN DI SINI: dari /my-current menjadi /current
-        Route::get('/current', [LeaveQuotaController::class, 'getMyCurrentQuotas']);
-        
+        Route::get('/my-current', [LeaveQuotaController::class, 'getMyCurrentQuotas']);
         Route::post('/bulk-update', [LeaveQuotaController::class, 'bulkUpdate']);
         Route::post('/reset-annual', [LeaveQuotaController::class, 'resetAnnualQuotas']);
         Route::get('/usage-summary', [LeaveQuotaController::class, 'getUsageSummary']);
         Route::get('/employees-without-quota', [LeaveQuotaController::class, 'getEmployeesWithoutQuota']);
     });
+    
+    // Rute UMUM dengan parameter (wildcard) diletakkan di paling bawah grup ini
+    Route::get('/{id}', [LeaveQuotaController::class, 'show']);
+    Route::put('/{id}', [LeaveQuotaController::class, 'update']);
+    Route::delete('/{id}', [LeaveQuotaController::class, 'destroy']);
 });
 
 // Leave Request Routes (Sudah Disederhanakan dan Benar)
@@ -138,34 +159,81 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-/*
-Route::middleware(['auth:sanctum'])->group(function () {
-    Route::prefix('manager')->group(function () {
-        Route::get('/subordinates', [ManagerController::class, 'getSubordinates']);
-        // ...
+// Manager Routes
+Route::middleware('auth:sanctum')->group(function () {
+    Route::prefix('manager')->name('manager.')->group(function () {
+        Route::get('/subordinates', [ManagerController::class, 'getSubordinates'])->name('subordinates');
+        
+        // TAMBAHKAN RUTE BARU INI
+        Route::get('/subordinate-leave-quotas', [ManagerController::class, 'getSubordinateLeaveQuotas'])->name('subordinate-leave-quotas');
+
+        // Anda bisa tambahkan rute manager lainnya di sini di kemudian hari
     });
 });
-*/
 
-// Attendance Machine Management Routes
-Route::middleware(['auth:sanctum'])->group(function () {
-    // Attendance Machines
-    Route::prefix('attendance-machines')->group(function () {
-        Route::get('/', [AttendanceMachineController::class, 'index']);
-        Route::post('/', [AttendanceMachineController::class, 'store']);
-        Route::get('/{id}', [AttendanceMachineController::class, 'show']);
-        Route::put('/{id}', [AttendanceMachineController::class, 'update']);
-        Route::delete('/{id}', [AttendanceMachineController::class, 'destroy']);
-        
-        // Machine Operations
-        Route::post('/{id}/test-connection', [AttendanceMachineController::class, 'testConnection']);
-        Route::post('/{id}/pull-attendance', [AttendanceMachineController::class, 'pullAttendanceData']);
-        Route::post('/{id}/sync-users', [AttendanceMachineController::class, 'syncAllUsers']);
-        Route::post('/{id}/restart', [AttendanceMachineController::class, 'restart']);
-        Route::post('/{id}/clear-data', [AttendanceMachineController::class, 'clearData']);
-        Route::post('/{id}/sync-time', [AttendanceMachineController::class, 'syncTime']);
-        
-        // Sync Logs
-        Route::get('/{id}/sync-logs', [AttendanceMachineController::class, 'syncLogs']);
-    });
+// Worship Attendance Routes - GA (General Affairs)
+Route::prefix('ga')->middleware(['auth:sanctum', 'role:ga'])->group(function () {
+    Route::get('/worship-dashboard', [WorshipAttendanceController::class, 'dashboard']);
+    Route::get('/worship-dashboard-detailed', [WorshipAttendanceController::class, 'gaDashboard']);
+    Route::get('/worship-attendances', [WorshipAttendanceController::class, 'getWorshipAttendances']);
+    Route::post('/worship-attendances', [WorshipAttendanceController::class, 'storeWorshipAttendance']);
+    Route::put('/worship-attendances/{id}', [WorshipAttendanceController::class, 'updateWorshipAttendance']);
+    Route::delete('/worship-attendances/{id}', [WorshipAttendanceController::class, 'deleteWorshipAttendance']);
+    Route::get('/worship-attendances/export', [WorshipAttendanceController::class, 'exportWorshipAttendances']);
+    Route::get('/worship-attendances/statistics', [WorshipAttendanceController::class, 'attendanceStatistics']);
+});
+
+// Worship Attendance Routes - User (Semua Role)
+Route::prefix('worship-attendance')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/attendance/{userId}/{date}', [WorshipAttendanceController::class, 'getUserAttendance']);
+    Route::get('/week-history/{userId}', [WorshipAttendanceController::class, 'getWeekHistory']);
+    Route::get('/leave/approved/{userId}/{date}', [WorshipAttendanceController::class, 'checkApprovedLeave']);
+    Route::post('/submit', [WorshipAttendanceController::class, 'submitAttendance']);
+    Route::get('/config', [WorshipAttendanceController::class, 'getConfig']);
+    
+    // Routes baru untuk user
+    Route::post('/user-submit', [WorshipAttendanceController::class, 'submitUserAttendance']);
+    Route::get('/user-status/{userId}/{date}', [WorshipAttendanceController::class, 'getUserAttendanceStatus']);
+    Route::get('/user-week-history/{userId}', [WorshipAttendanceController::class, 'getUserWeekHistory']);
+});
+
+// ===== MORNING REFLECTION ROUTES =====
+
+// Routes untuk semua user (dengan autentikasi)
+Route::prefix('morning-reflection')->middleware(['auth:sanctum'])->group(function () {
+    // Status renungan pagi hari ini
+    Route::get('/status', [MorningReflectionController::class, 'getStatus']);
+    Route::get('/status-user', [MorningReflectionController::class, 'status']);
+    
+    // Absen renungan pagi
+    Route::post('/attend', [MorningReflectionController::class, 'attend']);
+    Route::post('/attend-user', [MorningReflectionController::class, 'attendUser']);
+    
+    // Status kehadiran user
+    Route::get('/attendance', [MorningReflectionController::class, 'getAttendance']);
+    Route::get('/attendance-user', [MorningReflectionController::class, 'attendance']);
+    Route::get('/attendance/{userId}/{date}', [MorningReflectionController::class, 'getUserAttendance']);
+    Route::get('/attendance-by-date/{userId}/{date}', [MorningReflectionController::class, 'attendanceByDate']);
+    
+    // Kehadiran mingguan user
+    Route::get('/weekly-attendance/{userId}', [MorningReflectionController::class, 'getWeeklyAttendance']);
+    Route::get('/weekly-attendance-user/{userId}', [MorningReflectionController::class, 'weeklyAttendance']);
+    
+    // Konfigurasi renungan pagi
+    Route::get('/config', [MorningReflectionController::class, 'getConfig']);
+    Route::get('/config-user', [MorningReflectionController::class, 'config']);
+    
+    // Statistik kehadiran
+    Route::get('/statistics', [MorningReflectionController::class, 'statistics']);
+});
+
+// Routes untuk GA (General Affairs) - dengan role middleware
+Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:ga'])->group(function () {
+    // Dashboard kehadiran hari ini
+    Route::get('/today-attendance', [MorningReflectionController::class, 'getTodayAttendance']);
+    Route::get('/today-attendance-admin', [MorningReflectionController::class, 'todayAttendance']);
+    
+    // Update konfigurasi (admin only)
+    Route::put('/config', [MorningReflectionController::class, 'updateConfig']);
+    Route::put('/config-admin', [MorningReflectionController::class, 'updateConfigAdmin']);
 });
