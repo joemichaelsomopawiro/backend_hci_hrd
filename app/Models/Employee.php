@@ -16,6 +16,7 @@ class Employee extends Model
         'nama_lengkap',
         'nik',
         'nip',
+        'NumCard',
         'tanggal_lahir',
         'jenis_kelamin',
         'alamat',
@@ -32,6 +33,7 @@ class Employee extends Model
         'npwp',
         'nomor_kontrak',
         'tanggal_kontrak_berakhir',
+        'created_from',
     ];
 
     // Cast jabatan_saat_ini sebagai enum untuk validasi
@@ -75,15 +77,15 @@ class Employee extends Model
         return $this->hasMany(LeaveRequest::class, 'employee_id');
     }
     
-    // Tambahkan relationship untuk attendance machines
+    // Relationship untuk attendance system  
     public function attendances(): HasMany
     {
         return $this->hasMany(Attendance::class);
     }
 
-    public function attendanceMachineUsers(): HasMany
+    public function attendanceLogs(): HasMany
     {
-        return $this->hasMany(AttendanceMachineUser::class);
+        return $this->hasMany(AttendanceLog::class);
     }
 
     public function manager(): BelongsTo

@@ -21,21 +21,34 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // Sync attendance data every 15 minutes
-        $schedule->command('attendance:sync')
+        // Sync attendance data dari mesin Solution X304 setiap 15 menit
+        $schedule->command('attendance:sync --process')
                  ->everyFifteenMinutes()
                  ->withoutOverlapping()
-                 ->runInBackground();
-        
-        // Sync users to machines daily at 2 AM
-        $schedule->command('attendance:sync-users')
-                 ->dailyAt('02:00')
-                 ->withoutOverlapping();
-        
-        // Check machine status every hour
-        $schedule->command('attendance:machine-status')
-                 ->hourly()
-                 ->withoutOverlapping();
+                 ->runInBackground()
+                 ->name('attendance-sync-x304')
+                 ->description('Sync attendance data dari mesin Solution X304')
+                 ->appendOutputTo(storage_path('logs/attendance-sync.log'));
+
+        // Proses ulang attendance hari ini setiap jam (untuk memastikan data lengkap)
+        $schedule->call(function () {
+            $processingService = app(\App\Services\AttendanceProcessingService::class);
+            $result = $processingService->processTodayAttendance();
+            \Log::info('Hourly attendance processing completed', $result);
+        })->hourly()
+          ->withoutOverlapping()
+          ->name('attendance-hourly-process')
+          ->description('Proses ulang attendance hari ini');
+
+        // Generate summary harian setiap pagi jam 6
+        $schedule->call(function () {
+            $yesterday = now()->subDay()->format('Y-m-d');
+            $processingService = app(\App\Services\AttendanceProcessingService::class);
+            $summary = $processingService->getAttendanceSummary($yesterday);
+            \Log::info("Daily attendance summary for {$yesterday}", ['summary' => $summary]);
+        })->dailyAt('06:00')
+          ->name('daily-attendance-summary')
+          ->description('Generate daily attendance summary');
     }
 
     /**

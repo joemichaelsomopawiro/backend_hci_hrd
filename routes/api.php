@@ -9,9 +9,8 @@ use App\Http\Controllers\LeaveRequestController;
 use App\Http\Controllers\LeaveQuotaController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\GeneralAffairController;
-use App\Http\Controllers\AttendanceMachineController;
-use App\Http\Controllers\WorshipAttendanceController;
-use App\Http\Controllers\MorningReflectionController;
+
+
 
 /*
 |--------------------------------------------------------------------------
@@ -102,44 +101,33 @@ Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     Route::delete('/{id}', [LeaveRequestController::class, 'destroy']);
 });
 
-// Attendance Routes
-Route::prefix('attendances')->group(function () {
-    Route::get('/', [AttendanceController::class, 'index']);
-    Route::post('/', [AttendanceController::class, 'store']);
-    Route::post('/check-in', [AttendanceController::class, 'checkIn']);
-    Route::post('/check-out', [AttendanceController::class, 'checkOut']);
-    Route::get('/summary', [AttendanceController::class, 'workHoursSummary']);
+// Attendance Routes - Solution X304 Integration
+Route::prefix('attendance')->group(function () {
+    // Public routes (untuk testing)
     Route::get('/dashboard', [AttendanceController::class, 'dashboard']);
+    Route::get('/today-realtime', [AttendanceController::class, 'todayRealtime']);
+    Route::get('/machine/status', [AttendanceController::class, 'machineStatus']);
+    
+    // Main attendance routes  
+    Route::get('/list', [AttendanceController::class, 'index']);
+    Route::get('/employee/{employeeId}', [AttendanceController::class, 'employeeDetail']);
+    Route::get('/logs', [AttendanceController::class, 'logs']);
+    Route::get('/summary', [AttendanceController::class, 'summary']);
+    
+    // Sync and processing routes
+    Route::post('/sync', [AttendanceController::class, 'syncFromMachine']);
+    Route::post('/sync-today', [AttendanceController::class, 'syncToday']);
+    Route::post('/sync/users', [AttendanceController::class, 'syncUserData']);
+    Route::get('/users', [AttendanceController::class, 'getUserList']);
+    Route::post('/process', [AttendanceController::class, 'processLogs']);
+    Route::post('/process-today', [AttendanceController::class, 'processToday']);
+    Route::post('/reprocess', [AttendanceController::class, 'reprocessDate']);
+    
+    // Individual attendance management
+    Route::put('/{id}/recalculate', [AttendanceController::class, 'recalculate']);
 });
 
-// Attendance Machine Management Routes
-Route::prefix('attendance-machines')->middleware('auth:sanctum')->group(function () {
-    // CRUD operations
-    Route::get('/', [AttendanceMachineController::class, 'index']);
-    Route::post('/', [AttendanceMachineController::class, 'store']);
-    Route::get('/{id}', [AttendanceMachineController::class, 'show']);
-    Route::put('/{id}', [AttendanceMachineController::class, 'update']);
-    Route::delete('/{id}', [AttendanceMachineController::class, 'destroy']);
-    
-    // Machine operations
-    Route::post('/{id}/test-connection', [AttendanceMachineController::class, 'testConnection']);
-    Route::post('/{id}/pull-attendance', [AttendanceMachineController::class, 'pullAttendanceData']);
-    Route::post('/{id}/pull-attendance-process', [AttendanceMachineController::class, 'pullAndProcessAttendanceData']);
-    
-    // User synchronization
-    Route::post('/{id}/sync-user/{employeeId}', [AttendanceMachineController::class, 'syncSpecificUser']);
-    Route::post('/{id}/sync-all-users', [AttendanceMachineController::class, 'syncAllUsers']);
-    Route::delete('/{id}/remove-user/{employeeId}', [AttendanceMachineController::class, 'removeUser']);
-    
-    // Machine management
-    Route::post('/{id}/restart', [AttendanceMachineController::class, 'restartMachine']);
-    Route::post('/{id}/clear-data', [AttendanceMachineController::class, 'clearAttendanceData']);
-    Route::post('/{id}/sync-time', [AttendanceMachineController::class, 'syncTime']);
-    
-    // Logs and monitoring
-    Route::get('/{id}/sync-logs', [AttendanceMachineController::class, 'getSyncLogs']);
-    Route::get('/dashboard', [AttendanceMachineController::class, 'getDashboard']);
-});
+
 
 // Auth routes
 Route::prefix('auth')->group(function () {
@@ -171,69 +159,3 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 });
 
-// Worship Attendance Routes - GA (General Affairs)
-Route::prefix('ga')->middleware(['auth:sanctum', 'role:ga'])->group(function () {
-    Route::get('/worship-dashboard', [WorshipAttendanceController::class, 'dashboard']);
-    Route::get('/worship-dashboard-detailed', [WorshipAttendanceController::class, 'gaDashboard']);
-    Route::get('/worship-attendances', [WorshipAttendanceController::class, 'getWorshipAttendances']);
-    Route::post('/worship-attendances', [WorshipAttendanceController::class, 'storeWorshipAttendance']);
-    Route::put('/worship-attendances/{id}', [WorshipAttendanceController::class, 'updateWorshipAttendance']);
-    Route::delete('/worship-attendances/{id}', [WorshipAttendanceController::class, 'deleteWorshipAttendance']);
-    Route::get('/worship-attendances/export', [WorshipAttendanceController::class, 'exportWorshipAttendances']);
-    Route::get('/worship-attendances/statistics', [WorshipAttendanceController::class, 'attendanceStatistics']);
-});
-
-// Worship Attendance Routes - User (Semua Role)
-Route::prefix('worship-attendance')->middleware(['auth:sanctum'])->group(function () {
-    Route::get('/attendance/{userId}/{date}', [WorshipAttendanceController::class, 'getUserAttendance']);
-    Route::get('/week-history/{userId}', [WorshipAttendanceController::class, 'getWeekHistory']);
-    Route::get('/leave/approved/{userId}/{date}', [WorshipAttendanceController::class, 'checkApprovedLeave']);
-    Route::post('/submit', [WorshipAttendanceController::class, 'submitAttendance']);
-    Route::get('/config', [WorshipAttendanceController::class, 'getConfig']);
-    
-    // Routes baru untuk user
-    Route::post('/user-submit', [WorshipAttendanceController::class, 'submitUserAttendance']);
-    Route::get('/user-status/{userId}/{date}', [WorshipAttendanceController::class, 'getUserAttendanceStatus']);
-    Route::get('/user-week-history/{userId}', [WorshipAttendanceController::class, 'getUserWeekHistory']);
-});
-
-// ===== MORNING REFLECTION ROUTES =====
-
-// Routes untuk semua user (dengan autentikasi)
-Route::prefix('morning-reflection')->middleware(['auth:sanctum'])->group(function () {
-    // Status renungan pagi hari ini
-    Route::get('/status', [MorningReflectionController::class, 'getStatus']);
-    Route::get('/status-user', [MorningReflectionController::class, 'status']);
-    
-    // Absen renungan pagi
-    Route::post('/attend', [MorningReflectionController::class, 'attend']);
-    Route::post('/attend-user', [MorningReflectionController::class, 'attendUser']);
-    
-    // Status kehadiran user
-    Route::get('/attendance', [MorningReflectionController::class, 'getAttendance']);
-    Route::get('/attendance-user', [MorningReflectionController::class, 'attendance']);
-    Route::get('/attendance/{userId}/{date}', [MorningReflectionController::class, 'getUserAttendance']);
-    Route::get('/attendance-by-date/{userId}/{date}', [MorningReflectionController::class, 'attendanceByDate']);
-    
-    // Kehadiran mingguan user
-    Route::get('/weekly-attendance/{userId}', [MorningReflectionController::class, 'getWeeklyAttendance']);
-    Route::get('/weekly-attendance-user/{userId}', [MorningReflectionController::class, 'weeklyAttendance']);
-    
-    // Konfigurasi renungan pagi
-    Route::get('/config', [MorningReflectionController::class, 'getConfig']);
-    Route::get('/config-user', [MorningReflectionController::class, 'config']);
-    
-    // Statistik kehadiran
-    Route::get('/statistics', [MorningReflectionController::class, 'statistics']);
-});
-
-// Routes untuk GA (General Affairs) - dengan role middleware
-Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:ga'])->group(function () {
-    // Dashboard kehadiran hari ini
-    Route::get('/today-attendance', [MorningReflectionController::class, 'getTodayAttendance']);
-    Route::get('/today-attendance-admin', [MorningReflectionController::class, 'todayAttendance']);
-    
-    // Update konfigurasi (admin only)
-    Route::put('/config', [MorningReflectionController::class, 'updateConfig']);
-    Route::put('/config-admin', [MorningReflectionController::class, 'updateConfigAdmin']);
-});

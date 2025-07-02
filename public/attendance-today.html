@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Today - Sistem Absensi</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #007bff;
+        }
+        .header h1 {
+            color: #007bff;
+            margin: 0;
+        }
+        .current-time {
+            font-size: 18px;
+            color: #666;
+            margin-top: 10px;
+        }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .summary-card {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .summary-card.success {
+            background: linear-gradient(135deg, #28a745, #1e7e34);
+        }
+        .summary-card.warning {
+            background: linear-gradient(135deg, #ffc107, #e0a800);
+        }
+        .summary-card.info {
+            background: linear-gradient(135deg, #17a2b8, #117a8b);
+        }
+        .summary-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 24px;
+        }
+        .summary-card p {
+            margin: 0;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .controls {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 0 10px;
+        }
+        .btn:hover {
+            background: #0056b3;
+        }
+        .btn.success {
+            background: #28a745;
+        }
+        .btn.success:hover {
+            background: #1e7e34;
+        }
+        .attendance-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .attendance-table th,
+        .attendance-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .attendance-table th {
+            background-color: #007bff;
+            color: white;
+            font-weight: bold;
+        }
+        .attendance-table tr:hover {
+            background-color: #f8f9fa;
+        }
+        .status {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+        }
+        .status.present_ontime {
+            background: #28a745;
+        }
+        .status.present_late {
+            background: #ffc107;
+            color: #333;
+        }
+        .status.absent {
+            background: #dc3545;
+        }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+        .last-updated {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Attendance Hari Ini</h1>
+            <div class="current-time" id="currentTime"></div>
+        </div>
+
+        <div class="controls">
+            <button class="btn" onclick="loadData()">🔄 Refresh Data</button>
+            <button class="btn success" onclick="syncFromMachine()">📡 Sync dari Mesin</button>
+        </div>
+
+        <div class="summary" id="summary">
+            <div class="loading">⏳ Loading data...</div>
+        </div>
+
+        <div id="attendanceData">
+            <div class="loading">📋 Mengambil data attendance...</div>
+        </div>
+
+        <div class="last-updated" id="lastUpdated"></div>
+    </div>
+
+    <script>
+        // Update current time
+        function updateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleString('id-ID', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            document.getElementById('currentTime').textContent = timeString;
+        }
+
+                 // Load attendance data (real-time today only)
+        async function loadData() {
+            try {
+                const response = await fetch('/api/attendance/today-realtime');
+                const data = await response.json();
+                
+                if (data.success) {
+                    displaySummary(data.data.summary);
+                    displayAttendanceList(data.data.attendances);
+                    displayLatestLogs(data.data.latest_logs);
+                    updateLastUpdated();
+                } else {
+                    throw new Error(data.message || 'Failed to load data');
+                }
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('summary').innerHTML = 
+                    '<div style="color: red; text-align: center;">❌ Error loading data: ' + error.message + '</div>';
+            }
+        }
+
+        // Display summary cards
+        function displaySummary(summary) {
+            const summaryHtml = `
+                <div class="summary-card">
+                    <h3>${summary.total_users}</h3>
+                    <p>Total Users</p>
+                </div>
+                <div class="summary-card success">
+                    <h3>${summary.present_ontime}</h3>
+                    <p>Hadir Tepat Waktu</p>
+                </div>
+                <div class="summary-card warning">
+                    <h3>${summary.present_late}</h3>
+                    <p>Hadir Terlambat</p>
+                </div>
+                <div class="summary-card info">
+                    <h3>${summary.attendance_rate}%</h3>
+                    <p>Tingkat Kehadiran</p>
+                </div>
+            `;
+            document.getElementById('summary').innerHTML = summaryHtml;
+        }
+
+        // Display attendance list
+        function displayAttendanceList(attendances) {
+            if (!attendances || attendances.length === 0) {
+                document.getElementById('attendanceData').innerHTML = 
+                    '<div class="loading">📋 Tidak ada data attendance untuk hari ini</div>';
+                return;
+            }
+
+            let tableHtml = `
+                <table class="attendance-table">
+                    <thead>
+                        <tr>
+                            <th>Nama</th>
+                            <th>PIN</th>
+                            <th>Card Number</th>
+                            <th>Check In</th>
+                            <th>Check Out</th>
+                            <th>Status</th>
+                            <th>Total Taps</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            attendances.forEach(att => {
+                const checkIn = att.check_in ? new Date(att.check_in).toLocaleTimeString('id-ID') : '-';
+                const checkOut = att.check_out ? new Date(att.check_out).toLocaleTimeString('id-ID') : '-';
+                const statusClass = att.status || 'absent';
+                const statusText = getStatusText(att.status);
+
+                tableHtml += `
+                    <tr>
+                        <td><strong>${att.user_name || 'N/A'}</strong></td>
+                        <td>${att.user_pin || 'N/A'}</td>
+                        <td>${att.card_number || 'N/A'}</td>
+                        <td><strong>${checkIn}</strong></td>
+                        <td>${checkOut}</td>
+                        <td><span class="status ${statusClass}">${statusText}</span></td>
+                        <td>${att.total_taps || 0}</td>
+                    </tr>
+                `;
+            });
+
+            tableHtml += '</tbody></table>';
+            document.getElementById('attendanceData').innerHTML = tableHtml;
+        }
+
+        // Get status text in Indonesian
+        function getStatusText(status) {
+            const statusMap = {
+                'present_ontime': 'Hadir Tepat Waktu',
+                'present_late': 'Hadir Terlambat',
+                'absent': 'Tidak Hadir',
+                'on_leave': 'Cuti',
+                'sick_leave': 'Sakit',
+                'permission': 'Izin'
+            };
+            return statusMap[status] || status;
+        }
+
+                 // Sync from machine (today only)
+        async function syncFromMachine() {
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ Syncing...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/attendance/sync-today', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('✅ Sync hari ini berhasil! Data akan direfresh...');
+                    loadData();
+                } else {
+                    throw new Error(data.message || 'Sync failed');
+                }
+            } catch (error) {
+                console.error('Error syncing:', error);
+                alert('❌ Error sync: ' + error.message);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        // Display latest logs (for debugging taps)
+        function displayLatestLogs(logs) {
+            if (!logs || logs.length === 0) {
+                return;
+            }
+
+            // Add logs section after attendance table
+            let logsHtml = `
+                <div style="margin-top: 30px;">
+                    <h3>📋 Logs Tap Terbaru (10 terakhir)</h3>
+                    <table class="attendance-table">
+                        <thead>
+                            <tr>
+                                <th>Waktu Tap</th>
+                                <th>Nama</th>
+                                <th>PIN</th>
+                                <th>Card Number</th>
+                                <th>Method</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            logs.forEach(log => {
+                const tapTime = new Date(log.datetime).toLocaleString('id-ID');
+                const processedStatus = log.is_processed ? '✅ Processed' : '⏳ Pending';
+
+                logsHtml += `
+                    <tr>
+                        <td><strong>${tapTime}</strong></td>
+                        <td>${log.user_name || 'N/A'}</td>
+                        <td>${log.user_pin}</td>
+                        <td>${log.card_number || 'N/A'}</td>
+                        <td>${log.verified_method}</td>
+                        <td><span style="font-size: 12px;">${processedStatus}</span></td>
+                    </tr>
+                `;
+            });
+
+            logsHtml += '</tbody></table></div>';
+            
+            // Append to attendance data
+            document.getElementById('attendanceData').innerHTML += logsHtml;
+        }
+
+        // Update last updated time
+        function updateLastUpdated() {
+            const now = new Date().toLocaleTimeString('id-ID');
+            document.getElementById('lastUpdated').textContent = `Terakhir diupdate: ${now}`;
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            updateTime();
+            setInterval(updateTime, 1000);
+            loadData();
+            setInterval(loadData, 30000); // Auto refresh every 30 seconds
+        });
+    </script>
+</body>
+</html> 
