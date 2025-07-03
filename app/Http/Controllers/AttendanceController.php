@@ -620,7 +620,7 @@ class AttendanceController extends Controller
 
     /**
      * GET /api/attendance/today-realtime
-     * Data attendance hari ini real-time (untuk testing tap terbaru)
+     * Data attendance hari ini real-time (sederhana seperti sebelumnya)
      */
     public function todayRealtime(Request $request): JsonResponse
     {
@@ -637,18 +637,21 @@ class AttendanceController extends Controller
                         'id' => $attendance->id,
                         'user_name' => $attendance->user_name,
                         'user_pin' => $attendance->user_pin,
-                        'card_number' => $attendance->card_number,
                         'check_in' => $attendance->check_in,
                         'check_out' => $attendance->check_out,
                         'status' => $attendance->status,
-                        'total_taps' => $attendance->total_taps,
                         'late_minutes' => $attendance->late_minutes,
                         'updated_at' => $attendance->updated_at
                     ];
                 });
 
-            // Get latest logs for today (unprocessed or recent)
+            // Get latest 10 tap logs for today (simple)
+            $registeredUserPins = \App\Models\EmployeeAttendance::where('is_active', true)
+                ->pluck('machine_user_id')
+                ->toArray();
+
             $latestLogs = AttendanceLog::whereDate('datetime', $date)
+                ->whereIn('user_pin', $registeredUserPins)
                 ->orderBy('datetime', 'desc')
                 ->take(10)
                 ->get()
@@ -657,10 +660,8 @@ class AttendanceController extends Controller
                         'id' => $log->id,
                         'user_pin' => $log->user_pin,
                         'user_name' => $log->user_name,
-                        'card_number' => $log->card_number,
                         'datetime' => $log->datetime,
-                        'is_processed' => $log->is_processed,
-                        'verified_method' => $log->verified_method
+                        'is_processed' => $log->is_processed
                     ];
                 });
 
@@ -676,7 +677,9 @@ class AttendanceController extends Controller
                     'attendances' => $todayAttendances,
                     'latest_logs' => $latestLogs,
                     'total_attendances' => $todayAttendances->count(),
-                    'total_logs_today' => AttendanceLog::whereDate('datetime', $date)->count()
+                    'total_logs_today' => AttendanceLog::whereDate('datetime', $date)
+                        ->whereIn('user_pin', $registeredUserPins)
+                        ->count()
                 ]
             ]);
 
@@ -696,6 +699,112 @@ class AttendanceController extends Controller
     public function syncToday(Request $request): JsonResponse
     {
         try {
+            // Step 1: Find machine
+            $machine = AttendanceMachine::where('ip_address', '10.10.10.85')->first();
+
+            if (!$machine) {
+                Log::error('Sync Today: Machine not found with IP 10.10.10.85');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Mesin absensi tidak ditemukan.'
+                ], 404);
+            }
+
+            Log::info('Sync Today: Machine found', ['machine' => $machine->name]);
+
+            // Step 2: Test connection first
+            try {
+                $connectionTest = $this->machineService->testConnection($machine);
+                if (!$connectionTest['success']) {
+                    Log::warning('Sync Today: Connection failed', ['message' => $connectionTest['message']]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Tidak dapat terhubung ke mesin: ' . $connectionTest['message']
+                    ], 400);
+                }
+                Log::info('Sync Today: Connection successful');
+            } catch (\Exception $e) {
+                Log::error('Sync Today: Connection test exception', ['error' => $e->getMessage()]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error testing connection: ' . $e->getMessage()
+                ], 500);
+            }
+
+            // Step 3: Pull HANYA data hari ini dari mesin
+            try {
+                $today = now()->format('Y-m-d');
+                $pullResult = $this->machineService->pullTodayAttendanceData($machine, $today);
+
+                if (!$pullResult['success']) {
+                    Log::error('Sync Today: Pull today data failed', ['message' => $pullResult['message']]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Gagal mengambil data hari ini dari mesin: ' . $pullResult['message']
+                    ], 400);
+                }
+                Log::info('Sync Today: Pull today data successful', ['stats' => $pullResult['stats']]);
+            } catch (\Exception $e) {
+                Log::error('Sync Today: Pull today data exception', ['error' => $e->getMessage()]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error pulling today data: ' . $e->getMessage()
+                ], 500);
+            }
+
+            // Step 4: Process only today's unprocessed logs
+            try {
+                $result = $this->processingService->processTodayOnly($today);
+                Log::info('Sync Today: Processing successful', ['processed' => $result['processed']]);
+            } catch (\Exception $e) {
+                Log::error('Sync Today: Processing exception', ['error' => $e->getMessage()]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error processing logs: ' . $e->getMessage()
+                ], 500);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Sync hari ini berhasil - hanya data hari ini yang diproses',
+                'data' => [
+                    'pull_result' => $pullResult,
+                    'process_result' => $result,
+                    'date' => $today,
+                    'optimization' => 'Hanya data hari ini yang diambil dan diproses'
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error syncing today: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/attendance/sync-today-only
+     * Sync KHUSUS hanya data hari ini dari mesin (optimized)
+     */
+    public function syncTodayOnly(Request $request): JsonResponse
+    {
+        try {
+            // Ambil tanggal target (default hari ini)
+            $targetDate = $request->get('date', now()->format('Y-m-d'));
+            
+            // Validasi format tanggal
+            if (!Carbon::createFromFormat('Y-m-d', $targetDate)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Format tanggal tidak valid. Gunakan format: Y-m-d'
+                ], 422);
+            }
+
+            // Find machine
             $machine = AttendanceMachine::where('ip_address', '10.10.10.85')->first();
 
             if (!$machine) {
@@ -705,7 +814,9 @@ class AttendanceController extends Controller
                 ], 404);
             }
 
-            // Test connection first
+            Log::info('Sync Today Only: Started', ['target_date' => $targetDate, 'machine' => $machine->name]);
+
+            // Test connection
             $connectionTest = $this->machineService->testConnection($machine);
             if (!$connectionTest['success']) {
                 return response()->json([
@@ -714,35 +825,126 @@ class AttendanceController extends Controller
                 ], 400);
             }
 
-            // Pull data from machine
-            $pullResult = $this->machineService->pullAttendanceData($machine);
+            // Pull data khusus hari ini
+            $pullResult = $this->machineService->pullTodayAttendanceData($machine, $targetDate);
 
             if (!$pullResult['success']) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Gagal mengambil data dari mesin: ' . $pullResult['message']
+                    'message' => 'Gagal mengambil data: ' . $pullResult['message']
                 ], 400);
             }
 
-            // Process only today's unprocessed logs
-            $today = now()->format('Y-m-d');
-            $result = $this->processingService->processTodayOnly($today);
+            // Process hanya data hari ini
+            $processResult = $this->processingService->processTodayOnly($targetDate);
+
+            Log::info('Sync Today Only: Completed', [
+                'target_date' => $targetDate,
+                'pull_stats' => $pullResult['stats'] ?? null,
+                'process_result' => $processResult
+            ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Sync hari ini berhasil',
+                'message' => "Sync berhasil untuk {$targetDate} - hanya data hari ini",
                 'data' => [
+                    'date' => $targetDate,
                     'pull_result' => $pullResult,
-                    'process_result' => $result,
-                    'date' => $today
+                    'process_result' => $processResult,
+                    'optimization_info' => [
+                        'total_from_machine' => $pullResult['stats']['total_from_machine'] ?? 0,
+                        'filtered_today' => $pullResult['stats']['today_filtered'] ?? 0,
+                        'processed' => $pullResult['stats']['processed'] ?? 0,
+                        'message' => 'Hanya mengambil dan memproses data untuk tanggal yang diminta'
+                    ]
                 ]
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Error syncing today: ' . $e->getMessage());
+            Log::error('Error in sync today only: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * GET /api/attendance/debug-sync
+     * Debug sync functionality step by step
+     */
+    public function debugSync(Request $request): JsonResponse
+    {
+        $steps = [];
+        $errors = [];
+        
+        try {
+            // Step 1: Check machine exists
+            $steps[] = "1. Checking if attendance machine exists...";
+            $machine = AttendanceMachine::where('ip_address', '10.10.10.85')->first();
+            
+            if (!$machine) {
+                $errors[] = "Machine not found with IP 10.10.10.85";
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Machine not found',
+                    'steps' => $steps,
+                    'errors' => $errors
+                ], 404);
+            }
+            $steps[] = "✅ Machine found: {$machine->name}";
+            
+            // Step 2: Test service instantiation
+            $steps[] = "2. Testing service instantiation...";
+            $machineService = $this->machineService;
+            $processingService = $this->processingService;
+            $steps[] = "✅ Services instantiated successfully";
+            
+            // Step 3: Test connection (with timeout)
+            $steps[] = "3. Testing connection to machine...";
+            try {
+                $connectionTest = $machineService->testConnection($machine);
+                if ($connectionTest['success']) {
+                    $steps[] = "✅ Connection successful";
+                } else {
+                    $steps[] = "⚠️ Connection failed: " . $connectionTest['message'];
+                }
+            } catch (\Exception $e) {
+                $steps[] = "❌ Connection test error: " . $e->getMessage();
+            }
+            
+            // Step 4: Test processTodayOnly method
+            $steps[] = "4. Testing processTodayOnly method...";
+            $today = now()->format('Y-m-d');
+            $result = $processingService->processTodayOnly($today);
+            $steps[] = "✅ ProcessTodayOnly successful: " . $result['message'];
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Debug completed successfully',
+                'data' => [
+                    'machine' => [
+                        'name' => $machine->name,
+                        'ip_address' => $machine->ip_address,
+                        'status' => $machine->status
+                    ],
+                    'today' => $today,
+                    'result' => $result
+                ],
+                'steps' => $steps,
+                'errors' => $errors
+            ]);
+            
+        } catch (\Exception $e) {
+            $errors[] = "Exception: " . $e->getMessage();
+            $steps[] = "❌ Error occurred: " . $e->getMessage();
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Debug failed: ' . $e->getMessage(),
+                'steps' => $steps,
+                'errors' => $errors,
+                'trace' => $e->getTraceAsString()
             ], 500);
         }
     }

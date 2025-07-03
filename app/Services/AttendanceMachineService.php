@@ -101,6 +101,156 @@ class AttendanceMachineService
     }
 
     /**
+     * Tarik data absensi dari mesin - HANYA UNTUK HARI INI
+     * Method ini pull semua data dari mesin tapi hanya simpan yang hari ini
+     */
+    public function pullTodayAttendanceData(AttendanceMachine $machine = null, string $targetDate = null): array
+    {
+        $machine = $machine ?? $this->machine;
+        $targetDate = $targetDate ?? now()->format('Y-m-d');
+        $syncLog = $this->createSyncLog($machine, 'pull_today_data');
+        
+        try {
+            $timeout = env('ATTENDANCE_MACHINE_TIMEOUT', 10);
+            $connect = fsockopen($machine->ip_address, $machine->port, $errno, $errstr, $timeout);
+            
+            if (!$connect) {
+                throw new Exception("Koneksi gagal: $errstr ($errno)");
+            }
+
+            $soapRequest = "<GetAttLog><ArgComKey xsi:type=\"xsd:integer\">{$machine->comm_key}</ArgComKey><Arg><PIN xsi:type=\"xsd:integer\">All</PIN></Arg></GetAttLog>";
+            $newLine = "\r\n";
+            
+            fputs($connect, "POST /iWsService HTTP/1.0" . $newLine);
+            fputs($connect, "Content-Type: text/xml" . $newLine);
+            fputs($connect, "Content-Length: " . strlen($soapRequest) . $newLine . $newLine);
+            fputs($connect, $soapRequest . $newLine);
+            
+            $buffer = "";
+            while ($response = fgets($connect, 1024)) {
+                $buffer .= $response;
+            }
+            fclose($connect);
+
+            // Parse response
+            $attendanceData = $this->parseAttendanceData($buffer);
+            
+            // Filter hanya data hari ini
+            $todayData = $this->filterTodayData($attendanceData, $targetDate);
+            
+            // Proses hanya data hari ini
+            $processedCount = $this->processTodayAttendanceData($machine, $todayData, $targetDate);
+            
+            $machine->updateLastSync();
+            $syncLog->markCompleted('success', "Berhasil memproses {$processedCount} data absensi untuk {$targetDate}", [
+                'total_records' => count($attendanceData),
+                'today_records' => count($todayData),
+                'processed_records' => $processedCount,
+                'target_date' => $targetDate
+            ]);
+            $syncLog->update(['records_processed' => $processedCount]);
+
+            return [
+                'success' => true, 
+                'message' => "Berhasil memproses {$processedCount} data absensi untuk hari ini ({$targetDate})",
+                'data' => $todayData,
+                'stats' => [
+                    'total_from_machine' => count($attendanceData),
+                    'today_filtered' => count($todayData),
+                    'processed' => $processedCount
+                ]
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Error pulling today attendance data: ' . $e->getMessage());
+            $syncLog->markCompleted('failed', $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Filter data attendance hanya untuk tanggal tertentu
+     */
+    private function filterTodayData(array $attendanceData, string $targetDate): array
+    {
+        $todayData = [];
+        
+        foreach ($attendanceData as $data) {
+            $logDate = Carbon::parse($data['datetime'])->format('Y-m-d');
+            
+            if ($logDate === $targetDate) {
+                $todayData[] = $data;
+            }
+        }
+        
+        Log::info("Filter today data: {$targetDate}", [
+            'total_records' => count($attendanceData),
+            'today_records' => count($todayData)
+        ]);
+        
+        return $todayData;
+    }
+
+    /**
+     * Proses data absensi hari ini ke database
+     */
+    private function processTodayAttendanceData(AttendanceMachine $machine, array $todayData, string $targetDate): int
+    {
+        $processedCount = 0;
+        
+        foreach ($todayData as $data) {
+            try {
+                $logDateTime = Carbon::parse($data['datetime']);
+                
+                // Double check: pastikan benar-benar hari ini
+                if ($logDateTime->format('Y-m-d') !== $targetDate) {
+                    continue;
+                }
+                
+                // Cek apakah log sudah ada
+                $existingLog = AttendanceLog::where('attendance_machine_id', $machine->id)
+                    ->where('user_pin', $data['pin'])
+                    ->where('datetime', $logDateTime)
+                    ->first();
+                
+                if ($existingLog) {
+                    continue; // Skip jika sudah ada
+                }
+
+                // Ambil nama dan card number dari data user mesin
+                $userName = $this->getUserNameFromPin($data['pin']);
+                $cardNumber = $this->getCardNumberFromPin($data['pin']);
+
+                // Simpan ke attendance_logs
+                AttendanceLog::create([
+                    'attendance_machine_id' => $machine->id,
+                    'user_pin' => $data['pin'],
+                    'user_name' => $userName,
+                    'card_number' => $cardNumber,
+                    'datetime' => $logDateTime,
+                    'verified_method' => $this->getVerifiedMethod($data['verified']),
+                    'verified_code' => (int)$data['verified'],
+                    'status_code' => 'check_in',
+                    'is_processed' => false,
+                    'raw_data' => $data['raw_data']
+                ]);
+                
+                $processedCount++;
+                
+            } catch (Exception $e) {
+                Log::error("Error processing today attendance data: " . $e->getMessage(), $data);
+            }
+        }
+        
+        Log::info("Processed today attendance data", [
+            'target_date' => $targetDate,
+            'processed_count' => $processedCount
+        ]);
+        
+        return $processedCount;
+    }
+
+    /**
      * Parse data response dari mesin
      */
     private function parseData($data, $start, $end): string
@@ -218,10 +368,30 @@ class AttendanceMachineService
     }
 
     /**
-     * Get user name from PIN (berdasarkan data mesin)
+     * Get user name from PIN (berdasarkan data mesin dengan dukungan PIN dan PIN2)
      */
     private function getUserNameFromPin(string $pin): string
     {
+        // Priority 1: Cari berdasarkan PIN utama di employee_attendance
+        $employeeAttendance = \App\Models\EmployeeAttendance::where('machine_user_id', $pin)
+            ->where('is_active', true)
+            ->first();
+            
+        if ($employeeAttendance && !empty($employeeAttendance->name)) {
+            return $employeeAttendance->name;
+        }
+        
+        // Priority 2: Cari berdasarkan PIN2 di raw_data (untuk PIN alias)
+        $employeeByPin2 = \App\Models\EmployeeAttendance::where('is_active', true)
+            ->whereRaw("JSON_EXTRACT(raw_data, '$.raw_data') LIKE ?", ["%<PIN2>{$pin}</PIN2>%"])
+            ->first();
+            
+        if ($employeeByPin2 && !empty($employeeByPin2->name)) {
+            \Illuminate\Support\Facades\Log::info("Found user by PIN2: {$pin} -> {$employeeByPin2->name}");
+            return $employeeByPin2->name;
+        }
+        
+        // Priority 3: Fallback ke mapping manual (untuk kompatibilitas)
         $pinToNameMapping = [
             '1' => 'E.H Michael Palar',
             '2' => 'Budi Dharmadi', 
@@ -239,10 +409,33 @@ class AttendanceMachineService
     }
 
     /**
-     * Get card number from PIN (berdasarkan data mesin)
+     * Get card number from PIN (berdasarkan data mesin dengan dukungan PIN dan PIN2)
      */
     private function getCardNumberFromPin(string $pin): ?string
     {
+        // Priority 1: Cari berdasarkan PIN utama
+        $employeeAttendance = \App\Models\EmployeeAttendance::where('machine_user_id', $pin)
+            ->where('is_active', true)
+            ->first();
+            
+        if ($employeeAttendance && !empty($employeeAttendance->card_number)) {
+            return $employeeAttendance->card_number;
+        }
+        
+        // Priority 2: Cari berdasarkan PIN2 dan extract Card dari raw_data
+        $employeeByPin2 = \App\Models\EmployeeAttendance::where('is_active', true)
+            ->whereRaw("JSON_EXTRACT(raw_data, '$.raw_data') LIKE ?", ["%<PIN2>{$pin}</PIN2>%"])
+            ->first();
+            
+        if ($employeeByPin2) {
+            // Extract card number dari raw_data XML
+            $rawData = $employeeByPin2->raw_data['raw_data'] ?? '';
+            if (preg_match('/<Card>([^<]+)<\/Card>/', $rawData, $matches)) {
+                return $matches[1] !== '0' ? $matches[1] : null;
+            }
+        }
+        
+        // Priority 3: Fallback ke mapping manual
         $pinToCardMapping = [
             '1' => '1681542239',
             '2' => '1225559887', 

@@ -69,6 +69,16 @@
             margin-bottom: 20px;
             text-align: center;
         }
+        .controls .btn {
+            margin: 5px;
+        }
+        @media (max-width: 768px) {
+            .controls .btn {
+                display: block;
+                margin: 5px auto;
+                width: 200px;
+            }
+        }
         .btn {
             background: #007bff;
             color: white;
@@ -87,6 +97,19 @@
         }
         .btn.success:hover {
             background: #1e7e34;
+        }
+        .btn.warning {
+            background: #ffc107;
+            color: #333;
+        }
+        .btn.warning:hover {
+            background: #e0a800;
+        }
+        .btn.danger {
+            background: #dc3545;
+        }
+        .btn.danger:hover {
+            background: #c82333;
         }
         .attendance-table {
             width: 100%;
@@ -142,15 +165,30 @@
         <div class="header">
             <h1>📊 Attendance Hari Ini</h1>
             <div class="current-time" id="currentTime"></div>
+            <div style="margin-top: 15px; font-size: 14px; color: #666;">
+                <strong>💡 Tips:</strong> Gunakan <strong>"Sync Hari Ini"</strong> untuk sync rutin harian (cepat), 
+                <strong>"Sync Semua Data"</strong> hanya untuk setup awal (lambat)
+            </div>
         </div>
 
         <div class="controls">
-            <button class="btn" onclick="loadData()">🔄 Refresh Data</button>
-            <button class="btn success" onclick="syncFromMachine()">📡 Sync dari Mesin</button>
+            <button class="btn" onclick="loadData()" title="Refresh data tanpa sync dari mesin">🔄 Refresh Data</button>
+            <button class="btn success" onclick="syncTodayOnly()" title="Sync cepat - hanya data hari ini (5-10 detik)">⚡ Sync Hari Ini</button>
+            <button class="btn warning" onclick="syncAllData()" title="Sync lambat - semua data dari mesin (30-60 detik)">📡 Sync Semua Data</button>
+        </div>
+        
+        <div style="text-align: center; margin-top: 10px; font-size: 12px; color: #888;">
+            <span style="margin-right: 20px;">⚡ <strong>Sync Hari Ini:</strong> Optimized untuk penggunaan harian</span>
+            <span>📡 <strong>Sync Semua Data:</strong> Untuk setup awal atau reset data</span>
         </div>
 
         <div class="summary" id="summary">
             <div class="loading">⏳ Loading data...</div>
+        </div>
+        
+        <div id="syncStats" style="display: none; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #28a745;">
+            <h4 style="margin: 0 0 10px 0; color: #28a745;">📊 Statistik Sync Terakhir</h4>
+            <div id="syncStatsContent"></div>
         </div>
 
         <div id="attendanceData">
@@ -158,6 +196,16 @@
         </div>
 
         <div class="last-updated" id="lastUpdated"></div>
+        
+        <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center; border-top: 3px solid #007bff;">
+            <h4 style="margin: 0 0 10px 0; color: #007bff;">🚀 Sistem Attendance Optimized</h4>
+            <p style="margin: 5px 0; font-size: 14px; color: #666;">
+                <strong>Tips:</strong> Gunakan "Sync Hari Ini" untuk sync rutin harian yang lebih cepat!
+            </p>
+            <p style="margin: 0; font-size: 12px; color: #888;">
+                Dashboard ini akan auto-refresh setiap 30 detik untuk menampilkan data terkini.
+            </p>
+        </div>
     </div>
 
     <script>
@@ -280,15 +328,15 @@
             return statusMap[status] || status;
         }
 
-                 // Sync from machine (today only)
-        async function syncFromMachine() {
+        // Sync hari ini saja (optimized - cepat)
+        async function syncTodayOnly() {
             const btn = event.target;
             const originalText = btn.textContent;
             btn.textContent = '⏳ Syncing...';
             btn.disabled = true;
 
             try {
-                const response = await fetch('/api/attendance/sync-today', {
+                const response = await fetch('/api/attendance/sync-today-only', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -298,14 +346,66 @@
                 const data = await response.json();
                 
                 if (data.success) {
+                    const stats = data.data.optimization_info || {};
+                    
+                    // Show sync statistics
+                    displaySyncStats('today', stats);
+                    
                     alert('✅ Sync hari ini berhasil! Data akan direfresh...');
                     loadData();
                 } else {
                     throw new Error(data.message || 'Sync failed');
                 }
             } catch (error) {
-                console.error('Error syncing:', error);
-                alert('❌ Error sync: ' + error.message);
+                console.error('Error syncing today:', error);
+                alert('❌ Error sync hari ini: ' + error.message);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        // Sync semua data (full sync - lambat)
+        async function syncAllData() {
+            const confirmed = confirm(
+                '🚨 PERHATIAN!\n\n' +
+                'Sync semua data akan:\n' +
+                '• Mengambil SEMUA data dari mesin\n' +
+                '• Memakan waktu 30-60 detik\n' +
+                '• Sebaiknya hanya dilakukan saat setup awal\n\n' +
+                'Untuk penggunaan harian, gunakan "Sync Hari Ini" saja.\n\n' +
+                'Apakah Anda yakin ingin melanjutkan?'
+            );
+            
+            if (!confirmed) return;
+
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ Syncing All Data...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/attendance/sync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Show sync statistics for full sync
+                    displaySyncStats('full', data.data || {});
+                    
+                    alert('✅ Sync semua data berhasil! Data akan direfresh...');
+                    loadData();
+                } else {
+                    throw new Error(data.message || 'Sync failed');
+                }
+            } catch (error) {
+                console.error('Error syncing all data:', error);
+                alert('❌ Error sync semua data: ' + error.message);
             } finally {
                 btn.textContent = originalText;
                 btn.disabled = false;
@@ -362,6 +462,51 @@
         function updateLastUpdated() {
             const now = new Date().toLocaleTimeString('id-ID');
             document.getElementById('lastUpdated').textContent = `Terakhir diupdate: ${now}`;
+        }
+
+        // Display sync statistics
+        function displaySyncStats(type, data) {
+            const syncStatsDiv = document.getElementById('syncStats');
+            const syncStatsContent = document.getElementById('syncStatsContent');
+            
+            let statsHtml = '';
+            
+            if (type === 'today') {
+                statsHtml = `
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; font-size: 14px;">
+                        <div><strong>📊 Total dari mesin:</strong> ${data.total_from_machine || 0}</div>
+                        <div><strong>📅 Filtered hari ini:</strong> ${data.filtered_today || 0}</div>
+                        <div><strong>✅ Processed:</strong> ${data.processed || 0}</div>
+                        <div><strong>⚡ Jenis:</strong> <span style="color: #28a745;">Sync Hari Ini</span></div>
+                    </div>
+                    <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                        <strong>Optimasi:</strong> ${data.message || 'Hanya data hari ini yang diproses - lebih cepat!'}
+                    </div>
+                `;
+            } else if (type === 'full') {
+                const pullResult = data.pull_result || {};
+                const processResult = data.process_result || {};
+                
+                statsHtml = `
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; font-size: 14px;">
+                        <div><strong>📊 Data pulled:</strong> ${pullResult.data ? pullResult.data.length : 0}</div>
+                        <div><strong>✅ Processed:</strong> ${processResult.processed || 0}</div>
+                        <div><strong>🔄 Jenis:</strong> <span style="color: #ffc107;">Sync Semua Data</span></div>
+                        <div><strong>⏱️ Status:</strong> Selesai</div>
+                    </div>
+                    <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                        <strong>Info:</strong> Semua data dari mesin telah diproses. Untuk sync rutin selanjutnya, gunakan "Sync Hari Ini".
+                    </div>
+                `;
+            }
+            
+            syncStatsContent.innerHTML = statsHtml;
+            syncStatsDiv.style.display = 'block';
+            
+            // Auto hide after 10 seconds
+            setTimeout(() => {
+                syncStatsDiv.style.display = 'none';
+            }, 10000);
         }
 
         // Initialize

@@ -283,28 +283,51 @@ class AttendanceProcessingService
      */
     public function getAttendanceSummary($date): array
     {
-        $attendances = Attendance::where('date', $date)->get();
+        // Get registered user PINs
+        $registeredUserPins = \App\Models\EmployeeAttendance::where('is_active', true)
+            ->pluck('machine_user_id')
+            ->toArray();
 
+        // Count unique users yang benar-benar tap hari ini
+        $actualTappedUsers = AttendanceLog::whereDate('datetime', $date)
+            ->whereIn('user_pin', $registeredUserPins)
+            ->distinct('user_pin')
+            ->count('user_pin');
+
+        // Get attendances for the date (hanya user terdaftar)
+        $attendances = Attendance::where('date', $date)
+            ->whereIn('user_pin', $registeredUserPins)
+            ->get();
+
+        // Initialize summary
         $summary = [
             'date' => $date,
-            'total_users' => $attendances->count(),
+            'total_users' => $actualTappedUsers, // Hanya user terdaftar yang tap hari ini
+            'total_registered_users' => count($registeredUserPins), // Total user terdaftar di mesin (32)
             'present_ontime' => 0,
             'present_late' => 0,
             'absent' => 0,
             'on_leave' => 0,
             'sick_leave' => 0,
             'permission' => 0,
-            'attendance_rate' => 0
+            'attendance_rate' => 0,
+            'total_attendance_records' => $attendances->count(),
+            'total_logs_today' => AttendanceLog::whereDate('datetime', $date)
+                ->whereIn('user_pin', $registeredUserPins)
+                ->count()
         ];
 
+        // Count by status
         foreach ($attendances as $attendance) {
-            $summary[$attendance->status]++;
+            if (isset($summary[$attendance->status])) {
+                $summary[$attendance->status]++;
+            }
         }
 
-        // Calculate attendance rate (present users / total users * 100)
+        // Calculate attendance rate (present users / total registered users * 100)
         $presentCount = $summary['present_ontime'] + $summary['present_late'];
-        $summary['attendance_rate'] = $summary['total_users'] > 0 
-            ? round(($presentCount / $summary['total_users']) * 100, 2) 
+        $summary['attendance_rate'] = count($registeredUserPins) > 0 
+            ? round(($presentCount / count($registeredUserPins)) * 100, 2) 
             : 0;
 
         return $summary;

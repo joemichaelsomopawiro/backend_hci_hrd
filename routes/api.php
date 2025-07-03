@@ -107,6 +107,7 @@ Route::prefix('attendance')->group(function () {
     Route::get('/dashboard', [AttendanceController::class, 'dashboard']);
     Route::get('/today-realtime', [AttendanceController::class, 'todayRealtime']);
     Route::get('/machine/status', [AttendanceController::class, 'machineStatus']);
+    Route::get('/debug-sync', [AttendanceController::class, 'debugSync']);
     
     // Main attendance routes  
     Route::get('/list', [AttendanceController::class, 'index']);
@@ -117,6 +118,7 @@ Route::prefix('attendance')->group(function () {
     // Sync and processing routes
     Route::post('/sync', [AttendanceController::class, 'syncFromMachine']);
     Route::post('/sync-today', [AttendanceController::class, 'syncToday']);
+    Route::post('/sync-today-only', [AttendanceController::class, 'syncTodayOnly']);
     Route::post('/sync/users', [AttendanceController::class, 'syncUserData']);
     Route::get('/users', [AttendanceController::class, 'getUserList']);
     Route::post('/process', [AttendanceController::class, 'processLogs']);

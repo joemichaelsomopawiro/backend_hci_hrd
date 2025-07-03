@@ -3,19 +3,36 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
     public function up()
     {
-        // No foreign keys exist, just drop the columns
-        Schema::table('attendances', function (Blueprint $table) {
-            $table->dropColumn('employee_id');
-        });
+        // Use DB queries with error handling to drop columns if they exist
+        try {
+            // Check if employee_id column exists in attendances table
+            $columns = DB::select("DESCRIBE attendances");
+            $hasEmployeeId = collect($columns)->contains('Field', 'employee_id');
+            
+            if ($hasEmployeeId) {
+                DB::statement("ALTER TABLE attendances DROP COLUMN employee_id");
+            }
+        } catch (\Exception $e) {
+            // Column doesn't exist or already dropped, continue
+        }
 
-        Schema::table('attendance_logs', function (Blueprint $table) {
-            $table->dropColumn('employee_id');
-        });
+        try {
+            // Check if employee_id column exists in attendance_logs table
+            $columns = DB::select("DESCRIBE attendance_logs");
+            $hasEmployeeId = collect($columns)->contains('Field', 'employee_id');
+            
+            if ($hasEmployeeId) {
+                DB::statement("ALTER TABLE attendance_logs DROP COLUMN employee_id");
+            }
+        } catch (\Exception $e) {
+            // Column doesn't exist or already dropped, continue
+        }
     }
 
     public function down()
