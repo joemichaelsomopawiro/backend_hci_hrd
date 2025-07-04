@@ -247,6 +247,11 @@ class Employee extends Model
             ->first();
     }
 
+    public function employeeAttendance(): HasOne
+    {
+        return $this->hasOne(EmployeeAttendance::class);
+    }
+
     /**
      * Accessor untuk mendapatkan status kehadiran karyawan saat ini.
      * Ini akan bisa diakses seperti kolom biasa: $employee->current_status

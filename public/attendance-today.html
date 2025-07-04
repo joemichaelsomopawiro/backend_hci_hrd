@@ -158,6 +158,113 @@
             font-size: 14px;
             margin-top: 20px;
         }
+        
+        /* Custom Popup Styles */
+        .popup-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            z-index: 1000;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        .popup-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+            animation: popIn 0.3s ease;
+        }
+        
+        .popup-icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+        }
+        
+        .popup-title {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        .popup-message {
+            font-size: 16px;
+            line-height: 1.5;
+            color: #666;
+            margin-bottom: 25px;
+        }
+        
+        .popup-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+        }
+        
+        .popup-btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-width: 100px;
+        }
+        
+        .popup-btn.primary {
+            background: #007bff;
+            color: white;
+        }
+        
+        .popup-btn.primary:hover {
+            background: #0056b3;
+        }
+        
+        .popup-btn.secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .popup-btn.secondary:hover {
+            background: #545b62;
+        }
+        
+        .popup-btn.success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .popup-btn.success:hover {
+            background: #1e7e34;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        @keyframes popIn {
+            from { 
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(0.8);
+            }
+            to { 
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+        }
     </style>
 </head>
 <body>
@@ -172,14 +279,13 @@
         </div>
 
         <div class="controls">
-            <button class="btn" onclick="loadData()" title="Refresh data tanpa sync dari mesin">🔄 Refresh Data</button>
-            <button class="btn success" onclick="syncAll()" title="Sync lengkap - users + attendance hari ini (10-15 detik)">🚀 Sync All</button>
-            <button class="btn warning" onclick="fullSync()" title="Sync penuh - users + semua attendance data (60-90 detik)">📡 Full Sync</button>
+            <button class="btn success" onclick="syncAll()" title="Refresh data terbaru dari mesin + update linking employee">🔄 Refresh</button>
+            <button class="btn warning" onclick="fullSync()" title="Sync penuh - semua data dari mesin (60-90 detik)">📡 Full Sync</button>
         </div>
         
         <div style="text-align: center; margin-top: 10px; font-size: 12px; color: #888;">
             <span style="margin-right: 20px;">🚀 <strong>Auto Sync:</strong> Otomatis setiap refresh halaman</span>
-            <span>🔄 <strong>Manual Sync:</strong> Tersedia jika diperlukan sync paksa</span>
+            <span>🔄 <strong>Manual Refresh:</strong> Tersedia untuk update paksa + linking employee</span>
         </div>
 
         <div class="summary" id="summary">
@@ -199,6 +305,18 @@
         
         <div id="autoSyncStatus" style="text-align: center; margin-top: 10px; padding: 8px; background: #e3f2fd; border-radius: 5px; font-size: 12px; color: #1976d2; display: none;">
             <span id="autoSyncStatusText">🚀 Auto sync status</span>
+        </div>
+        
+        <!-- Custom Popup -->
+        <div id="customPopup" class="popup-overlay">
+            <div class="popup-content">
+                <div id="popupIcon" class="popup-icon">ℹ️</div>
+                <div id="popupTitle" class="popup-title">Informasi</div>
+                <div id="popupMessage" class="popup-message">Pesan popup</div>
+                <div id="popupButtons" class="popup-buttons">
+                    <button class="popup-btn success" onclick="closePopup()">OK</button>
+                </div>
+            </div>
         </div>
         
         <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center; border-top: 3px solid #007bff;">
@@ -228,7 +346,50 @@
             document.getElementById('currentTime').textContent = timeString;
         }
 
-                 // Load attendance data (real-time today only)
+        // Custom Popup Functions
+        function showPopup(title, message, icon = 'ℹ️', buttons = null) {
+            document.getElementById('popupTitle').textContent = title;
+            document.getElementById('popupMessage').innerHTML = message;
+            document.getElementById('popupIcon').textContent = icon;
+            
+            const buttonContainer = document.getElementById('popupButtons');
+            if (buttons) {
+                buttonContainer.innerHTML = '';
+                buttons.forEach(btn => {
+                    const button = document.createElement('button');
+                    button.className = `popup-btn ${btn.class || 'primary'}`;
+                    button.textContent = btn.text;
+                    button.onclick = btn.onclick || closePopup;
+                    buttonContainer.appendChild(button);
+                });
+            } else {
+                buttonContainer.innerHTML = '<button class="popup-btn success" onclick="closePopup()">OK</button>';
+            }
+            
+            document.getElementById('customPopup').style.display = 'block';
+        }
+        
+        function closePopup() {
+            document.getElementById('customPopup').style.display = 'none';
+        }
+        
+        function showSuccessPopup(title, message) {
+            showPopup(title, message, '✅');
+        }
+        
+        function showErrorPopup(title, message) {
+            showPopup(title, message, '❌');
+        }
+        
+        function showConfirmPopup(title, message, onConfirm, onCancel = closePopup) {
+            const buttons = [
+                { text: 'Ya', class: 'primary', onclick: onConfirm },
+                { text: 'Batal', class: 'secondary', onclick: onCancel }
+            ];
+            showPopup(title, message, '🚨', buttons);
+        }
+
+        // Load attendance data (real-time today only)
         async function loadData() {
             try {
                 const response = await fetch('/api/attendance/today-realtime');
@@ -237,7 +398,6 @@
                 if (data.success) {
                     displaySummary(data.data.summary);
                     displayAttendanceList(data.data.attendances);
-                    displayLatestLogs(data.data.latest_logs);
                     updateLastUpdated();
                 } else {
                     throw new Error(data.message || 'Failed to load data');
@@ -249,7 +409,7 @@
             }
         }
 
-        // Display summary cards
+        // Display summary cards (removed attendance rate)
         function displaySummary(summary) {
             const summaryHtml = `
                 <div class="summary-card">
@@ -263,10 +423,6 @@
                 <div class="summary-card warning">
                     <h3>${summary.present_late}</h3>
                     <p>Hadir Terlambat</p>
-                </div>
-                <div class="summary-card info">
-                    <h3>${summary.attendance_rate}%</h3>
-                    <p>Tingkat Kehadiran</p>
                 </div>
             `;
             document.getElementById('summary').innerHTML = summaryHtml;
@@ -352,11 +508,11 @@
             return statusMap[status] || status;
         }
 
-        // Sync lengkap - users + attendance hari ini (cepat)
+        // Refresh - users + attendance hari ini + link employee (cepat)
         async function syncAll() {
             const btn = event.target;
             const originalText = btn.textContent;
-            btn.textContent = '⏳ Syncing All...';
+            btn.textContent = '⏳ Refreshing...';
             btn.disabled = true;
 
             try {
@@ -374,7 +530,21 @@
                     throw new Error('Sync users failed: ' + usersData.message);
                 }
 
-                // Step 2: Sync attendance hari ini
+                // Step 2: Link employee dengan employee_attendance
+                const linkResponse = await fetch('/api/attendance/link-employees', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const linkData = await linkResponse.json();
+                
+                if (!linkData.success) {
+                    console.warn('Employee linking failed:', linkData.message);
+                }
+
+                // Step 3: Sync attendance hari ini
                 const attendanceResponse = await fetch('/api/attendance/sync-today-only', {
                     method: 'POST',
                     headers: {
@@ -388,21 +558,27 @@
                     throw new Error('Sync attendance failed: ' + attendanceData.message);
                 }
 
-                // Show success message
-                alert(`✅ Sync lengkap berhasil!\n\n` +
-                      `👥 Users: ${usersData.total || 0} karyawan\n` +
-                      `📊 Attendance: Data hari ini telah diproses\n\n` +
-                      `Data akan direfresh...`);
+                // Show success popup
+                const linkedCount = linkData.success ? (linkData.linked || 0) : 0;
+                showSuccessPopup(
+                    'Refresh Berhasil!', 
+                    `👥 <strong>Users:</strong> ${usersData.total || 0} karyawan<br>` +
+                    `🔗 <strong>Linked:</strong> ${linkedCount} employee terhubung<br>` +
+                    `📊 <strong>Attendance:</strong> Data hari ini telah diproses<br><br>` +
+                    `Data akan direfresh...`
+                );
                 
                 // Show sync statistics
                 const stats = attendanceData.data.optimization_info || {};
                 displaySyncStats('today', stats);
                 
-                loadData();
+                setTimeout(() => {
+                    loadData();
+                }, 1500);
                 
             } catch (error) {
-                console.error('Error syncing all:', error);
-                alert('❌ Error sync lengkap: ' + error.message);
+                console.error('Error refreshing:', error);
+                showErrorPopup('Error Refresh', error.message);
             } finally {
                 btn.textContent = originalText;
                 btn.disabled = false;
@@ -411,19 +587,23 @@
 
         // Full sync - users + semua attendance data (lambat)
         async function fullSync() {
-            const confirmed = confirm(
-                '🚨 PERHATIAN - FULL SYNC!\n\n' +
-                'Full sync akan:\n' +
-                '• Sync SEMUA data karyawan dari mesin\n' +
-                '• Sync SEMUA data attendance dari mesin\n' +
-                '• Memakan waktu 60-90 detik\n' +
-                '• Sebaiknya hanya dilakukan saat setup awal\n\n' +
-                'Untuk penggunaan harian, gunakan "Sync All" saja.\n\n' +
-                'Apakah Anda yakin ingin melanjutkan?'
+            showConfirmPopup(
+                'PERHATIAN - FULL SYNC!',
+                'Full sync akan:<br>' +
+                '• Sync SEMUA data karyawan dari mesin<br>' +
+                '• Sync SEMUA data attendance dari mesin<br>' +
+                '• Memakan waktu 60-90 detik<br>' +
+                '• Sebaiknya hanya dilakukan saat setup awal<br><br>' +
+                '<strong>Untuk penggunaan harian, gunakan tombol "Refresh" saja.</strong><br><br>' +
+                'Apakah Anda yakin ingin melanjutkan?',
+                async () => {
+                    closePopup();
+                    await performFullSync();
+                }
             );
-            
-            if (!confirmed) return;
-
+        }
+        
+        async function performFullSync() {
             const btn = event.target;
             const originalText = btn.textContent;
             btn.textContent = '⏳ Full Syncing...';
@@ -444,7 +624,17 @@
                     throw new Error('Sync users failed: ' + usersData.message);
                 }
 
-                // Step 2: Sync semua attendance data
+                // Step 2: Link employee dengan employee_attendance
+                const linkResponse = await fetch('/api/attendance/link-employees', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const linkData = await linkResponse.json();
+
+                // Step 3: Sync semua attendance data
                 const attendanceResponse = await fetch('/api/attendance/sync', {
                     method: 'POST',
                     headers: {
@@ -458,71 +648,33 @@
                     throw new Error('Sync attendance failed: ' + attendanceData.message);
                 }
 
-                // Show success message
-                alert(`✅ Full sync berhasil!\n\n` +
-                      `👥 Users: ${usersData.total || 0} karyawan\n` +
-                      `📊 Attendance: Semua data telah diproses\n\n` +
-                      `Data akan direfresh...`);
+                // Show success popup
+                const linkedCount = linkData.success ? (linkData.linked || 0) : 0;
+                showSuccessPopup(
+                    'Full Sync Berhasil!',
+                    `👥 <strong>Users:</strong> ${usersData.total || 0} karyawan<br>` +
+                    `🔗 <strong>Linked:</strong> ${linkedCount} employee terhubung<br>` +
+                    `📊 <strong>Attendance:</strong> Semua data telah diproses<br><br>` +
+                    `Data akan direfresh...`
+                );
                 
                 // Show sync statistics for full sync
                 displaySyncStats('full', attendanceData.data || {});
                 
-                loadData();
+                setTimeout(() => {
+                    loadData();
+                }, 1500);
                 
             } catch (error) {
                 console.error('Error full syncing:', error);
-                alert('❌ Error full sync: ' + error.message);
+                showErrorPopup('Error Full Sync', error.message);
             } finally {
                 btn.textContent = originalText;
                 btn.disabled = false;
             }
         }
 
-        // Display latest logs (for debugging taps)
-        function displayLatestLogs(logs) {
-            if (!logs || logs.length === 0) {
-                return;
-            }
 
-            // Add logs section after attendance table
-            let logsHtml = `
-                <div style="margin-top: 30px;">
-                    <h3>📋 Logs Tap Terbaru (10 terakhir)</h3>
-                    <table class="attendance-table">
-                        <thead>
-                            <tr>
-                                <th>Waktu Tap</th>
-                                <th>Nama</th>
-                                <th>PIN</th>
-                                <th>Card Number</th>
-                                <th>Method</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-            `;
-
-            logs.forEach(log => {
-                const tapTime = new Date(log.datetime).toLocaleString('id-ID');
-                const processedStatus = log.is_processed ? '✅ Processed' : '⏳ Pending';
-
-                logsHtml += `
-                    <tr>
-                        <td><strong>${tapTime}</strong></td>
-                        <td>${log.user_name || 'N/A'}</td>
-                        <td>${log.user_pin}</td>
-                        <td>${log.card_number || 'N/A'}</td>
-                        <td>${log.verified_method}</td>
-                        <td><span style="font-size: 12px;">${processedStatus}</span></td>
-                    </tr>
-                `;
-            });
-
-            logsHtml += '</tbody></table></div>';
-            
-            // Append to attendance data
-            document.getElementById('attendanceData').innerHTML += logsHtml;
-        }
 
         // Update last updated time
         function updateLastUpdated() {
@@ -643,7 +795,17 @@
                     throw new Error('Auto sync users failed: ' + usersData.message);
                 }
 
-                // Step 2: Sync attendance hari ini
+                // Step 2: Link employee dengan employee_attendance
+                const linkResponse = await fetch('/api/attendance/link-employees', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const linkData = await linkResponse.json();
+
+                // Step 3: Sync attendance hari ini
                 const attendanceResponse = await fetch('/api/attendance/sync-today-only', {
                     method: 'POST',
                     headers: {
@@ -661,8 +823,9 @@
                 localStorage.setItem('lastAutoSync', now.toString());
 
                 // Show success message briefly
+                const linkedCount = linkData.success ? (linkData.data?.linked || 0) : 0;
                 document.getElementById('summary').innerHTML = 
-                    `<div style="color: #28a745; text-align: center;">✅ Auto sync berhasil! Users: ${usersData.total || 0}, Attendance: Hari ini</div>`;
+                    `<div style="color: #28a745; text-align: center;">✅ Auto sync berhasil! Users: ${usersData.total || 0}, Linked: ${linkedCount}, Attendance: Hari ini</div>`;
 
                 // Update auto sync status
                 updateAutoSyncStatus(true, usersData.total || 0);

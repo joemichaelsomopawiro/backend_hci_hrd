@@ -120,6 +120,7 @@ Route::prefix('attendance')->group(function () {
     Route::post('/sync-today', [AttendanceController::class, 'syncToday']);
     Route::post('/sync-today-only', [AttendanceController::class, 'syncTodayOnly']);
     Route::post('/sync/users', [AttendanceController::class, 'syncUserData']);
+    Route::post('/link-employees', [AttendanceController::class, 'linkEmployees']);
     Route::get('/users', [AttendanceController::class, 'getUserList']);
     Route::post('/process', [AttendanceController::class, 'processLogs']);
     Route::post('/process-today', [AttendanceController::class, 'processToday']);

@@ -14,6 +14,7 @@ class EmployeeAttendance extends Model
 
     protected $fillable = [
         'attendance_machine_id',
+        'employee_id',
         'machine_user_id',
         'name',
         'card_number',
@@ -35,6 +36,11 @@ class EmployeeAttendance extends Model
     public function attendanceMachine(): BelongsTo
     {
         return $this->belongsTo(AttendanceMachine::class);
+    }
+
+    public function employee(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class);
     }
 
     // Scopes

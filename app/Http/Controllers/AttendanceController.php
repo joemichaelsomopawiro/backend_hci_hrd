@@ -966,4 +966,97 @@ class AttendanceController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * POST /api/attendance/link-employees
+     * Link employee dengan employee_attendance berdasarkan nama yang sama
+     */
+    public function linkEmployees(Request $request): JsonResponse
+    {
+        try {
+            $linkedCount = 0;
+            $skippedCount = 0;
+            $errors = [];
+
+            // Get all active employees
+            $employees = \App\Models\Employee::where('status_karyawan', 'active')->get();
+            
+            // Get all employee_attendance records
+            $attendanceUsers = \App\Models\EmployeeAttendance::where('is_active', true)->get();
+
+            foreach ($employees as $employee) {
+                try {
+                    // Cari matching berdasarkan nama (case insensitive, trim whitespace)
+                    $employeeName = trim(strtolower($employee->nama_lengkap));
+                    
+                    $matchingAttendanceUser = $attendanceUsers->first(function ($attendanceUser) use ($employeeName) {
+                        $attendanceName = trim(strtolower($attendanceUser->name));
+                        return $attendanceName === $employeeName;
+                    });
+
+                    if ($matchingAttendanceUser) {
+                        // Check if already linked
+                        $existingLink = \App\Models\EmployeeAttendance::where('id', $matchingAttendanceUser->id)
+                            ->whereNotNull('employee_id')
+                            ->first();
+
+                        if (!$existingLink) {
+                            // Link employee dengan employee_attendance
+                            $matchingAttendanceUser->update([
+                                'employee_id' => $employee->id
+                            ]);
+                            
+                            $linkedCount++;
+                            
+                            Log::info("Linked employee with attendance user", [
+                                'employee_id' => $employee->id,
+                                'employee_name' => $employee->nama_lengkap,
+                                'attendance_user_id' => $matchingAttendanceUser->id,
+                                'machine_user_id' => $matchingAttendanceUser->machine_user_id
+                            ]);
+                        } else {
+                            $skippedCount++;
+                        }
+                    } else {
+                        Log::info("No matching attendance user found for employee: " . $employee->nama_lengkap);
+                    }
+                    
+                } catch (\Exception $e) {
+                    $errors[] = "Error linking employee {$employee->nama_lengkap}: " . $e->getMessage();
+                    Log::error("Error linking employee", [
+                        'employee_id' => $employee->id,
+                        'employee_name' => $employee->nama_lengkap,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
+            $message = "Berhasil link {$linkedCount} employee";
+            if ($skippedCount > 0) {
+                $message .= ", {$skippedCount} sudah terlink sebelumnya";
+            }
+            if (count($errors) > 0) {
+                $message .= ", " . count($errors) . " error";
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'data' => [
+                    'linked' => $linkedCount,
+                    'skipped' => $skippedCount,
+                    'errors' => $errors,
+                    'total_employees' => $employees->count(),
+                    'total_attendance_users' => $attendanceUsers->count()
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error in linkEmployees: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 } 
