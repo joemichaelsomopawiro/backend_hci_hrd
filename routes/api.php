@@ -199,15 +199,25 @@ Route::prefix('worship-attendance')->middleware(['auth:sanctum'])->group(functio
 
 // ===== MORNING REFLECTION ROUTES =====
 
+// Endpoint reset rate limit (khusus testing, tanpa auth)
+Route::post('/morning-reflection/reset-rate-limit', [\App\Http\Controllers\MorningReflectionController::class, 'resetRateLimit']);
+
+// ===== DEBUG PANEL ENDPOINTS =====
+Route::get('/morning-reflection/test-db', [MorningReflectionController::class, 'testDatabase']);
+Route::post('/morning-reflection/join', [MorningReflectionController::class, 'joinZoom']);
+Route::post('/morning-reflection/attendance', [MorningReflectionController::class, 'recordAttendance']);
+
 // Routes untuk semua user (dengan autentikasi)
 Route::prefix('morning-reflection')->middleware(['auth:sanctum'])->group(function () {
     // Status renungan pagi hari ini
     Route::get('/status', [MorningReflectionController::class, 'getStatus']);
     Route::get('/status-user', [MorningReflectionController::class, 'status']);
     
-    // Absen renungan pagi
-    Route::post('/attend', [MorningReflectionController::class, 'attend']);
-    Route::post('/attend-user', [MorningReflectionController::class, 'attendUser']);
+    // Absen renungan pagi - dengan rate limiting khusus
+    Route::middleware(['attendance.rate.limit'])->group(function () {
+        Route::post('/attend', [MorningReflectionController::class, 'attend']);
+        Route::post('/attend-user', [MorningReflectionController::class, 'attendUser']);
+    });
     
     // Status kehadiran user
     Route::get('/attendance', [MorningReflectionController::class, 'getAttendance']);
@@ -228,7 +238,7 @@ Route::prefix('morning-reflection')->middleware(['auth:sanctum'])->group(functio
 });
 
 // Routes untuk GA (General Affairs) - dengan role middleware
-Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:ga'])->group(function () {
+Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:General Affairs'])->group(function () {
     // Dashboard kehadiran hari ini
     Route::get('/today-attendance', [MorningReflectionController::class, 'getTodayAttendance']);
     Route::get('/today-attendance-admin', [MorningReflectionController::class, 'todayAttendance']);

@@ -1,14 +1,27 @@
 <?php
-    namespace App\Models;
-    use Illuminate\Database\Eloquent\Model;
 
-    class MorningReflection extends Model
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Carbon\Carbon;
+
+class MorningReflection extends Model
 {
-    protected $fillable = ['employee_id', 'date', 'status', 'join_time'];
-    
+    use HasFactory;
+
+    protected $fillable = [
+        'employee_id',
+        'date',
+        'status',
+        'join_time',
+        'testing_mode'
+    ];
+
     protected $casts = [
         'date' => 'date',
-        'join_time' => 'datetime'
+        'join_time' => 'datetime',
+        'testing_mode' => 'boolean'
     ];
 
     public function employee()

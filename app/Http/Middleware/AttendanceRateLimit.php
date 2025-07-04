@@ -17,7 +17,13 @@ class AttendanceRateLimit
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $employeeId = $request->input('employee_id');
+        // Lewati rate limit di local/testing
+        if (app()->environment('local', 'testing')) {
+            return $next($request);
+        }
+        
+        // Support both employee_id and user_id parameters
+        $employeeId = $request->input('employee_id') ?? $request->input('user_id');
         
         if (!$employeeId) {
             return $next($request);
@@ -29,11 +35,16 @@ class AttendanceRateLimit
         // Get current attempt count
         $attempts = Cache::get($key, 0);
         
-        // Allow maximum 5 attempts per employee per day
-        if ($attempts >= 5) {
+        // Determine rate limit based on route
+        $isMorningReflection = str_contains($request->path(), 'morning-reflection');
+        $maxAttempts = $isMorningReflection ? 10 : 5; // 10 for morning reflection, 5 for others
+        
+        if ($attempts >= $maxAttempts) {
             Log::warning('Rate limit exceeded for attendance', [
                 'employee_id' => $employeeId,
                 'attempts' => $attempts,
+                'max_attempts' => $maxAttempts,
+                'route' => $request->path(),
                 'ip' => $request->ip(),
                 'user_agent' => $request->userAgent()
             ]);
