@@ -12,16 +12,20 @@ use Illuminate\Support\Collection;
 class AttendanceProcessingService
 {
     /**
-     * Proses semua attendance logs yang belum diproses
+     * Proses semua attendance logs yang belum diproses (hanya PIN terdaftar)
      */
     public function processUnprocessedLogs(): array
     {
+        // Get registered PINs from employee_attendance 
+        $registeredPins = $this->getRegisteredUserPins();
+        
         $logs = AttendanceLog::unprocessed()
+            ->whereIn('user_pin', $registeredPins) // Only process registered PINs
             ->orderBy('datetime')
             ->get();
 
         if ($logs->isEmpty()) {
-            return ['success' => true, 'message' => 'Tidak ada data yang perlu diproses', 'processed' => 0];
+            return ['success' => true, 'message' => 'Tidak ada data yang perlu diproses dari user terdaftar', 'processed' => 0];
         }
 
         // Group logs by user_pin and date
@@ -51,7 +55,7 @@ class AttendanceProcessingService
 
         return [
             'success' => true,
-            'message' => "Berhasil memproses {$processedCount} hari absensi",
+            'message' => "Berhasil memproses {$processedCount} hari absensi dari user terdaftar",
             'processed' => $processedCount
         ];
     }
@@ -68,8 +72,12 @@ class AttendanceProcessingService
         $firstTap = $sortedLogs->first();
         $lastTap = $sortedLogs->last();
         
-        // Get user info from first log
-        $userName = $firstTap->user_name ?? "User_{$userPin}";
+        // Get user info dari employee_attendance berdasarkan user_pin
+        $employee = \App\Models\EmployeeAttendance::where('machine_user_id', $userPin)
+            ->where('is_active', true)
+            ->first();
+            
+        $userName = $employee ? $employee->name : ($firstTap->user_name ?? "User_{$userPin}");
         $cardNumber = $firstTap->card_number;
 
         // Find or create attendance record based on user_pin
@@ -228,18 +236,22 @@ class AttendanceProcessingService
     }
 
     /**
-     * Proses hanya logs hari ini (untuk real-time testing)
+     * Proses hanya logs hari ini (hanya PIN terdaftar)
      */
     public function processTodayOnly($date): array
     {
-        // Get unprocessed logs for today only
+        // Get registered PINs from employee_attendance 
+        $registeredPins = $this->getRegisteredUserPins();
+        
+        // Get unprocessed logs for today only from registered users
         $logs = AttendanceLog::where('is_processed', false)
             ->whereDate('datetime', $date)
+            ->whereIn('user_pin', $registeredPins) // Only process registered PINs
             ->orderBy('datetime')
             ->get();
 
         if ($logs->isEmpty()) {
-            return ['success' => true, 'message' => 'Tidak ada logs baru untuk hari ini', 'processed' => 0];
+            return ['success' => true, 'message' => 'Tidak ada logs baru untuk hari ini dari user terdaftar', 'processed' => 0];
         }
 
         // Group logs by user_pin and date
@@ -272,7 +284,7 @@ class AttendanceProcessingService
 
         return [
             'success' => true,
-            'message' => "Berhasil memproses {$processedCount} user untuk hari ini",
+            'message' => "Berhasil memproses {$processedCount} user terdaftar untuk hari ini",
             'processed' => $processedCount,
             'date' => $date
         ];
@@ -375,7 +387,11 @@ class AttendanceProcessingService
             ->orderBy('datetime')
             ->get();
 
-        $userName = $attendances->first()->user_name ?? "User_{$userPin}";
+        // Get nama dari employee_attendance
+        $employee = \App\Models\EmployeeAttendance::where('machine_user_id', $userPin)
+            ->where('is_active', true)
+            ->first();
+        $userName = $employee ? $employee->name : ($attendances->first()->user_name ?? "User_{$userPin}");
 
         return [
             'user_pin' => $userPin,
@@ -424,5 +440,22 @@ class AttendanceProcessingService
                 'total_overtime_hours' => $attendances->sum('overtime_hours'),
             ]
         ];
+    }
+
+    /**
+     * Get registered user PINs from employee_attendance table (hanya PIN utama)
+     */
+    private function getRegisteredUserPins(): array
+    {
+        // Hanya get PIN utama dari employee_attendance karena di logs sudah disimpan PIN utama
+        $mainPins = \App\Models\EmployeeAttendance::where('is_active', true)
+            ->pluck('machine_user_id')
+            ->toArray();
+            
+        Log::info("Registered main PINs", [
+            'main_pins_count' => count($mainPins)
+        ]);
+        
+        return $mainPins;
     }
 } 

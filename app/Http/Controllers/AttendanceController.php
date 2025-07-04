@@ -30,8 +30,19 @@ class AttendanceController extends Controller
     }
 
     /**
+     * Get registered user PINs (hanya PIN utama karena di logs sudah disimpan PIN utama)
+     */
+    private function getAllRegisteredPins(): array
+    {
+        // Hanya get PIN utama dari employee_attendance karena di logs sudah disimpan PIN utama
+        return \App\Models\EmployeeAttendance::where('is_active', true)
+            ->pluck('machine_user_id')
+            ->toArray();
+    }
+
+    /**
      * GET /api/attendance/dashboard
-     * Dashboard attendance hari ini
+     * Dashboard attendance hari ini (hanya user terdaftar)
      */
     public function dashboard(Request $request): JsonResponse
     {
@@ -40,8 +51,12 @@ class AttendanceController extends Controller
             
             $summary = $this->processingService->getAttendanceSummary($date);
             
-            // Get latest attendance records for today (all records, not just present)
+            // Get all registered user PINs (main + PIN2)
+            $registeredUserPins = $this->getAllRegisteredPins();
+
+            // Get latest attendance records for today (hanya user terdaftar)
             $latestAttendances = Attendance::where('date', $date)
+                ->whereIn('user_pin', $registeredUserPins) // Only registered users
                 ->orderBy('check_in', 'desc')
                 ->get()
                 ->map(function($attendance) {
@@ -620,15 +635,19 @@ class AttendanceController extends Controller
 
     /**
      * GET /api/attendance/today-realtime
-     * Data attendance hari ini real-time (sederhana seperti sebelumnya)
+     * Data attendance hari ini real-time (hanya user terdaftar)
      */
     public function todayRealtime(Request $request): JsonResponse
     {
         try {
             $date = now()->format('Y-m-d');
             
-            // Get attendance for today only, sorted by latest check-in
+            // Get all registered user PINs (main + PIN2)
+            $registeredUserPins = $this->getAllRegisteredPins();
+
+            // Get attendance for today only dari user terdaftar, sorted by latest check-in
             $todayAttendances = Attendance::where('date', $date)
+                ->whereIn('user_pin', $registeredUserPins) // Only registered users
                 ->whereNotNull('check_in')
                 ->orderBy('check_in', 'desc')
                 ->get()
@@ -637,21 +656,19 @@ class AttendanceController extends Controller
                         'id' => $attendance->id,
                         'user_name' => $attendance->user_name,
                         'user_pin' => $attendance->user_pin,
+                        'date' => $attendance->date,
                         'check_in' => $attendance->check_in,
                         'check_out' => $attendance->check_out,
                         'status' => $attendance->status,
+                        'work_hours' => $attendance->work_hours,
                         'late_minutes' => $attendance->late_minutes,
                         'updated_at' => $attendance->updated_at
                     ];
                 });
 
-            // Get latest 10 tap logs for today (simple)
-            $registeredUserPins = \App\Models\EmployeeAttendance::where('is_active', true)
-                ->pluck('machine_user_id')
-                ->toArray();
-
+            // Get latest 10 tap logs for today dari user terdaftar
             $latestLogs = AttendanceLog::whereDate('datetime', $date)
-                ->whereIn('user_pin', $registeredUserPins)
+                ->whereIn('user_pin', $registeredUserPins) // Only registered users
                 ->orderBy('datetime', 'desc')
                 ->take(10)
                 ->get()
@@ -679,7 +696,8 @@ class AttendanceController extends Controller
                     'total_attendances' => $todayAttendances->count(),
                     'total_logs_today' => AttendanceLog::whereDate('datetime', $date)
                         ->whereIn('user_pin', $registeredUserPins)
-                        ->count()
+                        ->count(),
+                    'registered_users' => count($registeredUserPins)
                 ]
             ]);
 

@@ -192,11 +192,15 @@ class AttendanceMachineService
     }
 
     /**
-     * Proses data absensi hari ini ke database
+     * Proses data absensi hari ini ke database (resolve PIN2 ke PIN utama)
      */
     private function processTodayAttendanceData(AttendanceMachine $machine, array $todayData, string $targetDate): int
     {
+        // Get all registered PINs (main + PIN2)
+        $registeredPins = $this->getAllRegisteredPins();
+        
         $processedCount = 0;
+        $skippedCount = 0;
         
         foreach ($todayData as $data) {
             try {
@@ -207,9 +211,21 @@ class AttendanceMachineService
                     continue;
                 }
                 
+                $inputPin = $data['pin']; // PIN dari mesin (bisa PIN utama atau PIN2)
+                
+                // Skip jika PIN tidak terdaftar di mesin
+                if (!in_array($inputPin, $registeredPins)) {
+                    $skippedCount++;
+                    Log::info("Skipped unregistered PIN: {$inputPin}");
+                    continue;
+                }
+                
+                // Resolve PIN2 ke PIN utama
+                $mainPin = $this->resolvePinToMainPin($inputPin);
+                
                 // Cek apakah log sudah ada
                 $existingLog = AttendanceLog::where('attendance_machine_id', $machine->id)
-                    ->where('user_pin', $data['pin'])
+                    ->where('user_pin', $mainPin) // Cek berdasarkan PIN utama
                     ->where('datetime', $logDateTime)
                     ->first();
                 
@@ -217,22 +233,20 @@ class AttendanceMachineService
                     continue; // Skip jika sudah ada
                 }
 
-                // Ambil nama dan card number dari data user mesin
-                $userName = $this->getUserNameFromPin($data['pin']);
-                $cardNumber = $this->getCardNumberFromPin($data['pin']);
-
-                // Simpan ke attendance_logs
+                // Simpan ke attendance_logs dengan PIN utama
                 AttendanceLog::create([
                     'attendance_machine_id' => $machine->id,
-                    'user_pin' => $data['pin'],
-                    'user_name' => $userName,
-                    'card_number' => $cardNumber,
+                    'user_pin' => $mainPin, // Simpan PIN utama, bukan PIN2
                     'datetime' => $logDateTime,
                     'verified_method' => $this->getVerifiedMethod($data['verified']),
                     'verified_code' => (int)$data['verified'],
                     'status_code' => 'check_in',
                     'is_processed' => false,
-                    'raw_data' => $data['raw_data']
+                    'raw_data' => json_encode([
+                        'original_pin' => $inputPin, // Simpan PIN asli dari mesin
+                        'resolved_pin' => $mainPin,  // PIN utama yang digunakan
+                        'machine_data' => $data['raw_data']
+                    ])
                 ]);
                 
                 $processedCount++;
@@ -244,10 +258,139 @@ class AttendanceMachineService
         
         Log::info("Processed today attendance data", [
             'target_date' => $targetDate,
-            'processed_count' => $processedCount
+            'processed_count' => $processedCount,
+            'skipped_unregistered' => $skippedCount,
+            'total_registered_pins' => count($registeredPins)
         ]);
         
         return $processedCount;
+    }
+
+    /**
+     * Proses data absensi ke database (resolve PIN2 ke PIN utama)
+     */
+    private function processAttendanceData(AttendanceMachine $machine, array $attendanceData): int
+    {
+        // Get all registered PINs (main + PIN2)
+        $registeredPins = $this->getAllRegisteredPins();
+        
+        $processedCount = 0;
+        $skippedCount = 0;
+        
+        foreach ($attendanceData as $data) {
+            try {
+                $inputPin = $data['pin']; // PIN dari mesin (bisa PIN utama atau PIN2)
+                
+                // Skip jika PIN tidak terdaftar di mesin
+                if (!in_array($inputPin, $registeredPins)) {
+                    $skippedCount++;
+                    continue;
+                }
+                
+                // Resolve PIN2 ke PIN utama
+                $mainPin = $this->resolvePinToMainPin($inputPin);
+                
+                // Cek apakah log sudah ada
+                $existingLog = AttendanceLog::where('attendance_machine_id', $machine->id)
+                    ->where('user_pin', $mainPin) // Cek berdasarkan PIN utama
+                    ->where('datetime', Carbon::parse($data['datetime']))
+                    ->first();
+                
+                if ($existingLog) {
+                    continue; // Skip jika sudah ada
+                }
+
+                // Simpan ke attendance_logs dengan PIN utama
+                AttendanceLog::create([
+                    'attendance_machine_id' => $machine->id,
+                    'user_pin' => $mainPin, // Simpan PIN utama, bukan PIN2
+                    'datetime' => Carbon::parse($data['datetime']),
+                    'verified_method' => $this->getVerifiedMethod($data['verified']),
+                    'verified_code' => (int)$data['verified'],
+                    'status_code' => 'check_in',
+                    'is_processed' => false,
+                    'raw_data' => json_encode([
+                        'original_pin' => $inputPin, // Simpan PIN asli dari mesin
+                        'resolved_pin' => $mainPin,  // PIN utama yang digunakan
+                        'machine_data' => $data['raw_data']
+                    ])
+                ]);
+                
+                $processedCount++;
+                
+            } catch (Exception $e) {
+                Log::error("Error processing attendance data: " . $e->getMessage(), $data);
+            }
+        }
+        
+        Log::info("Processed attendance data", [
+            'processed_count' => $processedCount,
+            'skipped_unregistered' => $skippedCount,
+            'total_registered_pins' => count($registeredPins)
+        ]);
+        
+        return $processedCount;
+    }
+
+    /**
+     * Resolve PIN2 ke PIN utama dari employee_attendance
+     * FIXED: Cek PIN2 dulu, baru cek main PIN untuk menghindari konflik
+     */
+    private function resolvePinToMainPin(string $inputPin): string
+    {
+        // STEP 1: Cari PIN utama yang memiliki PIN2 ini (prioritas pertama)
+        $allEmployees = \App\Models\EmployeeAttendance::where('is_active', true)->get();
+        
+        foreach ($allEmployees as $employee) {
+            $rawData = $employee->raw_data['raw_data'] ?? '';
+            if (strpos($rawData, "<PIN2>{$inputPin}</PIN2>") !== false) {
+                Log::info("Resolved PIN2 to main PIN: {$inputPin} -> {$employee->machine_user_id} ({$employee->name})");
+                return $employee->machine_user_id; // Return PIN utama
+            }
+        }
+        
+        // STEP 2: Jika bukan PIN2, cek apakah sudah PIN utama
+        $mainPinUser = \App\Models\EmployeeAttendance::where('is_active', true)
+            ->where('machine_user_id', $inputPin)
+            ->first();
+            
+        if ($mainPinUser) {
+            Log::info("PIN is already main PIN: {$inputPin} -> {$mainPinUser->name}");
+            return $inputPin; // Sudah PIN utama
+        }
+        
+        // STEP 3: Jika tidak ditemukan, return input PIN (biarkan sebagai fallback)
+        Log::warning("PIN not found in employee_attendance: {$inputPin}");
+        return $inputPin;
+    }
+
+    /**
+     * Get all registered PINs (main PINs + PIN2s) from employee_attendance
+     */
+    private function getAllRegisteredPins(): array
+    {
+        // Get PIN utama dari employee_attendance
+        $mainPins = \App\Models\EmployeeAttendance::where('is_active', true)
+            ->pluck('machine_user_id')
+            ->toArray();
+            
+        // Get PIN2 dari raw_data
+        $pin2List = \App\Models\EmployeeAttendance::where('is_active', true)
+            ->get()
+            ->map(function ($employee) {
+                $rawData = $employee->raw_data['raw_data'] ?? '';
+                if (preg_match('/<PIN2>([^<]+)<\/PIN2>/', $rawData, $matches)) {
+                    return $matches[1];
+                }
+                return null;
+            })
+            ->filter()
+            ->toArray();
+            
+        // Combine dan remove duplicates
+        $allRegisteredPins = array_unique(array_merge($mainPins, $pin2List));
+        
+        return $allRegisteredPins;
     }
 
     /**
@@ -302,53 +445,6 @@ class AttendanceMachineService
     }
 
     /**
-     * Proses data absensi ke database
-     */
-    private function processAttendanceData(AttendanceMachine $machine, array $attendanceData): int
-    {
-        $processedCount = 0;
-        
-        foreach ($attendanceData as $data) {
-            try {
-                // Cek apakah log sudah ada
-                $existingLog = AttendanceLog::where('attendance_machine_id', $machine->id)
-                    ->where('user_pin', $data['pin'])
-                    ->where('datetime', Carbon::parse($data['datetime']))
-                    ->first();
-                
-                if ($existingLog) {
-                    continue; // Skip jika sudah ada
-                }
-
-                // Ambil nama dan card number dari data user mesin
-                $userName = $this->getUserNameFromPin($data['pin']);
-                $cardNumber = $this->getCardNumberFromPin($data['pin']);
-
-                // Simpan ke attendance_logs tanpa employee_id
-                AttendanceLog::create([
-                    'attendance_machine_id' => $machine->id,
-                    'user_pin' => $data['pin'],
-                    'user_name' => $userName,
-                    'card_number' => $cardNumber,
-                    'datetime' => Carbon::parse($data['datetime']),
-                    'verified_method' => $this->getVerifiedMethod($data['verified']),
-                    'verified_code' => (int)$data['verified'],
-                    'status_code' => 'check_in',
-                    'is_processed' => false,
-                    'raw_data' => $data['raw_data']
-                ]);
-                
-                $processedCount++;
-                
-            } catch (Exception $e) {
-                Log::error("Error processing attendance data: " . $e->getMessage(), $data);
-            }
-        }
-        
-        return $processedCount;
-    }
-
-    /**
      * Mapping verified code ke method
      */
     private function getVerifiedMethod($verifiedCode): string
@@ -368,11 +464,11 @@ class AttendanceMachineService
     }
 
     /**
-     * Get user name from PIN (berdasarkan data mesin dengan dukungan PIN dan PIN2)
+     * Get user name from PIN (hanya PIN utama dari machine_user_id)
      */
     private function getUserNameFromPin(string $pin): string
     {
-        // Priority 1: Cari berdasarkan PIN utama di employee_attendance
+        // Cari berdasarkan PIN utama di employee_attendance
         $employeeAttendance = \App\Models\EmployeeAttendance::where('machine_user_id', $pin)
             ->where('is_active', true)
             ->first();
@@ -381,75 +477,35 @@ class AttendanceMachineService
             return $employeeAttendance->name;
         }
         
-        // Priority 2: Cari berdasarkan PIN2 di raw_data (untuk PIN alias)
-        $employeeByPin2 = \App\Models\EmployeeAttendance::where('is_active', true)
-            ->whereRaw("JSON_EXTRACT(raw_data, '$.raw_data') LIKE ?", ["%<PIN2>{$pin}</PIN2>%"])
-            ->first();
-            
-        if ($employeeByPin2 && !empty($employeeByPin2->name)) {
-            \Illuminate\Support\Facades\Log::info("Found user by PIN2: {$pin} -> {$employeeByPin2->name}");
-            return $employeeByPin2->name;
-        }
-        
-        // Priority 3: Fallback ke mapping manual (untuk kompatibilitas)
-        $pinToNameMapping = [
-            '1' => 'E.H Michael Palar',
-            '2' => 'Budi Dharmadi', 
-            '3' => 'Joe',
-            '20111201' => 'Steven Albert Reynold M',
-            '20140202' => 'Jelly Jeclien Lukas',
-            '20140623' => 'Jefri Siadari',
-            '20150101' => 'Yola Yohana Tanara',
-            '20190201' => 'Mardianti Pangandaheng',
-            '20190401' => 'Friendly Marvelous Soro',
-            '20210226' => 'Jeri Januar Salle',
-        ];
-
-        return $pinToNameMapping[$pin] ?? "User_{$pin}";
+        // Fallback: return User_{pin} jika tidak ditemukan
+        Log::warning("Employee not found for main PIN: {$pin}");
+        return "User_{$pin}";
     }
 
     /**
-     * Get card number from PIN (berdasarkan data mesin dengan dukungan PIN dan PIN2)
+     * Get card number from PIN (hanya PIN utama dari machine_user_id) 
      */
     private function getCardNumberFromPin(string $pin): ?string
     {
-        // Priority 1: Cari berdasarkan PIN utama
+        // Cari berdasarkan PIN utama di employee_attendance
         $employeeAttendance = \App\Models\EmployeeAttendance::where('machine_user_id', $pin)
             ->where('is_active', true)
             ->first();
             
-        if ($employeeAttendance && !empty($employeeAttendance->card_number)) {
-            return $employeeAttendance->card_number;
-        }
-        
-        // Priority 2: Cari berdasarkan PIN2 dan extract Card dari raw_data
-        $employeeByPin2 = \App\Models\EmployeeAttendance::where('is_active', true)
-            ->whereRaw("JSON_EXTRACT(raw_data, '$.raw_data') LIKE ?", ["%<PIN2>{$pin}</PIN2>%"])
-            ->first();
-            
-        if ($employeeByPin2) {
-            // Extract card number dari raw_data XML
-            $rawData = $employeeByPin2->raw_data['raw_data'] ?? '';
+        if ($employeeAttendance) {
+            // Extract card number dari raw_data XML jika ada
+            $rawData = $employeeAttendance->raw_data['raw_data'] ?? '';
             if (preg_match('/<Card>([^<]+)<\/Card>/', $rawData, $matches)) {
                 return $matches[1] !== '0' ? $matches[1] : null;
             }
+            
+            // Fallback ke card_number field jika ada
+            if (!empty($employeeAttendance->card_number)) {
+                return $employeeAttendance->card_number;
+            }
         }
         
-        // Priority 3: Fallback ke mapping manual
-        $pinToCardMapping = [
-            '1' => '1681542239',
-            '2' => '1225559887', 
-            '3' => '0',
-            '20111201' => '3557012314',
-            '20140202' => '3299471671',
-            '20140623' => '2334492895',
-            '20150101' => '1681180159',
-            '20190201' => '2495562719',
-            '20190401' => '2930167247',
-            '20210226' => '2689269855',
-        ];
-
-        return $pinToCardMapping[$pin] ?? null;
+        return null;
     }
 
     /**
