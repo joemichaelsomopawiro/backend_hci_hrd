@@ -33,6 +33,8 @@ class User extends Authenticatable
         'password' => 'hashed',
     ];
 
+    protected $appends = ['profile_picture_url']; // <-- Tambahkan baris ini
+
     public function isPhoneVerified()
     {
         return !is_null($this->phone_verified_at);
