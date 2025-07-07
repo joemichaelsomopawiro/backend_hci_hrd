@@ -18,5 +18,10 @@ class DatabaseSeeder extends Seeder
         //     'name' => 'Test User',
         //     'email' => 'test@example.com',
         // ]);
+
+        // Seed morning reflection attendance data
+        $this->call([
+            MorningReflectionAttendanceSeeder::class,
+        ]);
     }
 }

@@ -6,9 +6,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Carbon\Carbon;
 
-class MorningReflection extends Model
+class MorningReflectionAttendance extends Model
 {
     use HasFactory;
+
+    protected $table = 'morning_reflection_attendance';
 
     protected $fillable = [
         'employee_id',

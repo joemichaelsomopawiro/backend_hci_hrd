@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
-use App\Models\MorningReflection;
+use App\Models\MorningReflectionAttendance;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -85,7 +85,7 @@ class MorningReflectionController extends Controller
     public function attend(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'user_id' => 'required|integer|min:1',
+            'employee_id' => 'required|integer|min:1',
             'testing_mode' => 'nullable|boolean'
         ]);
 
@@ -140,7 +140,7 @@ class MorningReflectionController extends Controller
             $status = self::getStatusByTime($now);
 
             // Cek apakah sudah absen hari ini
-            $existingAttendance = MorningReflection::where('employee_id', $request->user_id)
+            $existingAttendance = MorningReflectionAttendance::where('employee_id', $request->employee_id)
                                                   ->whereDate('date', $date)
                                                   ->first();
 
@@ -158,8 +158,8 @@ class MorningReflectionController extends Controller
             }
 
             // Buat record baru
-            $morningReflection = MorningReflection::create([
-                'employee_id' => $request->user_id,
+            $morningReflection = MorningReflectionAttendance::create([
+                'employee_id' => $request->employee_id,
                 'date' => $date,
                 'status' => $status,
                 'join_time' => $now,
@@ -169,7 +169,7 @@ class MorningReflectionController extends Controller
             DB::commit();
 
             Log::info('Morning reflection attendance recorded', [
-                'employee_id' => $request->user_id,
+                'employee_id' => $request->employee_id,
                 'date' => $date,
                 'status' => $status,
                 'testing_mode' => $testingMode
@@ -184,7 +184,7 @@ class MorningReflectionController extends Controller
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Error recording morning reflection attendance', [
-                'employee_id' => $request->user_id,
+                'employee_id' => $request->employee_id,
                 'error' => $e->getMessage()
             ]);
             return response()->json([
@@ -200,27 +200,27 @@ class MorningReflectionController extends Controller
     public function getAttendance(Request $request)
     {
         try {
-            $userId = $request->query('user_id');
+            $employee_id = $request->query('employee_id');
             $date = $request->query('date', \Carbon\Carbon::today()->toDateString());
             $perPage = $request->query('per_page', 10);
             $page = $request->query('page', 1);
 
-            $query = \App\Models\MorningReflection::with('employee');
+            $query = \App\Models\MorningReflectionAttendance::with('employee');
 
-            if ($userId) {
-                $query->where('employee_id', $userId);
+            if ($employee_id) {
+                $query->where('employee_id', $employee_id);
                 $query->whereDate('date', $date);
                 $attendance = $query->first();
                 return response()->json([
                     'success' => true,
                     'data' => [
-                        'attended' => $attendance ? true : false,
+                        'status' => $attendance ? true : false,
                         'attendance' => $attendance,
                         'message' => $attendance ? 'User sudah hadir' : 'User belum hadir'
                     ]
                 ]);
             } else {
-                // Jika tidak ada user_id, kembalikan semua data absensi (paginated)
+                // Jika tidak ada employee_id, kembalikan semua data absensi (paginated)
                 $reflections = $query->orderBy('date', 'desc')->paginate($perPage, ['*'], 'page', $page);
                 return response()->json([
                     'success' => true,
@@ -242,11 +242,11 @@ class MorningReflectionController extends Controller
     /**
      * Get user attendance by date
      */
-    public function getUserAttendance($userId, $date)
+    public function getUserAttendance($employee_id, $date)
     {
         try {
-            $attendance = \App\Models\MorningReflection::with('employee')
-                                          ->where('employee_id', $userId)
+            $attendance = \App\Models\MorningReflectionAttendance::with('employee')
+                                          ->where('employee_id', $employee_id)
                                           ->whereDate('date', $date)
                                           ->first();
 
@@ -257,7 +257,7 @@ class MorningReflectionController extends Controller
 
         } catch (Exception $e) {
             \Log::error('Error getting user attendance by date', [
-                'user_id' => $userId,
+                'employee_id' => $employee_id,
                 'date' => $date,
                 'error' => $e->getMessage()
             ]);
@@ -272,7 +272,7 @@ class MorningReflectionController extends Controller
     /**
      * Get weekly attendance for user
      */
-    public function getWeeklyAttendance($userId, Request $request)
+    public function getWeeklyAttendance($employee_id, Request $request)
     {
         try {
             $startDate = $request->query('start_date');
@@ -286,8 +286,8 @@ class MorningReflectionController extends Controller
                 $endDate = \Carbon\Carbon::now()->endOfWeek()->toDateString();
             }
 
-            $attendances = \App\Models\MorningReflection::with('employee')
-                                           ->where('employee_id', $userId)
+            $attendances = \App\Models\MorningReflectionAttendance::with('employee')
+                                           ->where('employee_id', $employee_id)
                                            ->whereBetween('date', [$startDate, $endDate])
                                            ->orderBy('date', 'asc')
                                            ->get();
@@ -303,7 +303,7 @@ class MorningReflectionController extends Controller
 
         } catch (Exception $e) {
             \Log::error('Error getting weekly attendance', [
-                'user_id' => $userId,
+                'employee_id' => $employee_id,
                 'error' => $e->getMessage()
             ]);
 
@@ -341,7 +341,7 @@ class MorningReflectionController extends Controller
             $date = $request->query('date', Carbon::today()->toDateString());
             $perPage = $request->query('per_page', 10);
 
-            $attendances = MorningReflection::with('employee')
+            $attendances = MorningReflectionAttendance::with('employee')
                                            ->whereDate('date', $date)
                                            ->orderBy('join_time', 'asc')
                                            ->paginate($perPage);
@@ -410,13 +410,13 @@ class MorningReflectionController extends Controller
             }
 
             $stats = [
-                'total_attended' => MorningReflection::whereBetween('date', [$startDate, $endDate])
+                'total_attended' => MorningReflectionAttendance::whereBetween('date', [$startDate, $endDate])
                                                     ->where('status', 'Hadir')
                                                     ->count(),
-                'total_late' => MorningReflection::whereBetween('date', [$startDate, $endDate])
+                'total_late' => MorningReflectionAttendance::whereBetween('date', [$startDate, $endDate])
                                                 ->where('status', 'Terlambat')
                                                 ->count(),
-                'total_absent' => MorningReflection::whereBetween('date', [$startDate, $endDate])
+                'total_absent' => MorningReflectionAttendance::whereBetween('date', [$startDate, $endDate])
                                                   ->where('status', 'Absen')
                                                   ->count(),
                 'period' => $period,
@@ -454,22 +454,22 @@ class MorningReflectionController extends Controller
             ], 403);
         }
 
-        $userId = $request->input('user_id');
+        $employee_id = $request->input('employee_id');
         
-        if (!$userId) {
+        if (!$employee_id) {
             return response()->json([
                 'success' => false,
-                'message' => 'User ID diperlukan'
+                'message' => 'Employee ID diperlukan'
             ], 422);
         }
 
         try {
             // Clear rate limit cache for this user
-            $key = 'attendance_attempt_' . $userId . '_' . date('Y-m-d');
+            $key = 'attendance_attempt_' . $employee_id . '_' . date('Y-m-d');
             Cache::forget($key);
             
             Log::info('Rate limit reset for user', [
-                'user_id' => $userId,
+                'employee_id' => $employee_id,
                 'date' => date('Y-m-d')
             ]);
 
@@ -480,7 +480,7 @@ class MorningReflectionController extends Controller
 
         } catch (Exception $e) {
             Log::error('Error resetting rate limit', [
-                'user_id' => $userId,
+                'employee_id' => $employee_id,
                 'error' => $e->getMessage()
             ]);
 
@@ -526,7 +526,7 @@ class MorningReflectionController extends Controller
     public function joinZoom(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'user_id' => 'required|integer',
+            'employee_id' => 'required|integer',
             'join_time' => 'required|date',
             'meeting_id' => 'required|string',
             'platform' => 'required|string'
@@ -542,7 +542,7 @@ class MorningReflectionController extends Controller
 
         try {
             $joinData = [
-                'user_id' => $request->user_id,
+                'employee_id' => $request->employee_id,
                 'join_time' => $request->join_time,
                 'meeting_id' => $request->meeting_id,
                 'platform' => $request->platform,
@@ -566,12 +566,12 @@ class MorningReflectionController extends Controller
     }
 
     /**
-     * Simulate record attendance (untuk debug panel, data masuk ke morning_reflections)
+     * Simulate record attendance (untuk debug panel, data masuk ke morning_reflection_attendances)
      */
     public function recordAttendance(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'user_id' => 'required|integer|exists:employees,id',
+            'employee_id' => 'required|integer|exists:employees,id',
             'attendance_date' => 'required|date',
             'join_time' => 'required|date',
             'status' => 'required|in:present,late,absent,leave',
@@ -602,7 +602,7 @@ class MorningReflectionController extends Controller
 
             // Data untuk insert/update
             $attendanceData = [
-                'employee_id' => $request->user_id,
+                'employee_id' => $request->employee_id,
                 'date' => $attendanceDate,
                 'join_time' => $joinTime,
                 'status' => $status,
@@ -610,7 +610,7 @@ class MorningReflectionController extends Controller
             ];
 
             // Cek apakah sudah ada attendance untuk user dan tanggal ini
-            $existing = MorningReflection::where('employee_id', $request->user_id)
+            $existing = MorningReflectionAttendance::where('employee_id', $request->employee_id)
                 ->whereDate('date', $attendanceDate)
                 ->first();
 
@@ -621,7 +621,7 @@ class MorningReflectionController extends Controller
                 $message = 'Attendance updated successfully (debug)';
             } else {
                 // Insert new record
-                $morningReflection = MorningReflection::create($attendanceData);
+                $morningReflection = MorningReflectionAttendance::create($attendanceData);
                 $morningReflection->load('employee');
                 $message = 'Attendance created successfully (debug)';
             }
@@ -666,14 +666,14 @@ class MorningReflectionController extends Controller
         return $this->getAttendance($request);
     }
 
-    public function attendanceByDate($userId, $date)
+    public function attendanceByDate($employee_id, $date)
     {
-        return $this->getUserAttendance($userId, $date);
+        return $this->getUserAttendance($employee_id, $date);
     }
 
-    public function weeklyAttendance($userId, Request $request)
+    public function weeklyAttendance($employee_id, Request $request)
     {
-        return $this->getWeeklyAttendance($userId, $request);
+        return $this->getWeeklyAttendance($employee_id, $request);
     }
 
     public function config()

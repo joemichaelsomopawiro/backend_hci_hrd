@@ -22,8 +22,8 @@ class AttendanceRateLimit
             return $next($request);
         }
         
-        // Support both employee_id and user_id parameters
-        $employeeId = $request->input('employee_id') ?? $request->input('user_id');
+        // Hapus support untuk user_id, hanya gunakan employee_id
+        $employeeId = $request->input('employee_id');
         
         if (!$employeeId) {
             return $next($request);

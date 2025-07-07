@@ -2,7 +2,7 @@
 namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
-use App\Models\MorningReflection;
+use App\Models\MorningReflectionAttendance;
 use App\Models\LeaveRequest;
 use App\Services\RoleHierarchyService;
 use Illuminate\Http\Request;
@@ -38,7 +38,7 @@ class GeneralAffairController extends Controller
             DB::beginTransaction();
             
             // Use firstOrCreate to handle race conditions atomically
-            $morningReflection = MorningReflection::firstOrCreate(
+            $morningReflection = MorningReflectionAttendance::firstOrCreate(
                 [
                     'employee_id' => $request->employee_id,
                     'date' => $request->date
@@ -136,7 +136,7 @@ class GeneralAffairController extends Controller
             $status = $now->lte($cutoffTime) ? 'Hadir' : 'Terlambat';
             
             // Use firstOrCreate to handle race conditions atomically
-            $morningReflection = MorningReflection::firstOrCreate(
+            $morningReflection = MorningReflectionAttendance::firstOrCreate(
                 [
                     'employee_id' => $request->employee_id,
                     'date' => $date
@@ -211,7 +211,7 @@ class GeneralAffairController extends Controller
     // Get all morning reflections for dashboard (Bagian C)
     public function getMorningReflections()
     {
-        $reflections = MorningReflection::with('employee')->get();
+        $reflections = MorningReflectionAttendance::with('employee')->get();
         return response()->json(['data' => $reflections], 200);
     }
 
@@ -272,10 +272,10 @@ class GeneralAffairController extends Controller
             
             // Statistik renungan pagi
             $morningReflectionStats = [
-                'today_present' => MorningReflection::whereDate('date', $today)->where('status', 'Hadir')->count(),
-                'today_late' => MorningReflection::whereDate('date', $today)->where('status', 'Terlambat')->count(),
-                'today_absent' => MorningReflection::whereDate('date', $today)->where('status', 'Absen')->count(),
-                'monthly_total' => MorningReflection::whereMonth('date', $thisMonth)
+                'today_present' => MorningReflectionAttendance::whereDate('date', $today)->where('status', 'Hadir')->count(),
+                'today_late' => MorningReflectionAttendance::whereDate('date', $today)->where('status', 'Terlambat')->count(),
+                'today_absent' => MorningReflectionAttendance::whereDate('date', $today)->where('status', 'Absen')->count(),
+                'monthly_total' => MorningReflectionAttendance::whereMonth('date', $thisMonth)
                                                   ->whereYear('date', $thisYear)
                                                   ->count()
             ];
@@ -283,7 +283,7 @@ class GeneralAffairController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'morning_reflection' => $morningReflectionStats,
+                    'morning_reflection_attendance' => $morningReflectionStats,
                     'date' => $today->toDateString()
                 ],
                 'message' => 'Statistik absensi renungan pagi berhasil diambil'
@@ -359,7 +359,7 @@ class GeneralAffairController extends Controller
     public function getDailyMorningReflectionHistory(Request $request)
     {
         try {
-            $query = MorningReflection::with(['employee']);
+            $query = MorningReflectionAttendance::with(['employee']);
             
             // Filter berdasarkan tanggal jika diminta
             if ($request->has('date')) {

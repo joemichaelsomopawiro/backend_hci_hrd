@@ -12,6 +12,7 @@ use App\Http\Controllers\GeneralAffairController;
 use App\Http\Controllers\AttendanceMachineController;
 use App\Http\Controllers\WorshipAttendanceController;
 use App\Http\Controllers\MorningReflectionController;
+use App\Http\Controllers\MorningReflectionAttendanceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -274,4 +275,17 @@ Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:General A
     // Update konfigurasi (admin only)
     Route::put('/config', [MorningReflectionController::class, 'updateConfig']);
     Route::put('/config-admin', [MorningReflectionController::class, 'updateConfigAdmin']);
+});
+
+// Tambahkan route baru untuk endpoint /api/morning-reflection-attendance/attendance
+Route::prefix('morning-reflection-attendance')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/attendance', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'getAttendance']);
+    Route::post('/attend', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'attend']);
+    // Tambahkan endpoint lain sesuai kebutuhan frontend
+});
+
+// Route testing tanpa rate limit (untuk development)
+Route::prefix('test')->group(function () {
+    Route::post('/morning-reflection-attendance/attend', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'attend']);
+    Route::get('/morning-reflection-attendance/attendance', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'getAttendance']);
 });
