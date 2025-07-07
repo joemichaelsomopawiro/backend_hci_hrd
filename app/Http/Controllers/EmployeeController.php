@@ -29,6 +29,7 @@ class EmployeeController extends Controller
     {
         try {
             $employees = Employee::with([
+                'user', // <-- tambahkan ini!
                 'documents',
                 'employmentHistories',
                 'promotionHistories',
@@ -50,6 +51,7 @@ class EmployeeController extends Controller
     {
         try {
             $employee = Employee::with([
+                'user',
                 'documents',
                 'employmentHistories',
                 'promotionHistories',

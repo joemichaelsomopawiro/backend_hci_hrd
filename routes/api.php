@@ -12,7 +12,11 @@ use App\Http\Controllers\GeneralAffairController;
 use App\Http\Controllers\AttendanceMachineController;
 use App\Http\Controllers\WorshipAttendanceController;
 use App\Http\Controllers\MorningReflectionController;
+
 use App\Http\Controllers\MorningReflectionAttendanceController;
+
+use App\Http\Controllers\AttendanceExportController;
+
 
 /*
 |--------------------------------------------------------------------------
@@ -129,6 +133,10 @@ Route::prefix('attendance')->group(function () {
     
     // Individual attendance management
     Route::put('/{id}/recalculate', [AttendanceController::class, 'recalculate']);
+    
+    // Export routes
+    Route::get('/export/daily', [AttendanceExportController::class, 'exportDaily']);
+    Route::get('/export/monthly', [AttendanceExportController::class, 'exportMonthly']);
 });
 
 // Attendance Routes (dari kode kedua)
