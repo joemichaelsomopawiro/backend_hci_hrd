@@ -56,6 +56,12 @@ class Attendance extends Model
         return env('ATTENDANCE_OVERTIME_START_TIME', '16:30:00');
     }
 
+    // Relasi ke EmployeeAttendance berdasarkan user_pin
+    public function employeeAttendance(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeAttendance::class, 'user_pin', 'machine_user_id');
+    }
+
     // Note: employee relationship removed - system now uses user_pin instead of employee_id
 
     // Scope untuk tanggal tertentu
