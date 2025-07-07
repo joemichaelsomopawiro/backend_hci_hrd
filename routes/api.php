@@ -24,7 +24,6 @@ use App\Http\Controllers\MorningReflectionController;
 |
 */
 
-
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
 Route::get('/employees/{id}', [EmployeeController::class, 'show']);
@@ -102,7 +101,36 @@ Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     Route::delete('/{id}', [LeaveRequestController::class, 'destroy']);
 });
 
-// Attendance Routes
+// Attendance Routes - Solution X304 Integration
+Route::prefix('attendance')->group(function () {
+    // Public routes (untuk testing)
+    Route::get('/dashboard', [AttendanceController::class, 'dashboard']);
+    Route::get('/today-realtime', [AttendanceController::class, 'todayRealtime']);
+    Route::get('/machine/status', [AttendanceController::class, 'machineStatus']);
+    Route::get('/debug-sync', [AttendanceController::class, 'debugSync']);
+    
+    // Main attendance routes  
+    Route::get('/list', [AttendanceController::class, 'index']);
+    Route::get('/employee/{employeeId}', [AttendanceController::class, 'employeeDetail']);
+    Route::get('/logs', [AttendanceController::class, 'logs']);
+    Route::get('/summary', [AttendanceController::class, 'summary']);
+    
+    // Sync and processing routes
+    Route::post('/sync', [AttendanceController::class, 'syncFromMachine']);
+    Route::post('/sync-today', [AttendanceController::class, 'syncToday']);
+    Route::post('/sync-today-only', [AttendanceController::class, 'syncTodayOnly']);
+    Route::post('/sync/users', [AttendanceController::class, 'syncUserData']);
+    Route::post('/link-employees', [AttendanceController::class, 'linkEmployees']);
+    Route::get('/users', [AttendanceController::class, 'getUserList']);
+    Route::post('/process', [AttendanceController::class, 'processLogs']);
+    Route::post('/process-today', [AttendanceController::class, 'processToday']);
+    Route::post('/reprocess', [AttendanceController::class, 'reprocessDate']);
+    
+    // Individual attendance management
+    Route::put('/{id}/recalculate', [AttendanceController::class, 'recalculate']);
+});
+
+// Attendance Routes (dari kode kedua)
 Route::prefix('attendances')->group(function () {
     Route::get('/', [AttendanceController::class, 'index']);
     Route::post('/', [AttendanceController::class, 'store']);
@@ -200,7 +228,7 @@ Route::prefix('worship-attendance')->middleware(['auth:sanctum'])->group(functio
 // ===== MORNING REFLECTION ROUTES =====
 
 // Endpoint reset rate limit (khusus testing, tanpa auth)
-Route::post('/morning-reflection/reset-rate-limit', [\App\Http\Controllers\MorningReflectionController::class, 'resetRateLimit']);
+Route::post('/morning-reflection/reset-rate-limit', [MorningReflectionController::class, 'resetRateLimit']);
 
 // ===== DEBUG PANEL ENDPOINTS =====
 Route::get('/morning-reflection/test-db', [MorningReflectionController::class, 'testDatabase']);

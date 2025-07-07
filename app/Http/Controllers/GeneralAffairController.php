@@ -4,7 +4,6 @@ use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\MorningReflection;
 use App\Models\LeaveRequest;
-use App\Models\Attendance;
 use App\Services\RoleHierarchyService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -259,105 +258,9 @@ class GeneralAffairController extends Controller
         $leaves = $query->get();
         return response()->json(['data' => $leaves], 200);
     }
-    
-    // ========== DASHBOARD GA - READ ONLY FUNCTIONS ==========
-    
+
     /**
-     * Dashboard GA - Tampilkan semua data absensi (seperti HR)
-     * Bagian B: Dashboard GA - Tampilkan semua data absensi
-     */
-    public function getAllAttendances(Request $request)
-    {
-        try {
-            $query = Attendance::with(['employee']);
-            
-            // Filter berdasarkan tanggal jika diminta
-            if ($request->has('date')) {
-                $query->whereDate('date', $request->date);
-            }
-            
-            if ($request->has('year')) {
-                $query->whereYear('date', $request->year);
-            }
-            
-            if ($request->has('month')) {
-                $query->whereMonth('date', $request->month);
-            }
-            
-            if ($request->has('status')) {
-                $query->where('status', $request->status);
-            }
-            
-            $attendances = $query->orderBy('date', 'desc')
-                                ->orderBy('check_in', 'asc')
-                                ->get();
-            
-            return response()->json([
-                'success' => true,
-                'data' => $attendances,
-                'message' => 'Data absensi berhasil diambil'
-            ], 200);
-            
-        } catch (Exception $e) {
-            Log::error('Error getting all attendances for GA', [
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan saat mengambil data absensi'
-            ], 500);
-        }
-    }
-    
-    /**
-     * Dashboard GA - Tampilkan semua data cuti (seperti HR)
-     * Bagian B: Dashboard GA - Tampilkan semua data cuti
-     */
-    public function getAllLeaveRequests(Request $request)
-    {
-        try {
-            $query = LeaveRequest::with(['employee.user', 'approvedBy.user']);
-            
-            // Filter berdasarkan status jika diminta
-            if ($request->has('overall_status')) {
-                $query->where('overall_status', $request->overall_status);
-            }
-            
-            if ($request->has('leave_type')) {
-                $query->where('leave_type', $request->leave_type);
-            }
-            
-            if ($request->has('year')) {
-                $query->whereYear('start_date', $request->year);
-            }
-            
-            if ($request->has('month')) {
-                $query->whereMonth('start_date', $request->month);
-            }
-            
-            $leaveRequests = $query->orderBy('created_at', 'desc')->get();
-            
-            return response()->json([
-                'success' => true,
-                'data' => $leaveRequests,
-                'message' => 'Data cuti berhasil diambil'
-            ], 200);
-            
-        } catch (Exception $e) {
-            Log::error('Error getting all leave requests for GA', [
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan saat mengambil data cuti'
-            ], 500);
-        }
-    }
-    
-    /**
-     * Dashboard GA - Statistik absensi
+     * Dashboard GA - Statistik absensi renungan pagi
      * Bagian B: Dashboard khusus absensi renungan pagi
      */
     public function getAttendanceStatistics(Request $request)
@@ -366,28 +269,6 @@ class GeneralAffairController extends Controller
             $today = Carbon::today();
             $thisMonth = Carbon::now()->month;
             $thisYear = Carbon::now()->year;
-            
-            // Statistik hari ini
-            $todayStats = [
-                'total_present' => Attendance::whereDate('date', $today)->where('status', 'present')->count(),
-                'total_absent' => Attendance::whereDate('date', $today)->where('status', 'absent')->count(),
-                'total_sick' => Attendance::whereDate('date', $today)->where('status', 'sick')->count(),
-                'total_leave' => Attendance::whereDate('date', $today)->where('status', 'leave')->count(),
-            ];
-            
-            // Statistik bulan ini
-            $monthlyStats = [
-                'total_work_hours' => Attendance::whereMonth('date', $thisMonth)
-                                               ->whereYear('date', $thisYear)
-                                               ->sum('work_hours'),
-                'total_overtime_hours' => Attendance::whereMonth('date', $thisMonth)
-                                                   ->whereYear('date', $thisYear)
-                                                   ->sum('overtime_hours'),
-                'total_employees' => Employee::count(),
-                'total_attendances_this_month' => Attendance::whereMonth('date', $thisMonth)
-                                                           ->whereYear('date', $thisYear)
-                                                           ->count()
-            ];
             
             // Statistik renungan pagi
             $morningReflectionStats = [
@@ -402,22 +283,20 @@ class GeneralAffairController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'today' => $todayStats,
-                    'monthly' => $monthlyStats,
                     'morning_reflection' => $morningReflectionStats,
                     'date' => $today->toDateString()
                 ],
-                'message' => 'Statistik absensi berhasil diambil'
+                'message' => 'Statistik absensi renungan pagi berhasil diambil'
             ], 200);
             
         } catch (Exception $e) {
-            Log::error('Error getting attendance statistics for GA', [
+            Log::error('Error getting morning reflection statistics for GA', [
                 'error' => $e->getMessage()
             ]);
             
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan saat mengambil statistik absensi'
+                'message' => 'Terjadi kesalahan saat mengambil statistik absensi renungan pagi'
             ], 500);
         }
     }
@@ -515,5 +394,4 @@ class GeneralAffairController extends Controller
             ], 500);
         }
     }
-    
 }

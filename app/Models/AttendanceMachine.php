@@ -15,54 +15,56 @@ class AttendanceMachine extends Model
         'ip_address',
         'port',
         'comm_key',
-        'soap_port',
         'device_id',
         'serial_number',
         'status',
         'last_sync_at',
         'settings',
-        'description'
+        'description',
     ];
 
     protected $casts = [
-        'settings' => 'array',
         'last_sync_at' => 'datetime',
-        'port' => 'integer',
+        'settings' => 'array',
     ];
+
+    // Relationships
+    public function attendanceLogs(): HasMany
+    {
+        return $this->hasMany(AttendanceLog::class);
+    }
 
     public function syncLogs(): HasMany
     {
         return $this->hasMany(AttendanceSyncLog::class);
     }
 
-    public function machineUsers(): HasMany
-    {
-        return $this->hasMany(AttendanceMachineUser::class);
-    }
-
-    public function attendances(): HasMany
-    {
-        return $this->hasMany(Attendance::class);
-    }
-
-    public function isActive(): bool
-    {
-        return $this->status === 'active';
-    }
-
-    public function getConnectionUrl(): string
-    {
-        return "http://{$this->ip_address}:{$this->soap_port}/iWsService";
-    }
-
+    // Scope untuk mesin aktif
     public function scopeActive($query)
     {
         return $query->where('status', 'active');
     }
 
-    public function getLastSyncStatus(): ?string
+    // Method untuk test koneksi
+    public function testConnection(): bool
     {
-        $lastLog = $this->syncLogs()->latest('started_at')->first();
-        return $lastLog ? $lastLog->status : null;
+        $connect = @fsockopen($this->ip_address, $this->port, $errno, $errstr, 5);
+        if ($connect) {
+            fclose($connect);
+            return true;
+        }
+        return false;
+    }
+
+    // Method untuk mendapatkan URL SOAP Web Service
+    public function getSoapUrl(): string
+    {
+        return "http://{$this->ip_address}:{$this->port}/iWsService";
+    }
+
+    // Method untuk update last sync
+    public function updateLastSync(): void
+    {
+        $this->update(['last_sync_at' => now()]);
     }
 }
