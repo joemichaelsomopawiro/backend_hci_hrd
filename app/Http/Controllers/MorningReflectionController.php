@@ -166,19 +166,28 @@ class MorningReflectionController extends Controller
                 'testing_mode' => $testingMode
             ]);
 
+            // 🔥 AUTO-SYNC: Sinkronisasi otomatis untuk employee ini
+            $employee = \App\Models\Employee::find($request->employee_id);
+            $syncResult = null;
+            if ($employee) {
+                $syncResult = \App\Services\EmployeeSyncService::autoSyncMorningReflection($employee->nama_lengkap);
+            }
+
             DB::commit();
 
             Log::info('Morning reflection attendance recorded', [
                 'employee_id' => $request->employee_id,
                 'date' => $date,
                 'status' => $status,
-                'testing_mode' => $testingMode
+                'testing_mode' => $testingMode,
+                'sync_result' => $syncResult
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => $morningReflection,
-                'message' => 'Kehadiran renungan pagi berhasil dicatat'
+                'message' => 'Kehadiran renungan pagi berhasil dicatat',
+                'sync_result' => $syncResult
             ], 201);
 
         } catch (Exception $e) {

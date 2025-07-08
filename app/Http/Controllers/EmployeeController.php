@@ -274,9 +274,12 @@ class EmployeeController extends Controller
                 // Silently ignore logging failure
             }
 
+            // 🔥 AUTO-SYNC: Sinkronisasi otomatis ke semua tabel
+            $syncResult = \App\Services\EmployeeSyncService::autoSyncNewEmployee($employee);
+            
             DB::commit();
 
-            // Response dengan informasi tambahan tentang user linking dan leave quota
+            // Response dengan informasi tambahan tentang user linking, leave quota, dan sync
             $responseData = [
                 'message' => 'Data pegawai berhasil disimpan',
                 'employee' => $employee->load([
@@ -289,14 +292,15 @@ class EmployeeController extends Controller
                 ]),
                 'user_linked' => $userLinked,
                 'leave_quota_created' => true,
-                'default_leave_quota_year' => $currentYear
+                'default_leave_quota_year' => $currentYear,
+                'sync_result' => $syncResult
             ];
             
             if ($userLinked) {
                 $responseData['linked_user'] = $matchingUser;
-                $responseData['message_detail'] = "Data karyawan berhasil dibuat, otomatis terhubung dengan akun user '{$matchingUser->name}', dan default jatah cuti tahun {$currentYear} telah dibuat";
+                $responseData['message_detail'] = "Data karyawan berhasil dibuat, otomatis terhubung dengan akun user '{$matchingUser->name}', default jatah cuti tahun {$currentYear} telah dibuat, dan sinkronisasi data selesai";
             } else {
-                $responseData['message_detail'] = "Data karyawan berhasil dibuat dan default jatah cuti tahun {$currentYear} telah dibuat. Belum ada akun user yang cocok";
+                $responseData['message_detail'] = "Data karyawan berhasil dibuat, default jatah cuti tahun {$currentYear} telah dibuat, dan sinkronisasi data selesai. Belum ada akun user yang cocok";
             }
 
             return response()->json($responseData, 201);

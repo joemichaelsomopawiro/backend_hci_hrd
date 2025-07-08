@@ -176,6 +176,9 @@ class AuthController extends Controller
             ]);
         }
     
+        // 🔥 AUTO-SYNC: Sinkronisasi otomatis untuk user yang baru register
+        $syncResult = \App\Services\EmployeeSyncService::autoSyncUserRegistration($request->name);
+
         $token = $user->createToken('auth_token')->plainTextToken;
     
         return response()->json([
@@ -184,7 +187,8 @@ class AuthController extends Controller
             'data' => [
                 'user' => $user->load('employee'),
                 'token' => $token,
-                'token_type' => 'Bearer'
+                'token_type' => 'Bearer',
+                'sync_result' => $syncResult
             ]
         ]);
     }
