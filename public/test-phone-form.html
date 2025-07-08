@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Phone Number Validation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .error {
+            color: red;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .success {
+            color: green;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            background: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Validasi Nomor Telepon</h1>
+    <p>Test untuk memverifikasi apakah backend menerima nomor 13-14 digit</p>
+
+    <form id="phoneForm">
+        <div class="form-group">
+            <label for="phone">Nomor Telepon:</label>
+            <input type="text" id="phone" name="phone" placeholder="Contoh: 08123456789012" required>
+            <div id="phoneError" class="error"></div>
+        </div>
+        
+        <button type="submit">Test Send OTP</button>
+    </form>
+
+    <div id="result" class="result" style="display: none;"></div>
+
+    <h3>Contoh nomor untuk test:</h3>
+    <ul>
+        <li><strong>13 digit:</strong> 0812345678901</li>
+        <li><strong>14 digit:</strong> 08123456789012</li>
+        <li><strong>14 digit dengan 62:</strong> 628123456789012</li>
+        <li><strong>14 digit dengan dash:</strong> 0812-3456-7890-12</li>
+        <li><strong>14 digit dengan spasi:</strong> 0812 3456 7890 12</li>
+    </ul>
+
+    <script>
+        document.getElementById('phoneForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const phone = document.getElementById('phone').value;
+            const resultDiv = document.getElementById('result');
+            const errorDiv = document.getElementById('phoneError');
+            
+            // Clear previous errors
+            errorDiv.textContent = '';
+            resultDiv.style.display = 'none';
+            
+            // Basic client-side validation
+            if (!phone) {
+                errorDiv.textContent = 'Nomor telepon harus diisi';
+                return;
+            }
+            
+            // Check if it's a valid phone format
+            const phoneRegex = /^[0-9+\-\s]+$/;
+            if (!phoneRegex.test(phone)) {
+                errorDiv.textContent = 'Format nomor telepon tidak valid. Hanya boleh mengandung angka, +, -, spasi';
+                return;
+            }
+            
+            // Check length
+            if (phone.length < 10) {
+                errorDiv.textContent = 'Nomor telepon minimal 10 digit';
+                return;
+            }
+            
+            if (phone.length > 20) {
+                errorDiv.textContent = 'Nomor telepon maksimal 20 karakter';
+                return;
+            }
+            
+            try {
+                resultDiv.innerHTML = 'Mengirim request ke API...';
+                resultDiv.style.display = 'block';
+                
+                const response = await fetch('/api/auth/send-register-otp', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        phone: phone
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <h4>✅ BERHASIL!</h4>
+                        <p><strong>Nomor:</strong> ${phone}</p>
+                        <p><strong>Pesan:</strong> ${data.message}</p>
+                        <p><strong>OTP ID:</strong> ${data.otp_id}</p>
+                    `;
+                    resultDiv.style.backgroundColor = '#d4edda';
+                    resultDiv.style.color = '#155724';
+                } else {
+                    resultDiv.innerHTML = `
+                        <h4>❌ GAGAL!</h4>
+                        <p><strong>Nomor:</strong> ${phone}</p>
+                        <p><strong>Pesan:</strong> ${data.message}</p>
+                        ${data.errors ? `<p><strong>Error:</strong> ${JSON.stringify(data.errors)}</p>` : ''}
+                    `;
+                    resultDiv.style.backgroundColor = '#f8d7da';
+                    resultDiv.style.color = '#721c24';
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <h4>❌ ERROR!</h4>
+                    <p><strong>Nomor:</strong> ${phone}</p>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                `;
+                resultDiv.style.backgroundColor = '#f8d7da';
+                resultDiv.style.color = '#721c24';
+            }
+        });
+        
+        // Auto-test function
+        async function testPhoneNumber(phone) {
+            document.getElementById('phone').value = phone;
+            document.getElementById('phoneForm').dispatchEvent(new Event('submit'));
+        }
+        
+        // Add test buttons
+        const testButtons = `
+            <h3>Quick Test:</h3>
+            <button onclick="testPhoneNumber('0812345678901')">Test 13 digit</button>
+            <button onclick="testPhoneNumber('08123456789012')">Test 14 digit</button>
+            <button onclick="testPhoneNumber('628123456789012')">Test 14 digit 62</button>
+            <button onclick="testPhoneNumber('0812-3456-7890-12')">Test 14 digit dash</button>
+            <button onclick="testPhoneNumber('0812 3456 7890 12')">Test 14 digit spasi</button>
+        `;
+        
+        document.body.insertAdjacentHTML('beforeend', testButtons);
+    </script>
+</body>
+</html> 

@@ -842,4 +842,178 @@ class AttendanceMachineService
             'started_at' => now()
         ]);
     }
+
+    /**
+     * Sync user data to machine
+     */
+    public function syncUserToMachine(AttendanceMachine $machine, $employee): array
+    {
+        $syncLog = $this->createSyncLog($machine, 'sync_user_to_machine');
+        
+        try {
+            // Create or update user di tabel employee_attendance
+            EmployeeAttendance::updateOrCreate(
+                [
+                    'attendance_machine_id' => $machine->id,
+                    'machine_user_id' => $employee->numcard ?? $employee->id
+                ],
+                [
+                    'name' => $employee->nama_lengkap,
+                    'card_number' => $employee->numcard,
+                    'privilege' => 'User',
+                    'group_name' => 'Employee',
+                    'is_active' => true,
+                    'raw_data' => $employee->toArray(),
+                    'last_seen_at' => now()
+                ]
+            );
+            
+            $syncLog->markCompleted('success', "User {$employee->nama_lengkap} berhasil disync ke mesin");
+            
+            return [
+                'success' => true,
+                'message' => "User {$employee->nama_lengkap} berhasil disync ke mesin",
+                'data' => [
+                    'employee_id' => $employee->id,
+                    'machine_user_id' => $employee->numcard ?? $employee->id,
+                    'name' => $employee->nama_lengkap
+                ]
+            ];
+            
+        } catch (Exception $e) {
+            Log::error('Error syncing user to machine: ' . $e->getMessage());
+            $syncLog->markCompleted('failed', $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Restart attendance machine
+     */
+    public function restartMachine(AttendanceMachine $machine): array
+    {
+        $syncLog = $this->createSyncLog($machine, 'restart_machine');
+        
+        try {
+            $timeout = env('ATTENDANCE_MACHINE_TIMEOUT', 10);
+            $connect = fsockopen($machine->ip_address, $machine->port, $errno, $errstr, $timeout);
+            
+            if (!$connect) {
+                throw new Exception("Koneksi gagal: $errstr ($errno)");
+            }
+
+            $soapRequest = "<Restart><ArgComKey xsi:type=\"xsd:integer\">{$machine->comm_key}</ArgComKey></Restart>";
+            $newLine = "\r\n";
+            
+            fputs($connect, "POST /iWsService HTTP/1.0" . $newLine);
+            fputs($connect, "Content-Type: text/xml" . $newLine);
+            fputs($connect, "Content-Length: " . strlen($soapRequest) . $newLine . $newLine);
+            fputs($connect, $soapRequest . $newLine);
+            
+            $buffer = "";
+            while ($response = fgets($connect, 1024)) {
+                $buffer .= $response;
+            }
+            fclose($connect);
+
+            $syncLog->markCompleted('success', 'Mesin berhasil di-restart');
+            
+            return [
+                'success' => true,
+                'message' => 'Mesin berhasil di-restart'
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Error restarting machine: ' . $e->getMessage());
+            $syncLog->markCompleted('failed', $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Clear attendance data from machine
+     */
+    public function clearAttendanceData(AttendanceMachine $machine): array
+    {
+        $syncLog = $this->createSyncLog($machine, 'clear_attendance_data');
+        
+        try {
+            $timeout = env('ATTENDANCE_MACHINE_TIMEOUT', 10);
+            $connect = fsockopen($machine->ip_address, $machine->port, $errno, $errstr, $timeout);
+            
+            if (!$connect) {
+                throw new Exception("Koneksi gagal: $errstr ($errno)");
+            }
+
+            $soapRequest = "<ClearAttLog><ArgComKey xsi:type=\"xsd:integer\">{$machine->comm_key}</ArgComKey></ClearAttLog>";
+            $newLine = "\r\n";
+            
+            fputs($connect, "POST /iWsService HTTP/1.0" . $newLine);
+            fputs($connect, "Content-Type: text/xml" . $newLine);
+            fputs($connect, "Content-Length: " . strlen($soapRequest) . $newLine . $newLine);
+            fputs($connect, $soapRequest . $newLine);
+            
+            $buffer = "";
+            while ($response = fgets($connect, 1024)) {
+                $buffer .= $response;
+            }
+            fclose($connect);
+
+            $syncLog->markCompleted('success', 'Data absensi berhasil dihapus dari mesin');
+            
+            return [
+                'success' => true,
+                'message' => 'Data absensi berhasil dihapus dari mesin'
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Error clearing attendance data: ' . $e->getMessage());
+            $syncLog->markCompleted('failed', $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Sync time with machine
+     */
+    public function syncTime(AttendanceMachine $machine): array
+    {
+        $syncLog = $this->createSyncLog($machine, 'sync_time');
+        
+        try {
+            $timeout = env('ATTENDANCE_MACHINE_TIMEOUT', 10);
+            $connect = fsockopen($machine->ip_address, $machine->port, $errno, $errstr, $timeout);
+            
+            if (!$connect) {
+                throw new Exception("Koneksi gagal: $errstr ($errno)");
+            }
+
+            $currentTime = now()->format('Y-m-d H:i:s');
+            $soapRequest = "<SetDeviceTime><ArgComKey xsi:type=\"xsd:integer\">{$machine->comm_key}</ArgComKey><Arg><Time xsi:type=\"xsd:string\">{$currentTime}</Time></Arg></SetDeviceTime>";
+            $newLine = "\r\n";
+            
+            fputs($connect, "POST /iWsService HTTP/1.0" . $newLine);
+            fputs($connect, "Content-Type: text/xml" . $newLine);
+            fputs($connect, "Content-Length: " . strlen($soapRequest) . $newLine . $newLine);
+            fputs($connect, $soapRequest . $newLine);
+            
+            $buffer = "";
+            while ($response = fgets($connect, 1024)) {
+                $buffer .= $response;
+            }
+            fclose($connect);
+
+            $syncLog->markCompleted('success', "Waktu berhasil disync: {$currentTime}");
+            
+            return [
+                'success' => true,
+                'message' => "Waktu berhasil disync: {$currentTime}"
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Error syncing time: ' . $e->getMessage());
+            $syncLog->markCompleted('failed', $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
 } 

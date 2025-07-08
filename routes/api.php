@@ -176,6 +176,10 @@ Route::prefix('attendance-machines')->middleware('auth:sanctum')->group(function
     // Logs and monitoring
     Route::get('/{id}/sync-logs', [AttendanceMachineController::class, 'getSyncLogs']);
     Route::get('/dashboard', [AttendanceMachineController::class, 'getDashboard']);
+    
+    // Additional machine operations
+    Route::post('/{id}/pull-today', [AttendanceMachineController::class, 'pullTodayData']);
+    Route::get('/{id}/users', [AttendanceMachineController::class, 'getMachineUsers']);
 });
 
 // Auth routes
