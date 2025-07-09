@@ -104,9 +104,18 @@ class LeaveRequestController extends Controller
         // DIPERBARUI: Hitung total hari kerja (tidak termasuk Sabtu & Minggu) 
         $startDate = Carbon::parse($request->start_date); 
         $endDate = Carbon::parse($request->end_date); 
-        $totalDays = $startDate->diffInDaysFiltered(function(Carbon $date) { 
-            return !$date->isWeekend(); 
-        }, $endDate) + ($startDate->isWeekend() ? 0 : 1);
+        
+        // Hitung hari kerja dengan mengecualikan Sabtu dan Minggu
+        $totalDays = 0;
+        $currentDate = $startDate->copy();
+        
+        while ($currentDate->lte($endDate)) {
+            // Hanya hitung jika bukan weekend (Sabtu = 6, Minggu = 0)
+            if (!$currentDate->isWeekend()) {
+                $totalDays++;
+            }
+            $currentDate->addDay();
+        }
 
 
         // Cek Quota 
