@@ -195,6 +195,7 @@ Route::prefix('auth')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
+        Route::get('/check-employee-status', [AuthController::class, 'checkEmployeeStatus']);
         Route::post('/upload-profile-picture', [AuthController::class, 'uploadProfilePicture']);
         Route::delete('/delete-profile-picture', [AuthController::class, 'deleteProfilePicture']);
     });

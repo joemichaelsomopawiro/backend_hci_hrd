@@ -527,4 +527,58 @@ class AuthController extends Controller
             ]
         ]);
     }
+
+    /**
+     * Check employee status for logged in user
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function checkEmployeeStatus(Request $request)
+    {
+        try {
+            $user = $request->user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User tidak ditemukan',
+                    'code' => 'USER_NOT_FOUND'
+                ], 401);
+            }
+            
+            // Cek apakah user masih ada di tabel employee
+            $employee = Employee::where('id', $user->employee_id)->first();
+            
+            if (!$employee) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Maaf, Anda sudah tidak terdaftar sebagai karyawan Hope Channel Indonesia',
+                    'code' => 'EMPLOYEE_NOT_FOUND'
+                ], 403);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'employee_id' => $employee->id,
+                    'status' => 'active',
+                    'name' => $employee->nama_lengkap,
+                    'jabatan' => $employee->jabatan_saat_ini,
+                    'nik' => $employee->nik,
+                    'nip' => $employee->nip,
+                    'tanggal_mulai_kerja' => $employee->tanggal_mulai_kerja,
+                    'manager_id' => $employee->manager_id
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengecek status employee',
+                'code' => 'API_ERROR',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }
