@@ -295,6 +295,23 @@ class AttendanceController extends Controller
                 'synced_count' => $syncedCount
             ]);
 
+            // Tambahan: Sinkronisasi employee_id di attendances berdasarkan nama
+            $attendancesWithoutEmployee = \App\Models\Attendance::whereNull('employee_id')
+                ->whereNotNull('user_name')
+                ->get();
+            $autoLinked = 0;
+            foreach ($attendancesWithoutEmployee as $attendance) {
+                $employee = \App\Models\Employee::where('nama_lengkap', $attendance->user_name)->first();
+                if ($employee) {
+                    $attendance->employee_id = $employee->id;
+                    $attendance->save();
+                    $autoLinked++;
+                }
+            }
+            Log::info('Full Sync: Auto-link employee_id in attendances', [
+                'auto_linked' => $autoLinked
+            ]);
+
             // Final response - format yang kompatibel dengan frontend
             $responseData = [
                 'pull_result' => [

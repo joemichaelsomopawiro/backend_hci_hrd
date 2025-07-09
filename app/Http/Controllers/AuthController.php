@@ -25,7 +25,7 @@ class AuthController extends Controller
     public function sendRegisterOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20|unique:users,phone',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:25|unique:users,phone',
         ]);
 
         if ($validator->fails()) {
@@ -55,7 +55,7 @@ class AuthController extends Controller
     public function verifyOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:25',
             'otp_code' => 'required|string|size:6',
         ]);
 
@@ -89,7 +89,7 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20|unique:users,phone',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:25|unique:users,phone',
             'name' => [
                 'required',
                 'string',
@@ -235,7 +235,7 @@ class AuthController extends Controller
     public function sendForgotPasswordOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20|exists:users,phone',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:25|exists:users,phone',
         ]);
 
         if ($validator->fails()) {
@@ -265,7 +265,7 @@ class AuthController extends Controller
     public function resetPassword(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20|exists:users,phone',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:25|exists:users,phone',
             'otp_code' => 'required|string|size:6',
             'password' => 'required|string|min:8|confirmed',
         ]);
@@ -454,7 +454,7 @@ class AuthController extends Controller
     public function resendOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:25',
             'type' => 'required|string|in:register,forgot_password'
         ]);
 
