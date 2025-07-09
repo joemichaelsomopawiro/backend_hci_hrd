@@ -211,17 +211,52 @@ class MorningReflectionController extends Controller
                 $query->where('employee_id', $employee_id);
                 $query->whereDate('date', $date);
                 $attendance = $query->first();
+                
+                // Transform data untuk konsistensi
+                if ($attendance) {
+                    $data = $attendance->toArray();
+                    $data['employee_id'] = (int) $data['employee_id'];
+                    
+                    if ($attendance->employee) {
+                        $data['employee_name'] = $attendance->employee->nama_lengkap;
+                        $data['employee']['id'] = (int) $attendance->employee->id;
+                    } else {
+                        $data['employee_name'] = 'Karyawan Tidak Ditemukan';
+                        $data['employee'] = null;
+                    }
+                }
+                
                 return response()->json([
                     'success' => true,
                     'data' => [
                         'status' => $attendance ? true : false,
-                        'attendance' => $attendance,
+                        'attendance' => $attendance ? $data : null,
                         'message' => $attendance ? 'User sudah hadir' : 'User belum hadir'
                     ]
                 ]);
             } else {
                 // Jika tidak ada employee_id, kembalikan semua data absensi (paginated)
                 $reflections = $query->orderBy('date', 'desc')->paginate($perPage, ['*'], 'page', $page);
+                
+                // Transform data untuk setiap item
+                $transformedItems = $reflections->getCollection()->map(function ($attendance) {
+                    $data = $attendance->toArray();
+                    $data['employee_id'] = (int) $data['employee_id'];
+                    
+                    if ($attendance->employee) {
+                        $data['employee_name'] = $attendance->employee->nama_lengkap;
+                        $data['employee']['id'] = (int) $attendance->employee->id;
+                    } else {
+                        $data['employee_name'] = 'Karyawan Tidak Ditemukan';
+                        $data['employee'] = null;
+                    }
+                    
+                    return $data;
+                });
+                
+                // Set collection yang sudah ditransform
+                $reflections->setCollection($transformedItems);
+                
                 return response()->json([
                     'success' => true,
                     'data' => $reflections,
@@ -230,7 +265,8 @@ class MorningReflectionController extends Controller
             }
         } catch (\Exception $e) {
             \Log::error('Error getting attendance', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             return response()->json([
                 'success' => false,
@@ -346,9 +382,25 @@ class MorningReflectionController extends Controller
                                            ->orderBy('join_time', 'asc')
                                            ->paginate($perPage);
 
+            // Transform data untuk setiap item
+            $transformedItems = $attendances->getCollection()->map(function ($attendance) {
+                $data = $attendance->toArray();
+                $data['employee_id'] = (int) $data['employee_id'];
+                
+                if ($attendance->employee) {
+                    $data['employee_name'] = $attendance->employee->nama_lengkap;
+                    $data['employee']['id'] = (int) $attendance->employee->id;
+                } else {
+                    $data['employee_name'] = 'Karyawan Tidak Ditemukan';
+                    $data['employee'] = null;
+                }
+                
+                return $data;
+            });
+
             return response()->json([
                 'success' => true,
-                'data' => $attendances->items(),
+                'data' => $transformedItems,
                 'pagination' => [
                     'current_page' => $attendances->currentPage(),
                     'per_page' => $attendances->perPage(),
@@ -359,7 +411,8 @@ class MorningReflectionController extends Controller
 
         } catch (Exception $e) {
             Log::error('Error getting today attendance', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([

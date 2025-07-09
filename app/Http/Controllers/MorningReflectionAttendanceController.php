@@ -16,6 +16,7 @@ class MorningReflectionAttendanceController extends Controller
     public function getAttendance(Request $request)
     {
         try {
+            // Ambil data absensi dengan relasi employee
             $attendances = MorningReflectionAttendance::with('employee')
                 ->when($request->date, function($query, $date) {
                     return $query->whereDate('date', $date);
@@ -26,13 +27,43 @@ class MorningReflectionAttendanceController extends Controller
                 ->orderBy('date', 'desc')
                 ->get();
 
+            // Transform data untuk memastikan konsistensi dan menambahkan field employee_name
+            $transformedAttendances = $attendances->map(function ($attendance) {
+                $data = $attendance->toArray();
+                
+                // Pastikan employee_id adalah integer
+                $data['employee_id'] = (int) $data['employee_id'];
+                
+                // Tambahkan field employee_name jika employee ada
+                if ($attendance->employee) {
+                    $data['employee_name'] = $attendance->employee->nama_lengkap;
+                    // Pastikan data employee juga konsisten
+                    $data['employee']['id'] = (int) $attendance->employee->id;
+                } else {
+                    $data['employee_name'] = 'Karyawan Tidak Ditemukan';
+                    $data['employee'] = null;
+                    
+                    // Log warning untuk data yang tidak konsisten
+                    Log::warning('Morning reflection attendance with invalid employee_id', [
+                        'attendance_id' => $attendance->id,
+                        'employee_id' => $attendance->employee_id,
+                        'date' => $attendance->date
+                    ]);
+                }
+                
+                return $data;
+            });
+
             return response()->json([
                 'success' => true,
-                'data' => $attendances
+                'data' => $transformedAttendances,
+                'message' => 'Data absensi renungan pagi berhasil diambil',
+                'total_records' => $transformedAttendances->count()
             ], 200);
         } catch (Exception $e) {
             Log::error('Error getting morning reflection attendance', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             
             return response()->json([
@@ -92,9 +123,22 @@ class MorningReflectionAttendanceController extends Controller
                 'testing_mode' => $testingMode
             ]);
 
+            // Load relasi employee dan transform data
+            $attendance->load('employee');
+            $data = $attendance->toArray();
+            $data['employee_id'] = (int) $data['employee_id'];
+            
+            if ($attendance->employee) {
+                $data['employee_name'] = $attendance->employee->nama_lengkap;
+                $data['employee']['id'] = (int) $attendance->employee->id;
+            } else {
+                $data['employee_name'] = 'Karyawan Tidak Ditemukan';
+                $data['employee'] = null;
+            }
+
             return response()->json([
                 'success' => true,
-                'data' => $attendance,
+                'data' => $data,
                 'message' => 'Kehadiran renungan pagi berhasil dicatat'
             ], 201);
 
