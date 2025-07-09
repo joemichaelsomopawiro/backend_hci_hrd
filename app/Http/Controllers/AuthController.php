@@ -25,7 +25,7 @@ class AuthController extends Controller
     public function sendRegisterOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|unique:users,phone',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20|unique:users,phone',
         ]);
 
         if ($validator->fails()) {
@@ -55,7 +55,7 @@ class AuthController extends Controller
     public function verifyOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20',
             'otp_code' => 'required|string|size:6',
         ]);
 
@@ -89,7 +89,7 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|unique:users,phone',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20|unique:users,phone',
             'name' => [
                 'required',
                 'string',
@@ -176,6 +176,9 @@ class AuthController extends Controller
             ]);
         }
     
+        // 🔥 AUTO-SYNC: Sinkronisasi otomatis untuk user yang baru register
+        $syncResult = \App\Services\EmployeeSyncService::autoSyncUserRegistration($request->name);
+
         $token = $user->createToken('auth_token')->plainTextToken;
     
         return response()->json([
@@ -184,7 +187,8 @@ class AuthController extends Controller
             'data' => [
                 'user' => $user->load('employee'),
                 'token' => $token,
-                'token_type' => 'Bearer'
+                'token_type' => 'Bearer',
+                'sync_result' => $syncResult
             ]
         ]);
     }
@@ -231,7 +235,7 @@ class AuthController extends Controller
     public function sendForgotPasswordOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|exists:users,phone',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20|exists:users,phone',
         ]);
 
         if ($validator->fails()) {
@@ -261,7 +265,7 @@ class AuthController extends Controller
     public function resetPassword(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|exists:users,phone',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20|exists:users,phone',
             'otp_code' => 'required|string|size:6',
             'password' => 'required|string|min:8|confirmed',
         ]);
@@ -450,7 +454,7 @@ class AuthController extends Controller
     public function resendOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/',
+            'phone' => 'required|string|regex:/^[0-9+\-\s]+$/|min:10|max:20',
             'type' => 'required|string|in:register,forgot_password'
         ]);
 

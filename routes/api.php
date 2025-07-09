@@ -176,6 +176,10 @@ Route::prefix('attendance-machines')->middleware('auth:sanctum')->group(function
     // Logs and monitoring
     Route::get('/{id}/sync-logs', [AttendanceMachineController::class, 'getSyncLogs']);
     Route::get('/dashboard', [AttendanceMachineController::class, 'getDashboard']);
+    
+    // Additional machine operations
+    Route::post('/{id}/pull-today', [AttendanceMachineController::class, 'pullTodayData']);
+    Route::get('/{id}/users', [AttendanceMachineController::class, 'getMachineUsers']);
 });
 
 // Auth routes
@@ -296,4 +300,31 @@ Route::prefix('morning-reflection-attendance')->middleware(['auth:sanctum'])->gr
 Route::prefix('test')->group(function () {
     Route::post('/morning-reflection-attendance/attend', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'attend']);
     Route::get('/morning-reflection-attendance/attendance', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'getAttendance']);
+});
+
+// ===== PERSONAL PROFILE ROUTES =====
+// Routes untuk profile pribadi (tanpa autentikasi)
+Route::prefix('personal')->group(function () {
+    // Profile pribadi
+    Route::get('/profile', [\App\Http\Controllers\PersonalProfileController::class, 'show']);
+    Route::put('/profile', [\App\Http\Controllers\PersonalProfileController::class, 'update']);
+});
+
+// ===== EMPLOYEE SYNC ROUTES =====
+// Routes untuk sinkronisasi employee (dengan autentikasi)
+Route::prefix('employee-sync')->middleware(['auth:sanctum'])->group(function () {
+    // Sync by name
+    Route::post('/sync-by-name', [\App\Http\Controllers\EmployeeSyncController::class, 'syncByName']);
+    
+    // Sync by ID
+    Route::post('/sync-by-id', [\App\Http\Controllers\EmployeeSyncController::class, 'syncById']);
+    
+    // Bulk sync
+    Route::post('/bulk-sync', [\App\Http\Controllers\EmployeeSyncController::class, 'bulkSync']);
+    
+    // Get sync status
+    Route::get('/status', [\App\Http\Controllers\EmployeeSyncController::class, 'getSyncStatus']);
+    
+    // Sync orphaned records
+    Route::post('/sync-orphaned-records', [\App\Http\Controllers\EmployeeSyncController::class, 'syncOrphanedRecords']);
 });

@@ -252,12 +252,25 @@ class AttendanceController extends Controller
             // Process the data
             $processResult = $this->processingService->processUnprocessedLogs();
 
+            // 🔥 AUTO-SYNC: Sinkronisasi otomatis untuk semua employee yang ada di attendance
+            $syncResults = [];
+            $uniqueUserNames = \App\Models\Attendance::whereNotNull('user_name')
+                                                    ->whereNull('employee_id')
+                                                    ->distinct()
+                                                    ->pluck('user_name');
+            
+            foreach ($uniqueUserNames as $userName) {
+                $syncResult = \App\Services\EmployeeSyncService::autoSyncAttendance($userName);
+                $syncResults[$userName] = $syncResult;
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Sync berhasil',
                 'data' => [
                     'pull_result' => $pullResult,
-                    'process_result' => $processResult
+                    'process_result' => $processResult,
+                    'sync_results' => $syncResults
                 ]
             ]);
 
@@ -279,10 +292,22 @@ class AttendanceController extends Controller
         try {
             $result = $this->processingService->processUnprocessedLogs();
 
+            // 🔥 AUTO-SYNC: Sinkronisasi otomatis untuk semua employee yang ada di attendance
+            $syncResults = [];
+            $uniqueUserNames = \App\Models\Attendance::whereNotNull('user_name')
+                                                    ->whereNull('employee_id')
+                                                    ->distinct()
+                                                    ->pluck('user_name');
+            
+            foreach ($uniqueUserNames as $userName) {
+                $syncResult = \App\Services\EmployeeSyncService::autoSyncAttendance($userName);
+                $syncResults[$userName] = $syncResult;
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => $result['message'],
-                'data' => $result
+                'data' => array_merge($result, ['sync_results' => $syncResults])
             ]);
 
         } catch (\Exception $e) {
