@@ -16,6 +16,9 @@ return [
         'default_port' => env('ATTENDANCE_MACHINE_PORT', 80),
         'comm_key' => env('ATTENDANCE_MACHINE_COMM_KEY', '0'),
         'timeout' => env('ATTENDANCE_MACHINE_TIMEOUT', 10),
+        'full_sync_timeout' => env('ATTENDANCE_MACHINE_FULL_TIMEOUT', 60),
+        'max_execution_time' => env('ATTENDANCE_MAX_EXECUTION_TIME', 240),
+        'memory_limit' => env('ATTENDANCE_MEMORY_LIMIT', '512M'),
     ],
 
     /*

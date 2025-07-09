@@ -74,7 +74,7 @@ class AttendanceController extends Controller
                         'late_minutes' => $attendance->late_minutes,
                     ];
                 });
-
+//tesfwfewefwef
             // Get machine status
             $machine = AttendanceMachine::where('ip_address', '10.10.10.85')->first();
             $machineStatus = null;
@@ -215,11 +215,17 @@ class AttendanceController extends Controller
 
     /**
      * POST /api/attendance/sync
-     * Sync data dari mesin absensi
+     * Sync data dari mesin absensi (FULL SYNC - SEMUA DATA)
      */
     public function syncFromMachine(Request $request): JsonResponse
     {
+        // Set longer timeout untuk full sync
+        set_time_limit(300); // 5 menit timeout
+        ini_set('memory_limit', '512M'); // Increase memory limit
+        
         try {
+            Log::info('Full Sync: Started', ['requested_by' => $request->ip()]);
+            
             $machine = AttendanceMachine::where('ip_address', '10.10.10.85')->first();
 
             if (!$machine) {
@@ -229,56 +235,116 @@ class AttendanceController extends Controller
                 ], 404);
             }
 
-            // Test connection first
+            // Step 1: Test connection dengan timeout yang lebih panjang
+            Log::info('Full Sync: Testing connection...');
             $connectionTest = $this->machineService->testConnection($machine);
             if (!$connectionTest['success']) {
+                Log::error('Full Sync: Connection failed', ['error' => $connectionTest['message']]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Tidak dapat terhubung ke mesin: ' . $connectionTest['message']
                 ], 400);
             }
+            Log::info('Full Sync: Connection successful');
 
-            // Pull data from machine
+            // Step 2: Pull SEMUA data dari mesin
+            Log::info('Full Sync: Pulling all data from machine...');
             $pin = $request->get('pin', 'All'); // Default ambil semua
             $pullResult = $this->machineService->pullAttendanceData($machine, $pin);
 
             if (!$pullResult['success']) {
+                Log::error('Full Sync: Pull data failed', ['error' => $pullResult['message']]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Gagal mengambil data dari mesin: ' . $pullResult['message']
                 ], 400);
             }
+            
+            $totalFromMachine = count($pullResult['data'] ?? []);
+            Log::info('Full Sync: Pull data successful', ['total_records' => $totalFromMachine]);
 
-            // Process the data
+            // Step 3: Process semua logs yang belum diproses
+            Log::info('Full Sync: Processing unprocessed logs...');
             $processResult = $this->processingService->processUnprocessedLogs();
+            Log::info('Full Sync: Processing successful', ['processed' => $processResult['processed']]);
 
-            // 🔥 AUTO-SYNC: Sinkronisasi otomatis untuk semua employee yang ada di attendance
+            // Step 4: AUTO-SYNC - Link employee data
+            Log::info('Full Sync: Auto-sync employee linking...');
             $syncResults = [];
             $uniqueUserNames = \App\Models\Attendance::whereNotNull('user_name')
                                                     ->whereNull('employee_id')
                                                     ->distinct()
                                                     ->pluck('user_name');
             
+            $syncedCount = 0;
             foreach ($uniqueUserNames as $userName) {
-                $syncResult = \App\Services\EmployeeSyncService::autoSyncAttendance($userName);
-                $syncResults[$userName] = $syncResult;
+                try {
+                    $syncResult = \App\Services\EmployeeSyncService::autoSyncAttendance($userName);
+                    $syncResults[$userName] = $syncResult;
+                    if ($syncResult['success']) {
+                        $syncedCount++;
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Full Sync: Auto-sync failed for user', ['user' => $userName, 'error' => $e->getMessage()]);
+                    $syncResults[$userName] = ['success' => false, 'message' => $e->getMessage()];
+                }
             }
+            
+            Log::info('Full Sync: Auto-sync completed', [
+                'total_users' => count($uniqueUserNames),
+                'synced_count' => $syncedCount
+            ]);
+
+            // Final response - format yang kompatibel dengan frontend
+            $responseData = [
+                'pull_result' => [
+                    'success' => $pullResult['success'],
+                    'message' => $pullResult['message'],
+                    'data' => $pullResult['data'] ?? [], // Array data untuk frontend stats
+                    'stats' => $pullResult['stats'] ?? [],
+                    'total_from_machine' => $totalFromMachine
+                ],
+                'process_result' => [
+                    'success' => $processResult['success'],
+                    'message' => $processResult['message'],
+                    'processed' => $processResult['processed'],
+                    'details' => $processResult
+                ],
+                'sync_results' => [
+                    'total_users' => count($uniqueUserNames),
+                    'synced_count' => $syncedCount,
+                    'details' => $syncResults
+                ],
+                'summary' => [
+                    'total_pulled' => $totalFromMachine,
+                    'total_processed' => $processResult['processed'],
+                    'total_synced' => $syncedCount,
+                    'operation' => 'FULL SYNC - Semua data dari mesin'
+                ]
+            ];
+
+            Log::info('Full Sync: Completed successfully', $responseData['summary']);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Sync berhasil',
-                'data' => [
-                    'pull_result' => $pullResult,
-                    'process_result' => $processResult,
-                    'sync_results' => $syncResults
-                ]
+                'message' => "Full sync berhasil! Pulled: {$totalFromMachine}, Processed: {$processResult['processed']}, Synced: {$syncedCount} users",
+                'data' => $responseData
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Error syncing from machine: ' . $e->getMessage());
+            Log::error('Full Sync: Fatal error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan pada full sync: ' . $e->getMessage(),
+                'error_details' => [
+                    'type' => get_class($e),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine()
+                ]
             ], 500);
         }
     }

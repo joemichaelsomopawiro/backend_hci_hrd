@@ -47,7 +47,7 @@ class AttendanceMachineService
     }
 
     /**
-     * Tarik data absensi dari mesin
+     * Tarik data absensi dari mesin (FULL SYNC - SEMUA DATA)
      */
     public function pullAttendanceData(AttendanceMachine $machine = null, string $pin = 'All'): array
     {
@@ -55,48 +55,118 @@ class AttendanceMachineService
         $syncLog = $this->createSyncLog($machine, 'pull_data');
         
         try {
-            $timeout = env('ATTENDANCE_MACHINE_TIMEOUT', 10);
+            // Use longer timeout for full sync (60 seconds)
+            $timeout = env('ATTENDANCE_MACHINE_FULL_TIMEOUT', 60);
+            
+            Log::info('Full Pull: Connecting to machine', [
+                'ip' => $machine->ip_address,
+                'port' => $machine->port,
+                'timeout' => $timeout,
+                'pin' => $pin
+            ]);
+            
             $connect = fsockopen($machine->ip_address, $machine->port, $errno, $errstr, $timeout);
             
             if (!$connect) {
-                throw new Exception("Koneksi gagal: $errstr ($errno)");
+                throw new Exception("Koneksi gagal ke {$machine->ip_address}:{$machine->port} - $errstr ($errno)");
             }
+
+            // Set longer stream timeout untuk membaca response yang besar
+            stream_set_timeout($connect, $timeout);
 
             $soapRequest = "<GetAttLog><ArgComKey xsi:type=\"xsd:integer\">{$machine->comm_key}</ArgComKey><Arg><PIN xsi:type=\"xsd:integer\">{$pin}</PIN></Arg></GetAttLog>";
             $newLine = "\r\n";
+            
+            Log::info('Full Pull: Sending SOAP request', ['request_size' => strlen($soapRequest)]);
             
             fputs($connect, "POST /iWsService HTTP/1.0" . $newLine);
             fputs($connect, "Content-Type: text/xml" . $newLine);
             fputs($connect, "Content-Length: " . strlen($soapRequest) . $newLine . $newLine);
             fputs($connect, $soapRequest . $newLine);
             
+            Log::info('Full Pull: Reading response from machine...');
+            
             $buffer = "";
-            while ($response = fgets($connect, 1024)) {
+            $start_time = time();
+            $max_execution_time = 240; // 4 minutes max
+            
+            while (!feof($connect) && (time() - $start_time) < $max_execution_time) {
+                $response = fgets($connect, 8192); // Bigger chunk size
+                if ($response === false) {
+                    break;
+                }
                 $buffer .= $response;
+                
+                // Log progress setiap 10KB
+                if (strlen($buffer) % 10240 == 0) {
+                    Log::info('Full Pull: Reading progress', ['bytes_read' => strlen($buffer)]);
+                }
             }
+            
             fclose($connect);
+            
+            Log::info('Full Pull: Response received', [
+                'total_bytes' => strlen($buffer),
+                'execution_time' => time() - $start_time . ' seconds'
+            ]);
+
+            if (empty($buffer)) {
+                throw new Exception("Response kosong dari mesin");
+            }
 
             // Parse response
+            Log::info('Full Pull: Parsing attendance data...');
             $attendanceData = $this->parseAttendanceData($buffer);
+            
+            if (empty($attendanceData)) {
+                throw new Exception("Tidak ada data attendance yang bisa diparsing dari response");
+            }
+            
+            Log::info('Full Pull: Processing attendance data to database...', ['total_records' => count($attendanceData)]);
             $processedCount = $this->processAttendanceData($machine, $attendanceData);
             
             $machine->updateLastSync();
-            $syncLog->markCompleted('success', "Berhasil memproses {$processedCount} data absensi", [
+            $syncLog->markCompleted('success', "FULL SYNC: Berhasil memproses {$processedCount} dari " . count($attendanceData) . " data absensi", [
                 'total_records' => count($attendanceData),
-                'processed_records' => $processedCount
+                'processed_records' => $processedCount,
+                'sync_type' => 'full_sync',
+                'response_size_bytes' => strlen($buffer)
             ]);
             $syncLog->update(['records_processed' => $processedCount]);
 
+            Log::info('Full Pull: Completed successfully', [
+                'total_from_machine' => count($attendanceData),
+                'processed_to_logs' => $processedCount
+            ]);
+
             return [
                 'success' => true, 
-                'message' => "Berhasil memproses {$processedCount} data absensi",
-                'data' => $attendanceData
+                'message' => "FULL SYNC: Berhasil memproses {$processedCount} dari " . count($attendanceData) . " data absensi",
+                'data' => $attendanceData,
+                'stats' => [
+                    'total_from_machine' => count($attendanceData),
+                    'processed_to_logs' => $processedCount,
+                    'response_size_bytes' => strlen($buffer),
+                    'sync_type' => 'full_sync'
+                ]
             ];
 
         } catch (Exception $e) {
-            Log::error('Error pulling attendance data: ' . $e->getMessage());
-            $syncLog->markCompleted('failed', $e->getMessage());
-            return ['success' => false, 'message' => $e->getMessage()];
+            Log::error('Full Pull: Error pulling attendance data', [
+                'error' => $e->getMessage(),
+                'machine' => $machine->ip_address,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            $syncLog->markCompleted('failed', 'FULL SYNC ERROR: ' . $e->getMessage());
+            return [
+                'success' => false, 
+                'message' => 'Full sync error: ' . $e->getMessage(),
+                'error_details' => [
+                    'type' => get_class($e),
+                    'machine_ip' => $machine->ip_address
+                ]
+            ];
         }
     }
 
@@ -267,7 +337,7 @@ class AttendanceMachineService
     }
 
     /**
-     * Proses data absensi ke database (resolve PIN2 ke PIN utama)
+     * Proses data absensi ke database (resolve PIN2 ke PIN utama) - CHUNKED untuk FULL SYNC
      */
     private function processAttendanceData(AttendanceMachine $machine, array $attendanceData): int
     {
@@ -276,56 +346,98 @@ class AttendanceMachineService
         
         $processedCount = 0;
         $skippedCount = 0;
+        $duplicateCount = 0;
+        $errorCount = 0;
         
-        foreach ($attendanceData as $data) {
-            try {
-                $inputPin = $data['pin']; // PIN dari mesin (bisa PIN utama atau PIN2)
-                
-                // Skip jika PIN tidak terdaftar di mesin
-                if (!in_array($inputPin, $registeredPins)) {
-                    $skippedCount++;
-                    continue;
-                }
-                
-                // Resolve PIN2 ke PIN utama
-                $mainPin = $this->resolvePinToMainPin($inputPin);
-                
-                // Cek apakah log sudah ada
-                $existingLog = AttendanceLog::where('attendance_machine_id', $machine->id)
-                    ->where('user_pin', $mainPin) // Cek berdasarkan PIN utama
-                    ->where('datetime', Carbon::parse($data['datetime']))
-                    ->first();
-                
-                if ($existingLog) {
-                    continue; // Skip jika sudah ada
-                }
+        // Process in chunks untuk menghindari memory issues
+        $chunkSize = 100; // Process 100 records at a time
+        $chunks = array_chunk($attendanceData, $chunkSize);
+        $totalChunks = count($chunks);
+        
+        Log::info("Full Pull Processing: Starting data processing", [
+            'total_records' => count($attendanceData),
+            'chunks' => $totalChunks,
+            'chunk_size' => $chunkSize,
+            'registered_pins' => count($registeredPins)
+        ]);
+        
+        foreach ($chunks as $chunkIndex => $chunk) {
+            Log::info("Full Pull Processing: Processing chunk " . ($chunkIndex + 1) . "/{$totalChunks}");
+            
+            foreach ($chunk as $data) {
+                try {
+                    $inputPin = $data['pin']; // PIN dari mesin (bisa PIN utama atau PIN2)
+                    
+                    // Skip jika PIN tidak terdaftar di mesin
+                    if (!in_array($inputPin, $registeredPins)) {
+                        $skippedCount++;
+                        continue;
+                    }
+                    
+                    // Resolve PIN2 ke PIN utama
+                    $mainPin = $this->resolvePinToMainPin($inputPin);
+                    
+                    // Parse datetime
+                    $logDateTime = Carbon::parse($data['datetime']);
+                    
+                    // Cek apakah log sudah ada (optimized query)
+                    $existingLog = AttendanceLog::where('attendance_machine_id', $machine->id)
+                        ->where('user_pin', $mainPin) // Cek berdasarkan PIN utama
+                        ->where('datetime', $logDateTime)
+                        ->exists(); // Use exists() instead of first() for better performance
+                    
+                    if ($existingLog) {
+                        $duplicateCount++;
+                        continue; // Skip jika sudah ada
+                    }
 
-                // Simpan ke attendance_logs dengan PIN utama
-                AttendanceLog::create([
-                    'attendance_machine_id' => $machine->id,
-                    'user_pin' => $mainPin, // Simpan PIN utama, bukan PIN2
-                    'datetime' => Carbon::parse($data['datetime']),
-                    'verified_method' => $this->getVerifiedMethod($data['verified']),
-                    'verified_code' => (int)$data['verified'],
-                    'status_code' => 'check_in',
-                    'is_processed' => false,
-                    'raw_data' => json_encode([
-                        'original_pin' => $inputPin, // Simpan PIN asli dari mesin
-                        'resolved_pin' => $mainPin,  // PIN utama yang digunakan
-                        'machine_data' => $data['raw_data']
-                    ])
+                    // Simpan ke attendance_logs dengan PIN utama
+                    AttendanceLog::create([
+                        'attendance_machine_id' => $machine->id,
+                        'user_pin' => $mainPin, // Simpan PIN utama, bukan PIN2
+                        'datetime' => $logDateTime,
+                        'verified_method' => $this->getVerifiedMethod($data['verified']),
+                        'verified_code' => (int)$data['verified'],
+                        'status_code' => 'check_in',
+                        'is_processed' => false,
+                        'raw_data' => json_encode([
+                            'original_pin' => $inputPin, // Simpan PIN asli dari mesin
+                            'resolved_pin' => $mainPin,  // PIN utama yang digunakan
+                            'machine_data' => $data['raw_data']
+                        ])
+                    ]);
+                    
+                    $processedCount++;
+                    
+                } catch (Exception $e) {
+                    $errorCount++;
+                    Log::error("Full Pull Processing: Error processing record", [
+                        'error' => $e->getMessage(),
+                        'data' => $data,
+                        'chunk' => $chunkIndex + 1
+                    ]);
+                }
+            }
+            
+            // Log progress after each chunk
+            if (($chunkIndex + 1) % 10 == 0 || ($chunkIndex + 1) == $totalChunks) {
+                Log::info("Full Pull Processing: Progress update", [
+                    'chunks_completed' => $chunkIndex + 1,
+                    'total_chunks' => $totalChunks,
+                    'processed_so_far' => $processedCount,
+                    'skipped_so_far' => $skippedCount,
+                    'duplicates_so_far' => $duplicateCount,
+                    'errors_so_far' => $errorCount
                 ]);
-                
-                $processedCount++;
-                
-            } catch (Exception $e) {
-                Log::error("Error processing attendance data: " . $e->getMessage(), $data);
             }
         }
         
-        Log::info("Processed attendance data", [
+        Log::info("Full Pull Processing: Completed data processing", [
+            'total_records' => count($attendanceData),
             'processed_count' => $processedCount,
             'skipped_unregistered' => $skippedCount,
+            'duplicate_skipped' => $duplicateCount,
+            'error_count' => $errorCount,
             'total_registered_pins' => count($registeredPins)
         ]);
         
