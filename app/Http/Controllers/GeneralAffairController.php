@@ -4,6 +4,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\MorningReflectionAttendance;
 use App\Models\LeaveRequest;
+use App\Models\Attendance;
+use App\Models\EmployeeAttendance;
 use App\Services\RoleHierarchyService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -391,6 +393,181 @@ class GeneralAffairController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat mengambil riwayat kehadiran'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all leave requests for GA Dashboard
+     * Endpoint: GET /ga/dashboard/leave-requests
+     */
+    public function getAllLeaveRequests(Request $request)
+    {
+        try {
+            // Pastikan user sudah login dan memiliki role GA
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User tidak terautentikasi'
+                ], 401);
+            }
+
+            // Validasi role GA/Admin
+            if (!in_array($user->role, ['General Affairs', 'Admin'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Hanya GA/Admin yang dapat mengakses endpoint ini.'
+                ], 403);
+            }
+
+            $query = LeaveRequest::with(['employee', 'approvedBy.user']);
+            
+            // Apply filters
+            if ($request->has('status')) {
+                $query->where('overall_status', $request->status);
+            }
+            
+            if ($request->has('leave_type')) {
+                $query->where('leave_type', $request->leave_type);
+            }
+            
+            if ($request->has('employee_id')) {
+                $query->where('employee_id', $request->employee_id);
+            }
+            
+            if ($request->has('start_date')) {
+                $query->whereDate('start_date', '>=', $request->start_date);
+            }
+            
+            if ($request->has('end_date')) {
+                $query->whereDate('end_date', '<=', $request->end_date);
+            }
+            
+            // Pagination
+            $perPage = $request->get('per_page', 15);
+            $leaveRequests = $query->orderBy('created_at', 'desc')->paginate($perPage);
+            
+            // Transform data untuk response format yang diinginkan dengan validasi
+            $transformedData = $leaveRequests->getCollection()->map(function ($leave) {
+                // Validasi data employee
+                if (!$leave->employee) {
+                    Log::warning('Leave request without employee data', ['leave_id' => $leave->id]);
+                    return null; // Skip data yang tidak valid
+                }
+                
+                return [
+                    'id' => $leave->id,
+                    'employee' => [
+                        'id' => $leave->employee->id,
+                        'nama_lengkap' => $leave->employee->nama_lengkap ?? 'Data tidak tersedia'
+                    ],
+                    'leave_type' => $leave->leave_type ?? 'unknown',
+                    'start_date' => $leave->start_date,
+                    'end_date' => $leave->end_date,
+                    'duration' => $leave->total_days ?? 0,
+                    'reason' => $leave->reason ?? 'Tidak ada keterangan',
+                    'overall_status' => $leave->overall_status ?? 'pending',
+                    'created_at' => $leave->created_at,
+                    'updated_at' => $leave->updated_at
+                ];
+            })->filter(); // Remove null values
+            
+            return response()->json([
+                'success' => true,
+                'data' => $transformedData,
+                'pagination' => [
+                    'current_page' => $leaveRequests->currentPage(),
+                    'last_page' => $leaveRequests->lastPage(),
+                    'per_page' => $leaveRequests->perPage(),
+                    'total' => $leaveRequests->total()
+                ],
+                'message' => 'Data cuti berhasil diambil'
+            ], 200);
+            
+        } catch (Exception $e) {
+            Log::error('Error getting all leave requests for GA', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data cuti'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all attendances for GA Dashboard
+     * Endpoint: GET /ga/dashboard/attendances
+     */
+    public function getAllAttendances(Request $request)
+    {
+        try {
+            // Pastikan user sudah login dan memiliki role GA
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User tidak terautentikasi'
+                ], 401);
+            }
+
+            // Validasi role GA/Admin
+            if (!in_array($user->role, ['General Affairs', 'Admin'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Hanya GA/Admin yang dapat mengakses endpoint ini.'
+                ], 403);
+            }
+
+            // Gunakan model EmployeeAttendance yang sudah ada
+            $query = EmployeeAttendance::with(['employee']);
+            
+            // Apply filters
+            if ($request->has('date')) {
+                $query->whereDate('date', $request->date);
+            } else {
+                // Default tampilkan hari ini
+                $query->whereDate('date', Carbon::today());
+            }
+            
+            if ($request->has('employee_id')) {
+                $query->where('employee_id', $request->employee_id);
+            }
+            
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+            
+            // Pagination
+            $perPage = $request->get('per_page', 15);
+            $attendances = $query->orderBy('date', 'desc')
+                                ->orderBy('check_in', 'asc')
+                                ->paginate($perPage);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $attendances->items(),
+                'pagination' => [
+                    'current_page' => $attendances->currentPage(),
+                    'last_page' => $attendances->lastPage(),
+                    'per_page' => $attendances->perPage(),
+                    'total' => $attendances->total()
+                ],
+                'message' => 'Data absensi berhasil diambil'
+            ], 200);
+            
+        } catch (Exception $e) {
+            Log::error('Error getting all attendances for GA', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data absensi'
             ], 500);
         }
     }
