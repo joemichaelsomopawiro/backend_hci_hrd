@@ -1126,4 +1126,107 @@ class AttendanceController extends Controller
             ], 500);
         }
     }
-} 
+
+    /**
+     * POST /api/attendance/sync-leave
+     * Sync leave status to attendance for specific date
+     */
+    public function syncLeaveToAttendance(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'date' => 'nullable|date',
+                'employee_id' => 'nullable|exists:employees,id'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation error',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $date = $request->get('date', now()->format('Y-m-d'));
+            $employeeId = $request->get('employee_id');
+
+            $leaveService = app(\App\Services\LeaveAttendanceIntegrationService::class);
+            
+            if ($employeeId) {
+                $result = $leaveService->syncLeaveStatusToAttendance($date, $employeeId);
+            } else {
+                $result = $leaveService->syncLeaveStatusToAttendance($date);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Leave status berhasil disinkronisasi ke attendance',
+                'data' => [
+                    'date' => $date,
+                    'employee_id' => $employeeId,
+                    'result' => $result
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error in syncLeaveToAttendance: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/attendance/sync-leave-date-range
+     * Sync leave status to attendance for date range
+     */
+    public function syncLeaveToAttendanceDateRange(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'start_date' => 'required|date',
+                'end_date' => 'required|date|after_or_equal:start_date',
+                'employee_id' => 'nullable|exists:employees,id'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation error',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $startDate = $request->get('start_date');
+            $endDate = $request->get('end_date');
+            $employeeId = $request->get('employee_id');
+
+            $leaveService = app(\App\Services\LeaveAttendanceIntegrationService::class);
+            
+            if ($employeeId) {
+                $result = $leaveService->syncLeaveStatusForDateRange($startDate, $endDate, $employeeId);
+            } else {
+                $result = $leaveService->syncLeaveStatusForDateRange($startDate, $endDate);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Leave status berhasil disinkronisasi ke attendance untuk rentang tanggal',
+                'data' => [
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'employee_id' => $employeeId,
+                    'result' => $result
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error in syncLeaveToAttendanceDateRange: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+}

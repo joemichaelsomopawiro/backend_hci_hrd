@@ -58,6 +58,14 @@ class Kernel extends ConsoleKernel
                  ->name('auto-expire-leave-requests')
                  ->description('Auto-expire leave requests yang sudah melewati tanggal mulai cuti')
                  ->appendOutputTo(storage_path('logs/leave-expire.log'));
+
+        // Sinkronisasi status cuti ke attendance setiap pagi jam 7:30
+        $schedule->command('attendance:sync-leave --today')
+                 ->dailyAt('07:30')
+                 ->withoutOverlapping()
+                 ->name('sync-leave-to-attendance')
+                 ->description('Sinkronisasi status cuti yang approved ke tabel attendance')
+                 ->appendOutputTo(storage_path('logs/leave-attendance-sync.log'));
     }
 
     /**

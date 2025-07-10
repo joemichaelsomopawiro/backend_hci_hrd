@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Attendance;
 use App\Models\Employee;
 use App\Models\EmployeeAttendance;
+use App\Services\LeaveAttendanceIntegrationService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -13,6 +14,12 @@ use Illuminate\Support\Facades\Log;
 
 class AttendanceExportController extends Controller
 {
+    protected $leaveService;
+
+    public function __construct(LeaveAttendanceIntegrationService $leaveService)
+    {
+        $this->leaveService = $leaveService;
+    }
     /**
      * Export data absensi harian
      * GET /api/attendance/export/daily
@@ -35,6 +42,9 @@ class AttendanceExportController extends Controller
 
             $date = $request->get('date', now()->format('Y-m-d'));
             $format = $request->get('format', 'csv');
+            
+            // Sinkronisasi status cuti sebelum export
+            $this->leaveService->syncLeaveStatusToAttendance($date);
             
             // Ambil data absensi untuk tanggal tertentu dengan relasi employee
             $attendances = Attendance::where('date', $date)
@@ -102,6 +112,11 @@ class AttendanceExportController extends Controller
                     return $emp->name;
                 });
 
+            // Sinkronisasi status cuti untuk seluruh bulan sebelum export
+            $startDate = Carbon::create($year, $month, 1)->format('Y-m-d');
+            $endDate = Carbon::create($year, $month, 1)->endOfMonth()->format('Y-m-d');
+            $this->leaveService->syncLeaveStatusForDateRange($startDate, $endDate);
+            
             // Ambil data absensi untuk bulan tertentu
             $attendances = Attendance::whereYear('date', $year)
                 ->whereMonth('date', $month)
@@ -320,7 +335,14 @@ class AttendanceExportController extends Controller
                 Log::info("  Checking attendance for {$userPin} on {$date}: " . ($att ? 'Found' : 'Not found'));
                 
                 if ($att) {
-                    if ($att->check_in) {
+                    // Cek apakah status adalah cuti
+                    if (in_array($att->status, ['on_leave', 'sick_leave'])) {
+                        // Status cuti - tampilkan jenis cuti
+                        $leaveType = $att->status === 'sick_leave' ? 'Sakit' : 'Cuti';
+                        $matrix[$userPin]['data'][$day] = 'CUTI_' . $leaveType;
+                        $matrix[$userPin]['total_hadir']++; // Cuti dihitung sebagai hadir
+                        Log::info("  Found leave status for {$date}: {$att->status}");
+                    } elseif ($att->check_in) {
                         // Jika ada check-in, berarti hadir
                         if ($att->check_out) {
                             $jamKerja = $att->work_hours ? number_format($att->work_hours, 2) : '0.00';
@@ -359,6 +381,7 @@ class AttendanceExportController extends Controller
         $html .= '.hadir-lengkap { background-color: #4CAF50; color: white; font-weight: bold; }'; // Hijau untuk hadir lengkap
         $html .= '.hadir-masuk { background-color: #FFC107; color: #333; font-weight: bold; }'; // Kuning untuk hanya masuk
         $html .= '.tidak-hadir { background-color: #F44336; color: white; font-weight: bold; }'; // Merah untuk tidak hadir
+        $html .= '.cuti { background-color: #1565C0; color: white; font-weight: bold; }'; // Biru tua untuk cuti
         $html .= '.total-col { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); font-weight: bold; color: #333; }';
         $html .= '.title { text-align: center; font-weight: bold; font-size: 18px; margin: 15px 0; color: #333; text-shadow: 1px 1px 2px rgba(0,0,0,0.1); }';
         $html .= '.subtitle { text-align: center; font-size: 14px; margin: 10px 0; color: #666; }';
@@ -391,6 +414,11 @@ class AttendanceExportController extends Controller
                     // Ada record tapi tidak ada check-in
                     $cellClass = 'tidak-hadir';
                     $cellContent = '-';
+                } elseif (strpos($cellData, 'CUTI_') === 0) {
+                    // Status cuti
+                    $cellClass = 'cuti';
+                    $leaveType = str_replace('CUTI_', '', $cellData);
+                    $cellContent = $leaveType;
                 } elseif (strpos($cellData, '-') !== false && substr($cellData, -1) === '-') {
                     // Hanya check-in (format: 08:00-)
                     $cellClass = 'hadir-masuk';
@@ -418,6 +446,7 @@ class AttendanceExportController extends Controller
         $html .= '<h3 style="margin-top: 0; color: #333;">📋 Keterangan Warna:</h3>';
         $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #4CAF50; margin-right: 10px; border-radius: 3px;"></span><strong>Hijau:</strong> Hadir Lengkap (Check-in & Check-out)</div>';
         $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #FFC107; margin-right: 10px; border-radius: 3px;"></span><strong>Kuning:</strong> Hanya Check-in</div>';
+        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #1565C0; margin-right: 10px; border-radius: 3px;"></span><strong>Biru Tua:</strong> Cuti/Sakit</div>';
         $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #F44336; margin-right: 10px; border-radius: 3px;"></span><strong>Merah:</strong> Tidak Hadir (-)</div>';
         $html .= '</div>';
         
@@ -471,14 +500,27 @@ class AttendanceExportController extends Controller
                 $employeeName = $attendance->employeeAttendance->name;
             }
             
-            $row = [
-                $no,
-                $employeeName,
-                $attendance->date,
-                $attendance->check_in ? $attendance->check_in->format('H:i:s') : '-',
-                $attendance->check_out ? $attendance->check_out->format('H:i:s') : '-',
-                $attendance->work_hours ? number_format($attendance->work_hours, 2) . ' jam' : '-'
-            ];
+            // Cek status cuti
+            if (in_array($attendance->status, ['on_leave', 'sick_leave'])) {
+                $statusText = $attendance->status === 'sick_leave' ? 'Sakit' : 'Cuti';
+                $row = [
+                    $no,
+                    $employeeName,
+                    $attendance->date,
+                    $statusText,
+                    '-',
+                    '-'
+                ];
+            } else {
+                $row = [
+                    $no,
+                    $employeeName,
+                    $attendance->date,
+                    $attendance->check_in ? $attendance->check_in->format('H:i:s') : '-',
+                    $attendance->check_out ? $attendance->check_out->format('H:i:s') : '-',
+                    $attendance->work_hours ? number_format($attendance->work_hours, 2) . ' jam' : '-'
+                ];
+            }
             $csv[] = implode(',', $row);
             $no++;
         }
@@ -502,6 +544,7 @@ class AttendanceExportController extends Controller
         $html .= 'th { background-color: #4472C4; color: white; font-weight: bold; }';
         $html .= '.title { text-align: center; font-weight: bold; font-size: 16px; margin: 10px 0; }';
         $html .= '.subtitle { text-align: center; font-size: 14px; margin: 5px 0; }';
+        $html .= '.cuti { background-color: #1565C0; color: white; font-weight: bold; }'; // Biru tua untuk cuti
         $html .= '</style>';
         $html .= '</head>';
         $html .= '<body>';
@@ -536,13 +579,25 @@ class AttendanceExportController extends Controller
                 $employeeName = $attendance->employeeAttendance->name;
             }
             
-            $html .= '<tr>';
+            // Tentukan class CSS berdasarkan status
+            $rowClass = '';
+            $statusText = '';
+            if (in_array($attendance->status, ['on_leave', 'sick_leave'])) {
+                $rowClass = 'cuti';
+                $statusText = $attendance->status === 'sick_leave' ? 'Sakit' : 'Cuti';
+            }
+            
+            $html .= '<tr class="' . $rowClass . '">';
             $html .= '<td>' . $no . '</td>';
             $html .= '<td>' . htmlspecialchars($employeeName) . '</td>';
             $html .= '<td>' . $attendance->date . '</td>';
-            $html .= '<td>' . ($attendance->check_in ? $attendance->check_in->format('H:i:s') : '-') . '</td>';
-            $html .= '<td>' . ($attendance->check_out ? $attendance->check_out->format('H:i:s') : '-') . '</td>';
-            $html .= '<td>' . ($attendance->work_hours ? number_format($attendance->work_hours, 2) . ' jam' : '-') . '</td>';
+            if ($statusText) {
+                $html .= '<td colspan="3">' . $statusText . '</td>';
+            } else {
+                $html .= '<td>' . ($attendance->check_in ? $attendance->check_in->format('H:i:s') : '-') . '</td>';
+                $html .= '<td>' . ($attendance->check_out ? $attendance->check_out->format('H:i:s') : '-') . '</td>';
+                $html .= '<td>' . ($attendance->work_hours ? number_format($attendance->work_hours, 2) . ' jam' : '-') . '</td>';
+            }
             $html .= '</tr>';
             $no++;
         }
@@ -589,7 +644,10 @@ class AttendanceExportController extends Controller
                 $attendance = $employeeAttendances->where('date', $date)->first();
                 
                 if ($attendance) {
-                    if ($attendance->check_in && $attendance->check_out) {
+                    // Cek status cuti
+                    if (in_array($attendance->status, ['on_leave', 'sick_leave'])) {
+                        $row[] = $attendance->status === 'sick_leave' ? 'SAKIT' : 'CUTI';
+                    } elseif ($attendance->check_in && $attendance->check_out) {
                         $row[] = 'HADIR';
                     } elseif ($attendance->check_in) {
                         $row[] = 'IN';
@@ -609,6 +667,8 @@ class AttendanceExportController extends Controller
         $csv[] = 'Keterangan:';
         $csv[] = 'HADIR = Hadir (Tap In & Tap Out)';
         $csv[] = 'IN = Hanya Tap In';
+        $csv[] = 'CUTI = Sedang Cuti';
+        $csv[] = 'SAKIT = Sakit';
         $csv[] = 'ABSEN = Tidak Hadir';
         $csv[] = 'Kosong = Hari Libur (Sabtu-Minggu)';
         
@@ -616,4 +676,4 @@ class AttendanceExportController extends Controller
     }
 
 
-} 
+}

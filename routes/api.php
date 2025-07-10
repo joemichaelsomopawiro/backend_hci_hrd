@@ -137,6 +137,10 @@ Route::prefix('attendance')->group(function () {
     // Export routes
     Route::get('/export/daily', [AttendanceExportController::class, 'exportDaily']);
     Route::get('/export/monthly', [AttendanceExportController::class, 'exportMonthly']);
+    
+    // Leave integration routes
+    Route::post('/sync-leave', [AttendanceController::class, 'syncLeaveToAttendance']);
+    Route::post('/sync-leave-date-range', [AttendanceController::class, 'syncLeaveToAttendanceDateRange']);
 });
 
 // Attendance Routes (dari kode kedua)

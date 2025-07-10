@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\LeaveRequest; 
 use App\Models\LeaveQuota; 
 use App\Services\RoleHierarchyService; 
+use App\Services\LeaveAttendanceIntegrationService; 
 use Illuminate\Http\Request; 
 use Illuminate\Http\JsonResponse; 
 use Carbon\Carbon; 
@@ -185,9 +186,13 @@ class LeaveRequestController extends Controller
 
         $leaveRequest->updateLeaveQuota(); 
 
+        // Sinkronisasi status cuti ke attendance
+        $leaveService = new LeaveAttendanceIntegrationService();
+        $leaveService->handleLeaveApproval($leaveRequest);
+
         return response()->json([ 
             'success' => true, 
-            'message' => 'Permohonan cuti berhasil disetujui', 
+            'message' => 'Permohonan cuti berhasil disetujui dan status attendance telah diupdate', 
             'data' => $leaveRequest->load(['employee.user', 'approvedBy.user']) 
         ]); 
     } 
@@ -221,9 +226,13 @@ class LeaveRequestController extends Controller
             'rejection_reason' => $request->rejection_reason, 
         ]); 
 
+        // Reset status attendance jika ada
+        $leaveService = new LeaveAttendanceIntegrationService();
+        $leaveService->handleLeaveRejection($leaveRequest);
+
         return response()->json([ 
             'success' => true, 
-            'message' => 'Permohonan cuti berhasil ditolak', 
+            'message' => 'Permohonan cuti berhasil ditolak dan status attendance telah direset', 
             'data' => $leaveRequest->load(['employee.user', 'approvedBy.user']) 
         ]); 
     } 
