@@ -4,6 +4,7 @@ namespace App\Console;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+use Illuminate\Support\Facades\Log;
 
 class Kernel extends ConsoleKernel
 {
@@ -34,10 +35,10 @@ class Kernel extends ConsoleKernel
         $schedule->call(function () {
             $processingService = app(\App\Services\AttendanceProcessingService::class);
             $result = $processingService->processTodayAttendance();
-            \Log::info('Hourly attendance processing completed', $result);
+            Log::info('Hourly attendance processing completed', $result);
         })->hourly()
-          ->withoutOverlapping()
           ->name('attendance-hourly-process')
+          ->withoutOverlapping()
           ->description('Proses ulang attendance hari ini');
 
         // Generate summary harian setiap pagi jam 6
@@ -45,10 +46,18 @@ class Kernel extends ConsoleKernel
             $yesterday = now()->subDay()->format('Y-m-d');
             $processingService = app(\App\Services\AttendanceProcessingService::class);
             $summary = $processingService->getAttendanceSummary($yesterday);
-            \Log::info("Daily attendance summary for {$yesterday}", ['summary' => $summary]);
+            Log::info("Daily attendance summary for {$yesterday}", ['summary' => $summary]);
         })->dailyAt('06:00')
           ->name('daily-attendance-summary')
           ->description('Generate daily attendance summary');
+
+        // Auto-expire leave requests yang sudah melewati tanggal mulai cuti
+        $schedule->command('leave:expire')
+                 ->dailyAt('07:00')
+                 ->withoutOverlapping()
+                 ->name('auto-expire-leave-requests')
+                 ->description('Auto-expire leave requests yang sudah melewati tanggal mulai cuti')
+                 ->appendOutputTo(storage_path('logs/leave-expire.log'));
     }
 
     /**

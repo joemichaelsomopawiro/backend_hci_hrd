@@ -163,8 +163,12 @@ class LeaveRequestController extends Controller
         $user = auth()->user(); 
         $leaveRequest = LeaveRequest::findOrFail($id); 
 
-        if ($leaveRequest->overall_status !== 'pending') { 
-            return response()->json(['success' => false, 'message' => 'Permohonan cuti sudah diproses'], 400); 
+        // Check if request is expired
+        $leaveRequest->checkAndExpire();
+        
+        if (!$leaveRequest->canBeProcessed()) { 
+            $statusMessage = $leaveRequest->isExpired() ? 'Permohonan cuti sudah expired karena melewati tanggal mulai cuti' : 'Permohonan cuti sudah diproses';
+            return response()->json(['success' => false, 'message' => $statusMessage], 400); 
         } 
 
         $employeeRole = $leaveRequest->employee->user->role; 
@@ -198,8 +202,12 @@ class LeaveRequestController extends Controller
 
         $request->validate(['rejection_reason' => 'required|string|max:1000']); 
         
-        if ($leaveRequest->overall_status !== 'pending') { 
-            return response()->json(['success' => false, 'message' => 'Permohonan cuti sudah diproses'], 400); 
+        // Check if request is expired
+        $leaveRequest->checkAndExpire();
+        
+        if (!$leaveRequest->canBeProcessed()) { 
+            $statusMessage = $leaveRequest->isExpired() ? 'Permohonan cuti sudah expired karena melewati tanggal mulai cuti' : 'Permohonan cuti sudah diproses';
+            return response()->json(['success' => false, 'message' => $statusMessage], 400); 
         } 
 
         $employeeRole = $leaveRequest->employee->user->role; 
@@ -233,11 +241,15 @@ class LeaveRequestController extends Controller
             ], 403); // 403 Forbidden 
         } 
 
+        // Check if request is expired
+        $leaveRequest->checkAndExpire();
+        
         // Validasi Status: Hanya permohonan 'pending' yang bisa dibatalkan 
-        if ($leaveRequest->overall_status !== 'pending') { 
+        if (!$leaveRequest->canBeProcessed()) { 
+            $statusMessage = $leaveRequest->isExpired() ? 'Permohonan ini sudah expired dan tidak dapat dibatalkan.' : 'Permohonan ini sudah diproses dan tidak dapat dibatalkan.';
             return response()->json([ 
                 'success' => false, 
-                'message' => 'Permohonan ini sudah diproses dan tidak dapat dibatalkan.' 
+                'message' => $statusMessage 
             ], 400); // 400 Bad Request 
         } 
 

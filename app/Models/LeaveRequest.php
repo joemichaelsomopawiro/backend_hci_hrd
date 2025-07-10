@@ -93,7 +93,33 @@ class LeaveRequest extends Model
             'pending' => 'warning', 
             'approved' => 'success', 
             'rejected' => 'danger', 
+            'expired' => 'dark',
             default => 'secondary' 
         }; 
+    }
+
+    // Check if leave request is expired
+    public function isExpired(): bool
+    {
+        return $this->overall_status === 'expired';
+    }
+
+    // Check if leave request can be processed (approved/rejected)
+    public function canBeProcessed(): bool
+    {
+        return $this->overall_status === 'pending';
+    }
+
+    // Auto-expire if start date has passed
+    public function checkAndExpire(): bool
+    {
+        if ($this->overall_status === 'pending' && $this->start_date < now()->toDateString()) {
+            $this->update([
+                'overall_status' => 'expired',
+                'rejection_reason' => 'Permohonan cuti otomatis expired karena sudah melewati tanggal mulai cuti tanpa persetujuan.'
+            ]);
+            return true;
+        }
+        return false;
     } 
 }
