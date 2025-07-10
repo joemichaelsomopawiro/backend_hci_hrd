@@ -92,14 +92,20 @@ class Attendance extends Model
 
         $checkIn = Carbon::parse($this->check_in);
         $checkOut = Carbon::parse($this->check_out);
+        $dateOnly = Carbon::parse($this->date)->format('Y-m-d');
         
-        // Hitung selisih dalam jam
+        // Jam kerja dimulai dari jam 6 pagi
+        $workStartTime = Carbon::parse($dateOnly . ' 06:00:00');
+        
+        // Jika check-in sebelum jam 6 pagi, gunakan jam 6 pagi sebagai waktu mulai kerja
+        if ($checkIn->lt($workStartTime)) {
+            $checkIn = $workStartTime;
+        }
+        
+        // Hitung selisih dalam jam dari waktu mulai kerja yang sudah disesuaikan
         $totalHours = $checkOut->diffInMinutes($checkIn) / 60;
         
-        // Kurangi lunch break jika kerja lebih dari 4 jam
-        if ($totalHours > 4) {
-            $totalHours -= (self::getLunchBreakDuration() / 60); // konversi menit ke jam
-        }
+        // Tidak ada pengurangan lunch break - jam kerja murni dari jam 6 pagi sampai check-out
 
         return round($totalHours, 2);
     }
@@ -215,4 +221,4 @@ class Attendance extends Model
 
         return $labels[$this->status] ?? 'Unknown';
     }
-} 
+}
