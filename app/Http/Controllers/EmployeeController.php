@@ -198,10 +198,10 @@ class EmployeeController extends Controller
                     if (!empty($history['company_name'])) {
                         EmploymentHistory::create([
                             'employee_id' => $employee->id,
-                            'company_name' => $history['company_name'],
-                            'position' => $history['position'],
-                            'start_date' => $history['start_date'],
-                            'end_date' => $history['end_date'],
+                            'company_name' => $history['company_name'] ?? null,
+                            'position' => $history['position'] ?? null,
+                            'start_date' => $history['start_date'] ?? null,
+                            'end_date' => $history['end_date'] ?? null,
                         ]);
                     }
                 }
@@ -212,22 +212,22 @@ class EmployeeController extends Controller
                     if (!empty($promotion['position'])) {
                         PromotionHistory::create([
                             'employee_id' => $employee->id,
-                            'position' => $promotion['position'],
-                            'promotion_date' => $promotion['promotion_date'],
+                            'position' => $promotion['position'] ?? null,
+                            'promotion_date' => $promotion['promotion_date'] ?? null,
                         ]);
                     }
                 }
             }
 
             if (isset($validated['trainings'])) {
-                foreach ($validated['trainings'] as $history) {
-                    if (!empty($history['training_name'])) {
+                foreach ($validated['trainings'] as $training) {
+                    if (!empty($training['training_name'])) {
                         Training::create([
                             'employee_id' => $employee->id,
-                            'training_name' => $history['training_name'],
-                            'institution' => $history['institution'],
-                            'completion_date' => $history['completion_date'],
-                            'certificate_number' => $history['certificate_number'],
+                            'training_name' => $training['training_name'] ?? null,
+                            'institution' => $training['institution'] ?? null,
+                            'completion_date' => $training['completion_date'] ?? null,
+                            'certificate_number' => $training['certificate_number'] ?? null,
                         ]);
                     }
                 }
@@ -238,9 +238,9 @@ class EmployeeController extends Controller
                     if (!empty($benefit['benefit_type'])) {
                         Benefit::create([
                             'employee_id' => $employee->id,
-                            'benefit_type' => $benefit['benefit_type'],
-                            'amount' => $benefit['amount'],
-                            'start_date' => $benefit['start_date'],
+                            'benefit_type' => $benefit['benefit_type'] ?? null,
+                            'amount' => $benefit['amount'] ?? null,
+                            'start_date' => $benefit['start_date'] ?? null,
                         ]);
                     }
                 }
@@ -424,10 +424,10 @@ class EmployeeController extends Controller
                     if (!empty($history['company_name'])) {
                         EmploymentHistory::create([
                             'employee_id' => $employee->id,
-                            'company_name' => $history['company_name'],
-                            'position' => $history['position'],
-                            'start_date' => $history['start_date'],
-                            'end_date' => $history['end_date'],
+                            'company_name' => $history['company_name'] ?? null,
+                            'position' => $history['position'] ?? null,
+                            'start_date' => $history['start_date'] ?? null,
+                            'end_date' => $history['end_date'] ?? null,
                         ]);
                     }
                 }
@@ -439,8 +439,8 @@ class EmployeeController extends Controller
                     if (!empty($promotion['position'])) {
                         PromotionHistory::create([
                             'employee_id' => $employee->id,
-                            'position' => $promotion['position'],
-                            'promotion_date' => $promotion['promotion_date'],
+                            'position' => $promotion['position'] ?? null,
+                            'promotion_date' => $promotion['promotion_date'] ?? null,
                         ]);
                     }
                 }
@@ -452,10 +452,10 @@ class EmployeeController extends Controller
                     if (!empty($training['training_name'])) {
                         Training::create([
                             'employee_id' => $employee->id,
-                            'training_name' => $training['training_name'],
-                            'institution' => $training['institution'],
-                            'completion_date' => $training['completion_date'],
-                            'certificate_number' => $training['certificate_number'],
+                            'training_name' => $training['training_name'] ?? null,
+                            'institution' => $training['institution'] ?? null,
+                            'completion_date' => $training['completion_date'] ?? null,
+                            'certificate_number' => $training['certificate_number'] ?? null,
                         ]);
                     }
                 }
@@ -467,9 +467,9 @@ class EmployeeController extends Controller
                     if (!empty($benefit['benefit_type'])) {
                         Benefit::create([
                             'employee_id' => $employee->id,
-                            'benefit_type' => $benefit['benefit_type'],
-                            'amount' => $benefit['amount'],
-                            'start_date' => $benefit['start_date'],
+                            'benefit_type' => $benefit['benefit_type'] ?? null,
+                            'amount' => $benefit['amount'] ?? null,
+                            'start_date' => $benefit['start_date'] ?? null,
                         ]);
                     }
                 }
