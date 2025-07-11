@@ -499,7 +499,7 @@ class GeneralAffairController extends Controller
     }
 
     /**
-     * Get all attendances for GA Dashboard
+     * Get all attendances for GA Dashboard with leave integration
      * Endpoint: GET /ga/dashboard/attendances
      */
     public function getAllAttendances(Request $request)
@@ -522,42 +522,13 @@ class GeneralAffairController extends Controller
                 ], 403);
             }
 
-            // Gunakan model EmployeeAttendance yang sudah ada
-            $query = EmployeeAttendance::with(['employee']);
-            
-            // Apply filters
-            if ($request->has('date')) {
-                $query->whereDate('date', $request->date);
-            } else {
-                // Default tampilkan hari ini
-                $query->whereDate('date', Carbon::today());
-            }
-            
+            // Jika ada filter employee_id, gunakan logika integrasi cuti
             if ($request->has('employee_id')) {
-                $query->where('employee_id', $request->employee_id);
+                return $this->getIntegratedAttendanceForGA($request);
             }
-            
-            if ($request->has('status')) {
-                $query->where('status', $request->status);
-            }
-            
-            // Pagination
-            $perPage = $request->get('per_page', 15);
-            $attendances = $query->orderBy('date', 'desc')
-                                ->orderBy('check_in', 'asc')
-                                ->paginate($perPage);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $attendances->items(),
-                'pagination' => [
-                    'current_page' => $attendances->currentPage(),
-                    'last_page' => $attendances->lastPage(),
-                    'per_page' => $attendances->perPage(),
-                    'total' => $attendances->total()
-                ],
-                'message' => 'Data absensi berhasil diambil'
-            ], 200);
+
+            // Untuk request tanpa employee_id, tampilkan semua data dengan integrasi cuti
+            return $this->getAllAttendancesWithLeaveIntegration($request);
             
         } catch (Exception $e) {
             Log::error('Error getting all attendances for GA', [
@@ -570,5 +541,320 @@ class GeneralAffairController extends Controller
                 'message' => 'Terjadi kesalahan saat mengambil data absensi'
             ], 500);
         }
+    }
+
+    /**
+     * Mendapatkan data absensi yang terintegrasi dengan data cuti untuk GA Dashboard
+     */
+    private function getIntegratedAttendanceForGA(Request $request)
+    {
+        try {
+            $employeeId = $request->employee_id;
+            $dateFilter = $request->date;
+
+            // Ambil data absensi umum (EmployeeAttendance)
+            $attendanceQuery = EmployeeAttendance::with('employee')
+                ->where('employee_id', $employeeId);
+            
+            if ($dateFilter) {
+                $attendanceQuery->whereDate('date', $dateFilter);
+            }
+            
+            $attendances = $attendanceQuery->get();
+
+            // Ambil data cuti yang disetujui
+            $leaveQuery = LeaveRequest::with('employee')
+                ->where('employee_id', $employeeId)
+                ->where('overall_status', 'approved');
+            
+            if ($dateFilter) {
+                $leaveQuery->where(function($query) use ($dateFilter) {
+                    $query->whereDate('start_date', '<=', $dateFilter)
+                          ->whereDate('end_date', '>=', $dateFilter);
+                });
+            }
+            
+            $leaves = $leaveQuery->get();
+
+            // Gabungkan data berdasarkan tanggal
+            $combinedData = $this->mergeGeneralAttendanceAndLeave($attendances, $leaves, $employeeId, $dateFilter);
+
+            // Pagination manual untuk data yang sudah digabung
+            $perPage = $request->get('per_page', 15);
+            $currentPage = $request->get('page', 1);
+            $total = count($combinedData);
+            $offset = ($currentPage - 1) * $perPage;
+            $paginatedData = array_slice($combinedData, $offset, $perPage);
+
+            return response()->json([
+                'success' => true,
+                'data' => $paginatedData,
+                'pagination' => [
+                    'current_page' => $currentPage,
+                    'last_page' => ceil($total / $perPage),
+                    'per_page' => $perPage,
+                    'total' => $total
+                ],
+                'message' => 'Data absensi dan cuti terintegrasi berhasil diambil'
+            ], 200);
+        } catch (Exception $e) {
+            Log::error('Error getting integrated attendance for GA', [
+                'employee_id' => $request->employee_id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data absensi terintegrasi'
+            ], 500);
+        }
+    }
+
+    /**
+     * Menggabungkan data absensi umum dan cuti berdasarkan tanggal
+     */
+    private function mergeGeneralAttendanceAndLeave($attendances, $leaves, $employeeId, $dateFilter = null)
+    {
+        $combinedData = [];
+        $processedDates = [];
+
+        // Ambil data employee untuk nama
+        $employee = Employee::find($employeeId);
+        $employeeName = $employee ? $employee->nama_lengkap : 'Karyawan Tidak Ditemukan';
+
+        // Proses data absensi umum
+        foreach ($attendances as $attendance) {
+            $date = Carbon::parse($attendance->date)->toDateString();
+            $processedDates[] = $date;
+            
+            $combinedData[] = [
+                'id' => $attendance->id,
+                'employee_id' => (int) $attendance->employee_id,
+                'employee_name' => $employeeName,
+                'date' => $date,
+                'status' => $this->mapGeneralAttendanceStatus($attendance->status),
+                'check_in_time' => $attendance->check_in,
+                'check_out_time' => $attendance->check_out,
+                'work_hours' => $attendance->work_hours,
+                'leave_type' => null,
+                'leave_reason' => null,
+                'data_source' => 'attendance',
+                'employee' => $attendance->employee ? [
+                    'id' => (int) $attendance->employee->id,
+                    'nama_lengkap' => $attendance->employee->nama_lengkap
+                ] : null
+            ];
+        }
+
+        // Proses data cuti - expand untuk setiap hari dalam rentang cuti
+        foreach ($leaves as $leave) {
+            $startDate = Carbon::parse($leave->start_date);
+            $endDate = Carbon::parse($leave->end_date);
+            
+            // Iterasi setiap hari dalam rentang cuti
+            for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+                $dateString = $date->toDateString();
+                
+                // Skip jika tanggal sudah ada di data absensi (prioritas absensi)
+                if (in_array($dateString, $processedDates)) {
+                    continue;
+                }
+                
+                // Skip jika ada filter tanggal dan tidak sesuai
+                if ($dateFilter && $dateString !== $dateFilter) {
+                    continue;
+                }
+                
+                $processedDates[] = $dateString;
+                
+                $combinedData[] = [
+                    'id' => null, // Tidak ada ID untuk data cuti
+                    'employee_id' => (int) $leave->employee_id,
+                    'employee_name' => $employeeName,
+                    'date' => $dateString,
+                    'status' => 'leave', // Status cuti
+                    'check_in_time' => null,
+                    'check_out_time' => null,
+                    'work_hours' => null,
+                    'leave_type' => $leave->leave_type,
+                    'leave_reason' => $leave->reason,
+                    'data_source' => 'leave',
+                    'employee' => $leave->employee ? [
+                        'id' => (int) $leave->employee->id,
+                        'nama_lengkap' => $leave->employee->nama_lengkap
+                    ] : null
+                ];
+            }
+        }
+
+        // Urutkan berdasarkan tanggal (terbaru dulu)
+        usort($combinedData, function($a, $b) {
+            return strcmp($b['date'], $a['date']);
+        });
+
+        return $combinedData;
+    }
+
+    /**
+     * Mapping status absensi umum ke format yang konsisten
+     */
+    private function mapGeneralAttendanceStatus($status)
+    {
+        $statusMap = [
+            'Present' => 'present',
+            'Hadir' => 'present',
+            'Late' => 'late',
+            'Terlambat' => 'late',
+            'Absent' => 'absent',
+            'Absen' => 'absent',
+            'Half Day' => 'half_day',
+            'Setengah Hari' => 'half_day'
+        ];
+
+        return $statusMap[$status] ?? strtolower($status);
+    }
+
+    /**
+     * Mendapatkan semua data absensi dengan integrasi cuti untuk semua karyawan
+     */
+    private function getAllAttendancesWithLeaveIntegration(Request $request)
+    {
+        try {
+            // Tentukan tanggal filter
+            $dateFilter = $request->has('date') ? $request->date : Carbon::today()->toDateString();
+            
+            // Ambil semua data absensi untuk tanggal tersebut
+            $query = EmployeeAttendance::with(['employee'])
+                ->whereDate('date', $dateFilter);
+            
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+            
+            $attendances = $query->get();
+
+            // Ambil semua data cuti yang disetujui untuk tanggal tersebut
+            $leaves = LeaveRequest::with('employee')
+                ->where('status', 'approved')
+                ->where('start_date', '<=', $dateFilter)
+                ->where('end_date', '>=', $dateFilter)
+                ->get();
+
+            // Gabungkan data absensi dan cuti
+            $combinedData = $this->mergeAllAttendancesAndLeaves($attendances, $leaves, $dateFilter);
+
+            // Filter berdasarkan status jika diminta
+            if ($request->has('status')) {
+                $statusFilter = $request->status;
+                $combinedData = array_filter($combinedData, function($item) use ($statusFilter) {
+                    return $item['status'] === $statusFilter;
+                });
+                $combinedData = array_values($combinedData); // Re-index array
+            }
+
+            // Pagination manual
+            $perPage = $request->get('per_page', 15);
+            $currentPage = $request->get('page', 1);
+            $total = count($combinedData);
+            $offset = ($currentPage - 1) * $perPage;
+            $paginatedData = array_slice($combinedData, $offset, $perPage);
+
+            return response()->json([
+                'success' => true,
+                'data' => $paginatedData,
+                'pagination' => [
+                    'current_page' => (int) $currentPage,
+                    'last_page' => ceil($total / $perPage),
+                    'per_page' => (int) $perPage,
+                    'total' => $total
+                ],
+                'message' => 'Data absensi dengan integrasi cuti berhasil diambil',
+                'filters' => [
+                    'date' => $dateFilter,
+                    'status' => $request->get('status'),
+                    'integrated_leave_data' => true
+                ]
+            ], 200);
+
+        } catch (Exception $e) {
+            Log::error('Error getting all attendances with leave integration', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data absensi terintegrasi'
+            ], 500);
+        }
+    }
+
+    /**
+     * Menggabungkan data absensi dan cuti untuk semua karyawan pada tanggal tertentu
+     */
+    private function mergeAllAttendancesAndLeaves($attendances, $leaves, $dateFilter)
+    {
+        $combinedData = [];
+        $processedEmployees = [];
+
+        // Proses data absensi yang ada
+        foreach ($attendances as $attendance) {
+            $employeeId = $attendance->employee_id;
+            $processedEmployees[] = $employeeId;
+            
+            $combinedData[] = [
+                'id' => $attendance->id,
+                'employee_id' => (int) $employeeId,
+                'employee_name' => $attendance->employee ? $attendance->employee->nama_lengkap : 'Karyawan Tidak Ditemukan',
+                'date' => $dateFilter,
+                'status' => $this->mapGeneralAttendanceStatus($attendance->status),
+                'check_in_time' => $attendance->check_in,
+                'check_out_time' => $attendance->check_out,
+                'work_hours' => $attendance->work_hours,
+                'leave_type' => null,
+                'leave_reason' => null,
+                'data_source' => 'attendance',
+                'employee' => $attendance->employee ? [
+                    'id' => (int) $attendance->employee->id,
+                    'nama_lengkap' => $attendance->employee->nama_lengkap
+                ] : null
+            ];
+        }
+
+        // Proses data cuti untuk karyawan yang tidak ada data absensi
+        foreach ($leaves as $leave) {
+            $employeeId = $leave->employee_id;
+            
+            // Skip jika karyawan sudah ada data absensi (prioritas absensi)
+            if (in_array($employeeId, $processedEmployees)) {
+                continue;
+            }
+            
+            $combinedData[] = [
+                'id' => null,
+                'employee_id' => (int) $employeeId,
+                'employee_name' => $leave->employee ? $leave->employee->nama_lengkap : 'Karyawan Tidak Ditemukan',
+                'date' => $dateFilter,
+                'status' => 'leave',
+                'check_in_time' => null,
+                'check_out_time' => null,
+                'work_hours' => null,
+                'leave_type' => $leave->leave_type,
+                'leave_reason' => $leave->reason,
+                'data_source' => 'leave',
+                'employee' => $leave->employee ? [
+                    'id' => (int) $leave->employee->id,
+                    'nama_lengkap' => $leave->employee->nama_lengkap
+                ] : null
+            ];
+        }
+
+        // Urutkan berdasarkan nama karyawan
+        usort($combinedData, function($a, $b) {
+            return strcmp($a['employee_name'], $b['employee_name']);
+        });
+
+        return $combinedData;
     }
 }

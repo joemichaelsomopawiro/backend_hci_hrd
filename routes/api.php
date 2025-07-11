@@ -302,6 +302,7 @@ Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:General A
 Route::prefix('morning-reflection-attendance')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/attendance', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'getAttendance']);
     Route::post('/attend', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'attend']);
+    Route::get('/history/{employeeId}', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'getHistory']);
     // Tambahkan endpoint lain sesuai kebutuhan frontend
 });
 
