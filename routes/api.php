@@ -51,12 +51,16 @@ Route::prefix('ga')->group(function () {
     });
     
     Route::get('/morning-reflections', [GeneralAffairController::class, 'getMorningReflections']);
-    Route::get('/dashboard/attendances', [GeneralAffairController::class, 'getAllAttendances']);
-    Route::get('/dashboard/leave-requests', [GeneralAffairController::class, 'getAllLeaveRequests']);
-    Route::get('/dashboard/attendance-statistics', [GeneralAffairController::class, 'getAttendanceStatistics']);
-    Route::get('/dashboard/leave-statistics', [GeneralAffairController::class, 'getLeaveStatistics']);
-    Route::get('/daily-morning-reflection-history', [GeneralAffairController::class, 'getDailyMorningReflectionHistory']);
-    Route::get('/leaves', [GeneralAffairController::class, 'getLeaves']);
+    
+    // Protected GA Dashboard Routes - Require Authentication
+    Route::middleware(['auth:sanctum'])->group(function () {
+        Route::get('/dashboard/attendances', [GeneralAffairController::class, 'getAllAttendances']);
+        Route::get('/dashboard/leave-requests', [GeneralAffairController::class, 'getAllLeaveRequests']);
+        Route::get('/dashboard/attendance-statistics', [GeneralAffairController::class, 'getAttendanceStatistics']);
+        Route::get('/dashboard/leave-statistics', [GeneralAffairController::class, 'getLeaveStatistics']);
+        Route::get('/daily-morning-reflection-history', [GeneralAffairController::class, 'getDailyMorningReflectionHistory']);
+        Route::get('/leaves', [GeneralAffairController::class, 'getLeaves']);
+    });
 
     // ===== ABSENSI RENUNGAN PAGI - ROUTES BARU =====
     Route::middleware(['auth:sanctum', 'role:ga'])->group(function () {
