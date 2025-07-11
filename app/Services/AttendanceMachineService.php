@@ -873,11 +873,12 @@ class AttendanceMachineService
     private function parseUsersFromWebInterface(AttendanceMachine $machine): array
     {
         try {
-            // Data sample yang Anda berikan dari web interface
+            // Data sample yang Anda berikan dari web interface - FIXED MAPPING
             $sampleUsers = [
                 ['pin' => '1', 'name' => 'E.H Michael Palar', 'card_no' => '1681542239', 'privilege' => 'User'],
                 ['pin' => '2', 'name' => 'Budi Dharmadi', 'card_no' => '1225559887', 'privilege' => 'User'],
-                ['pin' => '3', 'name' => 'Joe', 'card_no' => '0', 'privilege' => 'Super Administrator'],
+                ['pin' => '3', 'name' => 'Edward', 'card_no' => '0', 'privilege' => 'User'], // Fixed: Edward dengan machine_user_id 3
+                ['pin' => '36', 'name' => 'Joe', 'card_no' => '0', 'privilege' => 'Super Administrator'], // Fixed: Joe dengan machine_user_id 36
                 ['pin' => '20111201', 'name' => 'Steven Albert Reynold M', 'card_no' => '3557012314', 'privilege' => 'User'],
                 ['pin' => '20140202', 'name' => 'Jelly Jeclien Lukas', 'card_no' => '3299471671', 'privilege' => 'Super Administrator'],
                 ['pin' => '20140623', 'name' => 'Jefri Siadari', 'card_no' => '2334492895', 'privilege' => 'Super Administrator'],
@@ -885,6 +886,7 @@ class AttendanceMachineService
                 ['pin' => '20190201', 'name' => 'Mardianti Pangandaheng', 'card_no' => '2495562719', 'privilege' => 'User'],
                 ['pin' => '20190401', 'name' => 'Friendly Marvelous Soro', 'card_no' => '2930167247', 'privilege' => 'User'],
                 ['pin' => '20210226', 'name' => 'Jeri Januar Salle', 'card_no' => '2689269855', 'privilege' => 'User'],
+                ['pin' => '20210426', 'name' => 'Edward', 'card_no' => '0', 'privilege' => 'User'], // Added: Edward dengan employee_id 20210426
             ];
 
             $processedCount = $this->processUserDataToDatabase($machine, $sampleUsers);
@@ -1128,4 +1130,4 @@ class AttendanceMachineService
             return ['success' => false, 'message' => $e->getMessage()];
         }
     }
-} 
+}
