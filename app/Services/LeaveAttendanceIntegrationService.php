@@ -42,43 +42,55 @@ class LeaveAttendanceIntegrationService
      */
     private function updateAttendanceForLeave(LeaveRequest $leave, Carbon $date)
     {
-        // Cari attendance record berdasarkan employee_id
-        // Karena tabel attendance menggunakan user_pin, kita perlu mapping dari employee
-        $employee = $leave->employee;
-        
-        if (!$employee) {
-            Log::warning("Employee not found for leave request ID: {$leave->id}");
-            return;
-        }
+        try {
+            // Cari attendance record berdasarkan employee_id
+            // Karena tabel attendance menggunakan user_pin, kita perlu mapping dari employee
+            $employee = $leave->employee;
+            
+            if (!$employee) {
+                Log::warning("Employee not found for leave request ID: {$leave->id}");
+                return;
+            }
 
-        // Cari attendance berdasarkan user_pin dari employee
-        $attendance = Attendance::where('user_pin', $employee->user_pin)
-            ->where('date', $date->format('Y-m-d'))
-            ->first();
+            // Cari attendance berdasarkan user_pin dari employee
+            $attendance = Attendance::where('user_pin', $employee->user_pin)
+                ->where('date', $date->format('Y-m-d'))
+                ->first();
 
-        if ($attendance) {
-            // Update existing attendance record
-            $attendance->update([
-                'status' => $this->mapLeaveTypeToAttendanceStatus($leave->leave_type),
-                'notes' => "Cuti {$leave->leave_type} - {$leave->reason}"
-            ]);
-        } else {
-            // Buat attendance record baru untuk employee yang cuti
-            Attendance::create([
-                'user_pin' => $employee->user_pin,
-                'user_name' => $employee->nama_lengkap,
-                'card_number' => $employee->card_number ?? null,
+            if ($attendance) {
+                // Update existing attendance record
+                $attendance->update([
+                    'status' => $this->mapLeaveTypeToAttendanceStatus($leave->leave_type),
+                    'notes' => "Cuti {$leave->leave_type} - {$leave->reason}"
+                ]);
+            } else {
+                // Buat attendance record baru untuk employee yang cuti
+                Attendance::create([
+                    'user_pin' => $employee->user_pin,
+                    'user_name' => $employee->nama_lengkap,
+                    'card_number' => $employee->card_number ?? null,
+                    'date' => $date->format('Y-m-d'),
+                    'check_in' => null,
+                    'check_out' => null,
+                    'status' => $this->mapLeaveTypeToAttendanceStatus($leave->leave_type),
+                    'work_hours' => 0,
+                    'overtime_hours' => 0,
+                    'late_minutes' => 0,
+                    'early_leave_minutes' => 0,
+                    'total_taps' => 0,
+                    'notes' => "Cuti {$leave->leave_type} - {$leave->reason}"
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error("Error updating attendance for leave request ID: {$leave->id}", [
+                'employee_id' => $employee->id ?? null,
                 'date' => $date->format('Y-m-d'),
-                'check_in' => null,
-                'check_out' => null,
-                'status' => $this->mapLeaveTypeToAttendanceStatus($leave->leave_type),
-                'work_hours' => 0,
-                'overtime_hours' => 0,
-                'late_minutes' => 0,
-                'early_leave_minutes' => 0,
-                'total_taps' => 0,
-                'notes' => "Cuti {$leave->leave_type} - {$leave->reason}"
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
+            
+            // Jangan throw exception agar proses approval cuti tetap berlanjut
+            // Error ini tidak boleh menghentikan proses approval
         }
     }
 
@@ -87,32 +99,45 @@ class LeaveAttendanceIntegrationService
      */
     private function updateMorningReflectionForLeave(LeaveRequest $leave, Carbon $date)
     {
-        $employee = $leave->employee;
-        
-        if (!$employee) {
-            return;
-        }
+        try {
+            $employee = $leave->employee;
+            
+            if (!$employee) {
+                Log::warning("Employee not found for leave request ID: {$leave->id}");
+                return;
+            }
 
-        // Cari atau buat morning reflection attendance record
-        $morningReflection = MorningReflectionAttendance::where('employee_id', $employee->id)
-            ->where('date', $date->format('Y-m-d'))
-            ->first();
+            // Cari atau buat morning reflection attendance record
+            $morningReflection = MorningReflectionAttendance::where('employee_id', $employee->id)
+                ->where('date', $date->format('Y-m-d'))
+                ->first();
 
-        if ($morningReflection) {
-            // Update existing record
-            $morningReflection->update([
-                'status' => 'Cuti',
-                'join_time' => null
-            ]);
-        } else {
-            // Buat record baru
-            MorningReflectionAttendance::create([
-                'employee_id' => $employee->id,
+            if ($morningReflection) {
+                // Update existing record
+                $morningReflection->update([
+                    'status' => 'Cuti',
+                    'join_time' => null
+                ]);
+            } else {
+                // Buat record baru
+                MorningReflectionAttendance::create([
+                    'employee_id' => $employee->id,
+                    'date' => $date->format('Y-m-d'),
+                    'status' => 'Cuti',
+                    'join_time' => null,
+                    'testing_mode' => false
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error("Error updating morning reflection attendance for leave request ID: {$leave->id}", [
+                'employee_id' => $employee->id ?? null,
                 'date' => $date->format('Y-m-d'),
-                'status' => 'Cuti',
-                'join_time' => null,
-                'testing_mode' => false
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
+            
+            // Jangan throw exception agar proses approval cuti tetap berlanjut
+            // Error ini tidak boleh menghentikan proses approval
         }
     }
 
