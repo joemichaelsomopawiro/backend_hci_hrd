@@ -88,10 +88,7 @@ class EmployeeController extends Controller
             DB::beginTransaction();
 
             // --- PERUBAHAN VALIDASI DIMULAI DARI SINI ---
-            $allValidRoles = array_merge(
-                RoleHierarchyService::getManagerRoles(),
-                RoleHierarchyService::getEmployeeRoles()
-            );
+            $allValidRoles = RoleHierarchyService::getAllAvailableRoles();
 
             $validated = $request->validate([
                 'nama_lengkap' => [
@@ -339,10 +336,7 @@ class EmployeeController extends Controller
             $oldNamaLengkap = $employee->nama_lengkap; // Simpan nama lama untuk perbandingan
 
             // --- PERUBAHAN VALIDASI DIMULAI DARI SINI ---
-            $allValidRoles = array_merge(
-                RoleHierarchyService::getManagerRoles(),
-                RoleHierarchyService::getEmployeeRoles()
-            );
+            $allValidRoles = RoleHierarchyService::getAllAvailableRoles();
 
             $validated = $request->validate([
                 'nama_lengkap' => 'required|string|max:255',

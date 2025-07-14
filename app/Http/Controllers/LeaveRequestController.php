@@ -8,7 +8,8 @@ use App\Services\RoleHierarchyService;
 use App\Services\LeaveAttendanceIntegrationService; 
 use Illuminate\Http\Request; 
 use Illuminate\Http\JsonResponse; 
-use Carbon\Carbon; 
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Log; 
 
 class LeaveRequestController extends Controller 
 { 
@@ -97,10 +98,31 @@ class LeaveRequestController extends Controller
 
         $request->validate([ 
             'leave_type' => 'required|in:annual,sick,emergency,maternity,paternity,marriage,bereavement', 
-            'start_date' => 'required|date|after_or_equal:today', 
+            'start_date' => 'required|date', 
             'end_date' => 'required|date|after_or_equal:start_date', 
             'reason' => 'required|string|max:1000', 
         ]); 
+        
+        // Validasi khusus untuk tanggal masa lalu (hanya untuk non-emergency leave)
+        $startDate = Carbon::parse($request->start_date);
+        $today = Carbon::today();
+        
+        if ($request->leave_type !== 'emergency' && $startDate->lt($today)) {
+            return response()->json([
+                'success' => false, 
+                'message' => 'Tanggal mulai cuti tidak boleh di masa lalu kecuali untuk cuti darurat'
+            ], 400);
+        }
+        
+        // Peringatan untuk cuti di hari yang sama (bukan error, hanya info)
+        if ($startDate->eq($today)) {
+            // Log atau notifikasi bahwa ini adalah same-day leave request
+            Log::info('Same-day leave request submitted', [
+                'employee_id' => $user->employee_id,
+                'leave_type' => $request->leave_type,
+                'start_date' => $request->start_date
+            ]);
+        } 
 
         // DIPERBARUI: Hitung total hari kerja (tidak termasuk Sabtu & Minggu) 
         $startDate = Carbon::parse($request->start_date); 
