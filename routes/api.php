@@ -17,6 +17,7 @@ use App\Http\Controllers\MorningReflectionAttendanceController;
 
 use App\Http\Controllers\AttendanceExportController;
 use App\Http\Controllers\NationalHolidayController;
+use App\Http\Controllers\CustomRoleController;
 
 
 /*
@@ -297,6 +298,16 @@ Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:General A
     // Update konfigurasi (admin only)
     Route::put('/config', [MorningReflectionController::class, 'updateConfig']);
     Route::put('/config-admin', [MorningReflectionController::class, 'updateConfigAdmin']);
+});
+
+// Custom Role Management Routes
+Route::prefix('custom-roles')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/', [CustomRoleController::class, 'index']);
+    Route::post('/', [CustomRoleController::class, 'store']);
+    Route::get('/all-roles', [CustomRoleController::class, 'getAllRoles']);
+    Route::get('/{id}', [CustomRoleController::class, 'show']);
+    Route::put('/{id}', [CustomRoleController::class, 'update']);
+    Route::delete('/{id}', [CustomRoleController::class, 'destroy']);
 });
 
 // Tambahkan route baru untuk endpoint /api/morning-reflection-attendance/attendance
