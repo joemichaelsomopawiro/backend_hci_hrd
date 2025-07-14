@@ -27,9 +27,9 @@ class MorningReflectionController extends Controller
             // Cek apakah hari ini adalah hari renungan pagi
             $isWorshipDay = in_array($dayOfWeek, [1, 3, 5]); // Senin, Rabu, Jumat
             
-            // Cek waktu renungan pagi (07:10 - 07:35)
+            // Cek waktu renungan pagi (07:10 - 08:00)
             $startTime = Carbon::today()->setTime(7, 10); // 07:10
-            $endTime = Carbon::today()->setTime(7, 35);   // 07:35
+            $endTime = Carbon::today()->setTime(8, 0);    // 08:00
             
             $isOpen = $now->gte($startTime) && $now->lte($endTime);
             $isPassed = $now->gt($endTime);
@@ -41,7 +41,7 @@ class MorningReflectionController extends Controller
                     'is_open' => $isOpen,
                     'is_passed' => $isPassed,
                     'start_time' => '07:10',
-                    'end_time' => '07:35',
+                    'end_time' => '08:00',
                     'current_time' => $now->format('H:i'),
                     'day_of_week' => $dayOfWeek,
                     'message' => $isWorshipDay ? 
@@ -68,12 +68,12 @@ class MorningReflectionController extends Controller
         // Pastikan $attendanceTime adalah Carbon instance di Asia/Jakarta
         $attendanceTime = $attendanceTime->copy()->setTimezone('Asia/Jakarta');
         $minutes = $attendanceTime->hour * 60 + $attendanceTime->minute;
-        if ($minutes >= 430 && $minutes < 450) {
-            return 'Hadir';      // ✅ BENAR! 07:10-07:30
-        } elseif ($minutes >= 450 && $minutes <= 455) {
-            return 'Terlambat'; // ✅ BENAR! 07:30-07:35
+        if ($minutes >= 430 && $minutes <= 450) {
+            return 'Hadir';      // ✅ BENAR! 07:10-07:30 (termasuk 07:30)
+        } elseif ($minutes >= 451 && $minutes <= 455) {
+            return 'Terlambat'; // ✅ BENAR! 07:31-07:35
         } elseif ($minutes > 455 && $minutes <= 480) {
-            return 'Absen';     // ✅ BENAR! 07:35-08:00
+            return 'Tidak Hadir'; // ✅ BENAR! 07:35-08:00
         } else {
             return 'Hadir';     // ✅ BENAR! fallback
         }
@@ -123,14 +123,6 @@ class MorningReflectionController extends Controller
                     'message' => 'Absensi hanya dapat dilakukan antara pukul 07:10 - 08:00'
                 ], 422);
             }
-        }
-
-        // Jika lewat dari jam 08:00, tolak request
-        if ($now->gt($endTime) && !$testingMode && !$isTestingEnvironment) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Absensi sudah ditutup setelah pukul 08:00'
-            ], 422);
         }
 
         try {
@@ -273,7 +265,7 @@ class MorningReflectionController extends Controller
                 ]);
             }
         } catch (\Exception $e) {
-            \Log::error('Error getting attendance', [
+            Log::error('Error getting attendance', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -301,7 +293,7 @@ class MorningReflectionController extends Controller
             ], 200);
 
         } catch (Exception $e) {
-            \Log::error('Error getting user attendance by date', [
+            Log::error('Error getting user attendance by date', [
                 'employee_id' => $employee_id,
                 'date' => $date,
                 'error' => $e->getMessage()
@@ -347,7 +339,7 @@ class MorningReflectionController extends Controller
             ], 200);
 
         } catch (Exception $e) {
-            \Log::error('Error getting weekly attendance', [
+            Log::error('Error getting weekly attendance', [
                 'employee_id' => $employee_id,
                 'error' => $e->getMessage()
             ]);
@@ -369,7 +361,7 @@ class MorningReflectionController extends Controller
             'data' => [
                 'worship_days' => [1, 3, 5], // Senin, Rabu, Jumat
                 'start_time' => '07:10',
-                'end_time' => '07:35',
+                'end_time' => '08:00',
                 'cutoff_time' => '07:30',
                 'timezone' => 'Asia/Jakarta',
                 'active' => true
@@ -479,7 +471,7 @@ class MorningReflectionController extends Controller
                                                 ->where('status', 'Terlambat')
                                                 ->count(),
                 'total_absent' => MorningReflectionAttendance::whereBetween('date', [$startDate, $endDate])
-                                                  ->where('status', 'Absen')
+                                                  ->whereIn('status', ['Absen', 'Tidak Hadir'])
                                                   ->count(),
                 'period' => $period,
                 'start_date' => $startDate,

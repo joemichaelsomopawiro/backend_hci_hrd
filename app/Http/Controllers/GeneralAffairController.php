@@ -114,17 +114,17 @@ class GeneralAffairController extends Controller
             ], 422);
         }
 
-        // Validasi waktu: hanya boleh join antara 07:10 - 07:35 (bisa dilewati untuk testing)
+        // Validasi waktu: hanya boleh join antara 07:10 - 08:00 (bisa dilewati untuk testing)
         // Tambahan: bypass otomatis jika environment adalah local/testing
         $isTestingEnvironment = config('app.env') === 'local' || config('app.env') === 'testing';
         
         if (!$skipTimeValidation && !$isTestingEnvironment) {
             $startTime = Carbon::today()->setTime(7, 10); // 07:10
-            $endTime = Carbon::today()->setTime(7, 35);   // 07:35 - Closed
+            $endTime = Carbon::today()->setTime(8, 0);    // 08:00 - Closed
             
             if ($now->lt($startTime) || $now->gt($endTime)) {
                 return response()->json([
-                    'errors' => ['time' => 'Absensi Zoom hanya dapat dilakukan antara pukul 07:10 - 07:35.']
+                    'errors' => ['time' => 'Absensi Zoom hanya dapat dilakukan antara pukul 07:10 - 08:00.']
                 ], 422);
             }
         }
@@ -133,9 +133,17 @@ class GeneralAffairController extends Controller
             DB::beginTransaction();
             
             // Tentukan status berdasarkan waktu klik
-            // 07:10-07:30 = Hadir, 07:31-07:35 = Terlambat, >07:35 = Closed
+            // 07:10-07:30 = Hadir, 07:31-07:35 = Terlambat, 07:35-08:00 = Tidak Hadir
             $cutoffTime = Carbon::today()->setTime(7, 30); // 07:30
-            $status = $now->lte($cutoffTime) ? 'Hadir' : 'Terlambat';
+            $lateCutoffTime = Carbon::today()->setTime(7, 35); // 07:35
+            
+            if ($now->lte($cutoffTime)) {
+                $status = 'Hadir';
+            } elseif ($now->lte($lateCutoffTime)) {
+                $status = 'Terlambat';
+            } else {
+                $status = 'Tidak Hadir';
+            }
             
             // Use firstOrCreate to handle race conditions atomically
             $morningReflection = MorningReflectionAttendance::firstOrCreate(
@@ -276,7 +284,7 @@ class GeneralAffairController extends Controller
             $morningReflectionStats = [
                 'today_present' => MorningReflectionAttendance::whereDate('date', $today)->where('status', 'Hadir')->count(),
                 'today_late' => MorningReflectionAttendance::whereDate('date', $today)->where('status', 'Terlambat')->count(),
-                'today_absent' => MorningReflectionAttendance::whereDate('date', $today)->where('status', 'Absen')->count(),
+                'today_absent' => MorningReflectionAttendance::whereDate('date', $today)->whereIn('status', ['Absen', 'Tidak Hadir'])->count(),
                 'monthly_total' => MorningReflectionAttendance::whereMonth('date', $thisMonth)
                                                   ->whereYear('date', $thisYear)
                                                   ->count()
@@ -708,6 +716,7 @@ class GeneralAffairController extends Controller
             'Terlambat' => 'late',
             'Absent' => 'absent',
             'Absen' => 'absent',
+            'Tidak Hadir' => 'absent',
             'Half Day' => 'half_day',
             'Setengah Hari' => 'half_day'
         ];
