@@ -16,6 +16,7 @@ use App\Http\Controllers\MorningReflectionController;
 use App\Http\Controllers\MorningReflectionAttendanceController;
 
 use App\Http\Controllers\AttendanceExportController;
+use App\Http\Controllers\NationalHolidayController;
 
 
 /*
@@ -337,4 +338,31 @@ Route::prefix('employee-sync')->middleware(['auth:sanctum'])->group(function () 
     
     // Sync orphaned records
     Route::post('/sync-orphaned-records', [\App\Http\Controllers\EmployeeSyncController::class, 'syncOrphanedRecords']);
+});
+
+// ===== CALENDAR ROUTES =====
+// Routes untuk kalender nasional
+Route::prefix('calendar')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/', [NationalHolidayController::class, 'index']);
+    Route::get('/check', [NationalHolidayController::class, 'checkHoliday']);
+    Route::get('/data', [NationalHolidayController::class, 'getCalendarData']);
+    Route::get('/years', [NationalHolidayController::class, 'getAvailableYears']);
+    Route::get('/yearly-summary', [NationalHolidayController::class, 'getYearlySummary']);
+    Route::get('/yearly-holidays', [NationalHolidayController::class, 'getYearlyHolidays']);
+    
+    // Routes khusus HR untuk manage hari libur
+    Route::middleware(['role:HR'])->group(function () {
+        Route::post('/', [NationalHolidayController::class, 'store']);
+        Route::put('/{id}', [NationalHolidayController::class, 'update']);
+        Route::delete('/{id}', [NationalHolidayController::class, 'destroy']);
+        Route::post('/seed', [NationalHolidayController::class, 'seedHolidays']);
+        Route::post('/bulk-seed', [NationalHolidayController::class, 'bulkSeedYears']);
+        
+        // Routes untuk hari libur berulang dan kustom
+        Route::post('/recurring', [NationalHolidayController::class, 'createRecurringHoliday']);
+        Route::post('/monthly', [NationalHolidayController::class, 'createMonthlyHoliday']);
+        Route::post('/date-range', [NationalHolidayController::class, 'createDateRangeHoliday']);
+        Route::get('/custom', [NationalHolidayController::class, 'getCustomHolidays']);
+        Route::get('/types', [NationalHolidayController::class, 'getHolidayTypes']);
+    });
 });
