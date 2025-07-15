@@ -357,6 +357,7 @@ Route::prefix('calendar')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/', [NationalHolidayController::class, 'index']);
     Route::get('/check', [NationalHolidayController::class, 'checkHoliday']);
     Route::get('/data', [NationalHolidayController::class, 'getCalendarData']);
+    Route::get('/data-frontend', [NationalHolidayController::class, 'getCalendarDataForFrontend']);
     Route::get('/years', [NationalHolidayController::class, 'getAvailableYears']);
     Route::get('/yearly-summary', [NationalHolidayController::class, 'getYearlySummary']);
     Route::get('/yearly-holidays', [NationalHolidayController::class, 'getYearlyHolidays']);
@@ -375,5 +376,10 @@ Route::prefix('calendar')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/date-range', [NationalHolidayController::class, 'createDateRangeHoliday']);
         Route::get('/custom', [NationalHolidayController::class, 'getCustomHolidays']);
         Route::get('/types', [NationalHolidayController::class, 'getHolidayTypes']);
+        
+        // Google Calendar Integration Routes
+        Route::post('/sync-google', [NationalHolidayController::class, 'syncFromGoogleCalendar']);
+        Route::get('/test-google-connection', [NationalHolidayController::class, 'testGoogleCalendarConnection']);
+        Route::post('/clear-google-cache', [NationalHolidayController::class, 'clearGoogleCalendarCache']);
     });
 });

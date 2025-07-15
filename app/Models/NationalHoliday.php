@@ -21,9 +21,22 @@ class NationalHoliday extends Model
     ];
 
     protected $casts = [
-        'date' => 'date',
+        'date' => 'date:Y-m-d',
         'is_active' => 'boolean'
     ];
+    
+    /**
+     * Prepare a date for array / JSON serialization.
+     * Memastikan tanggal selalu dalam format Y-m-d tanpa komponen waktu
+     * untuk mencegah masalah pergeseran tanggal karena zona waktu.
+     *
+     * @param  \DateTimeInterface  $date
+     * @return string
+     */
+    protected function serializeDate(\DateTimeInterface $date)
+    {
+        return $date->format('Y-m-d');
+    }
 
     // Relationships
     public function createdBy()

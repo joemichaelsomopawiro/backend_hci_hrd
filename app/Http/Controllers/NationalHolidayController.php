@@ -12,9 +12,9 @@ class NationalHolidayController extends Controller
     public function index(Request $request)
     {
         $year = $request->get('year', date('Y'));
-        $month = $request->get('month', date('n'));
         
-        $holidays = NationalHoliday::getHolidaysByMonth($year, $month);
+        // Ambil semua hari libur untuk tahun tersebut, bukan hanya bulan tertentu
+        $holidays = NationalHoliday::active()->byYear($year)->orderBy('date')->get();
         
         return response()->json([
             'success' => true,
@@ -164,6 +164,39 @@ class NationalHolidayController extends Controller
         ]);
     }
 
+    /**
+     * Get calendar data untuk frontend (sesuai dengan frontend yang sudah ada)
+     */
+    public function getCalendarDataForFrontend(Request $request)
+    {
+        $year = $request->get('year', date('Y'));
+        
+        // Get holidays untuk tahun tersebut (semua bulan), bukan hanya bulan tertentu
+        $holidays = NationalHoliday::active()->byYear($year)->orderBy('date')->get();
+        
+        // Convert ke format yang diharapkan frontend
+        $holidaysMap = [];
+        foreach ($holidays as $holiday) {
+            $holidaysMap[$holiday->date->format('Y-m-d')] = [
+                'id' => $holiday->id,
+                'date' => $holiday->date->format('Y-m-d'),
+                'name' => $holiday->name,
+                'description' => $holiday->description,
+                'type' => $holiday->type,
+                'is_active' => $holiday->is_active,
+                'created_by' => $holiday->created_by,
+                'updated_by' => $holiday->updated_by
+            ];
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $holidaysMap
+        ])->header('Cache-Control', 'no-cache, no-store, must-revalidate')
+          ->header('Pragma', 'no-cache')
+          ->header('Expires', '0');
+    }
+
     public function seedHolidays(Request $request)
     {
         // Cek apakah user adalah HR
@@ -193,6 +226,8 @@ class NationalHolidayController extends Controller
         ]);
     }
 
+
+
     public function getYearlySummary(Request $request)
     {
         $year = $request->get('year', date('Y'));
@@ -210,6 +245,8 @@ class NationalHolidayController extends Controller
     public function getYearlyHolidays(Request $request)
     {
         $year = $request->get('year', date('Y'));
+        
+        // Get all holidays for the year, not just specific month
         $holidays = NationalHoliday::active()->byYear($year)->orderBy('date')->get();
         
         return response()->json([
@@ -218,7 +255,9 @@ class NationalHolidayController extends Controller
                 'year' => $year,
                 'holidays' => $holidays
             ]
-        ]);
+        ])->header('Cache-Control', 'no-cache, no-store, must-revalidate')
+          ->header('Pragma', 'no-cache')
+          ->header('Expires', '0');
     }
 
     public function bulkSeedYears(Request $request)
