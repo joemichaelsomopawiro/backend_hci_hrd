@@ -31,22 +31,22 @@ class GaDashboardController extends Controller
 
             $query = MorningReflectionAttendance::with(['employee.user'])
                 ->select([
-                    'morning_reflection_attendances.*',
+                    'morning_reflection_attendance.*',
                     'employees.nama_lengkap as employee_name',
                     'employees.jabatan_saat_ini as employee_position',
                     'users.role as user_role'
                 ])
-                ->leftJoin('employees', 'morning_reflection_attendances.employee_id', '=', 'employees.id')
+                ->leftJoin('employees', 'morning_reflection_attendance.employee_id', '=', 'employees.id')
                 ->leftJoin('users', 'employees.id', '=', 'users.employee_id');
 
             // Filter berdasarkan tanggal jika tidak meminta semua data
             if (!$allData && $dateFilter) {
-                $query->whereDate('morning_reflection_attendances.date', $dateFilter);
+                $query->whereDate('morning_reflection_attendance.date', $dateFilter);
             }
 
             // Urutkan berdasarkan tanggal terbaru
-            $query->orderBy('morning_reflection_attendances.date', 'desc')
-                  ->orderBy('morning_reflection_attendances.created_at', 'desc');
+            $query->orderBy('morning_reflection_attendance.date', 'desc')
+                  ->orderBy('morning_reflection_attendance.created_at', 'desc');
 
             $attendances = $query->get();
 
@@ -184,9 +184,9 @@ class GaDashboardController extends Controller
             $query = MorningReflectionAttendance::whereDate('date', $dateFilter);
             
             $total = $query->count();
-            $present = $query->where('status', 'present')->count();
-            $late = $query->where('status', 'late')->count();
-            $absent = $query->where('status', 'absent')->count();
+            $present = $query->clone()->where('status', 'present')->count();
+            $late = $query->clone()->where('status', 'late')->count();
+            $absent = $query->clone()->where('status', 'absent')->count();
 
             return response()->json([
                 'success' => true,
