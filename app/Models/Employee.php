@@ -229,18 +229,18 @@ class Employee extends Model
 
     public function machineUsers(): HasMany
     {
-        return $this->hasMany(EmployeeAttendance::class);
+        return $this->hasMany(AttendanceMachineUser::class);
     }
 
     public function isSyncedToMachine(AttendanceMachine $machine): bool
     {
         return $this->machineUsers()
             ->where('attendance_machine_id', $machine->id)
-            ->where('is_active', true)
+            ->where('status', 'synced')
             ->exists();
     }
 
-    public function getMachineUser(AttendanceMachine $machine): ?EmployeeAttendance
+    public function getMachineUser(AttendanceMachine $machine): ?AttendanceMachineUser
     {
         return $this->machineUsers()
             ->where('attendance_machine_id', $machine->id)

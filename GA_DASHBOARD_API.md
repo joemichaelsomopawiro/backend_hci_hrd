@@ -1,284 +1,289 @@
 # GA Dashboard API Documentation
 
 ## Overview
-Dokumentasi ini menjelaskan endpoint API yang tersedia untuk GA (General Affairs) Dashboard untuk mengakses data cuti dan absensi semua karyawan.
+API ini dibuat khusus untuk GA Dashboard yang menampilkan **SEMUA** data absensi renungan pagi dan permohonan cuti tanpa batasan role. Berbeda dengan endpoint lain yang membatasi data berdasarkan hierarki role, endpoint ini memberikan akses penuh ke semua data di database.
 
 ## Base URL
 ```
-http://localhost:8000/api
+http://127.0.0.1:8000/api/ga-dashboard
 ```
 
 ## Authentication
-Semua endpoint GA Dashboard memerlukan autentikasi menggunakan Bearer Token dan role GA/Admin.
-
-```http
-Authorization: Bearer {your_token_here}
+Semua endpoint memerlukan authentication dengan Bearer Token:
+```
+Authorization: Bearer {token}
 ```
 
 ## Endpoints
 
-### 1. Get All Leave Requests
-**Endpoint**: `GET /ga/dashboard/leave-requests`
+### 1. Get All Worship Attendance Data
+**GET** `/ga-dashboard/worship-attendance`
 
-**Deskripsi**: Mengambil semua data cuti dari seluruh karyawan dengan filtering dan pagination.
+Mendapatkan semua data absensi renungan pagi untuk semua karyawan tanpa batasan role.
 
-**Authorization**: Bearer Token (Role: General Affairs, Admin)
+#### Query Parameters
+- `date` (optional): Filter berdasarkan tanggal (format: YYYY-MM-DD)
+- `all` (optional): Jika `true`, ambil semua data tanpa filter tanggal
 
-**Query Parameters**:
+#### Example Request
+```bash
+# Ambil data untuk tanggal tertentu
+curl -X GET "http://127.0.0.1:8000/api/ga-dashboard/worship-attendance?date=2025-01-15" \
+  -H "Authorization: Bearer {token}" \
+  -H "Content-Type: application/json"
+
+# Ambil semua data tanpa filter tanggal
+curl -X GET "http://127.0.0.1:8000/api/ga-dashboard/worship-attendance?all=true" \
+  -H "Authorization: Bearer {token}" \
+  -H "Content-Type: application/json"
 ```
-?status=pending          // Filter berdasarkan status (pending, approved, rejected)
-?leave_type=annual       // Filter berdasarkan jenis cuti
-?employee_id=1           // Filter berdasarkan employee ID
-?start_date=2024-01-01   // Filter tanggal mulai cuti
-?end_date=2024-01-31     // Filter tanggal akhir cuti
-?per_page=15             // Jumlah data per halaman (default: 15)
-?page=1                  // Halaman yang diminta
-```
 
-**Response Success (200)**:
+#### Example Response
 ```json
 {
   "success": true,
   "data": [
     {
       "id": 1,
+      "employee_id": 123,
+      "name": "Natanael Detamor Karokaro",
+      "position": "General Affairs",
+      "date": "2025-01-15",
+      "attendance_time": "07:15",
+      "status": "present",
+      "testing_mode": false,
+      "created_at": "2025-01-15T07:15:00.000000Z",
+      "raw_data": { /* raw database data */ }
+    }
+  ],
+  "message": "Data absensi renungan pagi berhasil diambil",
+  "total_records": 1
+}
+```
+
+### 2. Get Worship Statistics
+**GET** `/ga-dashboard/worship-statistics`
+
+Mendapatkan statistik absensi renungan pagi untuk tanggal tertentu.
+
+#### Query Parameters
+- `date` (optional): Tanggal untuk statistik (default: hari ini)
+
+#### Example Request
+```bash
+curl -X GET "http://127.0.0.1:8000/api/ga-dashboard/worship-statistics?date=2025-01-15" \
+  -H "Authorization: Bearer {token}" \
+  -H "Content-Type: application/json"
+```
+
+#### Example Response
+```json
+{
+  "success": true,
+  "data": {
+    "total": 50,
+    "present": 35,
+    "late": 10,
+    "absent": 5,
+    "date": "2025-01-15"
+  }
+}
+```
+
+### 3. Get All Leave Requests
+**GET** `/ga-dashboard/leave-requests`
+
+Mendapatkan semua data permohonan cuti untuk semua karyawan tanpa batasan role.
+
+#### Example Request
+```bash
+curl -X GET "http://127.0.0.1:8000/api/ga-dashboard/leave-requests" \
+  -H "Authorization: Bearer {token}" \
+  -H "Content-Type: application/json"
+```
+
+#### Example Response
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "employee_id": 123,
       "employee": {
-        "id": 1,
-        "nama_lengkap": "John Doe"
+        "id": 123,
+        "nama_lengkap": "Natanael Detamor Karokaro",
+        "jabatan_saat_ini": "General Affairs"
       },
       "leave_type": "annual",
-      "start_date": "2024-01-15",
-      "end_date": "2024-01-17",
-      "duration": 3,
+      "start_date": "2025-01-20",
+      "end_date": "2025-01-22",
+      "total_days": 3,
       "reason": "Liburan keluarga",
+      "notes": null,
       "overall_status": "approved",
-      "created_at": "2024-01-10T08:00:00.000000Z",
-      "updated_at": "2024-01-12T10:30:00.000000Z"
+      "status": "approved",
+      "approved_by": 456,
+      "approved_at": "2025-01-16T10:30:00.000000Z",
+      "created_at": "2025-01-15T14:20:00.000000Z",
+      "updated_at": "2025-01-16T10:30:00.000000Z",
+      "raw_data": { /* raw database data */ }
     }
   ],
-  "pagination": {
-    "current_page": 1,
-    "last_page": 5,
-    "per_page": 15,
-    "total": 67
-  },
-  "message": "Data cuti berhasil diambil"
+  "message": "Data permohonan cuti berhasil diambil",
+  "total_records": 1
 }
 ```
 
-**Response Error (401)**:
-```json
-{
-  "success": false,
-  "message": "User tidak terautentikasi"
-}
-```
+### 4. Get Leave Statistics
+**GET** `/ga-dashboard/leave-statistics`
 
-**Response Error (403)**:
-```json
-{
-  "success": false,
-  "message": "Unauthorized. Hanya GA/Admin yang dapat mengakses endpoint ini."
-}
-```
+Mendapatkan statistik permohonan cuti secara keseluruhan.
 
-### 2. Get All Attendances
-**Endpoint**: `GET /ga/dashboard/attendances`
-
-**Deskripsi**: Mengambil semua data absensi karyawan dengan filtering dan pagination.
-
-**Authorization**: Bearer Token (Role: General Affairs, Admin)
-
-**Query Parameters**:
-```
-?date=2024-01-15         // Filter berdasarkan tanggal (default: hari ini)
-?employee_id=1           // Filter berdasarkan employee ID
-?status=present          // Filter berdasarkan status absensi
-?per_page=15             // Jumlah data per halaman (default: 15)
-?page=1                  // Halaman yang diminta
-```
-
-**Response Success (200)**:
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": 1,
-      "employee_id": 1,
-      "date": "2024-01-15",
-      "check_in": "08:00:00",
-      "check_out": "17:00:00",
-      "status": "present",
-      "work_hours": 8.0,
-      "employee": {
-        "id": 1,
-        "full_name": "John Doe"
-      }
-    }
-  ],
-  "pagination": {
-    "current_page": 1,
-    "last_page": 3,
-    "per_page": 15,
-    "total": 42
-  },
-  "message": "Data absensi berhasil diambil"
-}
-```
-
-### 3. Get Leave Statistics
-**Endpoint**: `GET /ga/dashboard/leave-statistics`
-
-**Deskripsi**: Mengambil statistik cuti untuk dashboard GA.
-
-**Authorization**: Bearer Token (Role: General Affairs, Admin)
-
-**Response Success (200)**:
-```json
-{
-  "success": true,
-  "data": {
-    "status_summary": {
-      "pending": 5,
-      "approved": 23,
-      "rejected": 2,
-      "this_month": 15,
-      "this_year": 89
-    },
-    "type_summary": {
-      "annual": 45,
-      "sick": 20,
-      "maternity": 3,
-      "paternity": 2,
-      "marriage": 1,
-      "emergency": 8
-    }
-  },
-  "message": "Statistik cuti berhasil diambil"
-}
-```
-
-### 4. Get Attendance Statistics
-**Endpoint**: `GET /ga/dashboard/attendance-statistics`
-
-**Deskripsi**: Mengambil statistik absensi renungan pagi untuk dashboard GA.
-
-**Authorization**: Bearer Token (Role: General Affairs, Admin)
-
-**Response Success (200)**:
-```json
-{
-  "success": true,
-  "data": {
-    "morning_reflection_attendance": {
-      "today_present": 25,
-      "today_late": 3,
-      "today_absent": 2,
-      "monthly_total": 450
-    },
-    "date": "2024-01-15"
-  },
-  "message": "Statistik absensi renungan pagi berhasil diambil"
-}
-```
-
-### 5. Get All Leaves (Alternative Endpoint)
-**Endpoint**: `GET /ga/leaves`
-
-**Deskripsi**: Endpoint alternatif untuk mengambil data cuti dengan otorisasi berdasarkan hierarki role.
-
-**Authorization**: Bearer Token
-
-**Response**: Sama seperti endpoint `/ga/dashboard/leave-requests` tetapi dengan filtering berdasarkan role hierarchy.
-
-## Error Handling
-
-### Common Error Responses
-
-**500 Internal Server Error**:
-```json
-{
-  "success": false,
-  "message": "Terjadi kesalahan saat mengambil data"
-}
-```
-
-**422 Validation Error**:
-```json
-{
-  "success": false,
-  "errors": {
-    "field_name": ["Error message"]
-  }
-}
-```
-
-## Usage Examples
-
-### JavaScript/Fetch Example
-```javascript
-// Get all leave requests with filters
-const response = await fetch('/api/ga/dashboard/leave-requests?status=pending&per_page=20', {
-  method: 'GET',
-  headers: {
-    'Authorization': 'Bearer ' + token,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json'
-  }
-});
-
-const data = await response.json();
-console.log(data);
-```
-
-### cURL Example
+#### Example Request
 ```bash
-# Get all leave requests
-curl -X GET "http://localhost:8000/api/ga/dashboard/leave-requests" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json"
-
-# Get attendances for specific date
-curl -X GET "http://localhost:8000/api/ga/dashboard/attendances?date=2024-01-15" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json"
+curl -X GET "http://127.0.0.1:8000/api/ga-dashboard/leave-statistics" \
+  -H "Authorization: Bearer {token}" \
+  -H "Content-Type: application/json"
 ```
 
-## Security & Access Control
+#### Example Response
+```json
+{
+  "success": true,
+  "data": {
+    "total": 100,
+    "pending": 15,
+    "approved": 70,
+    "rejected": 10,
+    "expired": 5
+  }
+}
+```
 
-- Semua endpoint memerlukan autentikasi dengan Bearer Token
-- Hanya user dengan role "General Affairs" atau "Admin" yang dapat mengakses endpoint dashboard
-- Data filtering dan pagination diterapkan untuk optimasi performa
-- Logging error untuk monitoring dan debugging
+## Status Codes
 
-## Frontend Integration Tips
+| Code | Description |
+|------|-------------|
+| 200 | Success |
+| 401 | Unauthorized (token tidak valid) |
+| 500 | Internal Server Error |
 
-1. **Pagination**: Gunakan parameter `page` dan `per_page` untuk implementasi pagination
-2. **Filtering**: Kombinasikan multiple filter parameters untuk pencarian yang lebih spesifik
-3. **Error Handling**: Selalu handle response error dengan proper user feedback
-4. **Loading States**: Implementasikan loading indicator saat melakukan API calls
-5. **Token Management**: Pastikan token disimpan dengan aman dan handle token expiration
+## Error Response Format
+```json
+{
+  "success": false,
+  "message": "Error description"
+}
+```
 
-## Rate Limiting
+## Frontend Integration
 
-Endpoint ini tidak memiliki rate limiting khusus, tetapi mengikuti rate limiting global aplikasi.
+### Update Frontend URLs
+Ganti endpoint di frontend dari:
+```javascript
+// Old endpoints (with role restrictions)
+const response = await fetch('/api/morning-reflection/attendance');
+const leaveResponse = await fetch('/api/leave-requests?all=true');
+```
 
-## Changelog
+Menjadi:
+```javascript
+// New GA Dashboard endpoints (no role restrictions)
+const response = await fetch('/api/ga-dashboard/worship-attendance');
+const leaveResponse = await fetch('/api/ga-dashboard/leave-requests');
+```
 
-### Version 1.1.0 (2024-01-15)
-- **FIXED**: JOIN query in getAllLeaveRequests endpoint
-- **FIXED**: employee.nama_lengkap field mapping (was using incorrect 'full_name')
-- **ADDED**: Data validation before sending response
-- **ADDED**: Fallback values for null/missing employee data
-- **ADDED**: Logging for data integrity issues
-- **IMPROVED**: Error handling and data consistency
+### Example Frontend Usage
+```javascript
+// Load worship attendance data
+async loadData() {
+  try {
+    const response = await fetch('/api/ga-dashboard/worship-attendance', {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const result = await response.json();
+    if (result.success) {
+      this.attendanceData = result.data;
+      this.calculateStats();
+    }
+  } catch (error) {
+    console.error('Error loading data:', error);
+  }
+}
 
-### Version 1.0.0 (2024-01-15)
-- Initial implementation of GA Dashboard API
-- Added getAllLeaveRequests endpoint
-- Added getAllAttendances endpoint
-- Added proper authentication and authorization
-- Added filtering and pagination support
+// Load leave requests data
+async loadLeaveData() {
+  try {
+    const response = await fetch('/api/ga-dashboard/leave-requests', {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const result = await response.json();
+    if (result.success) {
+      this.leaveData = result.data;
+      this.calculateLeaveStats();
+    }
+  } catch (error) {
+    console.error('Error loading leave data:', error);
+  }
+}
+```
+
+## Key Features
+
+1. **No Role Restrictions**: Menampilkan semua data tanpa batasan hierarki role
+2. **Complete Data Access**: Akses penuh ke semua record di database
+3. **Optimized Queries**: Menggunakan JOIN untuk performa yang lebih baik
+4. **Comprehensive Logging**: Logging detail untuk debugging
+5. **Error Handling**: Error handling yang robust
+6. **Frontend Compatible**: Response format yang kompatibel dengan frontend existing
+
+## Security Considerations
+
+- Endpoint ini hanya boleh diakses oleh user yang terautentikasi
+- Tidak ada validasi role tambahan - semua user yang login bisa akses
+- Logging dilakukan untuk audit trail
+- Data sensitif tidak diekspos dalam response
+
+## Testing
+
+### Test dengan cURL
+```bash
+# Test worship attendance
+curl -X GET "http://127.0.0.1:8000/api/ga-dashboard/worship-attendance" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Test leave requests
+curl -X GET "http://127.0.0.1:8000/api/ga-dashboard/leave-requests" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Test dengan Postman
+1. Set method: GET
+2. Set URL: `http://127.0.0.1:8000/api/ga-dashboard/worship-attendance`
+3. Add header: `Authorization: Bearer YOUR_TOKEN`
+4. Send request
+
+## Migration Notes
+
+Jika Anda menggunakan endpoint lama, update frontend untuk menggunakan endpoint baru:
+
+```javascript
+// OLD
+const worshipData = await fetch('/api/morning-reflection/attendance');
+const leaveData = await fetch('/api/leave-requests?all=true');
+
+// NEW
+const worshipData = await fetch('/api/ga-dashboard/worship-attendance');
+const leaveData = await fetch('/api/ga-dashboard/leave-requests');
+```
+
+Endpoint lama masih tersedia untuk kompatibilitas, tapi endpoint baru ini memberikan akses yang lebih lengkap dan konsisten.
