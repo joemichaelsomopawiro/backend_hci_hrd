@@ -43,6 +43,7 @@ Route::delete('/employees/{employeeId}/employment-histories/{historyId}', [Emplo
 Route::delete('/employees/{employeeId}/promotion-histories/{promotionId}', [EmployeeController::class, 'deletePromotionHistory']);
 Route::delete('/employees/{employeeId}/trainings/{trainingId}', [EmployeeController::class, 'deleteTraining']);
 Route::delete('/employees/{employeeId}/benefits/{benefitId}', [EmployeeController::class, 'deleteBenefit']);
+Route::post('/employees/{employeeId}/documents', [EmployeeController::class, 'uploadDocument']);
 
 // General Affair Routes
 Route::prefix('ga')->group(function () {
@@ -358,6 +359,10 @@ Route::prefix('ga-dashboard')->middleware(['auth:sanctum'])->group(function () {
     // Worship attendance routes
     Route::get('/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
     Route::get('/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
+    
+    // Export routes
+    Route::get('/export-worship-attendance', [GaDashboardController::class, 'exportWorshipAttendance']);
+    Route::get('/export-leave-requests', [GaDashboardController::class, 'exportLeaveRequests']);
     
     // Leave requests routes
     Route::get('/leave-requests', [GaDashboardController::class, 'getAllLeaveRequests']);

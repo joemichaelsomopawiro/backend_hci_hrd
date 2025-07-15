@@ -27,7 +27,7 @@ class RoleHierarchyService
     // BARU: Fungsi untuk mengecek apakah role memiliki akses read-only seperti HR
     public static function isReadOnlyRole($role): bool
     {
-        return in_array($role, self::$readOnlyRoles) || self::isHrManager($role);
+        return in_array($role, self::$readOnlyRoles); // HANYA executive, tanpa HR
     }
     
     // BARU: Fungsi untuk mengecek apakah role adalah VP President atau President Director

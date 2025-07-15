@@ -365,7 +365,9 @@ class EmployeeController extends Controller
                 'promotion_histories.*.position' => 'nullable|string|max:100',
                 'promotion_histories.*.promotion_date' => 'nullable|date',
                 'trainings.*.training_name' => 'nullable|string|max:255',
+                'trainings.*.course_name' => 'nullable|string|max:255',
                 'trainings.*.institution' => 'nullable|string|max:255',
+                'trainings.*.provider' => 'nullable|string|max:255',
                 'trainings.*.completion_date' => 'nullable|date',
                 'trainings.*.certificate_number' => 'nullable|string|max:100',
                 'benefits.*.benefit_type' => 'nullable|string|max:100',
@@ -443,11 +445,14 @@ class EmployeeController extends Controller
             if (isset($validated['trainings'])) {
                 $employee->trainings()->delete();
                 foreach ($validated['trainings'] as $training) {
-                    if (!empty($training['training_name'])) {
+                    // Ambil nama pelatihan dan institusi dari field manapun yang tersedia
+                    $trainingName = $training['training_name'] ?? $training['course_name'] ?? null;
+                    $institution = $training['institution'] ?? $training['provider'] ?? null;
+                    if (!empty($trainingName)) {
                         Training::create([
                             'employee_id' => $employee->id,
-                            'training_name' => $training['training_name'] ?? null,
-                            'institution' => $training['institution'] ?? null,
+                            'training_name' => $trainingName,
+                            'institution' => $institution,
                             'completion_date' => $training['completion_date'] ?? null,
                             'certificate_number' => $training['certificate_number'] ?? null,
                         ]);
@@ -854,6 +859,62 @@ class EmployeeController extends Controller
             }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload dokumen pendukung untuk employee
+     */
+    public function uploadDocument(Request $request, $employeeId)
+    {
+        try {
+            DB::beginTransaction();
+
+            // Validasi request
+            $request->validate([
+                'documents.*' => 'required|file|mimes:pdf,jpg,jpeg,png|max:2048', // max 2MB per file
+            ]);
+
+            $employee = Employee::findOrFail($employeeId);
+
+            $uploadedFiles = [];
+            foreach ($request->file('documents') as $file) {
+                $path = $file->store('documents', 'public');
+                $document = EmployeeDocument::create([
+                    'employee_id' => $employee->id,
+                    'document_type' => $file->getClientOriginalName(),
+                    'file_path' => $path,
+                ]);
+                $uploadedFiles[] = $document;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Dokumen berhasil diupload',
+                'data' => $uploadedFiles
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            try {
+                Log::error('Error in uploadDocument: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat upload dokumen',
                 'error' => $e->getMessage(),
             ], 500);
         }
