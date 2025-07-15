@@ -18,6 +18,7 @@ use App\Http\Controllers\MorningReflectionAttendanceController;
 use App\Http\Controllers\AttendanceExportController;
 use App\Http\Controllers\NationalHolidayController;
 use App\Http\Controllers\CustomRoleController;
+use App\Http\Controllers\GaDashboardController;
 
 
 /*
@@ -349,6 +350,18 @@ Route::prefix('employee-sync')->middleware(['auth:sanctum'])->group(function () 
     
     // Sync orphaned records
     Route::post('/sync-orphaned-records', [\App\Http\Controllers\EmployeeSyncController::class, 'syncOrphanedRecords']);
+});
+
+// ===== GA DASHBOARD ROUTES =====
+// Routes untuk GA Dashboard - Menampilkan SEMUA data tanpa batasan role
+Route::prefix('ga-dashboard')->middleware(['auth:sanctum'])->group(function () {
+    // Worship attendance routes
+    Route::get('/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
+    Route::get('/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
+    
+    // Leave requests routes
+    Route::get('/leave-requests', [GaDashboardController::class, 'getAllLeaveRequests']);
+    Route::get('/leave-statistics', [GaDashboardController::class, 'getLeaveStatistics']);
 });
 
 // ===== CALENDAR ROUTES =====
