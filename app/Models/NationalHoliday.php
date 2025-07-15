@@ -37,33 +37,6 @@ class NationalHoliday extends Model
     {
         return $date->format('Y-m-d');
     }
-    
-    /**
-     * Mutator untuk field date
-     * Memastikan tanggal selalu disimpan dalam format Y-m-d
-     * tanpa komponen waktu untuk mencegah pergeseran tanggal.
-     */
-    public function setDateAttribute($value)
-    {
-        if ($value) {
-            // Parse tanggal dan ekstrak hanya bagian tanggal (Y-m-d)
-            $this->attributes['date'] = Carbon::parse($value)->format('Y-m-d');
-        }
-    }
-    
-    /**
-     * Accessor untuk field date
-     * Memastikan tanggal selalu dikembalikan sebagai Carbon instance
-     * dengan waktu di-set ke 00:00:00 untuk konsistensi.
-     */
-    public function getDateAttribute($value)
-    {
-        if ($value) {
-            // Kembalikan sebagai Carbon instance dengan waktu 00:00:00
-            return Carbon::createFromFormat('Y-m-d', $value)->startOfDay();
-        }
-        return $value;
-    }
 
     // Relationships
     public function createdBy()
