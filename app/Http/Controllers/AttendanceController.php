@@ -20,13 +20,16 @@ class AttendanceController extends Controller
 {
     protected $machineService;
     protected $processingService;
+    protected $leaveService;
 
     public function __construct(
         AttendanceMachineService $machineService, 
-        AttendanceProcessingService $processingService
+        AttendanceProcessingService $processingService,
+        \App\Services\LeaveAttendanceIntegrationService $leaveService
     ) {
         $this->machineService = $machineService;
         $this->processingService = $processingService;
+        $this->leaveService = $leaveService;
     }
 
     /**
@@ -1125,6 +1128,582 @@ class AttendanceController extends Controller
                 'message' => 'Terjadi kesalahan: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * POST /api/attendance/sync-current-month
+     * Sync attendance data untuk bulan saat ini dari mesin
+     */
+    public function syncCurrentMonth(Request $request): JsonResponse
+    {
+        // Set longer timeout untuk monthly sync
+        set_time_limit(300); // 5 menit timeout
+        ini_set('memory_limit', '512M'); // Increase memory limit
+        
+        try {
+            Log::info('Monthly Sync: Started', ['requested_by' => $request->ip()]);
+            
+            $currentDate = Carbon::now();
+            $currentYear = $currentDate->year;
+            $currentMonth = $currentDate->month;
+            $monthName = $currentDate->format('F');
+            
+            Log::info('Monthly Sync: Target month', [
+                'month' => $monthName,
+                'year' => $currentYear,
+                'month_number' => $currentMonth
+            ]);
+            
+            $machine = AttendanceMachine::where('ip_address', '10.10.10.85')->first();
+
+            if (!$machine) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Mesin absensi tidak ditemukan. Silakan setup mesin terlebih dahulu.'
+                ], 404);
+            }
+
+            // Step 1: Test connection
+            Log::info('Monthly Sync: Testing connection...');
+            $connectionTest = $this->machineService->testConnection($machine);
+            if (!$connectionTest['success']) {
+                Log::error('Monthly Sync: Connection failed', ['error' => $connectionTest['message']]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tidak dapat terhubung ke mesin: ' . $connectionTest['message']
+                ], 400);
+            }
+            Log::info('Monthly Sync: Connection successful');
+
+            // Step 2: Pull data untuk bulan saat ini
+            Log::info('Monthly Sync: Pulling current month data from machine...');
+            $pullResult = $this->machineService->pullCurrentMonthAttendanceData($machine);
+
+            if (!$pullResult['success']) {
+                Log::error('Monthly Sync: Pull data failed', ['error' => $pullResult['message']]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Gagal mengambil data dari mesin: ' . $pullResult['message']
+                ], 400);
+            }
+            
+            $totalFromMachine = count($pullResult['data'] ?? []);
+            $monthFiltered = $pullResult['stats']['month_filtered'] ?? 0;
+            Log::info('Monthly Sync: Pull data successful', [
+                'total_records' => $totalFromMachine,
+                'month_filtered' => $monthFiltered
+            ]);
+
+            // Step 3: Process semua logs yang belum diproses
+            Log::info('Monthly Sync: Processing unprocessed logs...');
+            $processResult = $this->processingService->processUnprocessedLogs();
+            Log::info('Monthly Sync: Processing successful', ['processed' => $processResult['processed']]);
+
+            // Step 4: AUTO-SYNC - Link employee data
+            Log::info('Monthly Sync: Auto-sync employee linking...');
+            $uniqueUserNames = \App\Models\Attendance::whereNotNull('user_name')
+                                                    ->whereNull('employee_id')
+                                                    ->distinct()
+                                                    ->pluck('user_name');
+            
+            $syncedCount = 0;
+            foreach ($uniqueUserNames as $userName) {
+                try {
+                    $syncResult = \App\Services\EmployeeSyncService::autoSyncAttendance($userName);
+                    if ($syncResult['success']) {
+                        $syncedCount++;
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Monthly Sync: Auto-sync failed for user', ['user' => $userName, 'error' => $e->getMessage()]);
+                }
+            }
+            
+            Log::info('Monthly Sync: Auto-sync completed', [
+                'total_users' => count($uniqueUserNames),
+                'synced_count' => $syncedCount
+            ]);
+
+            // Step 5: Sinkronisasi employee_id di attendances berdasarkan nama
+            Log::info('Monthly Sync: Syncing employee_id in attendances...');
+            $attendanceUpdateCount = 0;
+            $attendancesWithoutEmployee = \App\Models\Attendance::whereNull('employee_id')
+                                                                ->whereNotNull('user_name')
+                                                                ->get();
+            
+            foreach ($attendancesWithoutEmployee as $attendance) {
+                $employee = \App\Models\Employee::where('nama_lengkap', $attendance->user_name)->first();
+                if ($employee) {
+                    $attendance->update(['employee_id' => $employee->id]);
+                    $attendanceUpdateCount++;
+                }
+            }
+            
+            Log::info('Monthly Sync: Employee ID sync completed', ['updated_count' => $attendanceUpdateCount]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Monthly sync berhasil untuk {$monthName} {$currentYear}",
+                'data' => [
+                    'month' => $monthName,
+                    'year' => $currentYear,
+                    'month_number' => $currentMonth,
+                    'pull_result' => $pullResult,
+                    'process_result' => $processResult,
+                    'auto_sync_result' => [
+                        'total_users' => count($uniqueUserNames),
+                        'synced_count' => $syncedCount
+                    ],
+                    'employee_id_sync' => [
+                        'updated_count' => $attendanceUpdateCount
+                    ],
+                    'monthly_stats' => [
+                        'total_from_machine' => $totalFromMachine,
+                        'month_filtered' => $monthFiltered,
+                        'processed_to_logs' => $pullResult['stats']['processed_to_logs'] ?? 0,
+                        'processed_to_attendances' => $processResult['processed'] ?? 0,
+                        'start_date' => $pullResult['stats']['start_date'] ?? null,
+                        'end_date' => $pullResult['stats']['end_date'] ?? null
+                    ]
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Monthly Sync: Error in sync current month: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/attendance/sync-current-month-fast
+     * Sync data absensi bulan saat ini dari mesin (FAST VERSION)
+     */
+    public function syncCurrentMonthFast(Request $request): JsonResponse
+    {
+        // Set optimized timeout untuk fast monthly sync
+        set_time_limit(180); // 3 menit timeout (reduced from 5)
+        ini_set('memory_limit', '256M'); // Reduced memory limit
+        
+        try {
+            Log::info('Fast Monthly Sync: Started', ['requested_by' => $request->ip()]);
+            
+            $currentDate = Carbon::now();
+            $currentYear = $currentDate->year;
+            $currentMonth = $currentDate->month;
+            $monthName = $currentDate->format('F');
+            
+            Log::info('Fast Monthly Sync: Target month', [
+                'month' => $monthName,
+                'year' => $currentYear,
+                'month_number' => $currentMonth
+            ]);
+            
+            $machine = AttendanceMachine::where('ip_address', '10.10.10.85')->first();
+
+            if (!$machine) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Mesin absensi tidak ditemukan. Silakan setup mesin terlebih dahulu.'
+                ], 404);
+            }
+
+            // Step 1: Test connection
+            Log::info('Fast Monthly Sync: Testing connection...');
+            $connectionTest = $this->machineService->testConnection($machine);
+            if (!$connectionTest['success']) {
+                Log::error('Fast Monthly Sync: Connection failed', ['error' => $connectionTest['message']]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tidak dapat terhubung ke mesin: ' . $connectionTest['message']
+                ], 400);
+            }
+            Log::info('Fast Monthly Sync: Connection successful');
+
+            // Step 2: Pull data untuk bulan saat ini (FAST VERSION)
+            Log::info('Fast Monthly Sync: Pulling current month data from machine (FAST)...');
+            $pullResult = $this->machineService->pullCurrentMonthAttendanceDataFast($machine);
+
+            if (!$pullResult['success']) {
+                Log::error('Fast Monthly Sync: Pull data failed', ['error' => $pullResult['message']]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Gagal mengambil data dari mesin: ' . $pullResult['message']
+                ], 400);
+            }
+            
+            $totalFromMachine = count($pullResult['data'] ?? []);
+            $monthFiltered = $pullResult['stats']['month_filtered'] ?? 0;
+            Log::info('Fast Monthly Sync: Pull data successful', [
+                'total_records' => $totalFromMachine,
+                'month_filtered' => $monthFiltered
+            ]);
+
+            // Step 3: Process semua logs yang belum diproses
+            Log::info('Fast Monthly Sync: Processing unprocessed logs...');
+            $processResult = $this->processingService->processUnprocessedLogs();
+            Log::info('Fast Monthly Sync: Processing successful', ['processed' => $processResult['processed']]);
+
+            // Step 4: AUTO-SYNC - Link employee data
+            Log::info('Fast Monthly Sync: Auto-sync employee linking...');
+            $uniqueUserNames = \App\Models\Attendance::whereNotNull('user_name')
+                                                    ->whereNull('employee_id')
+                                                    ->distinct()
+                                                    ->pluck('user_name');
+            
+            $syncedCount = 0;
+            foreach ($uniqueUserNames as $userName) {
+                try {
+                    $syncResult = \App\Services\EmployeeSyncService::autoSyncAttendance($userName);
+                    if ($syncResult['success']) {
+                        $syncedCount++;
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Fast Monthly Sync: Auto-sync failed for user', ['user' => $userName, 'error' => $e->getMessage()]);
+                }
+            }
+            
+            Log::info('Fast Monthly Sync: Auto-sync completed', [
+                'total_users' => count($uniqueUserNames),
+                'synced_count' => $syncedCount
+            ]);
+
+            // Step 5: Sinkronisasi employee_id di attendances berdasarkan nama
+            Log::info('Fast Monthly Sync: Syncing employee_id in attendances...');
+            $attendanceUpdateCount = 0;
+            $attendancesWithoutEmployee = \App\Models\Attendance::whereNull('employee_id')
+                                                                ->whereNotNull('user_name')
+                                                                ->get();
+            
+            foreach ($attendancesWithoutEmployee as $attendance) {
+                $employee = \App\Models\Employee::where('nama_lengkap', $attendance->user_name)->first();
+                if ($employee) {
+                    $attendance->update(['employee_id' => $employee->id]);
+                    $attendanceUpdateCount++;
+                }
+            }
+            
+            Log::info('Fast Monthly Sync: Employee ID sync completed', ['updated_count' => $attendanceUpdateCount]);
+
+            // Step 6: Auto Export Excel
+            Log::info('Fast Monthly Sync: Auto-exporting Excel...');
+            $exportResult = null;
+            $downloadUrl = null;
+            $filename = null;
+            try {
+                $exportResponse = $this->autoExportMonthlyExcel($currentYear, $currentMonth);
+                $exportResult = $exportResponse;
+                
+                // Extract download info
+                if (isset($exportResponse['success']) && $exportResponse['success']) {
+                    $downloadUrl = $exportResponse['download_url'] ?? null;
+                    $filename = $exportResponse['filename'] ?? null;
+                }
+                
+                Log::info('Fast Monthly Sync: Auto-export successful', [
+                    'export_result' => $exportResult,
+                    'download_url' => $downloadUrl,
+                    'filename' => $filename
+                ]);
+            } catch (\Exception $e) {
+                Log::warning('Fast Monthly Sync: Auto-export failed', ['error' => $e->getMessage()]);
+                $exportResult = ['error' => $e->getMessage()];
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => "FAST Monthly sync berhasil untuk {$monthName} {$currentYear}",
+                'data' => [
+                    'month' => $monthName,
+                    'year' => $currentYear,
+                    'month_number' => $currentMonth,
+                    'pull_result' => $pullResult,
+                    'process_result' => $processResult,
+                    'auto_sync_result' => [
+                        'total_users' => count($uniqueUserNames),
+                        'synced_count' => $syncedCount
+                    ],
+                    'employee_id_sync' => [
+                        'updated_count' => $attendanceUpdateCount
+                    ],
+                    'export_result' => $exportResult,
+                    'download_url' => $downloadUrl,
+                    'filename' => $filename,
+                    'monthly_stats' => [
+                        'total_from_machine' => $totalFromMachine,
+                        'month_filtered' => $monthFiltered,
+                        'processed_to_logs' => $pullResult['stats']['processed_to_logs'] ?? 0,
+                        'processed_to_attendances' => $processResult['processed'] ?? 0,
+                        'start_date' => $pullResult['stats']['start_date'] ?? null,
+                        'end_date' => $pullResult['stats']['end_date'] ?? null,
+                        'sync_type' => 'fast_monthly_sync'
+                    ]
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Fast Monthly Sync: Error in sync current month: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Auto export Excel untuk bulan tertentu
+     */
+    private function autoExportMonthlyExcel(int $year, int $month): array
+    {
+        try {
+            // Sinkronisasi status cuti untuk seluruh bulan
+            $startDate = Carbon::create($year, $month, 1)->format('Y-m-d');
+            $endDate = Carbon::create($year, $month, 1)->endOfMonth()->format('Y-m-d');
+            $this->leaveService->syncLeaveStatusForDateRange($startDate, $endDate);
+            
+            // Ambil semua karyawan yang terdaftar
+            $employees = \App\Models\EmployeeAttendance::where('is_active', true)
+                ->with('employee')
+                ->get()
+                ->sortBy(function($emp) {
+                    if ($emp->employee) {
+                        return $emp->employee->nama_lengkap;
+                    }
+                    return $emp->name;
+                });
+
+            // Ambil data absensi untuk bulan tertentu
+            $attendances = \App\Models\Attendance::whereYear('date', $year)
+                ->whereMonth('date', $month)
+                ->get()
+                ->groupBy('user_pin');
+
+            // Generate working days
+            $workingDays = $this->generateWorkingDays($year, $month);
+            $monthName = Carbon::create($year, $month)->format('F');
+            $yearName = $year;
+
+            // Generate Excel file
+            $result = $this->generateMonthlyExcelFile($employees, $attendances, $year, $month, $workingDays, $monthName, $yearName);
+            
+            return [
+                'success' => true,
+                'filename' => $result['filename'],
+                'download_url' => $result['download_url'],
+                'direct_download_url' => $result['direct_download_url'],
+                'total_employees' => $result['total_employees'],
+                'working_days' => $result['working_days'],
+                'month' => $result['month']
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Auto export Excel error: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Generate working days untuk bulan tertentu
+     */
+    private function generateWorkingDays($year, $month): array
+    {
+        $workingDays = [];
+        $startDate = Carbon::create($year, $month, 1);
+        $endDate = Carbon::create($year, $month, 1)->endOfMonth();
+        
+        $currentDate = $startDate->copy();
+        
+        while ($currentDate <= $endDate) {
+            if ($currentDate->dayOfWeek >= 1 && $currentDate->dayOfWeek <= 5) {
+                $workingDays[] = [
+                    'day' => $currentDate->day,
+                    'date' => $currentDate->format('Y-m-d'),
+                    'dayName' => $currentDate->format('D')
+                ];
+            }
+            $currentDate->addDay();
+        }
+        
+        return $workingDays;
+    }
+
+    /**
+     * Generate Excel file untuk bulan tertentu
+     */
+    private function generateMonthlyExcelFile($employees, $attendances, $year, $month, $workingDays, $monthName, $yearName): array
+    {
+        // Buat mapping dari user_pin ke employee data
+        $employeeMap = [];
+        foreach ($employees as $emp) {
+            $nama = $emp->employee ? $emp->employee->nama_lengkap : $emp->name;
+            $employeeMap[$emp->machine_user_id] = $nama;
+        }
+
+        // Siapkan data matrix
+        $matrix = [];
+        foreach ($employees as $emp) {
+            $userPin = $emp->machine_user_id;
+            $nama = $employeeMap[$userPin] ?? $userPin;
+            $matrix[$userPin] = [
+                'nama' => $nama,
+                'data' => [],
+                'total_hadir' => 0,
+                'total_jam' => 0.0
+            ];
+        }
+        
+        // Isi data matrix
+        foreach ($employees as $emp) {
+            $userPin = $emp->machine_user_id;
+            $empAttendances = $attendances->get($userPin, collect());
+            
+            foreach ($workingDays as $workingDay) {
+                $date = $workingDay['date'];
+                $day = $workingDay['day'];
+                $att = $empAttendances->filter(function($item) use ($date) {
+                    return $item->date->format('Y-m-d') === $date;
+                })->first();
+                
+                if ($att) {
+                    if (in_array($att->status, ['on_leave', 'sick_leave'])) {
+                        $leaveType = $att->status === 'sick_leave' ? 'Sakit' : 'Cuti';
+                        $matrix[$userPin]['data'][$day] = 'CUTI_' . $leaveType;
+                        $matrix[$userPin]['total_hadir']++;
+                    } elseif ($att->check_in) {
+                        if ($att->check_out) {
+                            $jamKerja = $att->work_hours ? number_format($att->work_hours, 2) : '0.00';
+                            $matrix[$userPin]['data'][$day] = $att->check_in->format('H:i') . '-' . $att->check_out->format('H:i');
+                            $matrix[$userPin]['total_jam'] += (float)$jamKerja;
+                        } else {
+                            $matrix[$userPin]['data'][$day] = $att->check_in->format('H:i') . '-';
+                        }
+                        $matrix[$userPin]['total_hadir']++;
+                    } else {
+                        $matrix[$userPin]['data'][$day] = 'ABSEN';
+                    }
+                } else {
+                    $matrix[$userPin]['data'][$day] = '';
+                }
+            }
+        }
+
+        // Urutkan matrix berdasarkan nama
+        $matrix = collect($matrix)->sortBy('nama')->toArray();
+
+        // Generate HTML table
+        $html = $this->generateExcelHTML($matrix, $workingDays, $monthName, $yearName);
+
+        // Save file
+        $filename = 'Absensi_' . $monthName . '_' . $yearName . '_Hope_Channel_Indonesia.xls';
+        $filePath = storage_path('app/public/exports/' . $filename);
+        
+        if (!file_exists(dirname($filePath))) {
+            mkdir(dirname($filePath), 0755, true);
+        }
+        
+        file_put_contents($filePath, $html);
+
+        return [
+            'filename' => $filename,
+            'download_url' => url('storage/exports/' . $filename),
+            'direct_download_url' => url('api/attendance/export/download/' . $filename),
+            'total_employees' => count($matrix),
+            'working_days' => count($workingDays),
+            'month' => $monthName . ' ' . $yearName
+        ];
+    }
+
+    /**
+     * Generate HTML untuk Excel
+     */
+    private function generateExcelHTML($matrix, $workingDays, $monthName, $yearName): string
+    {
+        $html = '<!DOCTYPE html>';
+        $html .= '<html>';
+        $html .= '<head>';
+        $html .= '<meta charset="UTF-8">';
+        $html .= '<title>Absensi ' . $monthName . ' ' . $yearName . ' Hope Channel Indonesia</title>';
+        $html .= '<style>';
+        $html .= 'table { border-collapse: collapse; width: 100%; font-size: 11px; }';
+        $html .= 'th, td { border: 1px solid #333; padding: 6px; text-align: center; }';
+        $html .= 'th { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: bold; }';
+        $html .= '.nama { text-align: left; font-weight: bold; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: black; }';
+        $html .= '.hadir-lengkap { background-color: #4CAF50; color: white; font-weight: bold; }';
+        $html .= '.hadir-masuk { background-color: #FFC107; color: #333; font-weight: bold; }';
+        $html .= '.tidak-hadir { background-color: #F44336; color: white; font-weight: bold; }';
+        $html .= '.cuti { background-color: #1565C0; color: white; font-weight: bold; }';
+        $html .= '.total-col { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); font-weight: bold; color: #333; }';
+        $html .= '.title { text-align: center; font-weight: bold; font-size: 18px; margin: 15px 0; color: #333; }';
+        $html .= '.subtitle { text-align: center; font-size: 14px; margin: 10px 0; color: #666; }';
+        $html .= '</style>';
+        $html .= '</head>';
+        $html .= '<body>';
+        $html .= '<div class="title">📊 LAPORAN ABSENSI ' . strtoupper($monthName) . ' ' . $yearName . '</div>';
+        $html .= '<div class="title" style="font-size: 16px;">Hope Channel Indonesia</div>';
+        $html .= '<div class="subtitle">📅 Hari Kerja (Senin-Jumat)</div>';
+        $html .= '<table>';
+        $html .= '<thead><tr><th>👤 Nama Karyawan</th>';
+        foreach ($workingDays as $workingDay) {
+            $html .= '<th>' . $workingDay['day'] . '<br><small>(' . $workingDay['dayName'] . ')</small></th>';
+        }
+        $html .= '<th class="total-col">✅ Total Hadir</th><th class="total-col">⏰ Total Jam Kerja</th></tr></thead>';
+        $html .= '<tbody>';
+        foreach ($matrix as $row) {
+            $html .= '<tr>';
+            $html .= '<td class="nama">' . htmlspecialchars($row['nama']) . '</td>';
+            foreach ($workingDays as $workingDay) {
+                $day = $workingDay['day'];
+                $cellData = $row['data'][$day] ?? '';
+                
+                if ($cellData === '') {
+                    $cellClass = 'tidak-hadir';
+                    $cellContent = '-';
+                } elseif ($cellData === 'ABSEN') {
+                    $cellClass = 'tidak-hadir';
+                    $cellContent = '-';
+                } elseif (strpos($cellData, 'CUTI_') === 0) {
+                    $cellClass = 'cuti';
+                    $leaveType = str_replace('CUTI_', '', $cellData);
+                    $cellContent = $leaveType;
+                } elseif (strpos($cellData, '-') !== false && substr($cellData, -1) === '-') {
+                    $cellClass = 'hadir-masuk';
+                    $cellContent = $cellData . ' (Hanya Masuk)';
+                } elseif (strpos($cellData, '-') !== false && substr($cellData, -1) !== '-') {
+                    $cellClass = 'hadir-lengkap';
+                    $cellContent = $cellData;
+                } else {
+                    $cellClass = '';
+                    $cellContent = $cellData;
+                }
+                
+                $html .= '<td class="' . $cellClass . '">' . $cellContent . '</td>';
+            }
+            $html .= '<td class="total-col">' . $row['total_hadir'] . '</td>';
+            $html .= '<td class="total-col">' . number_format($row['total_jam'], 2) . ' jam</td>';
+            $html .= '</tr>';
+        }
+        $html .= '</tbody></table>';
+        
+        // Legend
+        $html .= '<div style="margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background: #f9f9f9;">';
+        $html .= '<h3 style="margin-top: 0; color: #333;">📋 Keterangan Warna:</h3>';
+        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #4CAF50; margin-right: 10px; border-radius: 3px;"></span><strong>Hijau:</strong> Hadir Lengkap (Check-in & Check-out)</div>';
+        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #FFC107; margin-right: 10px; border-radius: 3px;"></span><strong>Kuning:</strong> Hanya Check-in</div>';
+        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #1565C0; margin-right: 10px; border-radius: 3px;"></span><strong>Biru Tua:</strong> Cuti/Sakit</div>';
+        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #F44336; margin-right: 10px; border-radius: 3px;"></span><strong>Merah:</strong> Tidak Hadir (-)</div>';
+        $html .= '</div>';
+        
+        $html .= '</body></html>';
+        
+        return $html;
     }
 
     /**

@@ -132,6 +132,8 @@ Route::prefix('attendance')->group(function () {
     Route::post('/sync', [AttendanceController::class, 'syncFromMachine']);
     Route::post('/sync-today', [AttendanceController::class, 'syncToday']);
     Route::post('/sync-today-only', [AttendanceController::class, 'syncTodayOnly']);
+    Route::post('/sync-current-month', [AttendanceController::class, 'syncCurrentMonth']);
+    Route::post('/sync-current-month-fast', [AttendanceController::class, 'syncCurrentMonthFast']);
     Route::post('/sync/users', [AttendanceController::class, 'syncUserData']);
     Route::post('/link-employees', [AttendanceController::class, 'linkEmployees']);
     Route::get('/users', [AttendanceController::class, 'getUserList']);
@@ -145,6 +147,7 @@ Route::prefix('attendance')->group(function () {
     // Export routes
     Route::get('/export/daily', [AttendanceExportController::class, 'exportDaily']);
     Route::get('/export/monthly', [AttendanceExportController::class, 'exportMonthly']);
+    Route::get('/export/download/{filename}', [AttendanceExportController::class, 'downloadFile']);
     
     // Leave integration routes
     Route::post('/sync-leave', [AttendanceController::class, 'syncLeaveToAttendance']);

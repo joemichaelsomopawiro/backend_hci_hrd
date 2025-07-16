@@ -459,18 +459,64 @@ class AttendanceExportController extends Controller
             mkdir(dirname($filePath), 0755, true);
         }
         file_put_contents($filePath, $html);
+        // Log successful export
+        Log::info('Monthly Excel export completed', [
+            'filename' => $filename,
+            'total_employees' => count($matrix),
+            'working_days' => count($workingDays),
+            'month' => $monthName . ' ' . $yearName,
+            'file_size' => filesize($filePath)
+        ]);
+
         return response()->json([
             'success' => true,
-            'message' => 'Export berhasil',
+            'message' => 'Export Excel berhasil dibuat',
             'data' => [
                 'filename' => $filename,
                 'download_url' => url('storage/exports/' . $filename),
+                'direct_download_url' => url('api/attendance/export/download/' . $filename),
                 'total_employees' => count($matrix),
                 'working_days' => count($workingDays),
                 'month' => $monthName . ' ' . $yearName,
-                'format' => 'excel'
+                'format' => 'excel',
+                'file_size' => filesize($filePath),
+                'auto_download' => true
             ]
         ]);
+    }
+
+    /**
+     * Download file Excel langsung
+     * GET /api/attendance/export/download/{filename}
+     */
+    public function downloadFile($filename)
+    {
+        try {
+            $filePath = storage_path('app/public/exports/' . $filename);
+            
+            if (!file_exists($filePath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File tidak ditemukan'
+                ], 404);
+            }
+            
+            // Set headers untuk download
+            $headers = [
+                'Content-Type' => 'application/vnd.ms-excel',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                'Content-Length' => filesize($filePath)
+            ];
+            
+            return response()->download($filePath, $filename, $headers);
+            
+        } catch (\Exception $e) {
+            Log::error('Error downloading file: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat download: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

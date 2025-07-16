@@ -239,6 +239,609 @@ class AttendanceMachineService
     }
 
     /**
+     * Tarik data absensi dari mesin untuk bulan saat ini
+     * Method ini pull semua data dari mesin dan filter untuk bulan saat ini
+     */
+    public function pullCurrentMonthAttendanceData(AttendanceMachine $machine = null): array
+    {
+        $machine = $machine ?? $this->machine;
+        $currentDate = Carbon::now();
+        $currentYear = $currentDate->year;
+        $currentMonth = $currentDate->month;
+        $monthName = $currentDate->format('F');
+        
+        $startDate = $currentDate->startOfMonth()->format('Y-m-d');
+        $endDate = $currentDate->endOfMonth()->format('Y-m-d');
+        
+        $syncLog = $this->createSyncLog($machine, 'pull_current_month_data');
+        
+        try {
+            Log::info('Monthly Pull: Starting sync for current month', [
+                'month' => $monthName,
+                'year' => $currentYear,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'machine_ip' => $machine->ip_address
+            ]);
+            
+            // Use longer timeout for monthly sync (60 seconds)
+            $timeout = env('ATTENDANCE_MACHINE_FULL_TIMEOUT', 60);
+            
+            $connect = fsockopen($machine->ip_address, $machine->port, $errno, $errstr, $timeout);
+            
+            if (!$connect) {
+                throw new Exception("Koneksi gagal ke {$machine->ip_address}:{$machine->port} - $errstr ($errno)");
+            }
+
+            // Set longer stream timeout untuk membaca response yang besar
+            stream_set_timeout($connect, $timeout);
+
+            $soapRequest = "<GetAttLog><ArgComKey xsi:type=\"xsd:integer\">{$machine->comm_key}</ArgComKey><Arg><PIN xsi:type=\"xsd:integer\">All</PIN></Arg></GetAttLog>";
+            $newLine = "\r\n";
+            
+            Log::info('Monthly Pull: Sending SOAP request');
+            
+            fputs($connect, "POST /iWsService HTTP/1.0" . $newLine);
+            fputs($connect, "Content-Type: text/xml" . $newLine);
+            fputs($connect, "Content-Length: " . strlen($soapRequest) . $newLine . $newLine);
+            fputs($connect, $soapRequest . $newLine);
+            
+            Log::info('Monthly Pull: Reading response from machine...');
+            
+            $buffer = "";
+            $start_time = time();
+            $max_execution_time = 240; // 4 minutes max
+            
+            while (!feof($connect) && (time() - $start_time) < $max_execution_time) {
+                $response = fgets($connect, 8192); // Bigger chunk size
+                if ($response === false) {
+                    break;
+                }
+                $buffer .= $response;
+                
+                // Log progress setiap 10KB
+                if (strlen($buffer) % 10240 == 0) {
+                    Log::info('Monthly Pull: Reading progress', ['bytes_read' => strlen($buffer)]);
+                }
+            }
+            
+            fclose($connect);
+            
+            Log::info('Monthly Pull: Response received', [
+                'total_bytes' => strlen($buffer),
+                'execution_time' => time() - $start_time . ' seconds'
+            ]);
+
+            if (empty($buffer)) {
+                throw new Exception("Response kosong dari mesin");
+            }
+
+            // Parse response
+            Log::info('Monthly Pull: Parsing attendance data...');
+            $attendanceData = $this->parseAttendanceData($buffer);
+            
+            if (empty($attendanceData)) {
+                throw new Exception("Tidak ada data attendance yang bisa diparsing dari response");
+            }
+            
+            // Filter data untuk bulan saat ini
+            $monthData = $this->filterCurrentMonthData($attendanceData, $currentYear, $currentMonth);
+            
+            Log::info('Monthly Pull: Processing current month data to database...', [
+                'total_records' => count($attendanceData),
+                'month_records' => count($monthData)
+            ]);
+            
+            $processedCount = $this->processCurrentMonthAttendanceData($machine, $monthData, $currentYear, $currentMonth);
+            
+            $machine->updateLastSync();
+            $syncLog->markCompleted('success', "MONTHLY SYNC: Berhasil memproses {$processedCount} data absensi untuk {$monthName} {$currentYear}", [
+                'total_records' => count($attendanceData),
+                'month_records' => count($monthData),
+                'processed_records' => $processedCount,
+                'sync_type' => 'monthly_sync',
+                'month' => $monthName,
+                'year' => $currentYear,
+                'response_size_bytes' => strlen($buffer)
+            ]);
+            $syncLog->update(['records_processed' => $processedCount]);
+
+            Log::info('Monthly Pull: Completed successfully', [
+                'total_from_machine' => count($attendanceData),
+                'month_filtered' => count($monthData),
+                'processed_to_logs' => $processedCount,
+                'month' => $monthName,
+                'year' => $currentYear
+            ]);
+
+            return [
+                'success' => true, 
+                'message' => "MONTHLY SYNC: Berhasil memproses {$processedCount} data absensi untuk {$monthName} {$currentYear}",
+                'data' => $monthData,
+                'stats' => [
+                    'total_from_machine' => count($attendanceData),
+                    'month_filtered' => count($monthData),
+                    'processed_to_logs' => $processedCount,
+                    'response_size_bytes' => strlen($buffer),
+                    'sync_type' => 'monthly_sync',
+                    'month' => $monthName,
+                    'year' => $currentYear,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate
+                ]
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Monthly Pull: Error pulling current month attendance data', [
+                'error' => $e->getMessage(),
+                'machine' => $machine->ip_address,
+                'month' => $monthName,
+                'year' => $currentYear,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            $syncLog->markCompleted('failed', 'MONTHLY SYNC ERROR: ' . $e->getMessage());
+            return [
+                'success' => false, 
+                'message' => 'Monthly sync error: ' . $e->getMessage(),
+                'error_details' => [
+                    'type' => get_class($e),
+                    'machine_ip' => $machine->ip_address,
+                    'month' => $monthName,
+                    'year' => $currentYear
+                ]
+            ];
+        }
+    }
+
+    /**
+     * Tarik data absensi dari mesin untuk bulan saat ini (FAST VERSION)
+     * Versi yang dioptimasi untuk performa lebih cepat
+     */
+    public function pullCurrentMonthAttendanceDataFast(AttendanceMachine $machine = null): array
+    {
+        $machine = $machine ?? $this->machine;
+        $currentDate = Carbon::now();
+        $currentYear = $currentDate->year;
+        $currentMonth = $currentDate->month;
+        $monthName = $currentDate->format('F');
+        
+        $startDate = $currentDate->startOfMonth()->format('Y-m-d');
+        $endDate = $currentDate->endOfMonth()->format('Y-m-d');
+        
+        $syncLog = $this->createSyncLog($machine, 'pull_current_month_data');
+        
+        try {
+            Log::info('Fast Monthly Pull: Starting optimized sync for current month', [
+                'month' => $monthName,
+                'year' => $currentYear,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'machine_ip' => $machine->ip_address
+            ]);
+            
+            // Optimized timeout (30 seconds instead of 60)
+            $timeout = 30;
+            
+            $connect = fsockopen($machine->ip_address, $machine->port, $errno, $errstr, $timeout);
+            
+            if (!$connect) {
+                throw new Exception("Koneksi gagal ke {$machine->ip_address}:{$machine->port} - $errstr ($errno)");
+            }
+
+            // Set optimized stream timeout
+            stream_set_timeout($connect, $timeout);
+
+            $soapRequest = "<GetAttLog><ArgComKey xsi:type=\"xsd:integer\">{$machine->comm_key}</ArgComKey><Arg><PIN xsi:type=\"xsd:integer\">All</PIN></Arg></GetAttLog>";
+            $newLine = "\r\n";
+            
+            Log::info('Fast Monthly Pull: Sending SOAP request');
+            
+            fputs($connect, "POST /iWsService HTTP/1.0" . $newLine);
+            fputs($connect, "Content-Type: text/xml" . $newLine);
+            fputs($connect, "Content-Length: " . strlen($soapRequest) . $newLine . $newLine);
+            fputs($connect, $soapRequest . $newLine);
+            
+            Log::info('Fast Monthly Pull: Reading response from machine...');
+            
+            $buffer = "";
+            $start_time = time();
+            $max_execution_time = 120; // 2 minutes max (reduced from 4)
+            
+            // Optimized reading with larger chunks
+            while (!feof($connect) && (time() - $start_time) < $max_execution_time) {
+                $response = fgets($connect, 16384); // 16KB chunks (doubled from 8KB)
+                if ($response === false) {
+                    break;
+                }
+                $buffer .= $response;
+                
+                // Log progress setiap 50KB (reduced frequency)
+                if (strlen($buffer) % 51200 == 0) {
+                    Log::info('Fast Monthly Pull: Reading progress', ['bytes_read' => strlen($buffer)]);
+                }
+            }
+            
+            fclose($connect);
+            
+            Log::info('Fast Monthly Pull: Response received', [
+                'total_bytes' => strlen($buffer),
+                'execution_time' => time() - $start_time . ' seconds'
+            ]);
+
+            if (empty($buffer)) {
+                throw new Exception("Response kosong dari mesin");
+            }
+
+            // Parse response dengan optimasi
+            Log::info('Fast Monthly Pull: Parsing attendance data...');
+            $attendanceData = $this->parseAttendanceDataOptimized($buffer);
+            
+            if (empty($attendanceData)) {
+                throw new Exception("Tidak ada data attendance yang bisa diparsing dari response");
+            }
+            
+            // Filter data untuk bulan saat ini dengan optimasi
+            $monthData = $this->filterCurrentMonthDataOptimized($attendanceData, $currentYear, $currentMonth);
+            
+            Log::info('Fast Monthly Pull: Processing current month data to database...', [
+                'total_records' => count($attendanceData),
+                'month_records' => count($monthData)
+            ]);
+            
+            $processedCount = $this->processCurrentMonthAttendanceDataOptimized($machine, $monthData, $currentYear, $currentMonth);
+            
+            $machine->updateLastSync();
+            $syncLog->markCompleted('success', "FAST MONTHLY SYNC: Berhasil memproses {$processedCount} data absensi untuk {$monthName} {$currentYear}", [
+                'total_records' => count($attendanceData),
+                'month_records' => count($monthData),
+                'processed_records' => $processedCount,
+                'sync_type' => 'fast_monthly_sync',
+                'month' => $monthName,
+                'year' => $currentYear,
+                'response_size_bytes' => strlen($buffer)
+            ]);
+            $syncLog->update(['records_processed' => $processedCount]);
+
+            Log::info('Fast Monthly Pull: Completed successfully', [
+                'total_from_machine' => count($attendanceData),
+                'month_filtered' => count($monthData),
+                'processed_to_logs' => $processedCount,
+                'month' => $monthName,
+                'year' => $currentYear
+            ]);
+
+            return [
+                'success' => true, 
+                'message' => "FAST MONTHLY SYNC: Berhasil memproses {$processedCount} data absensi untuk {$monthName} {$currentYear}",
+                'data' => $monthData,
+                'stats' => [
+                    'total_from_machine' => count($attendanceData),
+                    'month_filtered' => count($monthData),
+                    'processed_to_logs' => $processedCount,
+                    'response_size_bytes' => strlen($buffer),
+                    'sync_type' => 'fast_monthly_sync',
+                    'month' => $monthName,
+                    'year' => $currentYear,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate
+                ]
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Fast Monthly Pull: Error pulling current month attendance data', [
+                'error' => $e->getMessage(),
+                'machine' => $machine->ip_address,
+                'month' => $monthName,
+                'year' => $currentYear,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            $syncLog->markCompleted('failed', 'FAST MONTHLY SYNC ERROR: ' . $e->getMessage());
+            return [
+                'success' => false, 
+                'message' => 'Fast monthly sync error: ' . $e->getMessage(),
+                'error_details' => [
+                    'type' => get_class($e),
+                    'machine_ip' => $machine->ip_address,
+                    'month' => $monthName,
+                    'year' => $currentYear
+                ]
+            ];
+        }
+    }
+
+    /**
+     * Filter data attendance hanya untuk bulan saat ini
+     */
+    private function filterCurrentMonthData(array $attendanceData, int $year, int $month): array
+    {
+        $monthData = [];
+        
+        foreach ($attendanceData as $data) {
+            $logDate = Carbon::parse($data['datetime']);
+            
+            // Cek apakah data dari bulan dan tahun yang ditargetkan
+            if ($logDate->year === $year && $logDate->month === $month) {
+                $monthData[] = $data;
+            }
+        }
+        
+        Log::info("Filter current month data: {$year}-{$month}", [
+            'total_records' => count($attendanceData),
+            'month_records' => count($monthData)
+        ]);
+        
+        return $monthData;
+    }
+
+    /**
+     * Filter data attendance untuk bulan saat ini dengan optimasi
+     */
+    private function filterCurrentMonthDataOptimized(array $attendanceData, int $year, int $month): array
+    {
+        $monthData = [];
+        $yearMonth = sprintf('%04d-%02d', $year, $month);
+        
+        foreach ($attendanceData as $data) {
+            // Optimized date checking - check string prefix first
+            if (strpos($data['datetime'], $yearMonth) === 0) {
+                $monthData[] = $data;
+            }
+        }
+        
+        Log::info("Optimized filter current month data: {$year}-{$month}", [
+            'total_records' => count($attendanceData),
+            'month_records' => count($monthData)
+        ]);
+        
+        return $monthData;
+    }
+
+    /**
+     * Proses data absensi bulan saat ini ke database
+     */
+    private function processCurrentMonthAttendanceData(AttendanceMachine $machine, array $monthData, int $year, int $month): int
+    {
+        // Get all registered PINs (main + PIN2)
+        $registeredPins = $this->getAllRegisteredPins();
+        
+        $processedCount = 0;
+        $skippedCount = 0;
+        $duplicateCount = 0;
+        $errorCount = 0;
+        
+        // Process in chunks untuk menghindari memory issues
+        $chunkSize = 100; // Process 100 records at a time
+        $chunks = array_chunk($monthData, $chunkSize);
+        $totalChunks = count($chunks);
+        
+        Log::info("Monthly Processing: Starting data processing", [
+            'total_records' => count($monthData),
+            'chunks' => $totalChunks,
+            'chunk_size' => $chunkSize,
+            'registered_pins' => count($registeredPins),
+            'year' => $year,
+            'month' => $month
+        ]);
+        
+        foreach ($chunks as $chunkIndex => $chunk) {
+            Log::info("Monthly Processing: Processing chunk " . ($chunkIndex + 1) . "/{$totalChunks}");
+            
+            foreach ($chunk as $data) {
+                try {
+                    $inputPin = $data['pin']; // PIN dari mesin (bisa PIN utama atau PIN2)
+                    
+                    // Skip jika PIN tidak terdaftar di mesin
+                    if (!in_array($inputPin, $registeredPins)) {
+                        $skippedCount++;
+                        continue;
+                    }
+                    
+                    // Resolve PIN2 ke PIN utama
+                    $mainPin = $this->resolvePinToMainPin($inputPin);
+                    
+                    // Parse datetime
+                    $logDateTime = Carbon::parse($data['datetime']);
+                    
+                    // Double check: pastikan benar-benar dari bulan yang ditargetkan
+                    if ($logDateTime->year !== $year || $logDateTime->month !== $month) {
+                        $skippedCount++;
+                        continue;
+                    }
+                    
+                    // Cek apakah log sudah ada (optimized query)
+                    $existingLog = AttendanceLog::where('attendance_machine_id', $machine->id)
+                        ->where('user_pin', $mainPin) // Cek berdasarkan PIN utama
+                        ->where('datetime', $logDateTime)
+                        ->exists(); // Use exists() instead of first() for better performance
+                    
+                    if ($existingLog) {
+                        $duplicateCount++;
+                        continue; // Skip jika sudah ada
+                    }
+
+                    // Simpan ke attendance_logs dengan PIN utama
+                    AttendanceLog::create([
+                        'attendance_machine_id' => $machine->id,
+                        'user_pin' => $mainPin, // Simpan PIN utama, bukan PIN2
+                        'datetime' => $logDateTime,
+                        'verified_method' => $this->getVerifiedMethod($data['verified']),
+                        'verified_code' => (int)$data['verified'],
+                        'status_code' => 'check_in',
+                        'is_processed' => false,
+                        'raw_data' => json_encode([
+                            'original_pin' => $inputPin, // Simpan PIN asli dari mesin
+                            'resolved_pin' => $mainPin,  // PIN utama yang digunakan
+                            'machine_data' => $data['raw_data']
+                        ])
+                    ]);
+                    
+                    $processedCount++;
+                    
+                } catch (Exception $e) {
+                    $errorCount++;
+                    Log::error("Monthly Processing: Error processing record", [
+                        'error' => $e->getMessage(),
+                        'data' => $data,
+                        'chunk' => $chunkIndex + 1
+                    ]);
+                }
+            }
+            
+            // Log progress after each chunk
+            if (($chunkIndex + 1) % 10 == 0 || ($chunkIndex + 1) == $totalChunks) {
+                Log::info("Monthly Processing: Progress update", [
+                    'chunks_completed' => $chunkIndex + 1,
+                    'total_chunks' => $totalChunks,
+                    'processed_so_far' => $processedCount,
+                    'skipped_so_far' => $skippedCount,
+                    'duplicates_so_far' => $duplicateCount,
+                    'errors_so_far' => $errorCount
+                ]);
+            }
+        }
+        
+        Log::info("Monthly Processing: Completed data processing", [
+            'total_records' => count($monthData),
+            'processed_count' => $processedCount,
+            'skipped_unregistered' => $skippedCount,
+            'duplicate_skipped' => $duplicateCount,
+            'error_count' => $errorCount,
+            'year' => $year,
+            'month' => $month
+        ]);
+        
+        return $processedCount;
+    }
+
+    /**
+     * Proses data absensi bulan saat ini ke database dengan optimasi
+     */
+    private function processCurrentMonthAttendanceDataOptimized(AttendanceMachine $machine, array $monthData, int $year, int $month): int
+    {
+        // Get all registered PINs (main + PIN2) - cached
+        $registeredPins = $this->getAllRegisteredPins();
+        $pinCache = array_flip($registeredPins); // For faster lookup
+        
+        $processedCount = 0;
+        $skippedCount = 0;
+        $duplicateCount = 0;
+        $errorCount = 0;
+        
+        // Larger chunk size for better performance
+        $chunkSize = 200; // Increased from 100
+        $chunks = array_chunk($monthData, $chunkSize);
+        $totalChunks = count($chunks);
+        
+        Log::info("Optimized Monthly Processing: Starting data processing", [
+            'total_records' => count($monthData),
+            'chunks' => $totalChunks,
+            'chunk_size' => $chunkSize,
+            'registered_pins' => count($registeredPins),
+            'year' => $year,
+            'month' => $month
+        ]);
+        
+        // Batch insert preparation
+        $batchData = [];
+        $batchSize = 50; // Insert 50 records at once
+        
+        foreach ($chunks as $chunkIndex => $chunk) {
+            if (($chunkIndex + 1) % 5 == 0) {
+                Log::info("Optimized Monthly Processing: Processing chunk " . ($chunkIndex + 1) . "/{$totalChunks}");
+            }
+            
+            foreach ($chunk as $data) {
+                try {
+                    $inputPin = $data['pin'];
+                    
+                    // Fast lookup using array key
+                    if (!isset($pinCache[$inputPin])) {
+                        $skippedCount++;
+                        continue;
+                    }
+                    
+                    // Resolve PIN2 ke PIN utama
+                    $mainPin = $this->resolvePinToMainPin($inputPin);
+                    
+                    // Parse datetime only once
+                    $logDateTime = Carbon::parse($data['datetime']);
+                    
+                    // Double check: pastikan benar-benar dari bulan yang ditargetkan
+                    if ($logDateTime->year !== $year || $logDateTime->month !== $month) {
+                        $skippedCount++;
+                        continue;
+                    }
+                    
+                    // Prepare batch data
+                    $batchData[] = [
+                        'attendance_machine_id' => $machine->id,
+                        'user_pin' => $mainPin,
+                        'datetime' => $logDateTime,
+                        'verified_method' => $this->getVerifiedMethod($data['verified']),
+                        'verified_code' => (int)$data['verified'],
+                        'status_code' => 'check_in',
+                        'is_processed' => false,
+                        'raw_data' => json_encode([
+                            'original_pin' => $inputPin,
+                            'resolved_pin' => $mainPin,
+                            'machine_data' => $data['raw_data']
+                        ]),
+                        'created_at' => now(),
+                        'updated_at' => now()
+                    ];
+                    
+                    // Process batch when it reaches the size limit
+                    if (count($batchData) >= $batchSize) {
+                        $insertedCount = $this->insertBatchAttendanceLogs($batchData);
+                        $processedCount += $insertedCount;
+                        $batchData = []; // Reset batch
+                    }
+                    
+                } catch (Exception $e) {
+                    $errorCount++;
+                    Log::error("Optimized Monthly Processing: Error processing record", [
+                        'error' => $e->getMessage(),
+                        'data' => $data,
+                        'chunk' => $chunkIndex + 1
+                    ]);
+                }
+            }
+            
+            // Log progress less frequently
+            if (($chunkIndex + 1) % 20 == 0 || ($chunkIndex + 1) == $totalChunks) {
+                Log::info("Optimized Monthly Processing: Progress update", [
+                    'chunks_completed' => $chunkIndex + 1,
+                    'total_chunks' => $totalChunks,
+                    'processed_so_far' => $processedCount,
+                    'skipped_so_far' => $skippedCount,
+                    'duplicates_so_far' => $duplicateCount,
+                    'errors_so_far' => $errorCount
+                ]);
+            }
+        }
+        
+        // Insert remaining batch data
+        if (!empty($batchData)) {
+            $insertedCount = $this->insertBatchAttendanceLogs($batchData);
+            $processedCount += $insertedCount;
+        }
+        
+        Log::info("Optimized Monthly Processing: Completed data processing", [
+            'total_records' => count($monthData),
+            'processed_count' => $processedCount,
+            'skipped_unregistered' => $skippedCount,
+            'duplicate_skipped' => $duplicateCount,
+            'error_count' => $errorCount,
+            'year' => $year,
+            'month' => $month
+        ]);
+        
+        return $processedCount;
+    }
+
+    /**
      * Filter data attendance hanya untuk tanggal tertentu
      */
     private function filterTodayData(array $attendanceData, string $targetDate): array
@@ -552,6 +1155,35 @@ class AttendanceMachineService
                 ];
             }
         }
+        
+        return $attendanceData;
+    }
+
+    /**
+     * Parse attendance data dengan optimasi performa
+     */
+    private function parseAttendanceDataOptimized($buffer): array
+    {
+        $attendanceData = [];
+        
+        // Optimized regex pattern
+        $pattern = '/<Row>.*?<PIN>(.*?)<\/PIN>.*?<DateTime>(.*?)<\/DateTime>.*?<Verified>(.*?)<\/Verified>.*?<\/Row>/s';
+        
+        if (preg_match_all($pattern, $buffer, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $match) {
+                $attendanceData[] = [
+                    'pin' => trim($match[1]),
+                    'datetime' => trim($match[2]),
+                    'verified' => trim($match[3]),
+                    'raw_data' => $match[0]
+                ];
+            }
+        }
+        
+        Log::info("Optimized parsing completed", [
+            'total_records' => count($attendanceData),
+            'buffer_size' => strlen($buffer)
+        ]);
         
         return $attendanceData;
     }
@@ -1128,6 +1760,38 @@ class AttendanceMachineService
             Log::error('Error syncing time: ' . $e->getMessage());
             $syncLog->markCompleted('failed', $e->getMessage());
             return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Insert batch attendance logs dengan optimasi
+     */
+    private function insertBatchAttendanceLogs(array $batchData): int
+    {
+        try {
+            // Use insert() instead of create() for better performance
+            $inserted = AttendanceLog::insert($batchData);
+            return count($batchData);
+        } catch (Exception $e) {
+            Log::error("Batch insert error", [
+                'error' => $e->getMessage(),
+                'batch_size' => count($batchData)
+            ]);
+            
+            // Fallback to individual inserts if batch fails
+            $insertedCount = 0;
+            foreach ($batchData as $data) {
+                try {
+                    AttendanceLog::create($data);
+                    $insertedCount++;
+                } catch (Exception $e) {
+                    Log::error("Individual insert error", [
+                        'error' => $e->getMessage(),
+                        'data' => $data
+                    ]);
+                }
+            }
+            return $insertedCount;
         }
     }
 }

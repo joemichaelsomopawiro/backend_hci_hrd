@@ -64,13 +64,13 @@ class AttendanceLog extends Model
     // Method untuk mendapatkan tanggal saja
     public function getDateAttribute(): string
     {
-        return $this->datetime->format('Y-m-d');
+        return $this->datetime ? $this->datetime->format('Y-m-d') : '';
     }
 
     // Method untuk mendapatkan waktu saja
     public function getTimeAttribute(): string
     {
-        return $this->datetime->format('H:i:s');
+        return $this->datetime ? $this->datetime->format('H:i:s') : '';
     }
 
     // Method untuk mapping verified code ke method
