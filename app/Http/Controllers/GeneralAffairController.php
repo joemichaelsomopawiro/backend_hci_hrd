@@ -463,7 +463,13 @@ class GeneralAffairController extends Controller
                     Log::warning('Leave request without employee data', ['leave_id' => $leave->id]);
                     return null; // Skip data yang tidak valid
                 }
-                
+                // Generate leave_dates dari start_date ke end_date
+                $start = \Carbon\Carbon::parse($leave->start_date);
+                $end = \Carbon\Carbon::parse($leave->end_date);
+                $dates = [];
+                for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                    $dates[] = $date->toDateString();
+                }
                 return [
                     'id' => $leave->id,
                     'employee' => [
@@ -477,7 +483,8 @@ class GeneralAffairController extends Controller
                     'reason' => $leave->reason ?? 'Tidak ada keterangan',
                     'overall_status' => $leave->overall_status ?? 'pending',
                     'created_at' => $leave->created_at,
-                    'updated_at' => $leave->updated_at
+                    'updated_at' => $leave->updated_at,
+                    'leave_dates' => $dates
                 ];
             })->filter(); // Remove null values
             

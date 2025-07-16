@@ -141,6 +141,13 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $leaveRequests->map(function ($request) {
+                // Generate leave_dates dari start_date ke end_date
+                $start = \Carbon\Carbon::parse($request->start_date);
+                $end = \Carbon\Carbon::parse($request->end_date);
+                $dates = [];
+                for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                    $dates[] = $date->toDateString();
+                }
                 return [
                     'id' => $request->id,
                     'employee_id' => $request->employee_id,
@@ -163,6 +170,7 @@ class GaDashboardController extends Controller
                     'approved_at' => $request->approved_at,
                     'created_at' => $request->created_at,
                     'updated_at' => $request->updated_at,
+                    'leave_dates' => $dates,
                     'raw_data' => $request // Untuk debugging
                 ];
             });

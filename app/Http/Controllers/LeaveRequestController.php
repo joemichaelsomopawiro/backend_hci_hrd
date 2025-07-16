@@ -70,9 +70,22 @@ class LeaveRequestController extends Controller
         // ========== BAGIAN 3: EKSEKUSI QUERY ========== 
         $requests = $query->orderBy('created_at', 'desc')->get(); 
 
-        return response()->json([ 
-            'success' => true, 
-            'data' => $requests 
+        // Tambahkan leave_dates pada setiap data cuti
+        $transformed = $requests->map(function($leave) {
+            $start = \Carbon\Carbon::parse($leave->start_date);
+            $end = \Carbon\Carbon::parse($leave->end_date);
+            $dates = [];
+            for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                $dates[] = $date->toDateString();
+            }
+            $data = $leave->toArray();
+            $data['leave_dates'] = $dates;
+            return $data;
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $transformed
         ]); 
     }
 
