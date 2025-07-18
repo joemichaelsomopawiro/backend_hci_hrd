@@ -12,15 +12,12 @@ use App\Http\Controllers\GeneralAffairController;
 use App\Http\Controllers\AttendanceMachineController;
 use App\Http\Controllers\WorshipAttendanceController;
 use App\Http\Controllers\MorningReflectionController;
-
 use App\Http\Controllers\MorningReflectionAttendanceController;
-
 use App\Http\Controllers\AttendanceExportController;
 use App\Http\Controllers\NationalHolidayController;
 use App\Http\Controllers\CustomRoleController;
 use App\Http\Controllers\GaDashboardController;
 use App\Http\Controllers\ZoomLinkController;
-
 
 /*
 |--------------------------------------------------------------------------
@@ -277,33 +274,36 @@ Route::prefix('morning-reflection')->middleware(['auth:sanctum'])->group(functio
         Route::post('/attend-user', [MorningReflectionController::class, 'attendUser']);
     });
     
-    // Status kehadiran user
-    Route::get('/attendance', [MorningReflectionController::class, 'getAttendance']);
+    // ======= ROUTE YANG DIPERLUKAN FRONTEND =======
+    // Ambil history absensi + cuti (integrasi, paginasi, dsb)
+    Route::get('/attendance', [MorningReflectionAttendanceController::class, 'getAttendance']);
+    Route::get('/weekly-attendance', [MorningReflectionAttendanceController::class, 'getHistory']);
+    // ==============================================
+
+    // Route lain tetap boleh ada
     Route::get('/attendance-user', [MorningReflectionController::class, 'attendance']);
     Route::get('/attendance/{userId}/{date}', [MorningReflectionController::class, 'getUserAttendance']);
     Route::get('/attendance-by-date/{userId}/{date}', [MorningReflectionController::class, 'attendanceByDate']);
-    
-    // Kehadiran mingguan user
     Route::get('/weekly-attendance/{userId}', [MorningReflectionController::class, 'getWeeklyAttendance']);
     Route::get('/weekly-attendance-user/{userId}', [MorningReflectionController::class, 'weeklyAttendance']);
-    
-    // Konfigurasi renungan pagi
     Route::get('/config', [MorningReflectionController::class, 'getConfig']);
     Route::get('/config-user', [MorningReflectionController::class, 'config']);
-    
-    // Statistik kehadiran
     Route::get('/statistics', [MorningReflectionController::class, 'statistics']);
 });
 
 // Routes untuk GA (General Affairs) - dengan role middleware
 Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:General Affairs'])->group(function () {
-    // Dashboard kehadiran hari ini
     Route::get('/today-attendance', [MorningReflectionController::class, 'getTodayAttendance']);
     Route::get('/today-attendance-admin', [MorningReflectionController::class, 'todayAttendance']);
-    
-    // Update konfigurasi (admin only)
     Route::put('/config', [MorningReflectionController::class, 'updateConfig']);
     Route::put('/config-admin', [MorningReflectionController::class, 'updateConfigAdmin']);
+});
+
+// Tambahkan route baru untuk endpoint /api/morning-reflection-attendance/attendance (opsional, legacy)
+Route::prefix('morning-reflection-attendance')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/attendance', [MorningReflectionAttendanceController::class, 'getAttendance']);
+    Route::post('/attend', [MorningReflectionAttendanceController::class, 'attend']);
+    Route::get('/history/{employeeId}', [MorningReflectionAttendanceController::class, 'getHistory']);
 });
 
 // Custom Role Management Routes
@@ -316,18 +316,10 @@ Route::prefix('custom-roles')->middleware(['auth:sanctum'])->group(function () {
     Route::delete('/{id}', [CustomRoleController::class, 'destroy']);
 });
 
-// Tambahkan route baru untuk endpoint /api/morning-reflection-attendance/attendance
-Route::prefix('morning-reflection-attendance')->middleware(['auth:sanctum'])->group(function () {
-    Route::get('/attendance', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'getAttendance']);
-    Route::post('/attend', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'attend']);
-    Route::get('/history/{employeeId}', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'getHistory']);
-    // Tambahkan endpoint lain sesuai kebutuhan frontend
-});
-
 // Route testing tanpa rate limit (untuk development)
 Route::prefix('test')->group(function () {
-    Route::post('/morning-reflection-attendance/attend', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'attend']);
-    Route::get('/morning-reflection-attendance/attendance', [\App\Http\Controllers\MorningReflectionAttendanceController::class, 'getAttendance']);
+    Route::post('/morning-reflection-attendance/attend', [MorningReflectionAttendanceController::class, 'attend']);
+    Route::get('/morning-reflection-attendance/attendance', [MorningReflectionAttendanceController::class, 'getAttendance']);
 });
 
 // ===== PERSONAL PROFILE ROUTES =====
@@ -413,4 +405,4 @@ Route::get('/zoom-link', [ZoomLinkController::class, 'getZoomLink']);
 Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/ga/zoom-link', [ZoomLinkController::class, 'getZoomLink']);
     Route::post('/ga/zoom-link', [ZoomLinkController::class, 'updateZoomLink']);
-});
+}); 

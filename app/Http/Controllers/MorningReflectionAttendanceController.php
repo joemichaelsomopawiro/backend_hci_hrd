@@ -134,39 +134,78 @@ class MorningReflectionAttendanceController extends Controller
         try {
             $employeeId = $request->employee_id;
             $dateFilter = $request->date;
+            $perPage = $request->get('per_page', 15);
+            $page = $request->get('page', 1);
 
             // Ambil data absensi
             $attendanceQuery = MorningReflectionAttendance::with('employee')
                 ->where('employee_id', $employeeId);
-            
             if ($dateFilter) {
                 $attendanceQuery->whereDate('date', $dateFilter);
             }
-            
             $attendances = $attendanceQuery->get();
 
             // Ambil data cuti yang disetujui
             $leaveQuery = LeaveRequest::with('employee')
                 ->where('employee_id', $employeeId)
                 ->where('overall_status', 'approved');
-            
             if ($dateFilter) {
                 $leaveQuery->where(function($query) use ($dateFilter) {
                     $query->whereDate('start_date', '<=', $dateFilter)
                           ->whereDate('end_date', '>=', $dateFilter);
                 });
             }
-            
             $leaves = $leaveQuery->get();
+
+            // Tentukan rentang tanggal (dari absensi/cuti terawal sampai hari ini)
+            $attendanceDates = $attendances->pluck('date')->toArray();
+            $leaveDates = [];
+            foreach ($leaves as $leave) {
+                $start = Carbon::parse($leave->start_date);
+                $end = Carbon::parse($leave->end_date);
+                for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                    $leaveDates[] = $date->toDateString();
+                }
+            }
+            $allDates = array_merge($attendanceDates, $leaveDates);
+            $allDates = array_filter($allDates); // hapus null
+            $startDate = $allDates ? min($allDates) : Carbon::now()->toDateString();
+            $endDate = Carbon::now()->toDateString();
+            if ($dateFilter) {
+                $startDate = $dateFilter;
+                $endDate = $dateFilter;
+            }
 
             // Gabungkan data berdasarkan tanggal
             $combinedData = $this->mergeAttendanceAndLeave($attendances, $leaves, $employeeId, $dateFilter);
+            // Isi hari kosong (absen)
+            $combinedData = $this->fillMissingReflectionDays($combinedData, $employeeId, $startDate, $endDate);
+
+            // Paginasi manual
+            $total = count($combinedData);
+            $offset = ($page - 1) * $perPage;
+            $paginatedData = array_slice($combinedData, $offset, $perPage);
 
             return response()->json([
                 'success' => true,
-                'data' => $combinedData,
+                'data' => [
+                    'history' => $paginatedData
+                ],
                 'message' => 'Data absensi dan cuti berhasil diambil',
-                'total_records' => count($combinedData)
+                'total_records' => $total,
+                'pagination' => [
+                    'current_page' => (int) $page,
+                    'per_page' => (int) $perPage,
+                    'total' => $total,
+                    'last_page' => ceil($total / $perPage),
+                    'from' => $offset + 1,
+                    'to' => min($offset + $perPage, $total)
+                ],
+                'filters' => [
+                    'employee_id' => (int) $employeeId,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate
+                ]
             ], 200);
         } catch (Exception $e) {
             Log::error('Error getting integrated attendance for employee', [
@@ -174,10 +213,12 @@ class MorningReflectionAttendanceController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan saat mengambil data absensi terintegrasi'
+                'message' => 'Terjadi kesalahan saat mengambil data absensi terintegrasi',
+                'data' => [
+                    'history' => []
+                ]
             ], 500);
         }
     }
@@ -194,30 +235,36 @@ class MorningReflectionAttendanceController extends Controller
         $employee = Employee::find($employeeId);
         $employeeName = $employee ? $employee->nama_lengkap : 'Karyawan Tidak Ditemukan';
 
-        // Proses data absensi - filter hanya hari renungan (Senin-Jumat)
+        // Proses data absensi - filter hanya hari renungan (Senin, Rabu, Jumat)
         foreach ($attendances as $attendance) {
             $date = Carbon::parse($attendance->date);
             $dateString = $date->toDateString();
-            
-            // Skip jika bukan hari renungan (Senin=1, Jumat=5)
+
+            // Skip jika bukan hari renungan (Senin, Rabu, Jumat)
             if (!$this->isReflectionDay($date)) {
                 continue;
             }
-            
+
             $processedDates[] = $dateString;
-            
+
+            // Mapping status cuti dari absensi
+            $status = $this->mapAttendanceStatus($attendance->status);
+            if (strtolower($attendance->status) === 'cuti') {
+                $status = 'leave';
+            }
+
             $combinedData[] = [
                 'id' => $attendance->id,
                 'employee_id' => (int) $attendance->employee_id,
                 'employee_name' => $employeeName,
                 'date' => $dateString,
-                'status' => $this->mapAttendanceStatus($attendance->status),
+                'status' => $status,
                 'join_time' => $attendance->join_time,
                 'check_in_time' => $attendance->join_time, // Alias untuk konsistensi
                 'check_out_time' => null,
-                'leave_type' => null,
-                'leave_reason' => null,
-                'data_source' => 'attendance',
+                'leave_type' => property_exists($attendance, 'leave_type') ? $attendance->leave_type : null,
+                'leave_reason' => property_exists($attendance, 'leave_reason') ? $attendance->leave_reason : null,
+                'data_source' => strtolower($attendance->status) === 'cuti' ? 'leave' : 'attendance',
                 'employee' => $attendance->employee ? [
                     'id' => (int) $attendance->employee->id,
                     'nama_lengkap' => $attendance->employee->nama_lengkap
@@ -229,28 +276,28 @@ class MorningReflectionAttendanceController extends Controller
         foreach ($leaves as $leave) {
             $startDate = Carbon::parse($leave->start_date);
             $endDate = Carbon::parse($leave->end_date);
-            
+
             // Iterasi setiap hari dalam rentang cuti
             for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
                 $dateString = $date->toDateString();
-                
-                // Skip jika bukan hari renungan (Senin-Jumat)
+
+                // Skip jika bukan hari renungan (Senin, Rabu, Jumat)
                 if (!$this->isReflectionDay($date)) {
                     continue;
                 }
-                
+
                 // Skip jika tanggal sudah ada di data absensi (prioritas absensi)
                 if (in_array($dateString, $processedDates)) {
                     continue;
                 }
-                
+
                 // Skip jika ada filter tanggal dan tidak sesuai
                 if ($dateFilter && $dateString !== $dateFilter) {
                     continue;
                 }
-                
+
                 $processedDates[] = $dateString;
-                
+
                 $combinedData[] = [
                     'id' => null, // Tidak ada ID untuk data cuti
                     'employee_id' => (int) $leave->employee_id,
@@ -280,7 +327,7 @@ class MorningReflectionAttendanceController extends Controller
     }
 
     /**
-     * Mengecek apakah tanggal tersebut adalah hari renungan (Senin-Jumat)
+     * Mengecek apakah tanggal tersebut adalah hari renungan (Senin, Rabu, Jumat)
      */
     private function isReflectionDay(Carbon $date)
     {
@@ -288,8 +335,8 @@ class MorningReflectionAttendanceController extends Controller
         // 6 = Sabtu, 7 = Minggu
         $dayOfWeek = $date->dayOfWeek;
         
-        // Renungan pagi hanya Senin-Jumat (1-5)
-        return $dayOfWeek >= 1 && $dayOfWeek <= 5;
+        // Renungan pagi hanya Senin, Rabu, Jumat (1, 3, 5)
+        return in_array($dayOfWeek, [1, 3, 5]);
     }
 
     /**
@@ -300,10 +347,16 @@ class MorningReflectionAttendanceController extends Controller
         $statusMap = [
             'Hadir' => 'present',
             'Terlambat' => 'late',
-            'Absen' => 'absent'
+            'Absen' => 'absent',
+            'present' => 'present',
+            'late' => 'late',
+            'absent' => 'absent',
+            'Present' => 'present',
+            'Late' => 'late',
+            'Absent' => 'absent'
         ];
 
-        return $statusMap[$status] ?? 'unknown';
+        return $statusMap[$status] ?? 'absent'; // Default ke absent jika status tidak dikenal
     }
 
     public function attend(Request $request)
