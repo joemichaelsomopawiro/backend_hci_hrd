@@ -18,6 +18,7 @@ use App\Http\Controllers\NationalHolidayController;
 use App\Http\Controllers\CustomRoleController;
 use App\Http\Controllers\GaDashboardController;
 use App\Http\Controllers\ZoomLinkController;
+use App\Http\Controllers\UserController;
 
 /*
 |--------------------------------------------------------------------------
@@ -42,6 +43,11 @@ Route::delete('/employees/{employeeId}/promotion-histories/{promotionId}', [Empl
 Route::delete('/employees/{employeeId}/trainings/{trainingId}', [EmployeeController::class, 'deleteTraining']);
 Route::delete('/employees/{employeeId}/benefits/{benefitId}', [EmployeeController::class, 'deleteBenefit']);
 Route::post('/employees/{employeeId}/documents', [EmployeeController::class, 'uploadDocument']);
+
+// User routes
+Route::prefix('users')->group(function () {
+    Route::get('/', [UserController::class, 'index']);
+});
 
 // General Affair Routes
 Route::prefix('ga')->group(function () {
@@ -311,6 +317,9 @@ Route::prefix('custom-roles')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/', [CustomRoleController::class, 'index']);
     Route::post('/', [CustomRoleController::class, 'store']);
     Route::get('/all-roles', [CustomRoleController::class, 'getAllRoles']);
+    Route::get('/form-options', [CustomRoleController::class, 'getFormOptions']);
+    Route::get('/by-department/{department}', [CustomRoleController::class, 'getRolesByDepartment']);
+    Route::get('/hierarchy/{roleName}', [CustomRoleController::class, 'getRoleHierarchy']);
     Route::get('/{id}', [CustomRoleController::class, 'show']);
     Route::put('/{id}', [CustomRoleController::class, 'update']);
     Route::delete('/{id}', [CustomRoleController::class, 'destroy']);
