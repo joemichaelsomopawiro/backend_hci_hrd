@@ -124,7 +124,9 @@ class GaDashboardController extends Controller
                 'user_id' => auth()->id()
             ]);
 
+            // Ambil hanya cuti yang sudah approved
             $query = LeaveRequest::with(['employee.user', 'approvedBy.user'])
+                ->where('overall_status', 'approved')
                 ->select([
                     'leave_requests.*',
                     'employees.nama_lengkap as employee_name',
@@ -141,6 +143,15 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $leaveRequests->map(function ($request) {
+                // Generate leave_dates dari start_date ke end_date, hanya hari renungan (Senin=1, Rabu=3, Jumat=5)
+                $start = \Carbon\Carbon::parse($request->start_date);
+                $end = \Carbon\Carbon::parse($request->end_date);
+                $dates = [];
+                for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                    if (in_array($date->dayOfWeek, [1, 3, 5])) { // Senin, Rabu, Jumat
+                        $dates[] = $date->toDateString();
+                    }
+                }
                 return [
                     'id' => $request->id,
                     'employee_id' => $request->employee_id,
@@ -163,8 +174,11 @@ class GaDashboardController extends Controller
                     'approved_at' => $request->approved_at,
                     'created_at' => $request->created_at,
                     'updated_at' => $request->updated_at,
-                    'raw_data' => $request // Untuk debugging
+                    'leave_dates' => $dates,
                 ];
+            })->filter(function($item) {
+                // Hanya tampilkan jika ada minimal satu hari renungan di leave_dates
+                return !empty($item['leave_dates']);
             });
 
             Log::info('GA Dashboard: Leave requests data loaded', [
@@ -173,7 +187,7 @@ class GaDashboardController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $transformedData,
+                'data' => $transformedData->values(),
                 'message' => 'Data permohonan cuti berhasil diambil',
                 'total_records' => $transformedData->count()
             ], 200);
