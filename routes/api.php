@@ -19,6 +19,7 @@ use App\Http\Controllers\AttendanceExportController;
 use App\Http\Controllers\NationalHolidayController;
 use App\Http\Controllers\CustomRoleController;
 use App\Http\Controllers\GaDashboardController;
+use App\Http\Controllers\ZoomLinkController;
 
 
 /*
@@ -403,4 +404,13 @@ Route::prefix('calendar')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/test-google-connection', [NationalHolidayController::class, 'testGoogleCalendarConnection']);
         Route::post('/clear-google-cache', [NationalHolidayController::class, 'clearGoogleCalendarCache']);
     });
+});
+
+// Route publik untuk mengambil link Zoom
+Route::get('/zoom-link', [ZoomLinkController::class, 'getZoomLink']);
+
+// Route proteksi untuk update link Zoom (hanya untuk GA dan role terkait)
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/ga/zoom-link', [ZoomLinkController::class, 'getZoomLink']);
+    Route::post('/ga/zoom-link', [ZoomLinkController::class, 'updateZoomLink']);
 });
