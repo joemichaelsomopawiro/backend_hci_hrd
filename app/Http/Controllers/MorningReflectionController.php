@@ -73,7 +73,7 @@ class MorningReflectionController extends Controller
         } elseif ($minutes >= 451 && $minutes <= 455) {
             return 'Terlambat'; // ✅ BENAR! 07:31-07:35
         } elseif ($minutes > 455 && $minutes <= 480) {
-            return 'Tidak Hadir'; // ✅ BENAR! 07:35-08:00
+            return 'Absen'; // ✅ FIXED! 07:35-08:00 (menggunakan 'Absen' bukan 'Tidak Hadir')
         } else {
             return 'Hadir';     // ✅ BENAR! fallback
         }
@@ -471,7 +471,7 @@ class MorningReflectionController extends Controller
                                                 ->where('status', 'Terlambat')
                                                 ->count(),
                 'total_absent' => MorningReflectionAttendance::whereBetween('date', [$startDate, $endDate])
-                                                  ->whereIn('status', ['Absen', 'Tidak Hadir'])
+                                                  ->whereIn('status', ['Absen'])
                                                   ->count(),
                 'period' => $period,
                 'start_date' => $startDate,

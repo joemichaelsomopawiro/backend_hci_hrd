@@ -133,7 +133,7 @@ class GeneralAffairController extends Controller
             DB::beginTransaction();
             
             // Tentukan status berdasarkan waktu klik
-            // 07:10-07:30 = Hadir, 07:31-07:35 = Terlambat, 07:35-08:00 = Tidak Hadir
+            // 07:10-07:30 = Hadir, 07:31-07:35 = Terlambat, 07:35-08:00 = Absen
             $cutoffTime = Carbon::today()->setTime(7, 30); // 07:30
             $lateCutoffTime = Carbon::today()->setTime(7, 35); // 07:35
             
@@ -142,7 +142,7 @@ class GeneralAffairController extends Controller
             } elseif ($now->lte($lateCutoffTime)) {
                 $status = 'Terlambat';
             } else {
-                $status = 'Tidak Hadir';
+                $status = 'Absen';
             }
             
             // Use firstOrCreate to handle race conditions atomically
@@ -284,7 +284,7 @@ class GeneralAffairController extends Controller
             $morningReflectionStats = [
                 'today_present' => MorningReflectionAttendance::whereDate('date', $today)->where('status', 'Hadir')->count(),
                 'today_late' => MorningReflectionAttendance::whereDate('date', $today)->where('status', 'Terlambat')->count(),
-                'today_absent' => MorningReflectionAttendance::whereDate('date', $today)->whereIn('status', ['Absen', 'Tidak Hadir'])->count(),
+                'today_absent' => MorningReflectionAttendance::whereDate('date', $today)->whereIn('status', ['Absen'])->count(),
                 'monthly_total' => MorningReflectionAttendance::whereMonth('date', $thisMonth)
                                                   ->whereYear('date', $thisYear)
                                                   ->count()
