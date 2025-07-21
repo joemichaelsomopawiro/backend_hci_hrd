@@ -16,6 +16,7 @@ class LeaveRequestController extends Controller
     /** * Display a listing of the resource. 
      * Method ini telah diperbarui untuk menangani hak akses berdasarkan role. 
      * Logika disederhanakan untuk memisahkan otorisasi dan filtering.
+     * DIPERBARUI: Mendukung role kustom berdasarkan department
      */ 
     public function index(Request $request): JsonResponse 
     { 
@@ -36,8 +37,10 @@ class LeaveRequestController extends Controller
                 return response()->json(['success' => true, 'data' => []]); 
             } 
         } elseif (RoleHierarchyService::isOtherManager($user->role)) { 
-            // Manager lain (Program/Distribution) hanya bisa melihat bawahannya. 
+            // DIPERBARUI: Manager lain (Program/Distribution) hanya bisa melihat bawahannya
+            // Termasuk role kustom dengan department yang sama
             $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role); 
+            
             if (!empty($subordinateRoles)) { 
                 $query->whereHas('employee.user', function ($q) use ($subordinateRoles) { 
                     $q->whereIn('role', $subordinateRoles); 
@@ -91,6 +94,7 @@ class LeaveRequestController extends Controller
 
     /** * Store a newly created resource in storage. 
      * Method ini telah diperbaiki untuk menghilangkan error relasi dan memperbaiki kalkulasi durasi. 
+     * DIPERBARUI: Mendukung role kustom dengan access_level employee
      */ 
     public function store(Request $request): JsonResponse 
     { 
@@ -100,8 +104,10 @@ class LeaveRequestController extends Controller
             return response()->json(['success' => false, 'message' => 'User not authenticated or role not set'], 401); 
         } 
         
-        // Hanya Employee roles yang bisa mengajukan cuti 
-        if (!RoleHierarchyService::isEmployee($user->role)) { 
+        // DIPERBARUI: Validasi role untuk mendukung custom roles
+        $canSubmit = $this->canUserSubmitLeave($user, $request);
+        
+        if (!$canSubmit) {
             return response()->json(['success' => false, 'message' => 'Hanya role karyawan yang dapat mengajukan cuti'], 403); 
         } 
         
@@ -153,7 +159,6 @@ class LeaveRequestController extends Controller
             $currentDate->addDay();
         }
 
-
         // Cek Quota 
         if (in_array($request->leave_type, ['annual', 'sick', 'emergency', 'maternity', 'paternity', 'marriage', 'bereavement'])) { 
             $year = $startDate->year; 
@@ -189,7 +194,47 @@ class LeaveRequestController extends Controller
             'message' => 'Permohonan cuti berhasil diajukan', 
             'data' => $leaveRequest->load(['employee', 'approvedBy']) 
         ], 201); 
-    } 
+    }
+
+    /**
+     * DIPERBARUI: Method untuk mengecek apakah user bisa mengajukan cuti
+     * Mendukung role kustom dengan access_level employee
+     */
+    private function canUserSubmitLeave($user, $request): bool
+    {
+        $userRole = $user->role;
+        
+        // Cek access_level dari request (jika ada)
+        $accessLevel = $request->input('access_level');
+        if ($accessLevel === 'employee') {
+            return true;
+        }
+        
+        // Cek apakah role adalah custom role dengan access_level employee
+        if (RoleHierarchyService::isCustomRole($userRole)) {
+            $customRoleAccessLevel = RoleHierarchyService::getCustomRoleAccessLevel($userRole);
+            if ($customRoleAccessLevel === 'employee') {
+                return true;
+            }
+        }
+        
+        // Cek role standar
+        if (RoleHierarchyService::isEmployee($userRole)) {
+            return true;
+        }
+        
+        // Role yang tidak boleh mengajukan cuti
+        $excludedRoles = [
+            'VP President', 
+            'President Director', 
+            'Program Manager', 
+            'Distribution Manager', 
+            'HR Manager', 
+            'HR'
+        ];
+        
+        return !in_array($userRole, $excludedRoles);
+    }
 
     /** * Approve a leave request. 
      * Method ini disederhanakan dan menggunakan RoleHierarchyService untuk otorisasi. 

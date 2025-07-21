@@ -17,7 +17,7 @@ class CustomRoleController extends Controller
     public function index(): JsonResponse
     {
         try {
-            $customRoles = CustomRole::with('creator:id,name')
+            $customRoles = CustomRole::with(['creator:id,name', 'supervisor:id,role_name'])
                 ->orderBy('created_at', 'desc')
                 ->get();
 
@@ -56,15 +56,40 @@ class CustomRoleController extends Controller
                 ],
                 'description' => 'nullable|string|max:1000',
                 'access_level' => [
+                    'required',
+                    Rule::in(['employee', 'manager', 'hr_readonly', 'hr_full', 'director'])
+                ],
+                'department' => [
+                    'required',
+                    Rule::in(['hr', 'production', 'distribution', 'executive'])
+                ],
+                'supervisor_id' => [
                     'nullable',
-                    Rule::in(['employee', 'manager', 'hr_readonly', 'hr_full'])
+                    // 'exists:custom_roles,id', // Sementara dinonaktifkan
+                    // function ($attribute, $value, $fail) {
+                    //     // Validasi hierarchy untuk mencegah circular reference
+                    //     if ($value && !RoleHierarchyService::validateHierarchy(null, $value)) {
+                    //         $fail('Invalid supervisor selection. Cannot create circular reference.');
+                    //     }
+                    // }
                 ]
             ]);
+
+            // Validasi supervisor sementara dinonaktifkan
+            // TODO: Implementasi supervisor validation setelah data supervisor tersedia
+            // if ($validated['access_level'] === 'employee' && !$validated['supervisor_id']) {
+            //     return response()->json([
+            //         'success' => false,
+            //         'message' => 'Employee roles must have a supervisor'
+            //     ], 422);
+            // }
 
             $customRole = CustomRole::create([
                 'role_name' => $validated['role_name'],
                 'description' => $validated['description'] ?? null,
-                'access_level' => $validated['access_level'] ?? 'employee', // Default ke employee
+                'access_level' => $validated['access_level'],
+                'department' => $validated['department'],
+                'supervisor_id' => $validated['supervisor_id'],
                 'created_by' => auth()->id(),
                 'is_active' => true
             ]);
@@ -72,7 +97,7 @@ class CustomRoleController extends Controller
             // Update database enum values to include new custom role
             DatabaseEnumService::updateRoleEnums();
 
-            $customRole->load('creator:id,name');
+            $customRole->load(['creator:id,name', 'supervisor:id,role_name']);
 
             return response()->json([
                 'success' => true,
@@ -99,7 +124,7 @@ class CustomRoleController extends Controller
     public function show($id): JsonResponse
     {
         try {
-            $customRole = CustomRole::with('creator:id,name')->findOrFail($id);
+            $customRole = CustomRole::with(['creator:id,name', 'supervisor:id,role_name'])->findOrFail($id);
 
             return response()->json([
                 'success' => true,
@@ -145,23 +170,41 @@ class CustomRoleController extends Controller
                 ],
                 'description' => 'nullable|string|max:1000',
                 'access_level' => [
+                    'required',
+                    Rule::in(['employee', 'manager', 'hr_readonly', 'hr_full', 'director'])
+                ],
+                'department' => [
+                    'required',
+                    Rule::in(['hr', 'production', 'distribution', 'executive'])
+                ],
+                'supervisor_id' => [
                     'nullable',
-                    Rule::in(['employee', 'manager', 'hr_readonly', 'hr_full'])
+                    // 'exists:custom_roles,id', // Sementara dinonaktifkan
+                    // function ($attribute, $value, $fail) use ($id) {
+                    //     // Validasi hierarchy untuk mencegah circular reference
+                    //     if ($value && !RoleHierarchyService::validateHierarchy($id, $value)) {
+                    //         $fail('Invalid supervisor selection. Cannot create circular reference.');
+                    //     }
+                    // }
                 ],
                 'is_active' => 'boolean'
             ]);
 
-            // Set default access_level jika tidak diberikan
-            if (!isset($validated['access_level'])) {
-                $validated['access_level'] = 'employee';
-            }
+            // Validasi supervisor sementara dinonaktifkan
+            // TODO: Implementasi supervisor validation setelah data supervisor tersedia
+            // if ($validated['access_level'] === 'employee' && !$validated['supervisor_id']) {
+            //     return response()->json([
+            //         'success' => false,
+            //         'message' => 'Employee roles must have a supervisor'
+            //     ], 422);
+            // }
             
             $customRole->update($validated);
             
             // Update database enum values in case role name changed
             DatabaseEnumService::updateRoleEnums();
             
-            $customRole->load('creator:id,name');
+            $customRole->load(['creator:id,name', 'supervisor:id,role_name']);
 
             return response()->json([
                 'success' => true,
@@ -228,7 +271,10 @@ class CustomRoleController extends Controller
                 'readonly' => RoleHierarchyService::getReadOnlyRoles()
             ];
 
-            $customRoles = CustomRole::active()->get()->groupBy('access_level');
+            $customRoles = CustomRole::with('supervisor:id,role_name')
+                ->active()
+                ->get()
+                ->groupBy('access_level');
 
             return response()->json([
                 'success' => true,
@@ -242,6 +288,81 @@ class CustomRoleController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve roles: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan options untuk form (departments, access levels, supervisors)
+     */
+    public function getFormOptions(): JsonResponse
+    {
+        try {
+            $options = [
+                'departments' => CustomRole::getDepartmentOptions(),
+                'access_levels' => CustomRole::getAccessLevelOptions(),
+                'supervisors' => RoleHierarchyService::getAvailableManagers(),
+                'hierarchy' => RoleHierarchyService::getFullHierarchy()
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $options,
+                'message' => 'Form options retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve form options: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan roles berdasarkan department
+     */
+    public function getRolesByDepartment($department): JsonResponse
+    {
+        try {
+            $roles = RoleHierarchyService::getRolesByDepartment($department);
+
+            return response()->json([
+                'success' => true,
+                'data' => $roles,
+                'message' => 'Roles by department retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve roles by department: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan hierarchy untuk role tertentu
+     */
+    public function getRoleHierarchy($roleName): JsonResponse
+    {
+        try {
+            $supervisor = RoleHierarchyService::getSupervisorForRole($roleName);
+            $department = RoleHierarchyService::getDepartmentForRole($roleName);
+            $subordinates = RoleHierarchyService::getAllSubordinates($roleName);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'role_name' => $roleName,
+                    'supervisor' => $supervisor,
+                    'department' => $department,
+                    'subordinates' => $subordinates
+                ],
+                'message' => 'Role hierarchy retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve role hierarchy: ' . $e->getMessage()
             ], 500);
         }
     }

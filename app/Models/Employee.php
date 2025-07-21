@@ -22,6 +22,7 @@ class Employee extends Model
         'alamat',
         'status_pernikahan',
         'jabatan_saat_ini',
+        'department',
         'manager_id',
         'tanggal_mulai_kerja',
         'tingkat_pendidikan',
