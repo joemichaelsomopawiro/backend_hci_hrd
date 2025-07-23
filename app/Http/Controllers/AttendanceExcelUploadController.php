@@ -27,22 +27,35 @@ class AttendanceExcelUploadController extends Controller
     public function uploadExcel(Request $request): JsonResponse
     {
         try {
+            // Validasi hanya berdasarkan ekstensi file, bukan MIME type
             $validator = Validator::make($request->all(), [
                 'excel_file' => 'required|file|mimes:xlsx,xls|max:10240', // Max 10MB
                 'overwrite_existing' => 'nullable|boolean',
                 'date_range_start' => 'nullable|date',
                 'date_range_end' => 'nullable|date'
+            ], [
+                'excel_file.required' => 'File Excel wajib diupload.',
+                'excel_file.file' => 'File yang diupload tidak valid.',
+                'excel_file.mimes' => 'Format file harus .xlsx atau .xls.',
+                'excel_file.max' => 'Ukuran file maksimal 10MB.'
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Validation error',
+                    'message' => 'Validasi gagal. Silakan cek format dan ukuran file.',
                     'errors' => $validator->errors()
                 ], 422);
             }
 
             $file = $request->file('excel_file');
+            if (!$file) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File tidak ditemukan dalam request. Pastikan field name adalah excel_file.',
+                ], 422);
+            }
+
             $overwriteExisting = $request->get('overwrite_existing', false);
             $dateRangeStart = $request->get('date_range_start');
             $dateRangeEnd = $request->get('date_range_end');
@@ -84,19 +97,31 @@ class AttendanceExcelUploadController extends Controller
     public function previewExcel(Request $request): JsonResponse
     {
         try {
+            // Validasi hanya berdasarkan ekstensi file, bukan MIME type
             $validator = Validator::make($request->all(), [
-                'excel_file' => 'required|file|mimes:xlsx,xls|max:10240'
+                'excel_file' => 'required|file|mimes:xlsx,xls|max:10240',
+            ], [
+                'excel_file.required' => 'File Excel wajib diupload.',
+                'excel_file.file' => 'File yang diupload tidak valid.',
+                'excel_file.mimes' => 'Format file harus .xlsx atau .xls.',
+                'excel_file.max' => 'Ukuran file maksimal 10MB.'
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Validation error',
+                    'message' => 'Validasi gagal. Silakan cek format dan ukuran file.',
                     'errors' => $validator->errors()
                 ], 422);
             }
 
             $file = $request->file('excel_file');
+            if (!$file) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File tidak ditemukan dalam request. Pastikan field name adalah excel_file.',
+                ], 422);
+            }
             
             // Preview data Excel tanpa menyimpan ke database
             $result = $this->excelService->previewExcelData($file);
