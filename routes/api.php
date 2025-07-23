@@ -14,6 +14,7 @@ use App\Http\Controllers\WorshipAttendanceController;
 use App\Http\Controllers\MorningReflectionController;
 use App\Http\Controllers\MorningReflectionAttendanceController;
 use App\Http\Controllers\AttendanceExportController;
+use App\Http\Controllers\AttendanceExcelUploadController;
 use App\Http\Controllers\NationalHolidayController;
 use App\Http\Controllers\CustomRoleController;
 use App\Http\Controllers\GaDashboardController;
@@ -156,6 +157,13 @@ Route::prefix('attendance')->group(function () {
     // Leave integration routes
     Route::post('/sync-leave', [AttendanceController::class, 'syncLeaveToAttendance']);
     Route::post('/sync-leave-date-range', [AttendanceController::class, 'syncLeaveToAttendanceDateRange']);
+    
+    // Excel Upload routes
+    Route::post('/upload-excel', [AttendanceExcelUploadController::class, 'uploadExcel']);
+    Route::post('/upload-excel/preview', [AttendanceExcelUploadController::class, 'previewExcel']);
+    Route::get('/upload-excel/template', [AttendanceExcelUploadController::class, 'downloadTemplate']);
+    Route::get('/upload-excel/download-template', [AttendanceExcelUploadController::class, 'downloadTemplateFile']);
+    Route::get('/upload-excel/validation-rules', [AttendanceExcelUploadController::class, 'getValidationRules']);
 });
 
 // Attendance Routes (dari kode kedua)
