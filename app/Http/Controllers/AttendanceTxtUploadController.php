@@ -111,4 +111,35 @@ class AttendanceTxtUploadController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * POST /api/attendance/convert-raw-txt
+     * Konversi file TXT raw ke format fixed width dan mapping employee_id
+     */
+    public function convertRawTxt(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'txt_file' => 'required|file|mimes:txt|max:10240',
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal. Silakan cek format dan ukuran file.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+        $file = $request->file('txt_file');
+        if (!$file) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File tidak ditemukan dalam request. Pastikan field name adalah txt_file.',
+            ], 422);
+        }
+        $service = $this->txtService;
+        $fixedTxt = $service->convertRawTxtToFixedWidth($file, true); // true = mapping employee_id
+        return response($fixedTxt, 200, [
+            'Content-Type' => 'text/plain',
+            'Content-Disposition' => 'attachment; filename="converted_fixed_width.txt"'
+        ]);
+    }
 } 
