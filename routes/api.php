@@ -21,6 +21,7 @@ use App\Http\Controllers\GaDashboardController;
 use App\Http\Controllers\ZoomLinkController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ManualWorshipAttendanceController;
+use App\Http\Controllers\AttendanceTxtUploadController;
 
 /*
 |--------------------------------------------------------------------------
@@ -429,3 +430,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/ga/zoom-link', [ZoomLinkController::class, 'getZoomLink']);
     Route::post('/ga/zoom-link', [ZoomLinkController::class, 'updateZoomLink']);
 }); 
+
+// Upload dan preview TXT absensi
+Route::post('/attendance/upload-txt', [AttendanceTxtUploadController::class, 'uploadTxt']);
+Route::post('/attendance/upload-txt/preview', [AttendanceTxtUploadController::class, 'previewTxt']); 
