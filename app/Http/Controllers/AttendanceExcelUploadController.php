@@ -27,16 +27,15 @@ class AttendanceExcelUploadController extends Controller
     public function uploadExcel(Request $request): JsonResponse
     {
         try {
-            // Validasi hanya berdasarkan ekstensi file, bukan MIME type
+            // Validasi file dengan penanganan MIME type yang lebih fleksibel
             $validator = Validator::make($request->all(), [
-                'excel_file' => 'required|file|mimes:xlsx,xls|max:10240', // Max 10MB
+                'excel_file' => 'required|file|max:10240', // Max 10MB
                 'overwrite_existing' => 'nullable|boolean',
                 'date_range_start' => 'nullable|date',
                 'date_range_end' => 'nullable|date'
             ], [
                 'excel_file.required' => 'File Excel wajib diupload.',
                 'excel_file.file' => 'File yang diupload tidak valid.',
-                'excel_file.mimes' => 'Format file harus .xlsx atau .xls.',
                 'excel_file.max' => 'Ukuran file maksimal 10MB.'
             ]);
 
@@ -53,6 +52,23 @@ class AttendanceExcelUploadController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'File tidak ditemukan dalam request. Pastikan field name adalah excel_file.',
+                ], 422);
+            }
+
+            // Validasi ekstensi file secara manual
+            $allowedExtensions = ['xlsx', 'xls'];
+            $fileExtension = strtolower($file->getClientOriginalExtension());
+            
+            if (!in_array($fileExtension, $allowedExtensions)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Format file tidak valid. Hanya file Excel (.xlsx, .xls) yang diperbolehkan.',
+                    'debug_info' => [
+                        'original_name' => $file->getClientOriginalName(),
+                        'extension' => $fileExtension,
+                        'mime_type' => $file->getMimeType(),
+                        'size' => $file->getSize()
+                    ]
                 ], 422);
             }
 
@@ -97,13 +113,12 @@ class AttendanceExcelUploadController extends Controller
     public function previewExcel(Request $request): JsonResponse
     {
         try {
-            // Validasi hanya berdasarkan ekstensi file, bukan MIME type
+            // Validasi file dengan penanganan MIME type yang lebih fleksibel
             $validator = Validator::make($request->all(), [
-                'excel_file' => 'required|file|mimes:xlsx,xls|max:10240',
+                'excel_file' => 'required|file|max:10240',
             ], [
                 'excel_file.required' => 'File Excel wajib diupload.',
                 'excel_file.file' => 'File yang diupload tidak valid.',
-                'excel_file.mimes' => 'Format file harus .xlsx atau .xls.',
                 'excel_file.max' => 'Ukuran file maksimal 10MB.'
             ]);
 
@@ -120,6 +135,23 @@ class AttendanceExcelUploadController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'File tidak ditemukan dalam request. Pastikan field name adalah excel_file.',
+                ], 422);
+            }
+
+            // Validasi ekstensi file secara manual
+            $allowedExtensions = ['xlsx', 'xls'];
+            $fileExtension = strtolower($file->getClientOriginalExtension());
+            
+            if (!in_array($fileExtension, $allowedExtensions)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Format file tidak valid. Hanya file Excel (.xlsx, .xls) yang diperbolehkan.',
+                    'debug_info' => [
+                        'original_name' => $file->getClientOriginalName(),
+                        'extension' => $fileExtension,
+                        'mime_type' => $file->getMimeType(),
+                        'size' => $file->getSize()
+                    ]
                 ], 422);
             }
             
