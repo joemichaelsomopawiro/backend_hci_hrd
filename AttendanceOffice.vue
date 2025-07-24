@@ -70,7 +70,8 @@ export default {
         message: '',
         icon: 'ℹ️',
         buttons: []
-      }
+      },
+      apiBaseUrl: `${getApiBaseUrl()}/api`
     }
   },
   
@@ -80,13 +81,6 @@ export default {
       this.showAccessDenied()
       return
     }
-    
-    this.initializeComponent()
-  },
-  
-  beforeUnmount() {
-    // Cleanup intervals
-    if (this.timeInterval) clearInterval(this.timeInterval)
   },
   
   methods: {
@@ -127,26 +121,6 @@ export default {
           }
         ]
       }
-    },
-    
-    // Initialization
-    initializeComponent() {
-      this.updateTime()
-      this.timeInterval = setInterval(this.updateTime, 1000)
-    },
-    
-    // Time management
-    updateTime() {
-      const now = new Date()
-      this.currentTime = now.toLocaleString('id-ID', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      })
     },
     
     handleFileSelect(event) {

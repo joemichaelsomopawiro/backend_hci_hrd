@@ -434,6 +434,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 // Upload dan preview TXT absensi
 Route::post('/attendance/upload-txt', [AttendanceTxtUploadController::class, 'uploadTxt']);
 Route::post('/attendance/upload-txt/preview', [AttendanceTxtUploadController::class, 'previewTxt']); 
+Route::post('/attendance/convert-raw-txt', [AttendanceTxtUploadController::class, 'convertRawTxt']);
 
 // Endpoint download template TXT absensi
 Route::get('/attendance/template-txt', function () {
