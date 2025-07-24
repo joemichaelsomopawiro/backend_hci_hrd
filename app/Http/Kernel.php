@@ -67,5 +67,6 @@ class Kernel extends HttpKernel
         'role' => \App\Http\Middleware\RoleMiddleware::class,
         'readonly.role' => \App\Http\Middleware\ReadOnlyRoleMiddleware::class,
         'attendance.rate.limit' => \App\Http\Middleware\AttendanceRateLimit::class,
+        'validate.ga.role' => \App\Http\Middleware\ValidateGARole::class,
     ];
 }

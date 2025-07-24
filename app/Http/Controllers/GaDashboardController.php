@@ -25,10 +25,12 @@ class GaDashboardController extends Controller
         try {
             $dateFilter = $request->date;
             $allData = $request->boolean('all', false);
+            $attendanceMethod = $request->get('attendance_method'); // Filter baru untuk metode absensi
             
             Log::info('GA Dashboard: Loading worship attendance data', [
                 'date_filter' => $dateFilter,
                 'all_data' => $allData,
+                'attendance_method' => $attendanceMethod,
                 'user_id' => auth()->id()
             ]);
 
@@ -48,9 +50,15 @@ class GaDashboardController extends Controller
             }
 
             // Ambil semua data absensi renungan dalam rentang tanggal
-            $attendances = MorningReflectionAttendance::with(['employee.user'])
-                ->whereBetween('date', [$startDate, $endDate])
-                ->get();
+            $attendancesQuery = MorningReflectionAttendance::with(['employee.user'])
+                ->whereBetween('date', [$startDate, $endDate]);
+
+            // Filter berdasarkan metode absensi jika ada
+            if ($attendanceMethod) {
+                $attendancesQuery->byAttendanceMethod($attendanceMethod);
+            }
+
+            $attendances = $attendancesQuery->get();
 
             // Ambil semua data cuti yang disetujui dalam rentang tanggal
             $leaves = LeaveRequest::with(['employee.user'])
@@ -82,7 +90,9 @@ class GaDashboardController extends Controller
                     'status_label' => $this->getStatusLabel($record['status']),
                     'testing_mode' => $record['testing_mode'] ?? false,
                     'created_at' => $record['created_at'],
-                    'data_source' => $record['data_source']
+                    'data_source' => $record['data_source'],
+                    'attendance_method' => $record['attendance_method'] ?? 'online',
+                    'attendance_source' => $record['attendance_source'] ?? 'zoom'
                 ];
             });
 
@@ -939,7 +949,9 @@ class GaDashboardController extends Controller
                 'join_time' => $attendance->join_time,
                 'testing_mode' => $attendance->testing_mode,
                 'created_at' => $attendance->created_at,
-                'data_source' => 'attendance'
+                'data_source' => 'attendance',
+                'attendance_method' => $attendance->attendance_method ?? 'online',
+                'attendance_source' => $attendance->attendance_source ?? 'zoom'
             ];
         }
 
@@ -978,7 +990,9 @@ class GaDashboardController extends Controller
                     'join_time' => null,
                     'testing_mode' => false,
                     'created_at' => $leave->created_at,
-                    'data_source' => 'leave'
+                    'data_source' => 'leave',
+                    'attendance_method' => 'online', // Default untuk data cuti
+                    'attendance_source' => 'zoom'    // Default untuk data cuti
                 ];
             }
         }

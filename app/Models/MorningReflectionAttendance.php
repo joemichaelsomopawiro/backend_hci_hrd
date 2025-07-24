@@ -17,7 +17,9 @@ class MorningReflectionAttendance extends Model
         'date',
         'status',
         'join_time',
-        'testing_mode'
+        'testing_mode',
+        'attendance_method',
+        'attendance_source'
     ];
 
     protected $casts = [
@@ -29,5 +31,39 @@ class MorningReflectionAttendance extends Model
     public function employee()
     {
         return $this->belongsTo(Employee::class);
+    }
+
+    /**
+     * Scope untuk filter berdasarkan metode absensi
+     */
+    public function scopeByAttendanceMethod($query, $method)
+    {
+        return $query->where('attendance_method', $method);
+    }
+
+    /**
+     * Scope untuk filter berdasarkan sumber absensi
+     */
+    public function scopeByAttendanceSource($query, $source)
+    {
+        return $query->where('attendance_source', $source);
+    }
+
+    /**
+     * Scope untuk data manual input
+     */
+    public function scopeManualInput($query)
+    {
+        return $query->where('attendance_method', 'manual')
+                    ->where('attendance_source', 'manual_input');
+    }
+
+    /**
+     * Scope untuk data online/zoom
+     */
+    public function scopeOnline($query)
+    {
+        return $query->where('attendance_method', 'online')
+                    ->where('attendance_source', 'zoom');
     }
 }

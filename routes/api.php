@@ -19,6 +19,7 @@ use App\Http\Controllers\CustomRoleController;
 use App\Http\Controllers\GaDashboardController;
 use App\Http\Controllers\ZoomLinkController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\ManualWorshipAttendanceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -364,6 +365,11 @@ Route::prefix('ga-dashboard')->middleware(['auth:sanctum'])->group(function () {
     // Worship attendance routes
     Route::get('/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
     Route::get('/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
+    
+    // Manual worship attendance routes
+    Route::post('/manual-worship-attendance', [ManualWorshipAttendanceController::class, 'store']);
+    Route::get('/employees-for-manual-input', [ManualWorshipAttendanceController::class, 'getEmployeesForManualInput']);
+    Route::post('/update-existing-worship-data', [ManualWorshipAttendanceController::class, 'updateExistingData']);
     
     // Export routes
     Route::get('/export-worship-attendance', [GaDashboardController::class, 'exportWorshipAttendance']);
