@@ -373,7 +373,9 @@ Route::prefix('employee-sync')->middleware(['auth:sanctum'])->group(function () 
 Route::prefix('ga-dashboard')->middleware(['auth:sanctum'])->group(function () {
     // Worship attendance routes
     Route::get('/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
-    Route::get('/worship-attendance/all', [GaDashboardController::class, 'getAllWorshipAttendanceAll']); // Endpoint baru untuk "Periode: Semua"
+    Route::get('/worship-attendance/week', [GaDashboardController::class, 'getWorshipAttendanceWeek']);
+    Route::get('/worship-attendance/month', [GaDashboardController::class, 'getWorshipAttendanceMonth']);
+    Route::get('/worship-attendance/all', [GaDashboardController::class, 'getWorshipAttendanceAll']);
     Route::get('/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
     
     // Manual worship attendance routes
