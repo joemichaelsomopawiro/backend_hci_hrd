@@ -19,8 +19,8 @@
       </div>
     </div>
 
-    <!-- Upload Section - Only for Managers -->
-    <div v-if="!isEmployee" class="upload-section">
+    <!-- Upload Section -->
+    <div class="upload-section">
       <div class="dashboard-card upload-card">
         <div class="card-header">
           <div class="header-icon">
@@ -68,183 +68,9 @@
       </div>
     </div>
 
-    <!-- Sync Status Section - Only for Managers -->
-    <div v-if="!isEmployee" class="sync-status-section">
-      <div class="dashboard-card sync-card">
-        <div class="card-header">
-          <div class="header-icon">
-            <i class="fas fa-sync-alt"></i>
-          </div>
-          <div class="header-text">
-            <h3>Status Sinkronisasi Employee</h3>
-            <p>Status sinkronisasi employee_id di data absensi</p>
-          </div>
-          <div class="sync-actions">
-            <button 
-              class="btn btn-refresh" 
-              @click="fetchSyncStatus"
-              :disabled="loading.syncStatus"
-              title="Refresh status sync"
-            >
-              <i class="fas fa-refresh"></i>
-              {{ loading.syncStatus ? 'Loading...' : 'Refresh' }}
-            </button>
-            <button 
-              class="btn btn-sync" 
-              @click="manualBulkSync"
-              :disabled="loading.manualSync"
-              title="Manual bulk sync semua data"
-            >
-              <i class="fas fa-cogs"></i>
-              {{ loading.manualSync ? 'Syncing...' : 'Manual Sync' }}
-            </button>
-          </div>
-        </div>
-        <div class="card-content">
-          <div v-if="loading.syncStatus" class="loading-state">
-            <div class="loading-spinner"></div>
-            <span>Memuat status sync...</span>
-          </div>
-          
-          <div v-else-if="syncStatus.loaded" class="sync-info">
-            <div class="sync-stats">
-              <div class="stat-card total">
-                <div class="stat-icon">
-                  <i class="fas fa-database"></i>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-number">{{ syncStatus.data.total_attendance || 0 }}</div>
-                  <div class="stat-label">Total Absensi</div>
-                </div>
-              </div>
-              
-              <div class="stat-card synced">
-                <div class="stat-icon">
-                  <i class="fas fa-check-circle"></i>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-number">{{ syncStatus.data.synced_attendance || 0 }}</div>
-                  <div class="stat-label">Ter-sync</div>
-                </div>
-              </div>
-              
-              <div class="stat-card unsynced">
-                <div class="stat-icon">
-                  <i class="fas fa-exclamation-circle"></i>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-number">{{ syncStatus.data.unsynced_attendance || 0 }}</div>
-                  <div class="stat-label">Belum Sync</div>
-                </div>
-              </div>
-              
-              <div class="stat-card percentage" :class="getSyncPercentageClass()">
-                <div class="stat-icon">
-                  <i class="fas fa-chart-pie"></i>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-number">{{ syncStatus.data.sync_percentage || 0 }}%</div>
-                  <div class="stat-label">Persentase Sync</div>
-                </div>
-              </div>
-            </div>
-            
-            <div class="sync-progress">
-              <div class="progress-bar">
-                <div 
-                  class="progress-fill" 
-                  :style="{ width: (syncStatus.data.sync_percentage || 0) + '%' }"
-                  :class="getSyncPercentageClass()"
-                ></div>
-              </div>
-              <div class="progress-label">
-                {{ syncStatus.data.synced_attendance || 0 }} dari {{ syncStatus.data.total_attendance || 0 }} data ter-sync ({{ syncStatus.data.sync_percentage || 0 }}%)
-              </div>
-            </div>
-            
-            <!-- Sample Data -->
-            <div v-if="syncStatus.data.unsynced_samples && syncStatus.data.unsynced_samples.length > 0" class="sync-samples">
-              <h4>Contoh Data Belum Sync:</h4>
-              <div class="sample-list unsynced">
-                <div v-for="sample in syncStatus.data.unsynced_samples.slice(0, 5)" :key="`unsynced-${sample.user_name}-${sample.date}`" class="sample-item">
-                  <div class="sample-info">
-                    <span class="sample-name">{{ sample.user_name }}</span>
-                    <span class="sample-card">Card: {{ sample.card_number }}</span>
-                    <span class="sample-date">{{ sample.date }}</span>
-                  </div>
-                  <div class="sample-status unsynced">
-                    <i class="fas fa-times"></i>
-                    Belum Sync
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div v-if="syncStatus.data.synced_samples && syncStatus.data.synced_samples.length > 0" class="sync-samples">
-              <h4>Contoh Data Sudah Sync:</h4>
-              <div class="sample-list synced">
-                <div v-for="sample in syncStatus.data.synced_samples.slice(0, 3)" :key="`synced-${sample.user_name}-${sample.date}`" class="sample-item">
-                  <div class="sample-info">
-                    <span class="sample-name">{{ sample.user_name }}</span>
-                    <span class="sample-card">Card: {{ sample.card_number }}</span>
-                    <span class="sample-date">{{ sample.date }}</span>
-                  </div>
-                  <div class="sample-status synced">
-                    <i class="fas fa-check"></i>
-                    ID: {{ sample.employee_id }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <div v-else class="sync-placeholder">
-            <div class="placeholder-icon">
-              <i class="fas fa-sync-alt"></i>
-            </div>
-            <h4>Status Sinkronisasi</h4>
-            <p>Klik "Refresh" untuk melihat status sinkronisasi employee_id</p>
-            <button class="btn btn-primary" @click="fetchSyncStatus">
-              <i class="fas fa-refresh"></i>
-              Lihat Status
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Employee View Mode Toggle -->
-    <div v-if="isEmployee" class="view-mode-section">
-      <div class="dashboard-card">
-        <div class="card-header">
-          <div class="header-icon">
-            <i class="fas fa-user-clock"></i>
-          </div>
-          <div class="header-text">
-            <h3>Absensi Pribadi</h3>
-            <p>Lihat data absensi Anda</p>
-          </div>
-          <div class="view-toggle">
-            <button 
-              @click="toggleViewMode" 
-              class="btn-toggle"
-              :class="{ active: viewMode === 'table' }"
-            >
-              <i class="fas fa-table"></i>
-              Tabel
-            </button>
-            <button 
-              @click="toggleViewMode" 
-              class="btn-toggle"
-              :class="{ active: viewMode === 'list' }"
-            >
-              <i class="fas fa-list"></i>
-              List
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+
+
 
     <!-- Monthly Table Section -->
     <div class="table-section">
@@ -254,10 +80,8 @@
             <i class="fas fa-table"></i>
           </div>
           <div class="header-text">
-            <h3 v-if="!isEmployee">Tabel Absensi Bulanan</h3>
-            <h3 v-else>{{ viewMode === 'table' ? 'Tabel Absensi' : 'List Absensi' }}</h3>
-            <p v-if="!isEmployee">Data absensi karyawan per bulan</p>
-            <p v-else>Data absensi pribadi Anda</p>
+            <h3>Tabel Absensi Bulanan</h3>
+            <p>Data absensi karyawan per bulan</p>
           </div>
         </div>
         <div class="card-content">
@@ -309,48 +133,44 @@
             </div>
           </div>
 
-          <div v-if="isEmployee ? personalAttendance.loading : monthlyTable.loading" class="loading-state">
+          <div v-if="monthlyTable.loading" class="loading-state">
             <div class="loading-spinner"></div>
             <span>Memuat data...</span>
           </div>
           
           <div v-else class="table-container">
             <transition name="fade-slide">
-              <div v-if="isEmployee ? personalAttendance.data.length > 0 : monthlyTable.data.length > 0">
+              <div v-if="monthlyTable.data.length > 0">
                 <div class="table-info">
                   <div class="info-badge">
                     <i class="fas fa-calendar-check"></i>
-                    <span>{{ isEmployee ? personalAttendance.month : monthlyTable.month }} {{ isEmployee ? personalAttendance.year : monthlyTable.year }}</span>
+                    <span>{{ monthlyTable.month }} {{ monthlyTable.year }}</span>
                   </div>
                   <div class="info-stats">
-                    <span v-if="!isEmployee" class="stat-item">
+                    <span class="stat-item">
                       <i class="fas fa-users"></i>
                       {{ monthlyTable.data.length }} Karyawan
                     </span>
-                    <span v-else class="stat-item">
-                      <i class="fas fa-user"></i>
-                      Absensi Pribadi
-                    </span>
                     <span class="stat-item">
                       <i class="fas fa-calendar-day"></i>
-                      {{ isEmployee ? personalAttendance.workingDays.length : monthlyTable.workingDays.length }} Hari Kerja
+                      {{ monthlyTable.workingDays.length }} Hari Kerja
                     </span>
                     <span class="stat-item">
                       <i class="fas fa-calendar-alt"></i>
-                      {{ isEmployee ? personalAttendance.month : monthlyTable.month }} {{ isEmployee ? personalAttendance.year : monthlyTable.year }}
+                      {{ monthlyTable.month }} {{ monthlyTable.year }}
                     </span>
                   </div>
                 </div>
                 
                 <!-- Table View -->
-                <div v-if="!isEmployee || viewMode === 'table'" class="table-wrapper">
+                <div class="table-wrapper">
                   <table class="monthly-table">
                     <thead>
                       <tr>
                         <th class="th-number">No</th>
                         <th class="th-name">Nama</th>
                         <th class="th-card">Card Number</th>
-                        <th v-for="day in (isEmployee ? personalAttendance.workingDays : monthlyTable.workingDays)" :key="day.day" class="th-day">
+                        <th v-for="day in monthlyTable.workingDays" :key="day.day" class="th-day">
                           <div class="day-header">
                             <div class="day-number">{{ day.day }}</div>
                             <div class="day-name">{{ day.day_name }}</div>
@@ -361,11 +181,11 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, idx) in (isEmployee ? personalAttendance.data : monthlyTable.data)" :key="row.nama" class="table-row">
+                      <tr v-for="(row, idx) in monthlyTable.data" :key="row.nama" class="table-row">
                         <td class="td-number">{{ idx + 1 }}</td>
                         <td class="td-name">{{ row.nama }}</td>
                         <td class="td-card">{{ row.card_number }}</td>
-                        <td v-for="day in (isEmployee ? personalAttendance.workingDays : monthlyTable.workingDays)" :key="day.day" class="td-day">
+                        <td v-for="day in monthlyTable.workingDays" :key="day.day" class="td-day">
                           <div v-if="row.daily_data[String(day.day)]"
                                :class="{
                                  'status-absent': row.daily_data[String(day.day)].status === 'absent' || row.daily_data[String(day.day)].status === 'no_data',
@@ -403,58 +223,6 @@
                       </tr>
                     </tbody>
                   </table>
-                </div>
-
-                <!-- List View for Employees -->
-                <div v-else-if="isEmployee && viewMode === 'list'" class="list-view">
-                  <div v-for="(row, idx) in personalAttendance.data" :key="row.nama" class="employee-card">
-                    <div class="employee-header">
-                      <div class="employee-info">
-                        <h4>{{ row.nama }}</h4>
-                        <span class="card-number">Card: {{ row.card_number }}</span>
-                      </div>
-                      <div class="employee-summary">
-                        <div class="hours-cell">
-                          <i class="fas fa-check"></i>
-                          <span>{{ Math.round(row.total_jam_kerja) }}h</span>
-                        </div>
-                        <span class="absent-count">{{ row.total_absen }} Absen</span>
-                      </div>
-                    </div>
-                    <div class="attendance-list">
-                      <div v-for="day in personalAttendance.workingDays" :key="day.day" class="attendance-item">
-                        <div class="date-info">
-                          <span class="day-number">{{ day.day }}</span>
-                          <span class="day-name">{{ day.day_name }}</span>
-                        </div>
-                        <div v-if="row.daily_data[String(day.day)]" class="status-info">
-                          <div v-if="row.daily_data[String(day.day)].status === 'cuti'" class="status-badge status-leave">
-                            <i class="fas fa-calendar-times"></i>
-                            CUTI
-                          </div>
-                          <div v-else-if="row.daily_data[String(day.day)].status === 'present_ontime' || row.daily_data[String(day.day)].status === 'present_late'" 
-                               class="status-badge" 
-                               :class="row.daily_data[String(day.day)].status === 'present_late' ? 'status-late' : 'status-present'">
-                            <i class="fas fa-clock"></i>
-                            <div class="time-details">
-                              <span>{{ row.daily_data[String(day.day)].check_in }}</span>
-                              <span>{{ row.daily_data[String(day.day)].check_out }}</span>
-                            </div>
-                          </div>
-                          <div v-else class="status-badge status-absent">
-                            <i class="fas fa-times"></i>
-                            TIDAK HADIR
-                          </div>
-                        </div>
-                        <div v-else class="status-info">
-                          <div class="status-badge status-absent">
-                            <i class="fas fa-times"></i>
-                            TIDAK HADIR
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
               <div v-else class="empty-state">
@@ -494,13 +262,11 @@ export default {
   },
   data() {
     return {
-              loading: {
-          upload: false,
-          exportToday: false,
-          exportMonthly: false,
-          syncStatus: false,
-          manualSync: false,
-        },
+      loading: {
+        upload: false,
+        exportToday: false,
+        exportMonthly: false,
+      },
       selectedFile: null,
       popup: {
         show: false,
@@ -523,42 +289,21 @@ export default {
         month: '',
         year: ''
       },
-      isEmployee: false,
-      viewMode: 'table', // 'table' or 'list'
-      personalAttendance: {
-        loading: false,
-        data: [],
-        workingDays: [],
-        month: '',
-        year: ''
-      },
-      syncStatus: {
-        loaded: false,
-        data: {
-          total_attendance: 0,
-          synced_attendance: 0,
-          unsynced_attendance: 0,
-          sync_percentage: 0,
-          unsynced_samples: [],
-          synced_samples: []
-        }
-      }
+      viewMode: 'table' // 'table' or 'list'
     }
   },
   
   async mounted() {
-    this.checkUserRole()
+    console.log('🚀 AttendanceOffice mounted() started');
+    
     this.loadAvailableYears()
     this.startTimeUpdate()
     
-    if (this.isEmployee) {
-      await this.fetchPersonalAttendance()
-    } else if (this.hasManagerAccess()) {
-      await this.fetchMonthlyTable()
-      await this.fetchSyncStatus() // Fetch sync status for managers
-    } else {
-      this.showAccessDenied()
-    }
+    // Load monthly table for all users
+    console.log('📊 Loading monthly table...');
+    await this.fetchMonthlyTable()
+    
+    console.log('✅ AttendanceOffice mounted() completed');
   },
   
   beforeUnmount() {
@@ -569,58 +314,6 @@ export default {
   },
   
   methods: {
-    // Role checking
-    checkUserRole() {
-      const user = JSON.parse(localStorage.getItem('user') || '{}')
-      const userRole = user.role || user.jabatan || ''
-      
-      // Convert role to lowercase for comparison
-      const normalizedUserRole = userRole.toLowerCase().replace(/\s+/g, '_')
-      
-      // Manager roles that can see all employees
-      const managerRoles = ['general_affairs', 'hr', 'program_manager', 'distribution_manager', 'vp_president', 'president_director']
-      
-      this.isEmployee = !managerRoles.includes(normalizedUserRole)
-    },
-
-    hasManagerAccess() {
-      const user = JSON.parse(localStorage.getItem('user') || '{}')
-      const userRole = user.role || user.jabatan || ''
-      
-      // Convert role to lowercase for comparison
-      const normalizedUserRole = userRole.toLowerCase().replace(/\s+/g, '_')
-      
-      // Allow General Affairs, HR, Program Manager, Distribution Manager, VP President, and Director President
-      const allowedRoles = ['general_affairs', 'hr', 'program_manager', 'distribution_manager', 'vp_president', 'president_director']
-      
-      return allowedRoles.includes(normalizedUserRole)
-    },
-    
-    showAccessDenied() {
-      this.popup = {
-        show: true,
-        title: '❌ Akses Ditolak',
-        message: 'Anda tidak memiliki akses ke fitur Absensi Kantor.<br><br>' +
-                 '<strong>Hanya untuk:</strong><br>' +
-                 '• General Affairs<br>' +
-                 '• HR<br>' +
-                 '• Program Manager<br>' +
-                 '• VP President<br>' +
-                 '• Director President<br><br>' +
-                 'Hubungi administrator untuk akses.',
-        icon: '🚫',
-        buttons: [
-          {
-            text: 'Kembali ke Dashboard',
-            class: 'btn-primary',
-            action: () => {
-              this.$router.push('/')
-            }
-          }
-        ]
-      }
-    },
-    
     handleFileSelect(event) {
       const file = event.target.files[0];
       if (file) {
@@ -662,9 +355,7 @@ export default {
           this.$refs.fileInput.value = '';
           this.selectedFile = null;
           // After successful upload, refresh sync status for managers
-          if (!this.isEmployee) {
-            await this.fetchSyncStatus();
-          }
+          // await this.fetchSyncStatus(); // Removed as per new logic
         } else {
           this.showErrorPopup('Upload Gagal', result.message || 'Gagal upload file TXT');
         }
@@ -674,70 +365,54 @@ export default {
         this.loading.upload = false;
       }
     },
+    
     async fetchMonthlyTable() {
+      console.log('📊 fetchMonthlyTable() started');
       this.monthlyTable.loading = true
       try {
         const params = new URLSearchParams({
           month: parseInt(this.exportDate.month).toString(),
           year: this.exportDate.year
         })
-        const response = await smartFetch(`${this.apiBaseUrl}/attendance/monthly-table?${params}`)
+        const apiUrl = `${this.apiBaseUrl}/attendance/monthly-table?${params}`;
+        console.log('🌐 API URL:', apiUrl);
+        console.log('📅 Request params:', { month: this.exportDate.month, year: this.exportDate.year });
+        
+        const response = await smartFetch(apiUrl)
+        console.log('📡 Response status:', response.status);
+        
         const result = await response.json()
+        console.log('📋 API Response:', result);
+        
         if (result.success) {
+          console.log('✅ API Success - Records:', result.data?.records?.length || 0);
+          console.log('✅ API Success - Working days:', result.data?.working_days?.length || 0);
+          
           this.monthlyTable.data = result.data.records
           this.monthlyTable.workingDays = this.addDayNames(result.data.working_days, this.exportDate.month, this.exportDate.year)
           this.monthlyTable.month = result.data.month
           this.monthlyTable.year = result.data.year
+          
+          console.log('🎯 Final monthlyTable.data length:', this.monthlyTable.data.length);
         } else {
+          console.log('❌ API Failed:', result.message);
           this.monthlyTable.data = []
           this.monthlyTable.workingDays = []
         }
       } catch (e) {
+        console.log('💥 fetchMonthlyTable Error:', e);
         this.monthlyTable.data = []
         this.monthlyTable.workingDays = []
       } finally {
         this.monthlyTable.loading = false
+        console.log('📊 fetchMonthlyTable() completed, loading:', this.monthlyTable.loading);
       }
     },
     async onMonthYearChange() {
-      if (this.isEmployee) {
-        await this.fetchPersonalAttendance()
-      } else {
-        await this.fetchMonthlyTable()
-      }
+      await this.fetchMonthlyTable()
     },
 
-    async fetchPersonalAttendance() {
-      this.personalAttendance.loading = true
-      try {
-        const user = JSON.parse(localStorage.getItem('user') || '{}')
-        const params = new URLSearchParams({
-          month: parseInt(this.exportDate.month).toString(),
-          year: this.exportDate.year,
-          employee_id: user.employee_id || user.id
-        })
-        const response = await smartFetch(`${this.apiBaseUrl}/attendance/personal-monthly?${params}`)
-        const result = await response.json()
-        if (result.success) {
-          this.personalAttendance.data = [result.data.record]
-          this.personalAttendance.workingDays = this.addDayNames(result.data.working_days, this.exportDate.month, this.exportDate.year)
-          this.personalAttendance.month = result.data.month
-          this.personalAttendance.year = result.data.year
-        } else {
-          this.personalAttendance.data = []
-          this.personalAttendance.workingDays = []
-        }
-      } catch (e) {
-        this.personalAttendance.data = []
-        this.personalAttendance.workingDays = []
-      } finally {
-        this.personalAttendance.loading = false
-      }
-    },
 
-    toggleViewMode() {
-      this.viewMode = this.viewMode === 'table' ? 'list' : 'table'
-    },
     showSuccessPopup(title, message) {
       this.showPopup(title, message, '✅')
     },
@@ -816,53 +491,7 @@ export default {
       });
     },
 
-    async fetchSyncStatus() {
-      this.loading.syncStatus = true;
-      try {
-                 const response = await smartFetch(`${this.apiBaseUrl}/attendance/upload-txt/sync-status`);
-        const result = await response.json();
-        if (result.success) {
-          this.syncStatus.data = result.data;
-          this.syncStatus.loaded = true;
-        } else {
-          this.showErrorPopup('Gagal Memuat Status Sync', result.message || 'Gagal mengambil status sinkronisasi');
-          this.syncStatus.loaded = true; // Ensure loaded is true even on error
-        }
-      } catch (error) {
-        this.showErrorPopup('Gagal Memuat Status Sync', error.message || 'Gagal mengambil status sinkronisasi');
-        this.syncStatus.loaded = true;
-      } finally {
-        this.loading.syncStatus = false;
-      }
-    },
 
-    async manualBulkSync() {
-      this.loading.manualSync = true;
-      try {
-                 const response = await smartFetch(`${this.apiBaseUrl}/attendance/upload-txt/manual-sync`, {
-           method: 'POST'
-         });
-        const result = await response.json();
-        if (result.success) {
-          this.showSuccessPopup('Bulk Sync Berhasil!', result.message || 'Data absensi berhasil di-sync secara bulk.');
-          await this.fetchSyncStatus(); // Refresh status after bulk sync
-        } else {
-          this.showErrorPopup('Bulk Sync Gagal', result.message || 'Gagal melakukan bulk sync data absensi.');
-        }
-      } catch (error) {
-        this.showErrorPopup('Bulk Sync Gagal', error.message || 'Gagal melakukan bulk sync data absensi.');
-      } finally {
-        this.loading.manualSync = false;
-      }
-    },
-
-    getSyncPercentageClass() {
-      const percentage = this.syncStatus.data.sync_percentage || 0;
-      if (percentage >= 90) return 'high-sync';
-      if (percentage >= 70) return 'medium-sync';
-      if (percentage >= 50) return 'low-sync';
-      return 'no-sync';
-    }
   }
 }
 </script>
@@ -927,10 +556,6 @@ export default {
 
 /* Layout Sections */
 .upload-section, .table-section {
-  margin-bottom: 24px;
-}
-
-.sync-status-section {
   margin-bottom: 24px;
 }
 
@@ -1077,27 +702,7 @@ export default {
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
-.btn-refresh {
-  background: #4f46e5;
-  color: white;
-}
 
-.btn-refresh:hover:not(:disabled) {
-  background: #4338ca;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(69, 79, 192, 0.3);
-}
-
-.btn-sync {
-  background: #f59e0b;
-  color: white;
-}
-
-.btn-sync:hover:not(:disabled) {
-  background: #d97706;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-}
 
 
 .btn:disabled {
@@ -1672,12 +1277,7 @@ export default {
     gap: 16px;
   }
 
-  .sync-actions {
-    margin-left: 0;
-    margin-top: 12px;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
+
   
   .card-content {
     padding: 20px;
@@ -1775,35 +1375,7 @@ export default {
     font-size: 8px;
   }
 
-  /* Sync Status Mobile */
 
-  .sync-stats {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-
-  .stat-card {
-    padding: 12px;
-  }
-
-  .stat-number {
-    font-size: 20px;
-  }
-
-  .stat-label {
-    font-size: 13px;
-  }
-
-  .sample-item {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 10px;
-  }
-
-  .sample-status {
-    align-self: flex-end;
-  }
 }
 
 @media (max-width: 480px) {
@@ -1907,83 +1479,7 @@ export default {
     font-size: 8px;
   }
 
-  /* Sync Status Mobile Small */
-  .sync-actions {
-    flex-direction: column;
-    gap: 8px;
-  }
 
-  .sync-stats {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-  }
-
-  .stat-card {
-    padding: 10px;
-    flex-direction: column;
-    text-align: center;
-    gap: 8px;
-  }
-
-  .stat-icon {
-    width: 32px;
-    height: 32px;
-  }
-
-  .stat-number {
-    font-size: 18px;
-  }
-
-  .stat-label {
-    font-size: 12px;
-  }
-
-  .progress-bar {
-    height: 8px;
-  }
-
-  .progress-label {
-    font-size: 12px;
-  }
-
-  .sync-samples h4 {
-    font-size: 14px;
-  }
-
-  .sample-item {
-    padding: 8px;
-  }
-
-  .sample-name {
-    font-size: 13px;
-  }
-
-  .sample-card, .sample-date {
-    font-size: 11px;
-  }
-
-  .sample-status {
-    font-size: 11px;
-    padding: 3px 6px;
-  }
-
-  .sync-placeholder {
-    padding: 30px 16px;
-  }
-
-  .placeholder-icon {
-    width: 50px;
-    height: 50px;
-    margin-bottom: 12px;
-  }
-
-  .placeholder-icon i {
-    font-size: 20px;
-  }
-
-  .sync-placeholder h4 {
-    font-size: 15px;
-  }
 }
 
 /* Scroll customization */
@@ -2006,254 +1502,5 @@ export default {
   background: linear-gradient(135deg, #64748b 0%, #475569 100%);
 }
 
-/* Sync Status Styles */
-.sync-actions {
-  display: flex;
-  gap: 8px;
-  margin-left: auto;
-}
 
-.sync-info {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.sync-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-}
-
-.stat-card {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.stat-card.total {
-  border-left: 4px solid #3b82f6;
-}
-
-.stat-card.synced {
-  border-left: 4px solid #10b981;
-}
-
-.stat-card.unsynced {
-  border-left: 4px solid #ef4444;
-}
-
-.stat-card.percentage.high-sync {
-  border-left: 4px solid #10b981;
-  background: #ecfdf5;
-}
-
-.stat-card.percentage.medium-sync {
-  border-left: 4px solid #f59e0b;
-  background: #fffbeb;
-}
-
-.stat-card.percentage.low-sync {
-  border-left: 4px solid #ef4444;
-  background: #fef2f2;
-}
-
-.stat-card.percentage.no-sync {
-  border-left: 4px solid #6b7280;
-  background: #f9fafb;
-}
-
-.stat-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.stat-card.total .stat-icon {
-  color: #3b82f6;
-}
-
-.stat-card.synced .stat-icon {
-  color: #10b981;
-}
-
-.stat-card.unsynced .stat-icon {
-  color: #ef4444;
-}
-
-.stat-card.percentage .stat-icon {
-  color: #8b5cf6;
-}
-
-.stat-content {
-  flex: 1;
-}
-
-.stat-number {
-  font-size: 24px;
-  font-weight: 700;
-  color: #1e293b;
-  margin-bottom: 4px;
-}
-
-.stat-label {
-  font-size: 14px;
-  color: #64748b;
-  font-weight: 500;
-}
-
-.sync-progress {
-  background: #f8fafc;
-  border-radius: 8px;
-  padding: 16px;
-  border: 1px solid #e2e8f0;
-}
-
-.progress-bar {
-  width: 100%;
-  height: 12px;
-  background: #e2e8f0;
-  border-radius: 6px;
-  overflow: hidden;
-  margin-bottom: 8px;
-}
-
-.progress-fill {
-  height: 100%;
-  transition: width 0.5s ease;
-  border-radius: 6px;
-}
-
-.progress-fill.high-sync {
-  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
-}
-
-.progress-fill.medium-sync {
-  background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
-}
-
-.progress-fill.low-sync {
-  background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
-}
-
-.progress-fill.no-sync {
-  background: linear-gradient(90deg, #6b7280 0%, #4b5563 100%);
-}
-
-.progress-label {
-  font-size: 14px;
-  color: #64748b;
-  text-align: center;
-  font-weight: 500;
-}
-
-.sync-samples {
-  margin-top: 16px;
-}
-
-.sync-samples h4 {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1e293b;
-  margin-bottom: 12px;
-}
-
-.sample-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sample-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-}
-
-.sample-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sample-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.sample-card, .sample-date {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.sample-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.sample-status.synced {
-  background: #ecfdf5;
-  color: #059669;
-  border: 1px solid #d1fae5;
-}
-
-.sample-status.unsynced {
-  background: #fef2f2;
-  color: #dc2626;
-  border: 1px solid #fecaca;
-}
-
-.sync-placeholder {
-  text-align: center;
-  padding: 40px 20px;
-  color: #64748b;
-}
-
-.placeholder-icon {
-  width: 60px;
-  height: 60px;
-  background: #f3f4f6;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 16px;
-}
-
-.placeholder-icon i {
-  font-size: 24px;
-  color: #9ca3af;
-}
-
-.sync-placeholder h4 {
-  font-size: 16px;
-  font-weight: 600;
-  color: #374151;
-  margin: 0 0 8px 0;
-}
-
-.sync-placeholder p {
-  font-size: 14px;
-  color: #6b7280;
-  margin: 0 0 16px 0;
-}
 </style>
