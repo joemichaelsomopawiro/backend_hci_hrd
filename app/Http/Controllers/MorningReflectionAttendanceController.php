@@ -137,13 +137,17 @@ class MorningReflectionAttendanceController extends Controller
             $perPage = $request->get('per_page', 15);
             $page = $request->get('page', 1);
 
-            // Ambil data absensi
+            // Ambil SEMUA data absensi (online & manual) untuk employee ini
             $attendanceQuery = MorningReflectionAttendance::with('employee')
                 ->where('employee_id', $employeeId);
             if ($dateFilter) {
                 $attendanceQuery->whereDate('date', $dateFilter);
             }
-            $attendances = $attendanceQuery->get();
+            // Tidak filter attendance_method, ambil SEMUA (online & manual)
+            $attendances = $attendanceQuery
+                ->orderBy('date', 'desc')
+                ->orderBy('join_time', 'desc')
+                ->get();
 
             // Ambil data cuti yang disetujui
             $leaveQuery = LeaveRequest::with('employee')
@@ -265,6 +269,8 @@ class MorningReflectionAttendanceController extends Controller
                 'leave_type' => property_exists($attendance, 'leave_type') ? $attendance->leave_type : null,
                 'leave_reason' => property_exists($attendance, 'leave_reason') ? $attendance->leave_reason : null,
                 'data_source' => strtolower($attendance->status) === 'cuti' ? 'leave' : 'attendance',
+                'attendance_method' => $attendance->attendance_method ?? null,
+                'attendance_source' => $attendance->attendance_source ?? null,
                 'employee' => $attendance->employee ? [
                     'id' => (int) $attendance->employee->id,
                     'nama_lengkap' => $attendance->employee->nama_lengkap
@@ -332,11 +338,10 @@ class MorningReflectionAttendanceController extends Controller
     private function isReflectionDay(Carbon $date)
     {
         // 1 = Senin, 2 = Selasa, 3 = Rabu, 4 = Kamis, 5 = Jumat
-        // 6 = Sabtu, 7 = Minggu
+        // 6 = Sabtu, 0 = Minggu (Carbon: 0=Sunday, 6=Saturday)
         $dayOfWeek = $date->dayOfWeek;
-        
-        // Renungan pagi hanya Senin, Rabu, Jumat (1, 3, 5)
-        return in_array($dayOfWeek, [1, 3, 5]);
+        // Sekarang: hari kerja Senin-Jumat (1-5)
+        return $dayOfWeek >= 1 && $dayOfWeek <= 5;
     }
 
     /**
