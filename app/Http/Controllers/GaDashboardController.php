@@ -124,6 +124,96 @@ class GaDashboardController extends Controller
     }
 
     /**
+     * Mendapatkan SEMUA data absensi renungan pagi untuk fitur "Periode: Semua"
+     * Endpoint: GET /api/ga-dashboard/worship-attendance/all
+     * Mengembalikan seluruh data absensi tanpa batasan tanggal
+     */
+    public function getAllWorshipAttendanceAll(Request $request)
+    {
+        try {
+            $attendanceMethod = $request->get('attendance_method'); // Filter opsional untuk metode absensi
+            $page = $request->get('page', 1);
+            $perPage = $request->get('per_page', 50); // Default 50 records per page
+            
+            Log::info('GA Dashboard: Loading ALL worship attendance data for "Periode: Semua"', [
+                'attendance_method' => $attendanceMethod,
+                'page' => $page,
+                'per_page' => $perPage,
+                'user_id' => auth()->id()
+            ]);
+
+            // Ambil SEMUA data absensi renungan tanpa batasan tanggal
+            $attendancesQuery = MorningReflectionAttendance::with(['employee.user']);
+
+            // Filter berdasarkan metode absensi jika ada
+            if ($attendanceMethod) {
+                $attendancesQuery->byAttendanceMethod($attendanceMethod);
+            }
+
+            // Pagination untuk performa
+            $attendances = $attendancesQuery->orderBy('date', 'desc')
+                                          ->orderBy('created_at', 'desc')
+                                          ->paginate($perPage);
+
+            // Transform data untuk frontend
+            $transformedData = $attendances->getCollection()->map(function ($attendance) {
+                return [
+                    'id' => $attendance->id,
+                    'employee_id' => $attendance->employee_id,
+                    'name' => $attendance->employee ? $attendance->employee->nama_lengkap : 'Karyawan Tidak Ditemukan',
+                    'position' => $attendance->employee ? $attendance->employee->jabatan_saat_ini : '-',
+                    'date' => $attendance->date->format('Y-m-d'),
+                    'attendance_time' => $attendance->join_time ? 
+                        $attendance->join_time->format('H:i') : '-',
+                    'status' => $this->mapAttendanceStatus($attendance->status),
+                    'status_label' => $this->getStatusLabel($this->mapAttendanceStatus($attendance->status)),
+                    'testing_mode' => $attendance->testing_mode ?? false,
+                    'created_at' => $attendance->created_at->format('Y-m-d H:i:s'),
+                    'data_source' => 'attendance',
+                    'attendance_method' => $attendance->attendance_method ?? 'online',
+                    'attendance_source' => $attendance->attendance_source ?? 'zoom'
+                ];
+            });
+
+            Log::info('GA Dashboard: ALL worship attendance data loaded for "Periode: Semua"', [
+                'total_records' => $attendances->total(),
+                'current_page' => $attendances->currentPage(),
+                'per_page' => $attendances->perPage(),
+                'last_page' => $attendances->lastPage()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformedData,
+                'message' => 'Data absensi renungan pagi seluruh periode berhasil diambil',
+                'total_records' => $attendances->total(),
+                'current_page' => $attendances->currentPage(),
+                'per_page' => $attendances->perPage(),
+                'last_page' => $attendances->lastPage(),
+                'pagination' => [
+                    'current_page' => $attendances->currentPage(),
+                    'per_page' => $attendances->perPage(),
+                    'total' => $attendances->total(),
+                    'last_page' => $attendances->lastPage(),
+                    'from' => $attendances->firstItem(),
+                    'to' => $attendances->lastItem()
+                ]
+            ], 200);
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error loading ALL worship attendance data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data absensi seluruh periode: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Mendapatkan semua data permohonan cuti untuk GA Dashboard
      * Menampilkan SEMUA data tanpa batasan role
      */
