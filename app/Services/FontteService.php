@@ -22,7 +22,7 @@ class FontteService
             // Format nomor telepon untuk Fontte (hapus karakter non-digit kecuali +)
             $formattedPhone = $this->formatPhoneNumber($phone);
             
-            $message = "Kode OTP Anda: {$otpCode}. Berlaku selama 5 menit. Jangan bagikan kode ini kepada siapapun.";
+            $message = "Kode OTP Registrasi Hope Channel Indonesia Anda: {$otpCode}. Berlaku 5 menit. Jangan bagikan kode ini kepada siapapun.";
             
             Log::info('Sending OTP via Fontte', [
                 'original_phone' => $phone,
