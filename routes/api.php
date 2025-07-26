@@ -441,6 +441,10 @@ Route::post('/attendance/upload-txt', [AttendanceTxtUploadController::class, 'up
 Route::post('/attendance/upload-txt/preview', [AttendanceTxtUploadController::class, 'previewTxt']); 
 Route::post('/attendance/convert-raw-txt', [AttendanceTxtUploadController::class, 'convertRawTxt']);
 
+// Manual sync dan status sync employee_id
+Route::post('/attendance/upload-txt/manual-sync', [AttendanceTxtUploadController::class, 'manualBulkSync']);
+Route::get('/attendance/upload-txt/sync-status', [AttendanceTxtUploadController::class, 'getSyncStatus']);
+
 // Endpoint download template TXT absensi
 Route::get('/attendance/template-txt', function () {
     $path = storage_path('app/template_attendance.txt');

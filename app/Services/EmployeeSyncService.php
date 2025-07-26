@@ -168,33 +168,64 @@ class EmployeeSyncService
         ];
 
         try {
-            // Get employee's machine user ID
+            // 🔥 PRIORITAS 1: Update attendance table berdasarkan nama yang exact match
+            $attendanceUpdated = Attendance::where('user_name', $employee->nama_lengkap)
+                                          ->whereNull('employee_id')
+                                          ->update(['employee_id' => $employee->id]);
+            $results['attendance_updated'] += $attendanceUpdated;
+
+            // 🔥 PRIORITAS 2: Update attendance table berdasarkan case-insensitive match
+            if ($attendanceUpdated == 0) {
+                $attendanceCaseInsensitive = Attendance::whereRaw('LOWER(TRIM(user_name)) = ?', [strtolower(trim($employee->nama_lengkap))])
+                                                       ->whereNull('employee_id')
+                                                       ->update(['employee_id' => $employee->id]);
+                $results['attendance_updated'] += $attendanceCaseInsensitive;
+            }
+
+            // 🔥 PRIORITAS 3: Update attendance table berdasarkan card number sebagai fallback
+            if ($results['attendance_updated'] == 0 && !empty($employee->NumCard)) {
+                $attendanceByCard = Attendance::where('card_number', $employee->NumCard)
+                                              ->whereNull('employee_id')
+                                              ->update(['employee_id' => $employee->id]);
+                $results['attendance_updated'] += $attendanceByCard;
+            }
+
+            // Update employee_attendance table (untuk sistem machine attendance)
             $employeeAttendance = EmployeeAttendance::where('name', $employee->nama_lengkap)
                                                    ->whereNull('employee_id')
                                                    ->first();
 
             if ($employeeAttendance) {
-                // Update employee_attendance table
                 $employeeAttendance->update(['employee_id' => $employee->id]);
                 $results['employee_attendance_updated']++;
 
                 $machineUserId = $employeeAttendance->machine_user_id;
 
-                // Update attendance table
-                $attendanceUpdated = Attendance::where('user_name', $employee->nama_lengkap)
-                                              ->whereNull('employee_id')
-                                              ->update(['employee_id' => $employee->id]);
-                $results['attendance_updated'] += $attendanceUpdated;
-
-                // Update attendance_logs table
+                // Update attendance_logs table berdasarkan machine user ID
                 $logsUpdated = AttendanceLog::where('user_pin', $machineUserId)
                                            ->whereNull('employee_id')
                                            ->update(['employee_id' => $employee->id]);
                 $results['attendance_logs_updated'] += $logsUpdated;
             }
 
+            // Log hasil sync
+            if ($results['attendance_updated'] > 0 || $results['employee_attendance_updated'] > 0) {
+                Log::info('Attendance tables synced successfully', [
+                    'employee_id' => $employee->id,
+                    'employee_name' => $employee->nama_lengkap,
+                    'attendance_updated' => $results['attendance_updated'],
+                    'employee_attendance_updated' => $results['employee_attendance_updated'],
+                    'attendance_logs_updated' => $results['attendance_logs_updated']
+                ]);
+            }
+
         } catch (\Exception $e) {
             $results['errors'][] = 'Attendance sync error: ' . $e->getMessage();
+            Log::error('Error syncing attendance tables', [
+                'employee_id' => $employee->id,
+                'employee_name' => $employee->nama_lengkap,
+                'error' => $e->getMessage()
+            ]);
         }
 
         return $results;

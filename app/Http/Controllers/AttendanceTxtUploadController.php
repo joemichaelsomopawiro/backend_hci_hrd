@@ -104,10 +104,83 @@ class AttendanceTxtUploadController extends Controller
             $result = $this->txtService->previewTxtData($file);
             return response()->json($result);
         } catch (\Exception $e) {
-            Log::error('Error in TXT preview: ' . $e->getMessage());
+            Log::error('Error in TXT preview: ' . $e->getMessage(), [
+                'file' => $request->file('txt_file')?->getClientOriginalName(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat preview file TXT: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/attendance/upload-txt/manual-sync
+     * Manual bulk sync untuk semua attendance yang belum ter-sync dengan employee_id
+     */
+    public function manualBulkSync(): JsonResponse
+    {
+        try {
+            Log::info('Manual bulk sync started by user');
+            
+            $result = $this->txtService->manualBulkSyncAttendance();
+            return response()->json($result);
+        } catch (\Exception $e) {
+            Log::error('Error in manual bulk sync: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat manual sync: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * GET /api/attendance/upload-txt/sync-status
+     * Cek status sync employee_id di tabel attendance
+     */
+    public function getSyncStatus(): JsonResponse
+    {
+        try {
+            $totalAttendance = \App\Models\Attendance::count();
+            $syncedAttendance = \App\Models\Attendance::whereNotNull('employee_id')->count();
+            $unsyncedAttendance = $totalAttendance - $syncedAttendance;
+            
+            // Ambil beberapa contoh data yang belum ter-sync
+            $unsyncedSamples = \App\Models\Attendance::whereNull('employee_id')
+                                                    ->select('user_name', 'card_number', 'date')
+                                                    ->limit(10)
+                                                    ->get();
+            
+            // Ambil beberapa contoh data yang sudah ter-sync
+            $syncedSamples = \App\Models\Attendance::whereNotNull('employee_id')
+                                                  ->with('employee:id,nama_lengkap')
+                                                  ->select('user_name', 'card_number', 'date', 'employee_id')
+                                                  ->limit(10)
+                                                  ->get();
+            
+            $syncPercentage = $totalAttendance > 0 ? round(($syncedAttendance / $totalAttendance) * 100, 2) : 0;
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Status sync berhasil diambil',
+                'data' => [
+                    'total_attendance' => $totalAttendance,
+                    'synced_attendance' => $syncedAttendance,
+                    'unsynced_attendance' => $unsyncedAttendance,
+                    'sync_percentage' => $syncPercentage,
+                    'unsynced_samples' => $unsyncedSamples,
+                    'synced_samples' => $syncedSamples,
+                    'total_employees' => \App\Models\Employee::count()
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting sync status: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil status sync: ' . $e->getMessage()
             ], 500);
         }
     }
