@@ -289,43 +289,75 @@ class TxtAttendanceUploadService
 
     private function saveAttendance($data)
     {
-        // Mapping employee_id menggunakan sistem autosync yang sudah ada
+        // 🔥 ENHANCED AUTO-SYNC: Mapping employee_id berdasarkan nama yang lebih robust
         $employee_id = null;
         $mapped_by = null;
         
-        // 🔥 PRIORITAS UTAMA: Mapping berdasarkan nama (user_name = nama_lengkap)
+        // PRIORITAS 1: Mapping berdasarkan nama lengkap (exact match)
         $employee = \App\Models\Employee::where('nama_lengkap', $data['user_name'])->first();
+        
         if ($employee) {
             $employee_id = $employee->id;
-            $mapped_by = 'user_name';
-            
-            // Trigger autosync untuk memastikan semua data ter-sync
-            try {
-                \App\Services\EmployeeSyncService::autoSyncAttendance($data['user_name']);
-            } catch (\Exception $e) {
-                \Log::warning('Auto-sync failed for attendance', [
-                    'user_name' => $data['user_name'],
-                    'card_number' => $data['card_number'],
-                    'error' => $e->getMessage()
-                ]);
-            }
+            $mapped_by = 'exact_name_match';
         } else {
-            // Fallback: Coba mapping berdasarkan card_number (NumCard) jika nama tidak ditemukan
-            $employee = \App\Models\Employee::where('NumCard', $data['card_number'])->first();
-            if ($employee) {
-                $employee_id = $employee->id;
-                $mapped_by = 'card_number';
+            // PRIORITAS 2: Fuzzy name matching (untuk handle case typo atau format nama berbeda)
+            $employees = \App\Models\Employee::all();
+            foreach ($employees as $emp) {
+                // Case-insensitive comparison
+                if (strtolower(trim($emp->nama_lengkap)) === strtolower(trim($data['user_name']))) {
+                    $employee_id = $emp->id;
+                    $mapped_by = 'case_insensitive_match';
+                    $employee = $emp;
+                    break;
+                }
+                
+                // Partial match (jika nama di attendance mengandung nama di employee atau sebaliknya)
+                if (strpos(strtolower($emp->nama_lengkap), strtolower($data['user_name'])) !== false ||
+                    strpos(strtolower($data['user_name']), strtolower($emp->nama_lengkap)) !== false) {
+                    $employee_id = $emp->id;
+                    $mapped_by = 'partial_name_match';
+                    $employee = $emp;
+                    break;
+                }
             }
         }
         
-        // Update notes dengan employee_id dan informasi mapping
+        // PRIORITAS 3: Fallback ke card_number jika nama tidak ditemukan
+        if (!$employee_id && !empty($data['card_number'])) {
+            $employee = \App\Models\Employee::where('NumCard', $data['card_number'])->first();
+            if ($employee) {
+                $employee_id = $employee->id;
+                $mapped_by = 'card_number_match';
+            }
+        }
+        
+        // Log untuk debugging
+        if ($employee_id) {
+            \Log::info('Employee mapping successful', [
+                'user_name' => $data['user_name'],
+                'card_number' => $data['card_number'],
+                'employee_id' => $employee_id,
+                'mapped_by' => $mapped_by,
+                'employee_name' => $employee->nama_lengkap ?? 'Unknown'
+            ]);
+        } else {
+            \Log::warning('Employee mapping failed', [
+                'user_name' => $data['user_name'],
+                'card_number' => $data['card_number'],
+                'total_employees' => \App\Models\Employee::count()
+            ]);
+        }
+        
+        // Update notes dengan informasi mapping
         $notes = json_encode([
             'jml_kehadiran' => $data['jml_kehadiran'] ?? null,
             'employee_id' => $employee_id,
             'mapped_by' => $mapped_by,
-            'sync_status' => $employee_id ? 'synced' : 'not_found'
+            'sync_status' => $employee_id ? 'synced' : 'not_found',
+            'sync_timestamp' => now()->toISOString()
         ]);
         
+        // Save atau update attendance dengan employee_id
         Attendance::updateOrCreate(
             [
                 'card_number' => $data['card_number'],
@@ -338,7 +370,7 @@ class TxtAttendanceUploadService
                 'status' => $data['status'],
                 'work_hours' => $data['work_hours'],
                 'notes' => $notes,
-                'employee_id' => $employee_id // Tambahkan employee_id langsung ke kolom utama
+                'employee_id' => $employee_id // 🔥 INI YANG PENTING: Set employee_id langsung
             ]
         );
     }
@@ -475,46 +507,128 @@ class TxtAttendanceUploadService
      */
     private function bulkAutoSyncAfterUpload(): void
     {
-        // 🔥 PRIORITAS: Sync berdasarkan nama (user_name = nama_lengkap)
+        \Log::info('Starting bulk auto-sync after TXT upload');
+        
+        // 🔥 STEP 1: Direct sync berdasarkan nama yang belum ter-sync
+        $unsyncedAttendances = \App\Models\Attendance::whereNull('employee_id')
+                                                    ->whereNotNull('user_name')
+                                                    ->get();
+        
+        $directSyncCount = 0;
+        $partialSyncCount = 0;
+        $cardSyncCount = 0;
+        
+        foreach ($unsyncedAttendances as $attendance) {
+            $employee_id = null;
+            $mapped_by = null;
+            
+            // Exact match
+            $employee = \App\Models\Employee::where('nama_lengkap', $attendance->user_name)->first();
+            if ($employee) {
+                $employee_id = $employee->id;
+                $mapped_by = 'exact_match';
+                $directSyncCount++;
+            } else {
+                // Case insensitive match
+                $employees = \App\Models\Employee::all();
+                foreach ($employees as $emp) {
+                    if (strtolower(trim($emp->nama_lengkap)) === strtolower(trim($attendance->user_name))) {
+                        $employee_id = $emp->id;
+                        $mapped_by = 'case_insensitive';
+                        $directSyncCount++;
+                        break;
+                    }
+                }
+                
+                // Partial match jika masih belum ketemu
+                if (!$employee_id) {
+                    foreach ($employees as $emp) {
+                        if (strpos(strtolower($emp->nama_lengkap), strtolower($attendance->user_name)) !== false ||
+                            strpos(strtolower($attendance->user_name), strtolower($emp->nama_lengkap)) !== false) {
+                            $employee_id = $emp->id;
+                            $mapped_by = 'partial_match';
+                            $partialSyncCount++;
+                            break;
+                        }
+                    }
+                }
+                
+                // Card number fallback
+                if (!$employee_id && !empty($attendance->card_number)) {
+                    $employee = \App\Models\Employee::where('NumCard', $attendance->card_number)->first();
+                    if ($employee) {
+                        $employee_id = $employee->id;
+                        $mapped_by = 'card_match';
+                        $cardSyncCount++;
+                    }
+                }
+            }
+            
+            // Update jika ditemukan mapping
+            if ($employee_id) {
+                $attendance->update([
+                    'employee_id' => $employee_id,
+                    'notes' => json_encode([
+                        'mapped_by' => $mapped_by,
+                        'sync_status' => 'bulk_synced',
+                        'sync_timestamp' => now()->toISOString(),
+                        'original_notes' => $attendance->notes ? json_decode($attendance->notes, true) : null
+                    ])
+                ]);
+            }
+        }
+        
+        // 🔥 STEP 2: Trigger EmployeeSyncService untuk cross-validation
         $uniqueUserNames = \App\Models\Attendance::whereNotNull('user_name')
-                                                ->whereNull('employee_id')
+                                                ->whereNotNull('employee_id')
                                                 ->distinct()
                                                 ->pluck('user_name');
         
-        $syncedCount = 0;
+        $crossSyncCount = 0;
         foreach ($uniqueUserNames as $userName) {
             try {
-                // Trigger autosync berdasarkan nama
                 $syncResult = \App\Services\EmployeeSyncService::autoSyncAttendance($userName);
                 if ($syncResult['success']) {
-                    $syncedCount++;
+                    $crossSyncCount++;
                 }
             } catch (\Exception $e) {
-                \Log::warning('Auto-sync failed for user after TXT upload', [
+                \Log::warning('Cross-sync failed for user after TXT upload', [
                     'user' => $userName,
                     'error' => $e->getMessage()
                 ]);
             }
         }
         
-        // 🔥 TAMBAHAN: Sync langsung attendance yang belum ter-sync berdasarkan nama
-        $unsyncedAttendances = \App\Models\Attendance::whereNotNull('user_name')
-                                                    ->whereNull('employee_id')
-                                                    ->get();
-        
-        $directSyncCount = 0;
-        foreach ($unsyncedAttendances as $attendance) {
-            $employee = \App\Models\Employee::where('nama_lengkap', $attendance->user_name)->first();
-            if ($employee) {
-                $attendance->update(['employee_id' => $employee->id]);
-                $directSyncCount++;
-            }
-        }
-        
         \Log::info('Bulk auto-sync completed after TXT upload', [
-            'total_users' => count($uniqueUserNames),
-            'synced_count' => $syncedCount,
-            'direct_sync_count' => $directSyncCount
+            'total_unsynced' => count($unsyncedAttendances),
+            'direct_sync_count' => $directSyncCount,
+            'partial_sync_count' => $partialSyncCount,
+            'card_sync_count' => $cardSyncCount,
+            'cross_sync_count' => $crossSyncCount,
+            'remaining_unsynced' => \App\Models\Attendance::whereNull('employee_id')->count()
         ]);
+    }
+
+    /**
+     * Manual bulk sync untuk semua attendance yang belum ter-sync (dapat dipanggil terpisah)
+     */
+    public function manualBulkSyncAttendance(): array
+    {
+        $this->bulkAutoSyncAfterUpload();
+        
+        $totalAttendance = \App\Models\Attendance::count();
+        $syncedAttendance = \App\Models\Attendance::whereNotNull('employee_id')->count();
+        $unsyncedAttendance = $totalAttendance - $syncedAttendance;
+        
+        return [
+            'success' => true,
+            'message' => 'Manual bulk sync completed',
+            'data' => [
+                'total_attendance' => $totalAttendance,
+                'synced_attendance' => $syncedAttendance,
+                'unsynced_attendance' => $unsyncedAttendance,
+                'sync_percentage' => $totalAttendance > 0 ? round(($syncedAttendance / $totalAttendance) * 100, 2) : 0
+            ]
+        ];
     }
 } 

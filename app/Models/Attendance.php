@@ -25,6 +25,7 @@ class Attendance extends Model
         'early_leave_minutes',
         'total_taps',
         'notes',
+        'employee_id', // Tambahkan ini untuk auto-sync dengan Employee
     ];
 
     protected $casts = [
@@ -60,6 +61,12 @@ class Attendance extends Model
     public function employeeAttendance(): BelongsTo
     {
         return $this->belongsTo(EmployeeAttendance::class, 'user_pin', 'machine_user_id');
+    }
+
+    // Relasi ke Employee berdasarkan employee_id untuk auto-sync
+    public function employee(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class, 'employee_id');
     }
 
     // Note: employee relationship removed - system now uses user_pin instead of employee_id

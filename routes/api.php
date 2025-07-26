@@ -21,6 +21,7 @@ use App\Http\Controllers\GaDashboardController;
 use App\Http\Controllers\ZoomLinkController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ManualWorshipAttendanceController;
+use App\Http\Controllers\AttendanceTxtUploadController;
 
 /*
 |--------------------------------------------------------------------------
@@ -430,3 +431,35 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/ga/zoom-link', [ZoomLinkController::class, 'getZoomLink']);
     Route::post('/ga/zoom-link', [ZoomLinkController::class, 'updateZoomLink']);
 }); 
+
+// Upload dan preview TXT absensi
+Route::post('/attendance/upload-txt', [AttendanceTxtUploadController::class, 'uploadTxt']);
+Route::post('/attendance/upload-txt/preview', [AttendanceTxtUploadController::class, 'previewTxt']); 
+Route::post('/attendance/convert-raw-txt', [AttendanceTxtUploadController::class, 'convertRawTxt']);
+
+// Manual sync dan status sync employee_id
+Route::post('/attendance/upload-txt/manual-sync', [AttendanceTxtUploadController::class, 'manualBulkSync']);
+Route::get('/attendance/upload-txt/sync-status', [AttendanceTxtUploadController::class, 'getSyncStatus']);
+
+// Endpoint download template TXT absensi
+Route::get('/attendance/template-txt', function () {
+    $path = storage_path('app/template_attendance.txt');
+    return response()->download($path, 'template_attendance.txt');
+}); 
+
+// ================= GA DASHBOARD ROUTES (KHUSUS FRONTEND DASHBOARD) =================
+Route::middleware(['auth:sanctum', 'role:General Affairs'])->group(function () {
+    // Endpoint utama yang dipakai frontend
+    Route::get('/ga-dashboard/get-all-worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
+    Route::get('/ga-dashboard/get-all-leave-requests', [GaDashboardController::class, 'getAllLeaveRequests']);
+    Route::get('/ga-dashboard/get-worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
+    Route::get('/ga-dashboard/get-leave-statistics', [GaDashboardController::class, 'getLeaveStatistics']);
+    // Export Excel
+    Route::get('/ga-dashboard/export-worship-attendance', [GaDashboardController::class, 'exportWorshipAttendance']);
+    Route::get('/ga-dashboard/export-leave-requests', [GaDashboardController::class, 'exportLeaveRequests']);
+    // Legacy endpoints (opsional, untuk kompatibilitas lama)
+    Route::get('/ga-dashboard/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
+    Route::get('/ga-dashboard/leave-requests', [GaDashboardController::class, 'getAllLeaveRequests']);
+    Route::get('/ga-dashboard/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
+    Route::get('/ga-dashboard/leave-statistics', [GaDashboardController::class, 'getLeaveStatistics']);
+});
