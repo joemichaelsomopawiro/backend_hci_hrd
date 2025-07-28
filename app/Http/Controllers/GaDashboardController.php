@@ -25,20 +25,32 @@ class GaDashboardController extends Controller
         try {
             $dateFilter = $request->date;
             $allData = $request->boolean('all', false);
+            $period = $request->get('period'); // Parameter period baru dari frontend
+            $startDateParam = $request->get('start_date'); // Parameter start_date dari frontend
             $attendanceMethod = $request->get('attendance_method'); // Filter baru untuk metode absensi
             
             Log::info('GA Dashboard: Loading worship attendance data', [
                 'date_filter' => $dateFilter,
                 'all_data' => $allData,
+                'period' => $period,
+                'start_date_param' => $startDateParam,
                 'attendance_method' => $attendanceMethod,
                 'user_id' => auth()->id()
             ]);
 
-            // Tentukan rentang tanggal
+            // Tentukan rentang tanggal berdasarkan parameter
             if ($allData) {
                 // Jika meminta semua data, ambil 30 hari terakhir
                 $startDate = Carbon::now()->subDays(30)->toDateString();
                 $endDate = Carbon::now()->toDateString();
+            } elseif ($period === 'week' && $startDateParam) {
+                // Period mingguan dari start_date yang diberikan
+                $startDate = $startDateParam;
+                $endDate = Carbon::parse($startDateParam)->addDays(6)->toDateString();
+            } elseif ($period === 'month' && $startDateParam) {
+                // Period bulanan dari start_date yang diberikan
+                $startDate = $startDateParam;
+                $endDate = Carbon::parse($startDateParam)->endOfMonth()->toDateString();
             } elseif ($dateFilter) {
                 // Jika ada filter tanggal, gunakan tanggal tersebut
                 $startDate = $dateFilter;
