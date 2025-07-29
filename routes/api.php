@@ -102,6 +102,7 @@ Route::prefix('leave-quotas')->group(function () {
         Route::get('/my-current', [LeaveQuotaController::class, 'getMyCurrentQuotas']);
         Route::post('/bulk-update', [LeaveQuotaController::class, 'bulkUpdate']);
         Route::post('/reset-annual', [LeaveQuotaController::class, 'resetAnnualQuotas']);
+        Route::post('/reset-annual-manual', [LeaveQuotaController::class, 'resetAnnual']);
         Route::get('/usage-summary', [LeaveQuotaController::class, 'getUsageSummary']);
         Route::get('/employees-without-quota', [LeaveQuotaController::class, 'getEmployeesWithoutQuota']);
     });

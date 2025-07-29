@@ -66,6 +66,15 @@ class Kernel extends ConsoleKernel
                  ->name('sync-leave-to-attendance')
                  ->description('Sinkronisasi status cuti yang approved ke tabel attendance')
                  ->appendOutputTo(storage_path('logs/leave-attendance-sync.log'));
+
+        // Reset jatah cuti tahunan otomatis setiap 1 Januari jam 00:01
+        $schedule->command('leave:reset-annual')
+                 ->yearly()
+                 ->at('00:01')
+                 ->withoutOverlapping()
+                 ->name('annual-leave-reset')
+                 ->description('Reset jatah cuti tahunan untuk semua karyawan dengan standar default baru')
+                 ->appendOutputTo(storage_path('logs/annual-leave-reset.log'));
     }
 
     /**
