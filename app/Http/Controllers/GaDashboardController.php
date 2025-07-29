@@ -560,12 +560,13 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $leaveRequests->map(function ($request) {
-                // Generate leave_dates dari start_date ke end_date, hanya hari renungan (Senin=1, Rabu=3, Jumat=5)
+                // Generate leave_dates dari start_date ke end_date, SEMUA hari kerja (Senin-Jumat)
                 $start = \Carbon\Carbon::parse($request->start_date);
                 $end = \Carbon\Carbon::parse($request->end_date);
                 $dates = [];
                 for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
-                    if (in_array($date->dayOfWeek, [1, 3, 5])) { // Senin, Rabu, Jumat
+                    // Include all work days (Monday-Friday) for GA Dashboard
+                    if (in_array($date->dayOfWeek, [1, 2, 3, 4, 5])) { // Senin-Jumat
                         $dates[] = $date->toDateString();
                     }
                 }
@@ -580,22 +581,19 @@ class GaDashboardController extends Controller
                                             ($request->employee->jabatan_saat_ini ?? '-')
                     ],
                     'leave_type' => $request->leave_type,
-                    'start_date' => $request->start_date,
-                    'end_date' => $request->end_date,
+                    'start_date' => $start->format('Y-m-d'),
+                    'end_date' => $end->format('Y-m-d'),
                     'total_days' => $request->total_days,
                     'reason' => $request->reason,
                     'notes' => $request->notes,
                     'overall_status' => $request->overall_status,
                     'status' => $request->overall_status, // Alias untuk kompatibilitas
                     'approved_by' => $request->approved_by,
-                    'approved_at' => $request->approved_at,
-                    'created_at' => $request->created_at,
-                    'updated_at' => $request->updated_at,
+                    'approved_at' => $request->approved_at ? Carbon::parse($request->approved_at)->format('Y-m-d H:i:s') : null,
+                    'created_at' => Carbon::parse($request->created_at)->format('Y-m-d H:i:s'),
+                    'updated_at' => Carbon::parse($request->updated_at)->format('Y-m-d H:i:s'),
                     'leave_dates' => $dates,
                 ];
-            })->filter(function($item) {
-                // Hanya tampilkan jika ada minimal satu hari renungan di leave_dates
-                return !empty($item['leave_dates']);
             });
 
             Log::info('GA Dashboard: Leave requests data loaded', [
