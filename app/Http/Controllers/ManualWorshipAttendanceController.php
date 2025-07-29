@@ -48,9 +48,9 @@ class ManualWorshipAttendanceController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Data absensi manual berhasil disimpan',
+                'saved_count' => $result['saved_count'],
+                'total_data' => $result['total_data'],
                 'data' => [
-                    'saved_count' => $result['saved_count'],
-                    'total_data' => $result['total_data'],
                     'date' => $date,
                     'errors' => $result['errors']
                 ]
