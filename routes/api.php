@@ -14,7 +14,7 @@ use App\Http\Controllers\WorshipAttendanceController;
 use App\Http\Controllers\MorningReflectionController;
 use App\Http\Controllers\MorningReflectionAttendanceController;
 use App\Http\Controllers\AttendanceExportController;
-use App\Http\Controllers\AttendanceExcelUploadController;
+// use App\Http\Controllers\AttendanceExcelUploadController;
 use App\Http\Controllers\NationalHolidayController;
 use App\Http\Controllers\CustomRoleController;
 use App\Http\Controllers\GaDashboardController;
@@ -164,11 +164,11 @@ Route::prefix('attendance')->group(function () {
     Route::post('/sync-leave-date-range', [AttendanceController::class, 'syncLeaveToAttendanceDateRange']);
     
     // Excel Upload routes
-    Route::post('/upload-excel', [AttendanceExcelUploadController::class, 'uploadExcel']);
-    Route::post('/upload-excel/preview', [AttendanceExcelUploadController::class, 'previewExcel']);
-    Route::get('/upload-excel/template', [AttendanceExcelUploadController::class, 'downloadTemplate']);
-    Route::get('/upload-excel/download-template', [AttendanceExcelUploadController::class, 'downloadTemplateFile']);
-    Route::get('/upload-excel/validation-rules', [AttendanceExcelUploadController::class, 'getValidationRules']);
+    // Route::post('/upload-excel', [AttendanceExcelUploadController::class, 'uploadExcel']);
+    // Route::post('/upload-excel/preview', [AttendanceExcelUploadController::class, 'previewExcel']);
+    // Route::get('/upload-excel/template', [AttendanceExcelUploadController::class, 'downloadTemplate']);
+    // Route::get('/upload-excel/download-template', [AttendanceExcelUploadController::class, 'downloadTemplateFile']);
+    // Route::get('/upload-excel/validation-rules', [AttendanceExcelUploadController::class, 'getValidationRules']);
 });
 
 // Attendance Routes (dari kode kedua)
@@ -350,6 +350,11 @@ Route::prefix('personal')->group(function () {
     // Profile pribadi
     Route::get('/profile', [\App\Http\Controllers\PersonalProfileController::class, 'show']);
     Route::put('/profile', [\App\Http\Controllers\PersonalProfileController::class, 'update']);
+
+    // Office attendance (dengan autentikasi)
+    Route::middleware(['auth:sanctum'])->group(function () {
+        Route::get('/office-attendance', [\App\Http\Controllers\PersonalAttendanceController::class, 'getPersonalOfficeAttendance']);
+    });
 });
 
 // ===== EMPLOYEE SYNC ROUTES =====
