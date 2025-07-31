@@ -53,29 +53,33 @@ class ManualWorshipAttendanceRequest extends FormRequest
      */
     public function withValidator($validator)
     {
-        $validator->after(function ($validator) {
-            $this->validateWorshipDay($validator);
-        });
+        // Validasi hari sudah dihapus - input manual sekarang bisa untuk semua hari
+        // $validator->after(function ($validator) {
+        //     $this->validateWorshipDay($validator);
+        // });
     }
 
     /**
      * Validasi bahwa tanggal adalah hari Selasa atau Kamis
+     * NOTE: Validasi ini sudah dihapus untuk memungkinkan input manual di semua hari
      */
     private function validateWorshipDay($validator)
     {
-        $date = $this->input('tanggal');
+        // Validasi hari sudah dihapus - input manual sekarang bisa untuk semua hari
+        // $date = $this->input('tanggal');
         
-        if ($date) {
-            try {
-                $carbonDate = Carbon::parse($date);
-                $dayOfWeek = $carbonDate->dayOfWeek; // 2 = Selasa, 4 = Kamis
+        // if ($date) {
+        //     try {
+        //         $carbonDate = Carbon::parse($date);
+        //         $dayOfWeek = $carbonDate->dayOfWeek; // 2 = Selasa, 4 = Kamis
 
-                if (!in_array($dayOfWeek, [2, 4])) {
-                    $validator->errors()->add('tanggal', 'Input manual hanya diperbolehkan untuk hari Selasa dan Kamis');
-                }
-            } catch (\Exception $e) {
-                $validator->errors()->add('tanggal', 'Format tanggal tidak valid');
-            }
-        }
+        //         if (!in_array($dayOfWeek, [2, 4])) {
+        //             $validator->errors()->add('tanggal', 'Input manual hanya diperbolehkan untuk hari Selasa dan Kamis');
+        //         }
+        //     } catch (\Exception $e) {
+        //             $validator->errors()->add('tanggal', 'Format tanggal tidak valid');
+        //         }
+        //     }
+        // }
     }
 }

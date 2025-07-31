@@ -12,15 +12,15 @@ use Exception;
 class ManualAttendanceService
 {
     /**
-     * Simpan data absensi manual untuk hari Selasa & Kamis
+     * Simpan data absensi manual untuk semua hari
      */
     public function storeManualAttendance(array $attendanceData, string $date)
     {
         try {
             DB::beginTransaction();
 
-            // Validasi tanggal harus Selasa atau Kamis
-            $this->validateWorshipDay($date);
+            // Validasi hari sudah dihapus - input manual sekarang bisa untuk semua hari
+            // $this->validateWorshipDay($date);
 
             $savedCount = 0;
             $errors = [];
@@ -93,15 +93,17 @@ class ManualAttendanceService
 
     /**
      * Validasi bahwa tanggal adalah hari Selasa atau Kamis
+     * NOTE: Validasi ini sudah dihapus untuk memungkinkan input manual di semua hari
      */
     private function validateWorshipDay(string $date)
     {
-        $carbonDate = Carbon::parse($date);
-        $dayOfWeek = $carbonDate->dayOfWeek; // 2 = Selasa, 4 = Kamis
+        // Validasi hari sudah dihapus - input manual sekarang bisa untuk semua hari
+        // $carbonDate = Carbon::parse($date);
+        // $dayOfWeek = $carbonDate->dayOfWeek; // 2 = Selasa, 4 = Kamis
 
-        if (!in_array($dayOfWeek, [2, 4])) {
-            throw new Exception('Input manual hanya diperbolehkan untuk hari Selasa dan Kamis');
-        }
+        // if (!in_array($dayOfWeek, [2, 4])) {
+        //     throw new Exception('Input manual hanya diperbolehkan untuk hari Selasa dan Kamis');
+        // }
     }
 
     /**

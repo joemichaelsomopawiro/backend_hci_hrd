@@ -18,18 +18,18 @@ class ManualWorshipAttendanceController extends Controller
     }
 
     /**
-     * Simpan data absensi manual untuk hari Selasa & Kamis
+     * Simpan data absensi manual untuk semua hari
      * POST /api/ga-dashboard/manual-worship-attendance
      */
     public function store(ManualWorshipAttendanceRequest $request)
     {
         try {
-            // Validasi role GA
+            // Validasi role GA/Program Manager/HR
             $user = auth()->user();
-            if (!$user || !in_array($user->role, ['General Affairs', 'Admin'])) {
+            if (!$user || !in_array($user->role, ['General Affairs', 'Admin', 'Program Manager', 'HR'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Hanya GA/Admin yang dapat mengakses endpoint ini.'
+                    'message' => 'Unauthorized. Hanya GA/Admin/Program Manager/HR yang dapat mengakses endpoint ini.'
                 ], 403);
             }
 
@@ -109,12 +109,12 @@ class ManualWorshipAttendanceController extends Controller
     public function updateExistingData()
     {
         try {
-            // Validasi role GA
+            // Validasi role GA/Program Manager/HR
             $user = auth()->user();
-            if (!$user || !in_array($user->role, ['General Affairs', 'Admin'])) {
+            if (!$user || !in_array($user->role, ['General Affairs', 'Admin', 'Program Manager', 'HR'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Hanya GA/Admin yang dapat mengakses endpoint ini.'
+                    'message' => 'Unauthorized. Hanya GA/Admin/Program Manager/HR yang dapat mengakses endpoint ini.'
                 ], 403);
             }
 
