@@ -353,6 +353,8 @@ class MorningReflectionAttendanceController extends Controller
             'Hadir' => 'present',
             'Terlambat' => 'late',
             'Absen' => 'absent',
+            'izin' => 'izin',
+            'leave' => 'leave',
             'present' => 'present',
             'late' => 'late',
             'absent' => 'absent',

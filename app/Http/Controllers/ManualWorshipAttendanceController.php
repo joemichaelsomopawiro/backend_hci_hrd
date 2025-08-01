@@ -153,7 +153,7 @@ class ManualWorshipAttendanceController extends Controller
                 ->get()
                 ->map(function ($employee) {
                     return [
-                        'pegawai_id' => $employee->id,
+                        'employee_id' => $employee->id,
                         'nama_lengkap' => $employee->nama_lengkap,
                         'jabatan' => $employee->jabatan_saat_ini ?? '-'
                     ];

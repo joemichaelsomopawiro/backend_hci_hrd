@@ -647,6 +647,7 @@ class GaDashboardController extends Controller
             $late = $query->clone()->where('status', 'late')->count();
             $absent = $query->clone()->where('status', 'absent')->count();
             $leave = $query->clone()->where('status', 'leave')->count();
+            $izin = $query->clone()->where('status', 'izin')->count();
 
             return response()->json([
                 'success' => true,
@@ -656,6 +657,7 @@ class GaDashboardController extends Controller
                     'late' => $late,
                     'absent' => $absent,
                     'leave' => $leave,
+                    'izin' => $izin,
                     'date' => $dateFilter
                 ]
             ], 200);
@@ -1320,8 +1322,9 @@ class GaDashboardController extends Controller
             $labels = [
                 'present' => 'Hadir',
                 'late' => 'Terlambat',
-                'absent' => 'Tidak Hadir',
+                'absent' => 'Absen',
                 'leave' => 'Cuti',
+                'izin' => 'Izin',
                 'not_worship_day' => 'Bukan Jadwal'
             ];
         }
@@ -1503,6 +1506,7 @@ class GaDashboardController extends Controller
             'Hadir' => 'present',
             'Terlambat' => 'late',
             'Absen' => 'absent',
+            'izin' => 'izin',
             'present' => 'present',
             'late' => 'late',
             'absent' => 'absent'

@@ -32,7 +32,7 @@ class ManualAttendanceService
 
                     // Cek apakah sudah ada data untuk employee dan tanggal ini
                     $existingAttendance = MorningReflectionAttendance::where([
-                        'employee_id' => $data['pegawai_id'],
+                        'employee_id' => $data['employee_id'],
                         'date' => $date
                     ])->first();
 
@@ -47,7 +47,7 @@ class ManualAttendanceService
                     } else {
                         // Buat data baru
                         MorningReflectionAttendance::create([
-                            'employee_id' => $data['pegawai_id'],
+                            'employee_id' => $data['employee_id'],
                             'date' => $date,
                             'status' => $this->mapStatusToDatabase($data['status']),
                             'attendance_method' => 'manual',
@@ -59,7 +59,7 @@ class ManualAttendanceService
 
                     $savedCount++;
                 } catch (Exception $e) {
-                    $errors[] = "Error untuk pegawai ID {$data['pegawai_id']}: " . $e->getMessage();
+                    $errors[] = "Error untuk pegawai ID {$data['employee_id']}: " . $e->getMessage();
                 }
             }
 
@@ -111,20 +111,20 @@ class ManualAttendanceService
      */
     private function validateAttendanceData(array $data)
     {
-        // Validasi pegawai_id
-        if (!isset($data['pegawai_id']) || empty($data['pegawai_id'])) {
-            throw new Exception('Pegawai ID tidak boleh kosong');
+        // Validasi employee_id
+        if (!isset($data['employee_id']) || empty($data['employee_id'])) {
+            throw new Exception('Employee ID tidak boleh kosong');
         }
 
         // Cek apakah employee exists
-        $employee = Employee::find($data['pegawai_id']);
+        $employee = Employee::find($data['employee_id']);
         if (!$employee) {
-            throw new Exception("Pegawai dengan ID {$data['pegawai_id']} tidak ditemukan");
+            throw new Exception("Pegawai dengan ID {$data['employee_id']} tidak ditemukan");
         }
 
         // Validasi status
-        if (!isset($data['status']) || !in_array($data['status'], ['present', 'late', 'absent'])) {
-            throw new Exception('Status harus present, late, atau absent');
+        if (!isset($data['status']) || !in_array($data['status'], ['present', 'late', 'absent', 'izin'])) {
+            throw new Exception('Status harus present, late, absent, atau izin');
         }
     }
 
@@ -136,7 +136,8 @@ class ManualAttendanceService
         $statusMap = [
             'present' => 'Hadir',
             'late' => 'Terlambat',
-            'absent' => 'Absen'
+            'absent' => 'Absen',
+            'izin' => 'izin'
         ];
 
         return $statusMap[$status] ?? 'Absen';
@@ -150,7 +151,9 @@ class ManualAttendanceService
         $statusMap = [
             'Hadir' => 'present',
             'Terlambat' => 'late',
-            'Absen' => 'absent'
+            'Absen' => 'absent',
+            'izin' => 'izin',
+            'leave' => 'leave'
         ];
 
         return $statusMap[$status] ?? 'absent';
@@ -200,7 +203,7 @@ class ManualAttendanceService
         return $query->get()->map(function ($attendance) {
             return [
                 'id' => $attendance->id,
-                'pegawai_id' => $attendance->employee_id,
+                'employee_id' => $attendance->employee_id,
                 'nama_lengkap' => $attendance->employee->nama_lengkap ?? 'Unknown',
                 'status' => $this->mapStatusToFrontend($attendance->status),
                 'tanggal' => $attendance->date->format('Y-m-d'),
