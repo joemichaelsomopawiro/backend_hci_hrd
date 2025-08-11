@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Exception;
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\MonthlyWorshipAttendanceCalendarExport;
 
 
 
@@ -1515,5 +1517,329 @@ class GaDashboardController extends Controller
         return $statusMap[$status] ?? 'absent';
     }
 
+    /**
+     * Export monthly worship attendance data to Excel
+     */
+    public function exportWorshipAttendanceMonth(Request $request)
+    {
+        try {
+            $request->validate([
+                'start_date' => 'required|date_format:Y-m-d',
+                'timezone' => 'nullable|string',
+                'exclude_holidays' => 'nullable|boolean'
+            ]);
 
-} 
+            $tz = $request->get('timezone', config('app.timezone', 'Asia/Jakarta'));
+            $startDate = Carbon::parse($request->get('start_date'), $tz)->timezone('Asia/Jakarta');
+            $startOfMonth = $startDate->copy()->startOfMonth();
+            $endOfMonth = $startDate->copy()->endOfMonth();
+
+            // Generate work days (Mon-Fri)
+            $workDaysList = [];
+            for ($d = $startOfMonth->copy(); $d->lte($endOfMonth); $d->addDay()) {
+                if ($d->isWeekday()) {
+                    $workDaysList[] = $d->format('Y-m-d');
+                }
+            }
+
+            // Fetch employees
+            $employees = Employee::select('id', 'nama_lengkap as name', 'jabatan_saat_ini as position')
+                ->orderBy('nama_lengkap')
+                ->get();
+
+            // Fetch attendance records
+            $attendances = MorningReflectionAttendance::select('employee_id', 'date', 'status')
+                ->whereBetween('date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                ->get();
+
+            // Fetch approved leaves overlapping month
+            $leaves = LeaveRequest::select('employee_id', 'start_date', 'end_date')
+                ->where('overall_status', 'approved')
+                ->where(function($q) use ($startOfMonth, $endOfMonth) {
+                    $q->whereBetween('start_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                      ->orWhereBetween('end_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                      ->orWhere(function($qq) use ($startOfMonth, $endOfMonth) {
+                          $qq->where('start_date', '<=', $startOfMonth->toDateString())
+                             ->where('end_date', '>=', $endOfMonth->toDateString());
+                      });
+                })->get();
+
+            // Build status grid per employee per date with priority
+            $grid = [];
+            foreach ($employees as $emp) {
+                $grid[$emp->id] = [];
+            }
+
+            // Apply attendance statuses
+            foreach ($attendances as $row) {
+                $date = Carbon::parse($row->date)->format('Y-m-d');
+                $status = strtolower($row->status);
+                $status = $this->normalizeStatus($status);
+                if (!in_array($date, $workDaysList, true)) continue; // weekdays only
+                $current = $grid[$row->employee_id][$date] ?? 'absent';
+                if ($this->statusPriority($status) > $this->statusPriority($current)) {
+                    $grid[$row->employee_id][$date] = $status;
+                }
+            }
+
+            // Apply leaves with highest priority
+            foreach ($leaves as $leave) {
+                for ($d = Carbon::parse($leave->start_date); $d->lte(Carbon::parse($leave->end_date)); $d->addDay()) {
+                    $dateStr = $d->format('Y-m-d');
+                    if (!in_array($dateStr, $workDaysList, true)) continue;
+                    $current = $grid[$leave->employee_id][$dateStr] ?? 'absent';
+                    if ($this->statusPriority('leave') > $this->statusPriority($current)) {
+                        $grid[$leave->employee_id][$dateStr] = 'leave';
+                    }
+                }
+            }
+
+            // Fill missing with absent
+            foreach ($employees as $emp) {
+                foreach ($workDaysList as $date) {
+                    if (!isset($grid[$emp->id][$date])) {
+                        $grid[$emp->id][$date] = 'absent';
+                    }
+                }
+                ksort($grid[$emp->id]);
+            }
+
+            // Build export rows and global summary
+            $attendanceData = [];
+            $no = 1;
+            $global = ['H' => 0, 'T' => 0, 'C' => 0, 'I' => 0, 'A' => 0];
+
+            foreach ($employees as $emp) {
+                $rowAttendance = [];
+                foreach ($workDaysList as $date) {
+                    $rowAttendance[$date] = ['status' => $grid[$emp->id][$date]];
+                    switch ($grid[$emp->id][$date]) {
+                        case 'present': $global['H']++; break;
+                        case 'late': $global['T']++; break;
+                        case 'leave': $global['C']++; break;
+                        case 'izin': $global['I']++; break;
+                        default: $global['A']++; break;
+                    }
+                }
+
+                $attendanceData[] = [
+                    'no' => $no++,
+                    'employee_name' => $emp->name,
+                    'position' => $emp->position,
+                    'attendance' => $rowAttendance,
+                ];
+            }
+
+            $filename = sprintf('absensi-ibadah-bulanan-%s.xlsx', $startOfMonth->format('Y-m'));
+            $periodLabel = $startOfMonth->isoFormat('MMMM Y');
+            $globalSummary = array_merge(['employees' => count($employees), 'work_days' => count($workDaysList)], $global);
+
+            return Excel::download(
+                new MonthlyWorshipAttendanceCalendarExport(
+                    $attendanceData,
+                    $workDaysList,
+                    $startOfMonth->month,
+                    $startOfMonth->year,
+                    'monthly',
+                    $periodLabel,
+                    $globalSummary
+                ),
+                $filename
+            );
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error exporting monthly worship attendance', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengekspor data absensi ibadah bulanan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export weekly worship attendance data to Excel
+     * GET /api/ga-dashboard/worship-attendance/export-week?week_start=YYYY-MM-DD&timezone=Asia/Jakarta
+     */
+    public function exportWorshipAttendanceWeek(Request $request)
+    {
+        try {
+            $request->validate([
+                'week_start' => 'required|date_format:Y-m-d',
+                'timezone' => 'nullable|string',
+                'exclude_holidays' => 'nullable|boolean'
+            ]);
+
+            $tz = $request->get('timezone', config('app.timezone', 'Asia/Jakarta'));
+            $weekStart = Carbon::parse($request->get('week_start'), $tz)->timezone('Asia/Jakarta');
+            // Pastikan mulai Senin
+            if ($weekStart->dayOfWeek !== Carbon::MONDAY) {
+                $weekStart = $weekStart->copy()->startOfWeek(Carbon::MONDAY);
+            }
+            $weekEnd = $weekStart->copy()->addDays(6);
+
+            // Work days Mon-Fri only in that week
+            $workDaysList = [];
+            for ($d = $weekStart->copy(); $d->lte($weekEnd); $d->addDay()) {
+                if ($d->isWeekday()) {
+                    $workDaysList[] = $d->format('Y-m-d');
+                }
+            }
+
+            // Fetch employees
+            $employees = Employee::select('id', 'nama_lengkap as name', 'jabatan_saat_ini as position')
+                ->orderBy('nama_lengkap')
+                ->get();
+
+            // Fetch attendance within week
+            $attendances = MorningReflectionAttendance::select('employee_id', 'date', 'status')
+                ->whereBetween('date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+                ->get();
+
+            // Fetch approved leaves overlapping week
+            $leaves = LeaveRequest::select('employee_id', 'start_date', 'end_date')
+                ->where('overall_status', 'approved')
+                ->where(function($q) use ($weekStart, $weekEnd) {
+                    $q->whereBetween('start_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+                      ->orWhereBetween('end_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+                      ->orWhere(function($qq) use ($weekStart, $weekEnd) {
+                          $qq->where('start_date', '<=', $weekStart->toDateString())
+                             ->where('end_date', '>=', $weekEnd->toDateString());
+                      });
+                })->get();
+
+            // Build grid with priority
+            $grid = [];
+            foreach ($employees as $emp) { $grid[$emp->id] = []; }
+
+            foreach ($attendances as $row) {
+                $date = Carbon::parse($row->date)->format('Y-m-d');
+                if (!in_array($date, $workDaysList, true)) continue;
+                $status = $this->normalizeStatus(strtolower($row->status));
+                $current = $grid[$row->employee_id][$date] ?? 'absent';
+                if ($this->statusPriority($status) > $this->statusPriority($current)) {
+                    $grid[$row->employee_id][$date] = $status;
+                }
+            }
+
+            foreach ($leaves as $leave) {
+                for ($d = Carbon::parse($leave->start_date); $d->lte(Carbon::parse($leave->end_date)); $d->addDay()) {
+                    $dateStr = $d->format('Y-m-d');
+                    if (!in_array($dateStr, $workDaysList, true)) continue;
+                    $current = $grid[$leave->employee_id][$dateStr] ?? 'absent';
+                    if ($this->statusPriority('leave') > $this->statusPriority($current)) {
+                        $grid[$leave->employee_id][$dateStr] = 'leave';
+                    }
+                }
+            }
+
+            foreach ($employees as $emp) {
+                foreach ($workDaysList as $date) {
+                    if (!isset($grid[$emp->id][$date])) { $grid[$emp->id][$date] = 'absent'; }
+                }
+                ksort($grid[$emp->id]);
+            }
+
+            // Build export rows and global summary
+            $attendanceData = [];
+            $no = 1;
+            $global = ['H' => 0, 'T' => 0, 'C' => 0, 'I' => 0, 'A' => 0];
+
+            foreach ($employees as $emp) {
+                $rowAttendance = [];
+                foreach ($workDaysList as $date) {
+                    $rowAttendance[$date] = ['status' => $grid[$emp->id][$date]];
+                    switch ($grid[$emp->id][$date]) {
+                        case 'present': $global['H']++; break;
+                        case 'late': $global['T']++; break;
+                        case 'leave': $global['C']++; break;
+                        case 'izin': $global['I']++; break;
+                        default: $global['A']++; break;
+                    }
+                }
+                $attendanceData[] = [
+                    'no' => $no++,
+                    'employee_name' => $emp->name,
+                    'position' => $emp->position,
+                    'attendance' => $rowAttendance,
+                ];
+            }
+
+            $filename = sprintf('absensi-ibadah-mingguan-%s-to-%s.xlsx', $weekStart->format('Y-m-d'), $weekEnd->format('Y-m-d'));
+            $periodLabel = $weekStart->isoFormat('DD MMM') . ' - ' . $weekEnd->isoFormat('DD MMM Y');
+            $globalSummary = array_merge(['employees' => count($employees), 'work_days' => count($workDaysList)], $global);
+
+            return Excel::download(
+                new MonthlyWorshipAttendanceCalendarExport(
+                    $attendanceData,
+                    $workDaysList,
+                    $weekStart->month,
+                    $weekStart->year,
+                    'weekly',
+                    $periodLabel,
+                    $globalSummary
+                ),
+                $filename
+            );
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error exporting weekly worship attendance', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengekspor data absensi ibadah mingguan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Normalisasi status mentah menjadi salah satu dari: present|late|leave|izin|absent
+     */
+    private function normalizeStatus(string $status): string
+    {
+        switch ($status) {
+            case 'hadir':
+            case 'present_ontime':
+            case 'present':
+                return 'present';
+            case 'terlambat':
+            case 'present_late':
+            case 'late':
+                return 'late';
+            case 'cuti':
+            case 'on_leave':
+            case 'sick_leave':
+            case 'leave':
+                return 'leave';
+            case 'izin':
+            case 'permit':
+                return 'izin';
+            case 'absen':
+            case 'no_data':
+            case 'absent':
+            default:
+                return 'absent';
+        }
+    }
+
+    /**
+     * Bobot prioritas status: leave > izin > late > present > absent
+     */
+    private function statusPriority(string $status): int
+    {
+        $map = [
+            'absent' => 0,
+            'present' => 1,
+            'late' => 2,
+            'izin' => 3,
+            'leave' => 4,
+        ];
+        return $map[$status] ?? 0;
+    }
+}

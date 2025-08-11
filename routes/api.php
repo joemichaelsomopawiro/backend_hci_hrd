@@ -380,19 +380,19 @@ Route::prefix('employee-sync')->middleware(['auth:sanctum'])->group(function () 
 // ===== GA DASHBOARD ROUTES =====
 // Routes untuk GA Dashboard - OPEN TO ALL USERS - Menampilkan SEMUA data tanpa batasan role
 Route::prefix('ga-dashboard')->middleware(['auth:sanctum'])->group(function () {
-    // Worship attendance routes - open to all users
+    // Worship attendance routes
     Route::get('/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
     Route::get('/worship-attendance/week', [GaDashboardController::class, 'getWorshipAttendanceWeek']);
     Route::get('/worship-attendance/month', [GaDashboardController::class, 'getWorshipAttendanceMonth']);
+        Route::get('/worship-attendance/export-month', [GaDashboardController::class, 'exportWorshipAttendanceMonth']);
+    Route::get('/worship-attendance/export-week', [GaDashboardController::class, 'exportWorshipAttendanceWeek']);
     Route::get('/worship-attendance/all', [GaDashboardController::class, 'getWorshipAttendanceAll']);
     Route::get('/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
     
-    // Manual worship attendance routes - open to all users
-    Route::post('/manual-worship-attendance', [ManualWorshipAttendanceController::class, 'store']);
+    // Manual worship attendance routes
     Route::get('/employees-for-manual-input', [ManualWorshipAttendanceController::class, 'getEmployeesForManualInput']);
+    Route::post('/manual-worship-attendance', [ManualWorshipAttendanceController::class, 'store']);
     Route::post('/update-existing-worship-data', [ManualWorshipAttendanceController::class, 'updateExistingData']);
-    
-    // Export routes - open to all users
     Route::get('/export-worship-attendance', [GaDashboardController::class, 'exportWorshipAttendance']);
     Route::get('/export-leave-requests', [GaDashboardController::class, 'exportLeaveRequests']);
     
