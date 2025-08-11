@@ -24,7 +24,7 @@ class ManualWorshipAttendanceRequest extends FormRequest
             'tanggal' => 'required|date|after_or_equal:2020-01-01',
             'attendance_data' => 'required|array|min:1',
             'attendance_data.*.employee_id' => 'required|integer|exists:employees,id',
-            'attendance_data.*.status' => 'required|in:present,late,absent,izin'
+            'attendance_data.*.status' => 'required|in:present,late,absent,izin,leave'
         ];
     }
 
@@ -44,7 +44,7 @@ class ManualWorshipAttendanceRequest extends FormRequest
             'attendance_data.*.employee_id.integer' => 'ID pegawai harus berupa angka',
             'attendance_data.*.employee_id.exists' => 'Pegawai tidak ditemukan',
             'attendance_data.*.status.required' => 'Status absensi harus diisi',
-            'attendance_data.*.status.in' => 'Status harus present, late, absent, atau izin'
+            'attendance_data.*.status.in' => 'Status harus present, late, absent, izin, atau leave'
         ];
     }
 

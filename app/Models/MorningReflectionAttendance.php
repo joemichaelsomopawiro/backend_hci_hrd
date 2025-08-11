@@ -33,6 +33,7 @@ class MorningReflectionAttendance extends Model
     const STATUS_TERLAMBAT = 'Terlambat';
     const STATUS_ABSEN = 'Absen';
     const STATUS_IZIN = 'izin';
+    const STATUS_CUTI = 'Cuti';
 
     public static function getValidStatuses()
     {
@@ -40,7 +41,8 @@ class MorningReflectionAttendance extends Model
             self::STATUS_HADIR,
             self::STATUS_TERLAMBAT,
             self::STATUS_ABSEN,
-            self::STATUS_IZIN
+            self::STATUS_IZIN,
+            self::STATUS_CUTI
         ];
     }
 

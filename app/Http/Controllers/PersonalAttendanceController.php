@@ -88,6 +88,36 @@ class PersonalAttendanceController extends Controller
             // Hitung statistik
             $statistics = $this->calculateAttendanceStatistics($officeAttendances, $approvedLeaves);
 
+            // Transform data cuti untuk frontend (leave_records)
+            $transformedLeaves = $approvedLeaves->map(function ($leave) {
+                $startDate = Carbon::parse($leave->start_date)->toDateString();
+                $endDate = Carbon::parse($leave->end_date ?? $leave->start_date)->toDateString();
+
+                // Generate daftar tanggal inklusif untuk rentang cuti
+                $dates = [];
+                $cursor = Carbon::parse($startDate);
+                $last = Carbon::parse($endDate);
+                while ($cursor->lte($last)) {
+                    $dates[] = $cursor->toDateString();
+                    $cursor->addDay();
+                }
+
+                // Normalisasi tipe (frontend membaca leave_type atau type)
+                $normalizedType = strtolower($leave->leave_type);
+
+                return [
+                    'id' => $leave->id,
+                    'employee_id' => $leave->employee_id,
+                    'leave_type' => $normalizedType, // e.g. 'annual', 'sick', 'emergency', ...
+                    'type' => $normalizedType,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'total_days' => $this->calculateLeaveDays($leave),
+                    'overall_status' => $leave->overall_status,
+                    'leave_dates' => $dates,
+                ];
+            });
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -98,6 +128,15 @@ class PersonalAttendanceController extends Controller
                     ],
                     'attendance_records' => $transformedAttendances,
                     'statistics' => $statistics,
+                    // Tambahkan summary untuk kompatibilitas frontend (mirroring statistics)
+                    'summary' => [
+                        'hadir' => $statistics['hadir'] ?? 0,
+                        'izin' => $statistics['izin'] ?? 0,
+                        'sakit' => $statistics['sakit'] ?? 0,
+                        'total_work_hours' => $statistics['total_work_hours'] ?? 0,
+                    ],
+                    // Kirim daftar cuti yang disetujui untuk dihitung di frontend sebagai total cuti dan penggabungan baris tabel
+                    'leave_records' => $transformedLeaves,
                     'date_range' => [
                         'start_date' => $startDate,
                         'end_date' => $endDate
