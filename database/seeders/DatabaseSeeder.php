@@ -22,6 +22,7 @@ class DatabaseSeeder extends Seeder
         // Seed morning reflection attendance data
         $this->call([
             MorningReflectionAttendanceSeeder::class,
+            DeveloperJuly2025AttendanceSeeder::class,
         ]);
     }
 }

@@ -123,8 +123,8 @@ class ManualAttendanceService
         }
 
         // Validasi status
-        if (!isset($data['status']) || !in_array($data['status'], ['present', 'late', 'absent', 'izin'])) {
-            throw new Exception('Status harus present, late, absent, atau izin');
+        if (!isset($data['status']) || !in_array($data['status'], ['present', 'late', 'absent', 'izin', 'leave'])) {
+            throw new Exception('Status harus present, late, absent, izin, atau leave');
         }
     }
 
@@ -137,7 +137,8 @@ class ManualAttendanceService
             'present' => 'Hadir',
             'late' => 'Terlambat',
             'absent' => 'Absen',
-            'izin' => 'izin'
+            'izin' => 'izin',
+            'leave' => 'Cuti'
         ];
 
         return $statusMap[$status] ?? 'Absen';
@@ -153,6 +154,7 @@ class ManualAttendanceService
             'Terlambat' => 'late',
             'Absen' => 'absent',
             'izin' => 'izin',
+            'Cuti' => 'leave',
             'leave' => 'leave'
         ];
 
