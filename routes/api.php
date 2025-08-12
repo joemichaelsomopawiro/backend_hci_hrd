@@ -116,10 +116,19 @@ Route::prefix('leave-quotas')->group(function () {
 // Leave Request Routes (Sudah Disederhanakan dan Benar)
 Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     Route::get('/', [LeaveRequestController::class, 'index']);
+    Route::get('/{id}', [LeaveRequestController::class, 'show']);
     Route::post('/', [LeaveRequestController::class, 'store']);
     Route::put('/{id}/approve', [LeaveRequestController::class, 'approve']);
+    // Alternatif untuk upload file (multipart) menggunakan POST
+    Route::post('/{id}/approve', [LeaveRequestController::class, 'approve']);
     Route::put('/{id}/reject', [LeaveRequestController::class, 'reject']);
     Route::delete('/{id}', [LeaveRequestController::class, 'destroy']);
+    // Download surat cuti (PDF) - akan diimplementasikan di langkah berikutnya
+    Route::get('/{id}/letter', [LeaveRequestController::class, 'downloadLetter'] ?? function() {
+        return response()->json(['success'=>false,'message'=>'Letter generation not implemented'], 501);
+    });
+    // Upload tanda tangan atasan (opsional, jika tidak terunggah saat approve)
+    Route::post('/{id}/approver-signature', [LeaveRequestController::class, 'uploadApproverSignature']);
 });
 
 // Attendance Routes - Solution X304 Integration

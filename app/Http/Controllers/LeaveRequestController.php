@@ -10,6 +10,9 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse; 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log; 
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
+// use Barryvdh\DomPDF\Facade\Pdf; // Aktifkan setelah paket diinstall
 
 class LeaveRequestController extends Controller 
 { 
@@ -120,6 +123,11 @@ class LeaveRequestController extends Controller
             'start_date' => 'required|date', 
             'end_date' => 'required|date|after_or_equal:start_date', 
             'reason' => 'required|string|max:1000', 
+            'notes' => 'nullable|string',
+            'leave_location' => 'nullable|string|max:255',
+            'contact_phone' => 'nullable|string|max:50',
+            'emergency_contact' => 'nullable|string|max:50',
+            'employee_signature' => 'nullable|image|mimes:png,jpg,jpeg,webp|max:2048',
         ]); 
         
         // Validasi khusus untuk tanggal masa lalu (hanya untuk non-emergency leave)
@@ -188,6 +196,29 @@ class LeaveRequestController extends Controller
             'notes' => $request->notes, // `notes` bisa datang dari form, misal 'serah terima pekerjaan'
             'overall_status' => 'pending', 
         ]); 
+
+        // Simpan field opsional hanya jika kolom tersedia
+        $optionalUpdates = [];
+        if (Schema::hasColumn('leave_requests', 'leave_location')) {
+            $optionalUpdates['leave_location'] = $request->leave_location;
+        }
+        if (Schema::hasColumn('leave_requests', 'contact_phone')) {
+            $optionalUpdates['contact_phone'] = $request->contact_phone;
+        }
+        // Jika frontend mengirim emergency_contact, gunakan sebagai contact_phone jika kolom ada
+        if (Schema::hasColumn('leave_requests', 'contact_phone') && $request->filled('emergency_contact')) {
+            $optionalUpdates['contact_phone'] = $request->emergency_contact;
+        }
+
+        if (!empty($optionalUpdates)) {
+            $leaveRequest->update($optionalUpdates);
+        }
+
+        // Simpan tanda tangan pegawai bila kolom tersedia dan file dikirim
+        if ($request->hasFile('employee_signature') && Schema::hasColumn('leave_requests', 'employee_signature_path')) {
+            $path = $request->file('employee_signature')->store("signatures/leave/{$leaveRequest->id}", 'public');
+            $leaveRequest->update(['employee_signature_path' => $path]);
+        }
         
         return response()->json([ 
             'success' => true, 
@@ -257,12 +288,38 @@ class LeaveRequestController extends Controller
             return response()->json(['success' => false, 'message' => 'Anda tidak memiliki wewenang untuk menyetujui permohonan ini'], 403); 
         } 
 
-        $leaveRequest->update([ 
-            'overall_status' => 'approved', 
-            'approved_by' => $user->employee_id, 
-            'approved_at' => now(), 
-            'notes' => $request->notes, 
-        ]); 
+        // Validasi fleksibel: hanya validasi field yang memang dikirim
+        $rules = [
+            'notes' => 'nullable|string',
+        ];
+        if ($request->hasFile('approver_signature')) {
+            $rules['approver_signature'] = 'file|mimes:png,jpg,jpeg,webp|max:5120';
+        } elseif ($request->filled('approver_signature_base64')) {
+            $rules['approver_signature_base64'] = 'string';
+        }
+        $request->validate($rules);
+        Log::info('Approve request debug', [
+            'leave_request_id' => $leaveRequest->id,
+            'has_file' => $request->hasFile('approver_signature'),
+            'has_base64' => $request->filled('approver_signature_base64'),
+            'content_type' => $request->header('Content-Type'),
+        ]);
+
+        $updates = [
+            'overall_status' => 'approved',
+            'approved_by' => $user->employee_id,
+            'approved_at' => now(),
+            'notes' => $request->notes,
+        ];
+
+        // Simpan tanda tangan atasan dengan dukungan beberapa field dan base64
+        $storedPath = $this->storeApproverSignatureIfProvided($request, $leaveRequest->id);
+        if ($storedPath) {
+            $updates['approver_signature_path'] = $storedPath;
+            Log::info('Approver signature uploaded', ['leave_request_id' => $leaveRequest->id, 'path' => $storedPath, 'approver_employee_id' => $user->employee_id]);
+        }
+
+        $leaveRequest->update($updates);
 
         $leaveRequest->updateLeaveQuota(); 
 
@@ -350,4 +407,231 @@ class LeaveRequestController extends Controller
             'message' => 'Permohonan cuti berhasil dibatalkan.' 
         ]); 
     } 
+
+    /**
+     * Generate dan download surat cuti (PDF)
+     */
+    public function downloadLetter($id)
+    {
+        $leave = LeaveRequest::with(['employee.user', 'approvedBy.user'])->findOrFail($id);
+
+        if ($leave->overall_status !== 'approved') {
+            return response()->json(['success' => false, 'message' => 'Surat hanya tersedia untuk permohonan yang disetujui'], 400);
+        }
+
+        // Siapkan data sederhana untuk template
+        $employee = $leave->employee;
+
+        // Siapkan data URI untuk tanda tangan agar aman dipakai di PDF/HTML
+        $employeeSignaturePath = $leave->employee_signature_path;
+        $approverSignaturePath = $leave->approver_signature_path;
+
+        $guessMime = function (string $path): string {
+            $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+            return match ($ext) {
+                'jpg', 'jpeg' => 'image/jpeg',
+                'png' => 'image/png',
+                'webp' => 'image/webp',
+                default => 'image/png',
+            };
+        };
+
+        $toDataUri = function (?string $path) use ($guessMime): ?string {
+            if (!$path) { return null; }
+            // Normal public disk path
+            if (Storage::disk('public')->exists($path)) {
+                $mime = $guessMime($path);
+                return 'data:' . $mime . ';base64,' . base64_encode(Storage::disk('public')->get($path));
+            }
+            // Path dimulai dengan storage/
+            if (str_starts_with($path, 'storage/')) {
+                $relative = substr($path, strlen('storage/'));
+                if (Storage::disk('public')->exists($relative)) {
+                    $mime = $guessMime($relative);
+                    return 'data:' . $mime . ';base64,' . base64_encode(Storage::disk('public')->get($relative));
+                }
+            }
+            // Absolute file path
+            if (file_exists($path)) {
+                $mime = $guessMime($path);
+                return 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($path));
+            }
+            // URL http(s)
+            if (preg_match('#^https?://#i', $path)) {
+                try {
+                    $content = @file_get_contents($path);
+                    if ($content !== false) {
+                        $mime = $guessMime($path);
+                        return 'data:' . $mime . ';base64,' . base64_encode($content);
+                    }
+                } catch (\Throwable $e) {
+                    // ignore
+                }
+            }
+            return null;
+        };
+
+        $employeeSignatureDataUri = $toDataUri($employeeSignaturePath);
+        $approverSignatureDataUri = $toDataUri($approverSignaturePath);
+
+        // Fallback: pakai signature dari profil atasan jika ada
+        if (!$approverSignatureDataUri) {
+            $profileSig = $leave->approvedBy->user->signature_path ?? $leave->approvedBy->signature_path ?? null;
+            $approverSignatureDataUri = $toDataUri($profileSig);
+            Log::info('Approver signature fallback used', [
+                'leave_request_id' => $leave->id,
+                'fallback_source' => $profileSig ? 'profile_signature_path' : 'none',
+                'has_data_uri' => (bool) $approverSignatureDataUri,
+            ]);
+        }
+
+        // Format rentang tanggal seperti contoh (satu tahun di akhir bila memungkinkan)
+        $start = Carbon::parse($leave->start_date)->locale('id');
+        $end = Carbon::parse($leave->end_date)->locale('id');
+        if ($start->year === $end->year) {
+            if ($start->month === $end->month) {
+                $dateRange = $start->translatedFormat('j F') . ' - ' . $end->translatedFormat('j F Y');
+            } else {
+                $dateRange = $start->translatedFormat('j F') . ' - ' . $end->translatedFormat('j F Y');
+            }
+        } else {
+            $dateRange = $start->translatedFormat('j F Y') . ' - ' . $end->translatedFormat('j F Y');
+        }
+
+        // Coba ambil logo perusahaan dari public/images atau favicon
+        $logoCandidates = [
+            public_path('images/image.png'),
+            public_path('images/hope_logo.png'),
+            public_path('images/hope-logo.png'),
+            public_path('images/logo_hope_channel.png'),
+            public_path('favicon.ico'),
+        ];
+        $companyLogoDataUri = null;
+        foreach ($logoCandidates as $logoPath) {
+            if ($logoPath && file_exists($logoPath)) {
+                $mime = function_exists('mime_content_type') ? mime_content_type($logoPath) : 'image/png';
+                $companyLogoDataUri = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($logoPath));
+                break;
+            }
+        }
+
+        $approver = $leave->approvedBy;
+        $approverName = $approver?->nama_lengkap ?? $approver?->name ?? 'Atasan';
+        $approverPosition = $approver?->jabatan_saat_ini ?? $approver?->user?->role ?? 'Manager Program';
+
+        $employeePosition = $employee->jabatan_saat_ini ?? $employee->jabatan ?? $employee->user?->role ?? '-';
+
+        $data = [
+            'employee_name' => $employee->nama_lengkap ?? $employee->name ?? 'Nama Pegawai',
+            'employee_position' => $employeePosition,
+            'date_range_text' => $dateRange,
+            'total_days' => $leave->total_days,
+            'leave_type' => $leave->leave_type,
+            'letter_date' => now()->locale('id')->translatedFormat('j F Y'),
+            'city' => 'Jakarta',
+            'year' => $start->year,
+            'employee_signature_path' => $employeeSignaturePath ? (storage_path('app/public/' . $employeeSignaturePath)) : null,
+            'approver_signature_path' => $approverSignaturePath ? (storage_path('app/public/' . $approverSignaturePath)) : null,
+            'employee_signature_data_uri' => $employeeSignatureDataUri,
+            'approver_signature_data_uri' => $approverSignatureDataUri,
+            'leave_location' => $leave->leave_location,
+            'contact_phone' => $leave->contact_phone,
+            'emergency_contact' => $leave->emergency_contact ?? $leave->contact_phone,
+            'approver_name' => $approverName,
+            'approver_position' => $approverPosition,
+            'company_logo_data_uri' => $companyLogoDataUri,
+            'company_name' => 'HOPE CHANNEL INDONESIA',
+            'company_address_lines' => [
+                '2nd Floor Gedung Pertemuan Advent',
+                'Jl. M. T. Haryono Kav. 4-5 Block A - Jakarta 12810',
+                '🕿 62.21.8379 7879 / 8379 7883 ● 🖂: info@hopetv.or.id  ● www.hopechannel.id',
+            ],
+        ];
+
+        // Jika paket dompdf telah terpasang, hasilkan PDF
+        if (class_exists(\Barryvdh\DomPDF\Facade\Pdf::class)) {
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdfs.leave_letter_simple', $data)->setPaper('A4');
+            return $pdf->download('surat_cuti_' . $leave->id . '.pdf');
+        }
+
+        // Fallback: render HTML jika PDF belum tersedia
+        return response()->view('pdfs.leave_letter_simple', $data, 200)->header('Content-Type', 'text/html; charset=UTF-8');
+    }
+
+    /**
+     * Show detail leave request (untuk debug/verifikasi tanda tangan)
+     */
+    public function show($id): JsonResponse
+    {
+        $leave = LeaveRequest::with(['employee.user', 'approvedBy.user'])->findOrFail($id);
+        return response()->json([
+            'success' => true,
+            'data' => $leave,
+            'debug' => [
+                'has_employee_signature' => (bool) $leave->employee_signature_path,
+                'has_approver_signature' => (bool) $leave->approver_signature_path,
+                'employee_signature_path' => $leave->employee_signature_path,
+                'approver_signature_path' => $leave->approver_signature_path,
+            ]
+        ]);
+    }
+
+    /**
+     * Upload/ubah tanda tangan atasan terpisah dari proses approve
+     */
+    public function uploadApproverSignature(Request $request, $id): JsonResponse
+    {
+        $leaveRequest = LeaveRequest::findOrFail($id);
+
+        // Terima file dari beberapa nama field atau base64
+        $path = $this->storeApproverSignatureIfProvided($request, $leaveRequest->id, true);
+        if (!$path) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File tanda tangan tidak ditemukan pada permintaan.'
+            ], 422);
+        }
+        $leaveRequest->approver_signature_path = $path;
+        $leaveRequest->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Tanda tangan atasan berhasil diunggah',
+            'data' => $leaveRequest,
+        ]);
+    }
+
+    /**
+     * Simpan tanda tangan atasan dari request (mendukung field: approver_signature|signature|file atau base64: approver_signature_base64)
+     * Mengembalikan relative path di disk public atau null jika tidak ada.
+     */
+    private function storeApproverSignatureIfProvided(Request $request, int $leaveRequestId, bool $validate = false): ?string
+    {
+        $fileKeys = ['approver_signature', 'signature', 'file'];
+        foreach ($fileKeys as $key) {
+            if ($request->hasFile($key)) {
+                if ($validate) {
+                    $request->validate([
+                        $key => 'required|image|mimes:png,jpg,jpeg,webp|max:2048',
+                    ]);
+                }
+                return $request->file($key)->store("signatures/leave/{$leaveRequestId}", 'public');
+            }
+        }
+
+        // Dukungan base64
+        $base64 = $request->input('approver_signature_base64');
+        if (is_string($base64) && str_contains($base64, 'base64,')) {
+            [$meta, $data] = explode('base64,', $base64, 2);
+            $binary = base64_decode($data, true);
+            if ($binary !== false) {
+                $ext = str_contains($meta, 'image/png') ? 'png' : (str_contains($meta, 'image/webp') ? 'webp' : 'jpg');
+                $relativePath = "signatures/leave/{$leaveRequestId}/approver_signature_" . time() . ".{$ext}";
+                Storage::disk('public')->put($relativePath, $binary);
+                return $relativePath;
+            }
+        }
+
+        return null;
+    }
 }
