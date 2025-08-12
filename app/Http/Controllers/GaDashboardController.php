@@ -1631,7 +1631,7 @@ class GaDashboardController extends Controller
             }
 
             $filename = sprintf('absensi-ibadah-bulanan-%s.xlsx', $startOfMonth->format('Y-m'));
-            $periodLabel = $startOfMonth->isoFormat('MMMM Y');
+            $periodLabel = $this->formatMonthYearIndo($startOfMonth);
             $globalSummary = array_merge(['employees' => count($employees), 'work_days' => count($workDaysList)], $global);
 
             return Excel::download(
@@ -1769,7 +1769,7 @@ class GaDashboardController extends Controller
             }
 
             $filename = sprintf('absensi-ibadah-mingguan-%s-to-%s.xlsx', $weekStart->format('Y-m-d'), $weekEnd->format('Y-m-d'));
-            $periodLabel = $weekStart->isoFormat('DD MMM') . ' - ' . $weekEnd->isoFormat('DD MMM Y');
+            $periodLabel = $this->formatDayMonthIndo($weekStart) . ' - ' . $this->formatDayMonthIndo($weekEnd) . ' ' . $weekEnd->format('Y');
             $globalSummary = array_merge(['employees' => count($employees), 'work_days' => count($workDaysList)], $global);
 
             return Excel::download(
@@ -1841,5 +1841,31 @@ class GaDashboardController extends Controller
             'leave' => 4,
         ];
         return $map[$status] ?? 0;
+    }
+
+    /**
+     * Format "MMMM YYYY" (Bahasa Indonesia) tanpa ext-intl
+     */
+    private function formatMonthYearIndo(Carbon $date): string
+    {
+        $months = [
+            1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April', 5 => 'Mei', 6 => 'Juni',
+            7 => 'Juli', 8 => 'Agustus', 9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember'
+        ];
+        $monthName = $months[(int)$date->format('n')] ?? $date->format('F');
+        return $monthName . ' ' . $date->format('Y');
+    }
+
+    /**
+     * Format "DD MMM" (Bahasa Indonesia) tanpa ext-intl
+     */
+    private function formatDayMonthIndo(Carbon $date): string
+    {
+        $monthsShort = [
+            1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'Mei', 6 => 'Jun',
+            7 => 'Jul', 8 => 'Agu', 9 => 'Sep', 10 => 'Okt', 11 => 'Nov', 12 => 'Des'
+        ];
+        $month = $monthsShort[(int)$date->format('n')] ?? $date->format('M');
+        return $date->format('d') . ' ' . $month;
     }
 }
