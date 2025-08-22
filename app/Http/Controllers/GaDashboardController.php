@@ -1504,17 +1504,7 @@ class GaDashboardController extends Controller
      */
     private function mapAttendanceStatus($status)
     {
-        $statusMap = [
-            'Hadir' => 'present',
-            'Terlambat' => 'late',
-            'Absen' => 'absent',
-            'izin' => 'izin',
-            'present' => 'present',
-            'late' => 'late',
-            'absent' => 'absent'
-        ];
-
-        return $statusMap[$status] ?? 'absent';
+        return $this->normalizeStatus(strtolower($status));
     }
 
     /**
