@@ -34,8 +34,8 @@ class NationalHolidayController extends Controller
             ], 401);
         }
         
-        // Cek apakah user adalah HR
-        if (!in_array(Auth::user()->role, ['HR'])) {
+        // Cek apakah user adalah HR atau Program Manager
+        if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak memiliki akses untuk menambah hari libur'
@@ -67,8 +67,8 @@ class NationalHolidayController extends Controller
 
     public function update(Request $request, $id)
     {
-        // Cek apakah user adalah HR
-        if (!in_array(Auth::user()->role, ['HR'])) {
+        // Cek apakah user adalah HR atau Program Manager
+        if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak memiliki akses untuk mengedit hari libur'
@@ -107,8 +107,8 @@ class NationalHolidayController extends Controller
 
     public function destroy($id)
     {
-        // Cek apakah user adalah HR
-        if (!in_array(Auth::user()->role, ['HR'])) {
+        // Cek apakah user adalah HR atau Program Manager
+        if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak memiliki akses untuk menghapus hari libur'
@@ -201,8 +201,8 @@ class NationalHolidayController extends Controller
 
     public function seedHolidays(Request $request)
     {
-        // Cek apakah user adalah HR
-        if (!in_array(Auth::user()->role, ['HR'])) {
+        // Cek apakah user adalah HR atau Program Manager
+        if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak memiliki akses untuk seed hari libur'
@@ -264,8 +264,8 @@ class NationalHolidayController extends Controller
 
     public function bulkSeedYears(Request $request)
     {
-        // Cek apakah user adalah HR
-        if (!in_array(Auth::user()->role, ['HR'])) {
+        // Cek apakah user adalah HR atau Program Manager
+        if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak memiliki akses untuk bulk seed hari libur'
@@ -296,8 +296,8 @@ class NationalHolidayController extends Controller
 
     public function createRecurringHoliday(Request $request)
     {
-        // Cek apakah user adalah HR
-        if (!in_array(Auth::user()->role, ['HR'])) {
+        // Cek apakah user adalah HR atau Program Manager
+        if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak memiliki akses untuk membuat hari libur berulang'
@@ -349,8 +349,8 @@ class NationalHolidayController extends Controller
 
     public function createMonthlyHoliday(Request $request)
     {
-        // Cek apakah user adalah HR
-        if (!in_array(Auth::user()->role, ['HR'])) {
+        // Cek apakah user adalah HR atau Program Manager
+        if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak memiliki akses untuk membuat hari libur bulanan'
@@ -399,8 +399,8 @@ class NationalHolidayController extends Controller
 
     public function createDateRangeHoliday(Request $request)
     {
-        // Cek apakah user adalah HR
-        if (!in_array(Auth::user()->role, ['HR'])) {
+        // Cek apakah user adalah HR atau Program Manager
+        if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak memiliki akses untuk membuat hari libur rentang tanggal'

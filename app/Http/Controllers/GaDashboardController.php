@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Exception;
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\MonthlyWorshipAttendanceCalendarExport;
 
 
 
@@ -25,20 +27,32 @@ class GaDashboardController extends Controller
         try {
             $dateFilter = $request->date;
             $allData = $request->boolean('all', false);
+            $period = $request->get('period'); // Parameter period baru dari frontend
+            $startDateParam = $request->get('start_date'); // Parameter start_date dari frontend
             $attendanceMethod = $request->get('attendance_method'); // Filter baru untuk metode absensi
             
             Log::info('GA Dashboard: Loading worship attendance data', [
                 'date_filter' => $dateFilter,
                 'all_data' => $allData,
+                'period' => $period,
+                'start_date_param' => $startDateParam,
                 'attendance_method' => $attendanceMethod,
                 'user_id' => auth()->id()
             ]);
 
-            // Tentukan rentang tanggal
+            // Tentukan rentang tanggal berdasarkan parameter
             if ($allData) {
                 // Jika meminta semua data, ambil 30 hari terakhir
                 $startDate = Carbon::now()->subDays(30)->toDateString();
                 $endDate = Carbon::now()->toDateString();
+            } elseif ($period === 'week' && $startDateParam) {
+                // Period mingguan dari start_date yang diberikan
+                $startDate = $startDateParam;
+                $endDate = Carbon::parse($startDateParam)->addDays(6)->toDateString();
+            } elseif ($period === 'month' && $startDateParam) {
+                // Period bulanan dari start_date yang diberikan
+                $startDate = $startDateParam;
+                $endDate = Carbon::parse($startDateParam)->endOfMonth()->toDateString();
             } elseif ($dateFilter) {
                 // Jika ada filter tanggal, gunakan tanggal tersebut
                 $startDate = $dateFilter;
@@ -118,7 +132,415 @@ class GaDashboardController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan saat mengambil data absensi: ' . $e->getMessage()
+                'message' => 'Gagal mengambil data absensi renungan pagi',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan data absensi renungan pagi untuk periode mingguan (dari start_date hingga hari ini)
+     */
+    public function     getWorshipAttendanceWeek(Request $request)
+    {
+        try {
+            // Ambil start_date dari request, default ke awal minggu ini
+            $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->format('Y-m-d'));
+            
+            // Untuk periode week, ada 2 opsi logic:
+            // 1. Sampai hari ini (untuk data real-time) 
+            // 2. Seminggu penuh dari start_date (untuk historical data)
+            
+            $includeFullWeek = $request->boolean('full_week', true); // Default true untuk seminggu penuh
+            
+            if ($includeFullWeek) {
+                // Seminggu penuh: start_date + 6 hari (total 7 hari)
+                $endDate = Carbon::parse($startDate)->addDays(6)->format('Y-m-d');
+            } else {
+                // Sampai hari ini saja
+                $weekEndDate = Carbon::parse($startDate)->addDays(6)->format('Y-m-d');
+                $todayDate = Carbon::now()->format('Y-m-d');
+                $endDate = $weekEndDate <= $todayDate ? $weekEndDate : $todayDate;
+            }
+            
+            $attendanceMethod = $request->get('attendance_method');
+            
+            Log::info('GA Dashboard: Loading weekly worship attendance data', [
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'full_week' => $includeFullWeek,
+                'today' => Carbon::now()->format('Y-m-d'),
+                'attendance_method' => $attendanceMethod,
+                'user_id' => auth()->id()
+            ]);
+
+            // Validasi format tanggal
+            try {
+                Carbon::parse($startDate);
+            } catch (Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Format tanggal start_date tidak valid'
+                ], 400);
+            }
+
+            // Ambil data absensi renungan dalam rentang tanggal
+            $attendancesQuery = MorningReflectionAttendance::with(['employee.user'])
+                ->whereBetween('date', [$startDate, $endDate]);
+
+            // Filter berdasarkan metode absensi jika ada
+            if ($attendanceMethod) {
+                $attendancesQuery->byAttendanceMethod($attendanceMethod);
+            }
+
+            $attendances = $attendancesQuery->get();
+
+            // Ambil data cuti yang disetujui dalam rentang tanggal
+            $leaves = LeaveRequest::with(['employee.user'])
+                ->where('overall_status', 'approved')
+                ->where(function($query) use ($startDate, $endDate) {
+                    $query->whereBetween('start_date', [$startDate, $endDate])
+                          ->orWhereBetween('end_date', [$startDate, $endDate])
+                          ->orWhere(function($q) use ($startDate, $endDate) {
+                              $q->where('start_date', '<=', $startDate)
+                                ->where('end_date', '>=', $endDate);
+                          });
+                })
+                ->get();
+
+            // Gabungkan data absensi dan cuti
+            $combinedData = $this->mergeAllAttendanceAndLeave($attendances, $leaves, $startDate, $endDate);
+
+            // Transform data untuk frontend
+            $transformedData = $combinedData->map(function ($record) {
+                return [
+                    'id' => $record['id'],
+                    'employee_id' => $record['employee_id'],
+                    'employee_name' => $record['employee_name'],
+                    'employee' => [
+                        'nama_lengkap' => $record['employee_name'],
+                        'position' => $record['employee_position'] ?? '-',
+                        'jabatan_saat_ini' => $record['employee_position'] ?? '-'
+                    ],
+                    'date' => $record['date'],
+                    'join_time' => $record['join_time'],
+                    'attendance_time' => $record['join_time'] ? 
+                        Carbon::parse($record['join_time'])->format('H:i') : '-',
+                    'status' => $record['status'],
+                    'attendance_method' => $record['attendance_method'] ?? 'online',
+                    'attendance_source' => $record['attendance_source'] ?? 'zoom'
+                ];
+            });
+
+            Log::info('GA Dashboard: Weekly worship attendance data loaded', [
+                'total_records' => $transformedData->count(),
+                'start_date' => $startDate,
+                'end_date' => $endDate
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformedData,
+                'message' => 'Data absensi renungan pagi mingguan berhasil diambil',
+                'total_records' => $transformedData->count()
+            ], 200);
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error loading weekly worship attendance data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil data absensi renungan pagi mingguan',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan data absensi renungan pagi untuk periode bulanan (dari start_date hingga hari ini)
+     */
+    public function getWorshipAttendanceMonth(Request $request)
+    {
+        try {
+            // Ambil start_date dari request, default ke awal bulan ini
+            $startDate = $request->get('start_date', Carbon::now()->startOfMonth()->format('Y-m-d'));
+            $endDate = Carbon::now()->format('Y-m-d');
+            $attendanceMethod = $request->get('attendance_method');
+            
+            Log::info('GA Dashboard: Loading monthly worship attendance data', [
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'attendance_method' => $attendanceMethod,
+                'user_id' => auth()->id()
+            ]);
+
+            // Validasi format tanggal
+            try {
+                Carbon::parse($startDate);
+            } catch (Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Format tanggal start_date tidak valid'
+                ], 400);
+            }
+
+            // Ambil data absensi renungan dalam rentang tanggal
+            $attendancesQuery = MorningReflectionAttendance::with(['employee.user'])
+                ->whereBetween('date', [$startDate, $endDate]);
+
+            // Filter berdasarkan metode absensi jika ada
+            if ($attendanceMethod) {
+                $attendancesQuery->byAttendanceMethod($attendanceMethod);
+            }
+
+            $attendances = $attendancesQuery->get();
+
+            // Ambil data cuti yang disetujui dalam rentang tanggal
+            $leaves = LeaveRequest::with(['employee.user'])
+                ->where('overall_status', 'approved')
+                ->where(function($query) use ($startDate, $endDate) {
+                    $query->whereBetween('start_date', [$startDate, $endDate])
+                          ->orWhereBetween('end_date', [$startDate, $endDate])
+                          ->orWhere(function($q) use ($startDate, $endDate) {
+                              $q->where('start_date', '<=', $startDate)
+                                ->where('end_date', '>=', $endDate);
+                          });
+                })
+                ->get();
+
+            // Gabungkan data absensi dan cuti
+            $combinedData = $this->mergeAllAttendanceAndLeave($attendances, $leaves, $startDate, $endDate);
+
+            // Transform data untuk frontend
+            $transformedData = $combinedData->map(function ($record) {
+                return [
+                    'id' => $record['id'],
+                    'employee_id' => $record['employee_id'],
+                    'employee_name' => $record['employee_name'],
+                    'employee' => [
+                        'nama_lengkap' => $record['employee_name'],
+                        'position' => $record['employee_position'] ?? '-',
+                        'jabatan_saat_ini' => $record['employee_position'] ?? '-'
+                    ],
+                    'date' => $record['date'],
+                    'join_time' => $record['join_time'],
+                    'attendance_time' => $record['join_time'] ? 
+                        Carbon::parse($record['join_time'])->format('H:i') : '-',
+                    'status' => $record['status'],
+                    'attendance_method' => $record['attendance_method'] ?? 'online',
+                    'attendance_source' => $record['attendance_source'] ?? 'zoom'
+                ];
+            });
+
+            Log::info('GA Dashboard: Monthly worship attendance data loaded', [
+                'total_records' => $transformedData->count(),
+                'start_date' => $startDate,
+                'end_date' => $endDate
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformedData,  
+                'message' => 'Data absensi renungan pagi bulanan berhasil diambil',
+                'total_records' => $transformedData->count()
+            ], 200);
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error loading monthly worship attendance data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil data absensi renungan pagi bulanan',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan semua data absensi renungan pagi (tanpa batasan tanggal)
+     */
+    public function getWorshipAttendanceAll(Request $request)
+    {
+        try {
+            $attendanceMethod = $request->get('attendance_method');
+            
+            Log::info('GA Dashboard: Loading all worship attendance data', [
+                'attendance_method' => $attendanceMethod,
+                'user_id' => auth()->id()
+            ]);
+
+            // Ambil semua data absensi renungan
+            $attendancesQuery = MorningReflectionAttendance::with(['employee.user']);
+
+            // Filter berdasarkan metode absensi jika ada
+            if ($attendanceMethod) {
+                $attendancesQuery->byAttendanceMethod($attendanceMethod);
+            }
+
+            $attendances = $attendancesQuery->get();
+
+            // Ambil semua data cuti yang disetujui
+            $leaves = LeaveRequest::with(['employee.user'])
+                ->where('overall_status', 'approved')
+                ->get();
+
+            // Untuk semua data, kita perlu menentukan rentang tanggal dari data yang ada
+            $startDate = null;
+            $endDate = null;
+
+            if ($attendances->count() > 0) {
+                $startDate = $attendances->min('date');
+                $endDate = $attendances->max('date');
+            }
+
+            // Jika tidak ada data absensi, gunakan rentang default
+            if (!$startDate || !$endDate) {
+                $startDate = Carbon::now()->subDays(90)->format('Y-m-d');
+                $endDate = Carbon::now()->format('Y-m-d');
+            }
+
+            // Gabungkan data absensi dan cuti
+            $combinedData = $this->mergeAllAttendanceAndLeave($attendances, $leaves, $startDate, $endDate);
+
+            // Transform data untuk frontend
+            $transformedData = $combinedData->map(function ($record) {
+                return [
+                    'id' => $record['id'],
+                    'employee_id' => $record['employee_id'],
+                    'employee_name' => $record['employee_name'],
+                    'employee' => [
+                        'nama_lengkap' => $record['employee_name'],
+                        'position' => $record['employee_position'] ?? '-',
+                        'jabatan_saat_ini' => $record['employee_position'] ?? '-'
+                    ],
+                    'date' => $record['date'],
+                    'join_time' => $record['join_time'],
+                    'attendance_time' => $record['join_time'] ? 
+                        Carbon::parse($record['join_time'])->format('H:i') : '-',
+                    'status' => $record['status'],
+                    'attendance_method' => $record['attendance_method'] ?? 'online',
+                    'attendance_source' => $record['attendance_source'] ?? 'zoom'
+                ];
+            });
+
+            Log::info('GA Dashboard: All worship attendance data loaded', [
+                'total_records' => $transformedData->count(),
+                'date_range' => $startDate . ' to ' . $endDate
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformedData,
+                'message' => 'Data absensi renungan pagi berhasil diambil',
+                'total_records' => $transformedData->count()
+            ], 200);
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error loading all worship attendance data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil semua data absensi renungan pagi',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan SEMUA data absensi renungan pagi untuk fitur "Periode: Semua"
+     * Endpoint: GET /api/ga-dashboard/worship-attendance/all
+     * Mengembalikan seluruh data absensi tanpa batasan tanggal
+     */
+    public function getAllWorshipAttendanceAll(Request $request)
+    {
+        try {
+            $attendanceMethod = $request->get('attendance_method'); // Filter opsional untuk metode absensi
+            $page = $request->get('page', 1);
+            $perPage = $request->get('per_page', 50); // Default 50 records per page
+            
+            Log::info('GA Dashboard: Loading ALL worship attendance data for "Periode: Semua"', [
+                'attendance_method' => $attendanceMethod,
+                'page' => $page,
+                'per_page' => $perPage,
+                'user_id' => auth()->id()
+            ]);
+
+            // Ambil SEMUA data absensi renungan tanpa batasan tanggal
+            $attendancesQuery = MorningReflectionAttendance::with(['employee.user']);
+
+            // Filter berdasarkan metode absensi jika ada
+            if ($attendanceMethod) {
+                $attendancesQuery->byAttendanceMethod($attendanceMethod);
+            }
+
+            // Pagination untuk performa
+            $attendances = $attendancesQuery->orderBy('date', 'desc')
+                                          ->orderBy('created_at', 'desc')
+                                          ->paginate($perPage);
+
+            // Transform data untuk frontend
+            $transformedData = $attendances->getCollection()->map(function ($attendance) {
+                return [
+                    'id' => $attendance->id,
+                    'employee_id' => $attendance->employee_id,
+                    'name' => $attendance->employee ? $attendance->employee->nama_lengkap : 'Karyawan Tidak Ditemukan',
+                    'position' => $attendance->employee ? $attendance->employee->jabatan_saat_ini : '-',
+                    'date' => $attendance->date->format('Y-m-d'),
+                    'attendance_time' => $attendance->join_time ? 
+                        $attendance->join_time->format('H:i') : '-',
+                    'status' => $this->mapAttendanceStatus($attendance->status),
+                    'status_label' => $this->getStatusLabel($this->mapAttendanceStatus($attendance->status)),
+                    'testing_mode' => $attendance->testing_mode ?? false,
+                    'created_at' => $attendance->created_at->format('Y-m-d H:i:s'),
+                    'data_source' => 'attendance',
+                    'attendance_method' => $attendance->attendance_method ?? 'online',
+                    'attendance_source' => $attendance->attendance_source ?? 'zoom'
+                ];
+            });
+
+            Log::info('GA Dashboard: ALL worship attendance data loaded for "Periode: Semua"', [
+                'total_records' => $attendances->total(),
+                'current_page' => $attendances->currentPage(),
+                'per_page' => $attendances->perPage(),
+                'last_page' => $attendances->lastPage()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformedData,
+                'message' => 'Data absensi renungan pagi seluruh periode berhasil diambil',
+                'total_records' => $attendances->total(),
+                'current_page' => $attendances->currentPage(),
+                'per_page' => $attendances->perPage(),
+                'last_page' => $attendances->lastPage(),
+                'pagination' => [
+                    'current_page' => $attendances->currentPage(),
+                    'per_page' => $attendances->perPage(),
+                    'total' => $attendances->total(),
+                    'last_page' => $attendances->lastPage(),
+                    'from' => $attendances->firstItem(),
+                    'to' => $attendances->lastItem()
+                ]
+            ], 200);
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error loading ALL worship attendance data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data absensi seluruh periode: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -134,9 +556,8 @@ class GaDashboardController extends Controller
                 'user_id' => auth()->id()
             ]);
 
-            // Ambil hanya cuti yang sudah approved
+            // GA perlu melihat SEMUA status cuti untuk workflow management
             $query = LeaveRequest::with(['employee.user', 'approvedBy.user'])
-                ->where('overall_status', 'approved')
                 ->select([
                     'leave_requests.*',
                     'employees.nama_lengkap as employee_name',
@@ -153,12 +574,13 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $leaveRequests->map(function ($request) {
-                // Generate leave_dates dari start_date ke end_date, hanya hari renungan (Senin=1, Rabu=3, Jumat=5)
+                // Generate leave_dates dari start_date ke end_date, SEMUA hari kerja (Senin-Jumat)
                 $start = \Carbon\Carbon::parse($request->start_date);
                 $end = \Carbon\Carbon::parse($request->end_date);
                 $dates = [];
                 for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
-                    if (in_array($date->dayOfWeek, [1, 3, 5])) { // Senin, Rabu, Jumat
+                    // Include all work days (Monday-Friday) for GA Dashboard
+                    if (in_array($date->dayOfWeek, [1, 2, 3, 4, 5])) { // Senin-Jumat
                         $dates[] = $date->toDateString();
                     }
                 }
@@ -173,22 +595,19 @@ class GaDashboardController extends Controller
                                             ($request->employee->jabatan_saat_ini ?? '-')
                     ],
                     'leave_type' => $request->leave_type,
-                    'start_date' => $request->start_date,
-                    'end_date' => $request->end_date,
+                    'start_date' => $start->format('Y-m-d'),
+                    'end_date' => $end->format('Y-m-d'),
                     'total_days' => $request->total_days,
                     'reason' => $request->reason,
                     'notes' => $request->notes,
                     'overall_status' => $request->overall_status,
                     'status' => $request->overall_status, // Alias untuk kompatibilitas
                     'approved_by' => $request->approved_by,
-                    'approved_at' => $request->approved_at,
-                    'created_at' => $request->created_at,
-                    'updated_at' => $request->updated_at,
+                    'approved_at' => $request->approved_at ? Carbon::parse($request->approved_at)->format('Y-m-d H:i:s') : null,
+                    'created_at' => Carbon::parse($request->created_at)->format('Y-m-d H:i:s'),
+                    'updated_at' => Carbon::parse($request->updated_at)->format('Y-m-d H:i:s'),
                     'leave_dates' => $dates,
                 ];
-            })->filter(function($item) {
-                // Hanya tampilkan jika ada minimal satu hari renungan di leave_dates
-                return !empty($item['leave_dates']);
             });
 
             Log::info('GA Dashboard: Leave requests data loaded', [
@@ -230,6 +649,7 @@ class GaDashboardController extends Controller
             $late = $query->clone()->where('status', 'late')->count();
             $absent = $query->clone()->where('status', 'absent')->count();
             $leave = $query->clone()->where('status', 'leave')->count();
+            $izin = $query->clone()->where('status', 'izin')->count();
 
             return response()->json([
                 'success' => true,
@@ -239,6 +659,7 @@ class GaDashboardController extends Controller
                     'late' => $late,
                     'absent' => $absent,
                     'leave' => $leave,
+                    'izin' => $izin,
                     'date' => $dateFilter
                 ]
             ], 200);
@@ -903,8 +1324,9 @@ class GaDashboardController extends Controller
             $labels = [
                 'present' => 'Hadir',
                 'late' => 'Terlambat',
-                'absent' => 'Tidak Hadir',
+                'absent' => 'Absen',
                 'leave' => 'Cuti',
+                'izin' => 'Izin',
                 'not_worship_day' => 'Bukan Jadwal'
             ];
         }
@@ -1082,17 +1504,358 @@ class GaDashboardController extends Controller
      */
     private function mapAttendanceStatus($status)
     {
-        $statusMap = [
-            'Hadir' => 'present',
-            'Terlambat' => 'late',
-            'Absen' => 'absent',
-            'present' => 'present',
-            'late' => 'late',
-            'absent' => 'absent'
-        ];
-
-        return $statusMap[$status] ?? 'absent';
+        return $this->normalizeStatus(strtolower($status));
     }
 
+    /**
+     * Export monthly worship attendance data to Excel
+     */
+    public function exportWorshipAttendanceMonth(Request $request)
+    {
+        try {
+            $request->validate([
+                'start_date' => 'required|date_format:Y-m-d',
+                'timezone' => 'nullable|string',
+                'exclude_holidays' => 'nullable|boolean'
+            ]);
 
-} 
+            $tz = $request->get('timezone', config('app.timezone', 'Asia/Jakarta'));
+            $startDate = Carbon::parse($request->get('start_date'), $tz)->timezone('Asia/Jakarta');
+            $startOfMonth = $startDate->copy()->startOfMonth();
+            $endOfMonth = $startDate->copy()->endOfMonth();
+
+            // Generate work days (Mon-Fri)
+            $workDaysList = [];
+            for ($d = $startOfMonth->copy(); $d->lte($endOfMonth); $d->addDay()) {
+                if ($d->isWeekday()) {
+                    $workDaysList[] = $d->format('Y-m-d');
+                }
+            }
+
+            // Fetch employees
+            $employees = Employee::select('id', 'nama_lengkap as name', 'jabatan_saat_ini as position')
+                ->orderBy('nama_lengkap')
+                ->get();
+
+            // Fetch attendance records
+            $attendances = MorningReflectionAttendance::select('employee_id', 'date', 'status')
+                ->whereBetween('date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                ->get();
+
+            // Fetch approved leaves overlapping month
+            $leaves = LeaveRequest::select('employee_id', 'start_date', 'end_date')
+                ->where('overall_status', 'approved')
+                ->where(function($q) use ($startOfMonth, $endOfMonth) {
+                    $q->whereBetween('start_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                      ->orWhereBetween('end_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                      ->orWhere(function($qq) use ($startOfMonth, $endOfMonth) {
+                          $qq->where('start_date', '<=', $startOfMonth->toDateString())
+                             ->where('end_date', '>=', $endOfMonth->toDateString());
+                      });
+                })->get();
+
+            // Build status grid per employee per date with priority
+            $grid = [];
+            foreach ($employees as $emp) {
+                $grid[$emp->id] = [];
+            }
+
+            // Apply attendance statuses
+            foreach ($attendances as $row) {
+                $date = Carbon::parse($row->date)->format('Y-m-d');
+                $status = strtolower($row->status);
+                $status = $this->normalizeStatus($status);
+                if (!in_array($date, $workDaysList, true)) continue; // weekdays only
+                $current = $grid[$row->employee_id][$date] ?? 'absent';
+                if ($this->statusPriority($status) > $this->statusPriority($current)) {
+                    $grid[$row->employee_id][$date] = $status;
+                }
+            }
+
+            // Apply leaves with highest priority
+            foreach ($leaves as $leave) {
+                for ($d = Carbon::parse($leave->start_date); $d->lte(Carbon::parse($leave->end_date)); $d->addDay()) {
+                    $dateStr = $d->format('Y-m-d');
+                    if (!in_array($dateStr, $workDaysList, true)) continue;
+                    $current = $grid[$leave->employee_id][$dateStr] ?? 'absent';
+                    if ($this->statusPriority('leave') > $this->statusPriority($current)) {
+                        $grid[$leave->employee_id][$dateStr] = 'leave';
+                    }
+                }
+            }
+
+            // Fill missing with absent
+            foreach ($employees as $emp) {
+                foreach ($workDaysList as $date) {
+                    if (!isset($grid[$emp->id][$date])) {
+                        $grid[$emp->id][$date] = 'absent';
+                    }
+                }
+                ksort($grid[$emp->id]);
+            }
+
+            // Build export rows and global summary
+            $attendanceData = [];
+            $no = 1;
+            $global = ['H' => 0, 'T' => 0, 'C' => 0, 'I' => 0, 'A' => 0];
+
+            foreach ($employees as $emp) {
+                $rowAttendance = [];
+                foreach ($workDaysList as $date) {
+                    $rowAttendance[$date] = ['status' => $grid[$emp->id][$date]];
+                    switch ($grid[$emp->id][$date]) {
+                        case 'present': $global['H']++; break;
+                        case 'late': $global['T']++; break;
+                        case 'leave': $global['C']++; break;
+                        case 'izin': $global['I']++; break;
+                        default: $global['A']++; break;
+                    }
+                }
+
+                $attendanceData[] = [
+                    'no' => $no++,
+                    'employee_name' => $emp->name,
+                    'position' => $emp->position,
+                    'attendance' => $rowAttendance,
+                ];
+            }
+
+            $filename = sprintf('absensi-ibadah-bulanan-%s.xlsx', $startOfMonth->format('Y-m'));
+            $periodLabel = $this->formatMonthYearIndo($startOfMonth);
+            $globalSummary = array_merge(['employees' => count($employees), 'work_days' => count($workDaysList)], $global);
+
+            return Excel::download(
+                new MonthlyWorshipAttendanceCalendarExport(
+                    $attendanceData,
+                    $workDaysList,
+                    $startOfMonth->month,
+                    $startOfMonth->year,
+                    'monthly',
+                    $periodLabel,
+                    $globalSummary
+                ),
+                $filename
+            );
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error exporting monthly worship attendance', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengekspor data absensi ibadah bulanan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export weekly worship attendance data to Excel
+     * GET /api/ga-dashboard/worship-attendance/export-week?week_start=YYYY-MM-DD&timezone=Asia/Jakarta
+     */
+    public function exportWorshipAttendanceWeek(Request $request)
+    {
+        try {
+            $request->validate([
+                'week_start' => 'required|date_format:Y-m-d',
+                'timezone' => 'nullable|string',
+                'exclude_holidays' => 'nullable|boolean'
+            ]);
+
+            $tz = $request->get('timezone', config('app.timezone', 'Asia/Jakarta'));
+            $weekStart = Carbon::parse($request->get('week_start'), $tz)->timezone('Asia/Jakarta');
+            // Pastikan mulai Senin
+            if ($weekStart->dayOfWeek !== Carbon::MONDAY) {
+                $weekStart = $weekStart->copy()->startOfWeek(Carbon::MONDAY);
+            }
+            $weekEnd = $weekStart->copy()->addDays(6);
+
+            // Work days Mon-Fri only in that week
+            $workDaysList = [];
+            for ($d = $weekStart->copy(); $d->lte($weekEnd); $d->addDay()) {
+                if ($d->isWeekday()) {
+                    $workDaysList[] = $d->format('Y-m-d');
+                }
+            }
+
+            // Fetch employees
+            $employees = Employee::select('id', 'nama_lengkap as name', 'jabatan_saat_ini as position')
+                ->orderBy('nama_lengkap')
+                ->get();
+
+            // Fetch attendance within week
+            $attendances = MorningReflectionAttendance::select('employee_id', 'date', 'status')
+                ->whereBetween('date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+                ->get();
+
+            // Fetch approved leaves overlapping week
+            $leaves = LeaveRequest::select('employee_id', 'start_date', 'end_date')
+                ->where('overall_status', 'approved')
+                ->where(function($q) use ($weekStart, $weekEnd) {
+                    $q->whereBetween('start_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+                      ->orWhereBetween('end_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+                      ->orWhere(function($qq) use ($weekStart, $weekEnd) {
+                          $qq->where('start_date', '<=', $weekStart->toDateString())
+                             ->where('end_date', '>=', $weekEnd->toDateString());
+                      });
+                })->get();
+
+            // Build grid with priority
+            $grid = [];
+            foreach ($employees as $emp) { $grid[$emp->id] = []; }
+
+            foreach ($attendances as $row) {
+                $date = Carbon::parse($row->date)->format('Y-m-d');
+                if (!in_array($date, $workDaysList, true)) continue;
+                $status = $this->normalizeStatus(strtolower($row->status));
+                $current = $grid[$row->employee_id][$date] ?? 'absent';
+                if ($this->statusPriority($status) > $this->statusPriority($current)) {
+                    $grid[$row->employee_id][$date] = $status;
+                }
+            }
+
+            foreach ($leaves as $leave) {
+                for ($d = Carbon::parse($leave->start_date); $d->lte(Carbon::parse($leave->end_date)); $d->addDay()) {
+                    $dateStr = $d->format('Y-m-d');
+                    if (!in_array($dateStr, $workDaysList, true)) continue;
+                    $current = $grid[$leave->employee_id][$dateStr] ?? 'absent';
+                    if ($this->statusPriority('leave') > $this->statusPriority($current)) {
+                        $grid[$leave->employee_id][$dateStr] = 'leave';
+                    }
+                }
+            }
+
+            foreach ($employees as $emp) {
+                foreach ($workDaysList as $date) {
+                    if (!isset($grid[$emp->id][$date])) { $grid[$emp->id][$date] = 'absent'; }
+                }
+                ksort($grid[$emp->id]);
+            }
+
+            // Build export rows and global summary
+            $attendanceData = [];
+            $no = 1;
+            $global = ['H' => 0, 'T' => 0, 'C' => 0, 'I' => 0, 'A' => 0];
+
+            foreach ($employees as $emp) {
+                $rowAttendance = [];
+                foreach ($workDaysList as $date) {
+                    $rowAttendance[$date] = ['status' => $grid[$emp->id][$date]];
+                    switch ($grid[$emp->id][$date]) {
+                        case 'present': $global['H']++; break;
+                        case 'late': $global['T']++; break;
+                        case 'leave': $global['C']++; break;
+                        case 'izin': $global['I']++; break;
+                        default: $global['A']++; break;
+                    }
+                }
+                $attendanceData[] = [
+                    'no' => $no++,
+                    'employee_name' => $emp->name,
+                    'position' => $emp->position,
+                    'attendance' => $rowAttendance,
+                ];
+            }
+
+            $filename = sprintf('absensi-ibadah-mingguan-%s-to-%s.xlsx', $weekStart->format('Y-m-d'), $weekEnd->format('Y-m-d'));
+            $periodLabel = $this->formatDayMonthIndo($weekStart) . ' - ' . $this->formatDayMonthIndo($weekEnd) . ' ' . $weekEnd->format('Y');
+            $globalSummary = array_merge(['employees' => count($employees), 'work_days' => count($workDaysList)], $global);
+
+            return Excel::download(
+                new MonthlyWorshipAttendanceCalendarExport(
+                    $attendanceData,
+                    $workDaysList,
+                    $weekStart->month,
+                    $weekStart->year,
+                    'weekly',
+                    $periodLabel,
+                    $globalSummary
+                ),
+                $filename
+            );
+
+        } catch (Exception $e) {
+            Log::error('GA Dashboard: Error exporting weekly worship attendance', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengekspor data absensi ibadah mingguan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Normalisasi status mentah menjadi salah satu dari: present|late|leave|izin|absent
+     */
+    private function normalizeStatus(string $status): string
+    {
+        switch ($status) {
+            case 'hadir':
+            case 'present_ontime':
+            case 'present':
+                return 'present';
+            case 'terlambat':
+            case 'present_late':
+            case 'late':
+                return 'late';
+            case 'cuti':
+            case 'on_leave':
+            case 'sick_leave':
+            case 'leave':
+                return 'leave';
+            case 'izin':
+            case 'permit':
+                return 'izin';
+            case 'absen':
+            case 'no_data':
+            case 'absent':
+            default:
+                return 'absent';
+        }
+    }
+
+    /**
+     * Bobot prioritas status: leave > izin > late > present > absent
+     */
+    private function statusPriority(string $status): int
+    {
+        $map = [
+            'absent' => 0,
+            'present' => 1,
+            'late' => 2,
+            'izin' => 3,
+            'leave' => 4,
+        ];
+        return $map[$status] ?? 0;
+    }
+
+    /**
+     * Format "MMMM YYYY" (Bahasa Indonesia) tanpa ext-intl
+     */
+    private function formatMonthYearIndo(Carbon $date): string
+    {
+        $months = [
+            1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April', 5 => 'Mei', 6 => 'Juni',
+            7 => 'Juli', 8 => 'Agustus', 9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember'
+        ];
+        $monthName = $months[(int)$date->format('n')] ?? $date->format('F');
+        return $monthName . ' ' . $date->format('Y');
+    }
+
+    /**
+     * Format "DD MMM" (Bahasa Indonesia) tanpa ext-intl
+     */
+    private function formatDayMonthIndo(Carbon $date): string
+    {
+        $monthsShort = [
+            1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'Mei', 6 => 'Jun',
+            7 => 'Jul', 8 => 'Agu', 9 => 'Sep', 10 => 'Okt', 11 => 'Nov', 12 => 'Des'
+        ];
+        $month = $monthsShort[(int)$date->format('n')] ?? $date->format('M');
+        return $date->format('d') . ' ' . $month;
+    }
+}

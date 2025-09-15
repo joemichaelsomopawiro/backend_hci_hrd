@@ -55,14 +55,14 @@ class AttendanceExcelUploadController extends Controller
                 ], 422);
             }
 
-            // Validasi ekstensi file secara manual
-            $allowedExtensions = ['xlsx', 'xls'];
+            // Validasi ekstensi file secara manual - support Excel dan CSV (Google Spreadsheet)
+            $allowedExtensions = ['xlsx', 'xls', 'csv'];
             $fileExtension = strtolower($file->getClientOriginalExtension());
             
             if (!in_array($fileExtension, $allowedExtensions)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Format file tidak valid. Hanya file Excel (.xlsx, .xls) yang diperbolehkan.',
+                    'message' => 'Format file tidak valid. Hanya file Excel (.xlsx, .xls) atau CSV yang diperbolehkan.',
                     'debug_info' => [
                         'original_name' => $file->getClientOriginalName(),
                         'extension' => $fileExtension,
@@ -138,14 +138,14 @@ class AttendanceExcelUploadController extends Controller
                 ], 422);
             }
 
-            // Validasi ekstensi file secara manual
-            $allowedExtensions = ['xlsx', 'xls'];
+            // Validasi ekstensi file secara manual - support Excel dan CSV (Google Spreadsheet)
+            $allowedExtensions = ['xlsx', 'xls', 'csv'];
             $fileExtension = strtolower($file->getClientOriginalExtension());
             
             if (!in_array($fileExtension, $allowedExtensions)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Format file tidak valid. Hanya file Excel (.xlsx, .xls) yang diperbolehkan.',
+                    'message' => 'Format file tidak valid. Hanya file Excel (.xlsx, .xls) atau CSV yang diperbolehkan.',
                     'debug_info' => [
                         'original_name' => $file->getClientOriginalName(),
                         'extension' => $fileExtension,
@@ -245,7 +245,7 @@ class AttendanceExcelUploadController extends Controller
                     'Jml Kehadiran' => 'Total kehadiran (format: HH:MM)'
                 ],
                 'file_requirements' => [
-                    'format' => 'Excel (.xlsx, .xls)',
+                    'format' => 'Excel (.xlsx, .xls) atau CSV',
                     'max_size' => '10MB',
                     'encoding' => 'UTF-8'
                 ],

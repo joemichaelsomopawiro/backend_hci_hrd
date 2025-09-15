@@ -161,17 +161,17 @@ class AuthController extends Controller
                 'year' => $currentYear,
                 'annual_leave_quota' => 12, // Default 12 hari cuti tahunan
                 'annual_leave_used' => 0,
-                'sick_leave_quota' => 12, // Default 12 hari cuti sakit
+                'sick_leave_quota' => 3, // Default 3 hari cuti sakit
                 'sick_leave_used' => 0,
-                'emergency_leave_quota' => 2, // Default 2 hari cuti darurat
+                'emergency_leave_quota' => 1, // Default 1 hari cuti darurat
                 'emergency_leave_used' => 0,
-                'maternity_leave_quota' => $employee->jenis_kelamin === 'Perempuan' ? 90 : 0, // 90 hari untuk perempuan
+                'maternity_leave_quota' => $employee->jenis_kelamin === 'Perempuan' ? 80 : 0, // 80 hari untuk perempuan
                 'maternity_leave_used' => 0,
-                'paternity_leave_quota' => $employee->jenis_kelamin === 'Laki-laki' ? 2 : 0, // 2 hari untuk laki-laki
+                'paternity_leave_quota' => $employee->jenis_kelamin === 'Laki-laki' ? 3 : 0, // 3 hari untuk laki-laki
                 'paternity_leave_used' => 0,
-                'marriage_leave_quota' => 2, // Default 2 hari cuti menikah
+                'marriage_leave_quota' => 3, // Default 3 hari cuti menikah
                 'marriage_leave_used' => 0,
-                'bereavement_leave_quota' => 2, // Default 2 hari cuti duka
+                'bereavement_leave_quota' => 3, // Default 3 hari cuti duka
                 'bereavement_leave_used' => 0,
             ]);
         }

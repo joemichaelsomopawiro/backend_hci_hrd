@@ -1,0 +1,862 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Attendance;
+use App\Models\Employee;
+use Carbon\Carbon;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+
+class AttendanceExcelUploadService
+{
+    /**
+     * Proses upload file Excel dan update tabel attendance
+     */
+    public function processExcelUpload(
+        UploadedFile $file,
+        bool $overwriteExisting = false,
+        ?string $dateRangeStart = null,
+        ?string $dateRangeEnd = null
+    ): array {
+        try {
+            DB::beginTransaction();
+
+            // Baca file Excel dengan error handling yang lebih detail dan support berbagai format
+            try {
+                // Cek ekstensi file untuk menentukan reader yang tepat
+                $fileExtension = strtolower($file->getClientOriginalExtension());
+                $data = null;
+                $usedReader = 'unknown';
+                
+                // Coba berbagai reader secara berurutan
+                $readers = [
+                    'xls' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Xls();
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'xlsx' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Xlsx();
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_comma' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter(',');
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_semicolon' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter(';');
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_tab' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter("\t");
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_pipe' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter('|');
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_colon' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter(':');
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'html' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Html();
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'auto' => function($filePath) {
+                        return \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
+                    }
+                ];
+                
+                // Coba reader berdasarkan ekstensi file terlebih dahulu
+                $extensionReaders = [
+                    'xls' => ['xls'],
+                    'xlsx' => ['xlsx'],
+                    'csv' => ['csv_comma', 'csv_semicolon', 'csv_tab', 'csv_pipe', 'csv_colon']
+                ];
+                
+                if (isset($extensionReaders[$fileExtension])) {
+                    foreach ($extensionReaders[$fileExtension] as $readerType) {
+                        try {
+                            $spreadsheet = $readers[$readerType]($file->getPathname());
+                            $worksheet = $spreadsheet->getActiveSheet();
+                            $data = $worksheet->toArray();
+                            $usedReader = $readerType;
+                            
+                            Log::info("File read successfully with {$readerType} reader", [
+                                'file' => $file->getClientOriginalName(),
+                                'rows' => count($data)
+                            ]);
+                            break;
+                        } catch (\Exception $e) {
+                            Log::info("{$readerType} reader failed, trying next", [
+                                'file' => $file->getClientOriginalName(),
+                                'error' => $e->getMessage()
+                            ]);
+                        }
+                    }
+                }
+                
+                // Jika reader berdasarkan ekstensi gagal, coba semua reader
+                if (empty($data)) {
+                    foreach ($readers as $readerType => $readerFunction) {
+                        if ($readerType === $fileExtension) continue; // Skip yang sudah dicoba
+                        
+                        try {
+                            $spreadsheet = $readerFunction($file->getPathname());
+                            $worksheet = $spreadsheet->getActiveSheet();
+                            $data = $worksheet->toArray();
+                            $usedReader = $readerType;
+                            
+                            Log::info("File read successfully with {$readerType} fallback reader", [
+                                'file' => $file->getClientOriginalName(),
+                                'rows' => count($data)
+                            ]);
+                            break;
+                        } catch (\Exception $e) {
+                            Log::info("{$readerType} reader failed", [
+                                'file' => $file->getClientOriginalName(),
+                                'error' => $e->getMessage()
+                            ]);
+                        }
+                    }
+                }
+                
+                if (empty($data) || count($data) < 2) {
+                    return [
+                        'success' => false,
+                        'message' => 'File tidak berisi data yang valid. Pastikan file memiliki header dan minimal 1 baris data.',
+                        'debug_info' => [
+                            'file_name' => $file->getClientOriginalName(),
+                            'file_size' => $file->getSize(),
+                            'file_extension' => $file->getClientOriginalExtension(),
+                            'total_rows' => count($data),
+                            'used_reader' => $usedReader,
+                            'php_extensions' => [
+                                'zip' => extension_loaded('zip'),
+                                'xml' => extension_loaded('xml'),
+                                'gd' => extension_loaded('gd')
+                            ]
+                        ]
+                    ];
+                }
+                
+            } catch (\Exception $e) {
+                return [
+                    'success' => false,
+                    'message' => 'File tidak dapat dibaca. Pastikan file adalah Excel (.xls/.xlsx), CSV, atau HTML table yang valid.',
+                    'debug_info' => [
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_size' => $file->getSize(),
+                        'file_extension' => $file->getClientOriginalExtension(),
+                        'error' => $e->getMessage(),
+                        'used_reader' => $usedReader ?? 'none',
+                        'php_extensions' => [
+                            'zip' => extension_loaded('zip'),
+                            'xml' => extension_loaded('xml'),
+                            'gd' => extension_loaded('gd')
+                        ]
+                    ]
+                ];
+            }
+
+            // Validasi header
+            $headerValidation = $this->validateHeader($data[0]);
+            if (!$headerValidation['valid']) {
+                return [
+                    'success' => false,
+                    'message' => 'Format header tidak valid: ' . $headerValidation['message']
+                ];
+            }
+
+            // Proses data (skip header)
+            $processedData = [];
+            $errors = [];
+            $updatedCount = 0;
+            $createdCount = 0;
+            $skippedCount = 0;
+
+            for ($i = 1; $i < count($data); $i++) {
+                $row = $data[$i];
+                
+                // Skip baris kosong
+                if ($this->isEmptyRow($row)) {
+                    continue;
+                }
+
+                try {
+                    $processedRow = $this->processRow($row, $dateRangeStart, $dateRangeEnd);
+                    
+                    if ($processedRow) {
+                        $result = $this->saveAttendanceData($processedRow, $overwriteExisting);
+                        
+                        if ($result['success']) {
+                            if ($result['action'] === 'created') {
+                                $createdCount++;
+                            } else {
+                                $updatedCount++;
+                            }
+                            $processedData[] = $processedRow;
+                        } else {
+                            $errors[] = "Baris " . ($i + 1) . ": " . $result['message'];
+                        }
+                    } else {
+                        $skippedCount++;
+                    }
+                } catch (\Exception $e) {
+                    $errors[] = "Baris " . ($i + 1) . ": " . $e->getMessage();
+                }
+            }
+
+            DB::commit();
+
+            Log::info('Excel upload completed', [
+                'total_rows' => count($data) - 1,
+                'processed' => count($processedData),
+                'created' => $createdCount,
+                'updated' => $updatedCount,
+                'skipped' => $skippedCount,
+                'errors' => count($errors)
+            ]);
+
+            return [
+                'success' => true,
+                'message' => "Berhasil memproses " . count($processedData) . " data attendance",
+                'data' => [
+                    'total_rows' => count($data) - 1,
+                    'processed' => count($processedData),
+                    'created' => $createdCount,
+                    'updated' => $updatedCount,
+                    'skipped' => $skippedCount,
+                    'errors' => $errors,
+                    'sample_data' => array_slice($processedData, 0, 5) // Sample 5 data pertama
+                ]
+            ];
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error processing Excel upload: ' . $e->getMessage());
+            
+            return [
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat memproses file: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Preview data Excel tanpa menyimpan ke database
+     */
+    public function previewExcelData(UploadedFile $file): array
+    {
+        try {
+            // Baca file Excel dengan error handling yang lebih detail dan support berbagai format
+            try {
+                // Cek ekstensi file untuk menentukan reader yang tepat
+                $fileExtension = strtolower($file->getClientOriginalExtension());
+                $data = null;
+                $usedReader = 'unknown';
+                
+                // Coba berbagai reader secara berurutan
+                $readers = [
+                    'xls' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Xls();
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'xlsx' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Xlsx();
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_comma' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter(',');
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_semicolon' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter(';');
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_tab' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter("\t");
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_pipe' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter('|');
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'csv_colon' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+                        $reader->setDelimiter(':');
+                        $reader->setEnclosure('"');
+                        $reader->setSheetIndex(0);
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'html' => function($filePath) {
+                        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Html();
+                        $reader->setReadDataOnly(true);
+                        return $reader->load($filePath);
+                    },
+                    'auto' => function($filePath) {
+                        return \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
+                    }
+                ];
+                
+                // Coba reader berdasarkan ekstensi file terlebih dahulu
+                if (isset($readers[$fileExtension])) {
+                    try {
+                        $spreadsheet = $readers[$fileExtension]($file->getPathname());
+                        $worksheet = $spreadsheet->getActiveSheet();
+                        $data = $worksheet->toArray();
+                        $usedReader = $fileExtension;
+                        
+                        Log::info("File read successfully with {$fileExtension} reader for preview", [
+                            'file' => $file->getClientOriginalName(),
+                            'rows' => count($data)
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::info("{$fileExtension} reader failed for preview, trying fallbacks", [
+                            'file' => $file->getClientOriginalName(),
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+                
+                // Jika reader berdasarkan ekstensi gagal, coba semua reader
+                if (empty($data)) {
+                    foreach ($readers as $readerType => $readerFunction) {
+                        if ($readerType === $fileExtension) continue; // Skip yang sudah dicoba
+                        
+                        try {
+                            $spreadsheet = $readerFunction($file->getPathname());
+                            $worksheet = $spreadsheet->getActiveSheet();
+                            $data = $worksheet->toArray();
+                            $usedReader = $readerType;
+                            
+                            Log::info("File read successfully with {$readerType} fallback reader for preview", [
+                                'file' => $file->getClientOriginalName(),
+                                'rows' => count($data)
+                            ]);
+                            break;
+                        } catch (\Exception $e) {
+                            Log::info("{$readerType} reader failed for preview", [
+                                'file' => $file->getClientOriginalName(),
+                                'error' => $e->getMessage()
+                            ]);
+                        }
+                    }
+                }
+                
+                if (empty($data) || count($data) < 2) {
+                    return [
+                        'success' => false,
+                        'message' => 'File tidak berisi data yang valid. Pastikan file memiliki header dan minimal 1 baris data.',
+                        'debug_info' => [
+                            'file_name' => $file->getClientOriginalName(),
+                            'file_size' => $file->getSize(),
+                            'file_extension' => $file->getClientOriginalExtension(),
+                            'total_rows' => count($data),
+                            'used_reader' => $usedReader,
+                            'php_extensions' => [
+                                'zip' => extension_loaded('zip'),
+                                'xml' => extension_loaded('xml'),
+                                'gd' => extension_loaded('gd')
+                            ]
+                        ]
+                    ];
+                }
+                
+            } catch (\Exception $e) {
+                return [
+                    'success' => false,
+                    'message' => 'File tidak dapat dibaca. Pastikan file adalah Excel (.xls/.xlsx), CSV, atau HTML table yang valid.',
+                    'debug_info' => [
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_size' => $file->getSize(),
+                        'file_extension' => $file->getClientOriginalExtension(),
+                        'error' => $e->getMessage(),
+                        'used_reader' => $usedReader ?? 'none',
+                        'php_extensions' => [
+                            'zip' => extension_loaded('zip'),
+                            'xml' => extension_loaded('xml'),
+                            'gd' => extension_loaded('gd')
+                        ]
+                    ]
+                ];
+            }
+
+            // Validasi header
+            $headerValidation = $this->validateHeader($data[0]);
+            if (!$headerValidation['valid']) {
+                return [
+                    'success' => false,
+                    'message' => 'Format header tidak valid: ' . $headerValidation['message']
+                ];
+            }
+
+            $previewData = [];
+            $errors = [];
+            $totalRows = 0;
+
+            // Preview 10 baris pertama
+            $previewLimit = min(10, count($data) - 1);
+            
+            for ($i = 1; $i <= $previewLimit; $i++) {
+                $row = $data[$i];
+                
+                if ($this->isEmptyRow($row)) {
+                    continue;
+                }
+
+                $totalRows++;
+                
+                try {
+                    $processedRow = $this->processRow($row);
+                    if ($processedRow) {
+                        $previewData[] = $processedRow;
+                    }
+                } catch (\Exception $e) {
+                    $errors[] = "Baris " . ($i + 1) . ": " . $e->getMessage();
+                }
+            }
+
+            return [
+                'success' => true,
+                'data' => [
+                    'total_rows' => count($data) - 1,
+                    'preview_rows' => count($previewData),
+                    'preview_data' => $previewData,
+                    'errors' => $errors,
+                    'header' => $data[0]
+                ]
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Error previewing Excel: ' . $e->getMessage());
+            
+            return [
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat preview file: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Generate template Excel untuk attendance
+     */
+    public function generateTemplate(): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        // Set header
+        $headers = [
+            'No. ID',
+            'Nama',
+            'Tanggal',
+            'Scan Masuk',
+            'Scan Pulang',
+            'Absent',
+            'Jml Jam Kerja',
+            'Jml Kehadiran'
+        ];
+
+        foreach ($headers as $colIndex => $header) {
+            $sheet->setCellValueByColumnAndRow($colIndex + 1, 1, $header);
+        }
+
+        // Set sample data
+        $sampleData = [
+            ['1', 'E.H Michael Palar', '14-Jul-25', '', '', 'True', '', ''],
+            ['2', 'Budi Dharmadi', '14-Jul-25', '07:05', '16:40', 'False', '09:34', '09:34'],
+            ['20111201', 'Steven Albert Reynold', '14-Jul-25', '09:10', '16:25', 'False', '07:15', '07:15'],
+        ];
+
+        foreach ($sampleData as $rowIndex => $rowData) {
+            foreach ($rowData as $colIndex => $value) {
+                $sheet->setCellValueByColumnAndRow($colIndex + 1, $rowIndex + 2, $value);
+            }
+        }
+
+        // Style header
+        $headerStyle = [
+            'font' => ['bold' => true],
+            'fill' => [
+                'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
+                'startColor' => ['rgb' => 'E2EFDA']
+            ]
+        ];
+        $sheet->getStyle('A1:H1')->applyFromArray($headerStyle);
+
+        // Auto size columns
+        foreach (range('A', 'H') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+
+        // Create templates directory if not exists
+        $templateDir = storage_path('app/templates');
+        if (!file_exists($templateDir)) {
+            mkdir($templateDir, 0755, true);
+        }
+
+        $templatePath = $templateDir . '/attendance_template.xlsx';
+        
+        $writer = new Xlsx($spreadsheet);
+        $writer->save($templatePath);
+
+        return $templatePath;
+    }
+
+    /**
+     * Validasi header Excel
+     */
+    private function validateHeader(array $header): array
+    {
+        $requiredColumns = [
+            'No. ID',
+            'Nama', 
+            'Tanggal',
+            'Scan Masuk',
+            'Scan Pulang',
+            'Absent',
+            'Jml Jam Kerja',
+            'Jml Kehadiran'
+        ];
+
+        $missingColumns = [];
+        foreach ($requiredColumns as $required) {
+            if (!in_array($required, $header)) {
+                $missingColumns[] = $required;
+            }
+        }
+
+        if (!empty($missingColumns)) {
+            return [
+                'valid' => false,
+                'message' => 'Kolom yang diperlukan tidak ditemukan: ' . implode(', ', $missingColumns)
+            ];
+        }
+
+        return ['valid' => true];
+    }
+
+    /**
+     * Cek apakah baris kosong
+     */
+    private function isEmptyRow(array $row): bool
+    {
+        return empty(array_filter($row, function($cell) {
+            return !empty(trim($cell));
+        }));
+    }
+
+    /**
+     * Proses satu baris data Excel
+     */
+    private function processRow(array $row, ?string $dateRangeStart = null, ?string $dateRangeEnd = null): ?array
+    {
+        $noId = trim($row[0]);
+        $nama = trim($row[1]);
+        $tanggal = trim($row[2]);
+        $scanMasuk = trim($row[3]);
+        $scanPulang = trim($row[4]);
+        $absent = trim($row[5]);
+        $jmlJamKerja = trim($row[6]);
+        $jmlKehadiran = trim($row[7]); // Diabaikan
+
+        // Skip jika data kosong
+        if (empty($noId) || empty($nama) || empty($tanggal)) {
+            return null;
+        }
+
+        // Parse tanggal
+        $parsedDate = $this->parseDate($tanggal);
+        if (!$parsedDate) {
+            throw new \Exception("Format tanggal tidak valid: {$tanggal}");
+        }
+
+        // Filter berdasarkan range tanggal jika ada
+        if ($dateRangeStart && $dateRangeEnd) {
+            $startDate = Carbon::parse($dateRangeStart);
+            $endDate = Carbon::parse($dateRangeEnd);
+            $rowDate = Carbon::parse($parsedDate);
+            
+            if ($rowDate->lt($startDate) || $rowDate->gt($endDate)) {
+                return null; // Skip data di luar range
+            }
+        }
+
+        // Parse waktu
+        $checkIn = $this->parseTime($scanMasuk);
+        $checkOut = $this->parseTime($scanPulang);
+
+        // Parse jam kerja (hanya dari kolom Jml Jam Kerja)
+        $workHours = $this->parseWorkHours($jmlJamKerja);
+
+        // Tentukan status berdasarkan kolom Absent
+        $status = $this->determineStatus($absent, $checkIn, $checkOut);
+
+        return [
+            'card_number' => $noId,           // No. ID → card_number
+            'user_name' => $nama,             // Nama → user_name
+            'date' => $parsedDate,
+            'check_in' => $checkIn,           // Scan Masuk → check_in
+            'check_out' => $checkOut,         // Scan Pulang → check_out
+            'status' => $status,              // Absent → status
+            'work_hours' => $workHours,       // Jml Jam Kerja → work_hours
+            'absent' => strtolower($absent) === 'true',
+            'raw_data' => [
+                'scan_masuk' => $scanMasuk,
+                'scan_pulang' => $scanPulang,
+                'jml_jam_kerja' => $jmlJamKerja,
+                'jml_kehadiran' => $jmlKehadiran // Diabaikan
+            ]
+        ];
+    }
+
+    /**
+     * Parse tanggal dari berbagai format
+     */
+    private function parseDate(string $dateString): ?string
+    {
+        $formats = [
+            'd-M-y',    // 14-Jul-25
+            'd/m/Y',    // 14/07/2025
+            'Y-m-d',    // 2025-07-14
+            'd-m-Y',    // 14-07-2025
+            'd-M-Y',    // 14-Jul-2025
+        ];
+
+        foreach ($formats as $format) {
+            try {
+                $date = Carbon::createFromFormat($format, $dateString);
+                if ($date) {
+                    return $date->format('Y-m-d');
+                }
+            } catch (\Exception $e) {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Parse waktu dari format HH:MM atau HH:MM:SS
+     */
+    private function parseTime(string $timeString): ?string
+    {
+        if (empty($timeString)) {
+            return null;
+        }
+
+        $formats = ['H:i', 'H:i:s'];
+        
+        foreach ($formats as $format) {
+            try {
+                $time = Carbon::createFromFormat($format, $timeString);
+                if ($time) {
+                    return $time->format('H:i:s');
+                }
+            } catch (\Exception $e) {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Parse jam kerja dari format HH:MM
+     */
+    private function parseWorkHours(string $hoursString): ?float
+    {
+        if (empty($hoursString)) {
+            return null;
+        }
+
+        // Handle format HH:MM
+        if (preg_match('/^(\d{1,2}):(\d{2})$/', $hoursString, $matches)) {
+            $hours = (int)$matches[1];
+            $minutes = (int)$matches[2];
+            return $hours + ($minutes / 60);
+        }
+
+        // Handle format desimal
+        if (is_numeric($hoursString)) {
+            return (float)$hoursString;
+        }
+
+        return null;
+    }
+
+    /**
+     * Tentukan status attendance berdasarkan kolom Absent
+     */
+    private function determineStatus(string $absent, ?string $checkIn, ?string $checkOut): string
+    {
+        // Jika kolom Absent = True, langsung return absent
+        if (strtolower($absent) === 'true') {
+            return 'absent';
+        }
+
+        // Jika kolom Absent = False, cek berdasarkan scan masuk/pulang
+        if (!$checkIn && !$checkOut) {
+            return 'absent';
+        }
+
+        if ($checkIn && $checkOut) {
+            // Cek keterlambatan berdasarkan jam kerja default
+            $workStartTime = env('ATTENDANCE_WORK_START_TIME', '07:30:00');
+            $checkInTime = Carbon::parse($checkIn);
+            $workStart = Carbon::parse($workStartTime);
+            
+            if ($checkInTime->gt($workStart)) {
+                return 'present_late';
+            }
+            
+            return 'present_ontime';
+        }
+
+        // Jika hanya ada scan masuk atau scan pulang
+        return 'present_ontime';
+    }
+
+    /**
+     * Simpan data attendance ke database
+     */
+    private function saveAttendanceData(array $data, bool $overwriteExisting): array
+    {
+        try {
+            // Cari employee berdasarkan nama
+            $employee = $this->findEmployee($data['user_name']);
+            
+            // Cari attendance yang sudah ada berdasarkan nama dan tanggal
+            $existingAttendance = Attendance::where('date', $data['date'])
+                ->where(function($query) use ($data, $employee) {
+                    if ($employee) {
+                        $query->where('employee_id', $employee->id);
+                    }
+                    $query->orWhere('user_name', $data['user_name']);
+                })
+                ->first();
+
+            if ($existingAttendance && !$overwriteExisting) {
+                return [
+                    'success' => false,
+                    'message' => 'Data attendance sudah ada untuk ' . $data['user_name'] . ' pada tanggal ' . $data['date'],
+                    'action' => 'skipped'
+                ];
+            }
+
+            $attendanceData = [
+                'card_number' => $data['card_number'],     // No. ID dari Excel
+                'user_name' => $data['user_name'],         // Nama dari Excel
+                'date' => $data['date'],
+                'check_in' => $data['check_in'],           // Scan Masuk
+                'check_out' => $data['check_out'],         // Scan Pulang
+                'status' => $data['status'],               // Status berdasarkan Absent
+                'work_hours' => $data['work_hours'],       // Jml Jam Kerja
+                'notes' => 'Imported from Excel: ' . json_encode($data['raw_data'])
+            ];
+
+            // Set employee_id jika ditemukan berdasarkan nama
+            if ($employee) {
+                $attendanceData['employee_id'] = $employee->id;
+            }
+
+            if ($existingAttendance) {
+                $existingAttendance->update($attendanceData);
+                return [
+                    'success' => true,
+                    'message' => 'Data attendance berhasil diupdate untuk ' . $data['user_name'],
+                    'action' => 'updated'
+                ];
+            } else {
+                Attendance::create($attendanceData);
+                return [
+                    'success' => true,
+                    'message' => 'Data attendance berhasil dibuat untuk ' . $data['user_name'],
+                    'action' => 'created'
+                ];
+            }
+
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Error saving data: ' . $e->getMessage(),
+                'action' => 'error'
+            ];
+        }
+    }
+
+    /**
+     * Cari employee berdasarkan nama
+     */
+    private function findEmployee(string $userName): ?Employee
+    {
+        // Cari berdasarkan nama lengkap (exact match)
+        $employee = Employee::where('nama_lengkap', $userName)->first();
+        if ($employee) {
+            return $employee;
+        }
+
+        // Cari berdasarkan nama dengan partial match (jika exact match tidak ditemukan)
+        $employee = Employee::where('nama_lengkap', 'LIKE', '%' . $userName . '%')->first();
+        if ($employee) {
+            return $employee;
+        }
+
+        // Cari berdasarkan nama dengan case insensitive
+        $employee = Employee::whereRaw('LOWER(nama_lengkap) = ?', [strtolower($userName)])->first();
+        if ($employee) {
+            return $employee;
+        }
+
+        return null;
+    }
+} 

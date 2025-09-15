@@ -28,6 +28,24 @@ class MorningReflectionAttendance extends Model
         'testing_mode' => 'boolean'
     ];
 
+    // Constants untuk status yang valid
+    const STATUS_HADIR = 'Hadir';
+    const STATUS_TERLAMBAT = 'Terlambat';
+    const STATUS_ABSEN = 'Absen';
+    const STATUS_IZIN = 'izin';
+    const STATUS_CUTI = 'Cuti';
+
+    public static function getValidStatuses()
+    {
+        return [
+            self::STATUS_HADIR,
+            self::STATUS_TERLAMBAT,
+            self::STATUS_ABSEN,
+            self::STATUS_IZIN,
+            self::STATUS_CUTI
+        ];
+    }
+
     public function employee()
     {
         return $this->belongsTo(Employee::class);

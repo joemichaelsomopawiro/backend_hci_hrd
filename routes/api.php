@@ -14,13 +14,14 @@ use App\Http\Controllers\WorshipAttendanceController;
 use App\Http\Controllers\MorningReflectionController;
 use App\Http\Controllers\MorningReflectionAttendanceController;
 use App\Http\Controllers\AttendanceExportController;
-use App\Http\Controllers\AttendanceExcelUploadController;
+// use App\Http\Controllers\AttendanceExcelUploadController;
 use App\Http\Controllers\NationalHolidayController;
 use App\Http\Controllers\CustomRoleController;
 use App\Http\Controllers\GaDashboardController;
 use App\Http\Controllers\ZoomLinkController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ManualWorshipAttendanceController;
+use App\Http\Controllers\AttendanceTxtUploadController;
 
 /*
 |--------------------------------------------------------------------------
@@ -72,8 +73,8 @@ Route::prefix('ga')->group(function () {
         Route::get('/leaves', [GeneralAffairController::class, 'getLeaves']);
     });
 
-    // ===== ABSENSI RENUNGAN PAGI - ROUTES BARU =====
-    Route::middleware(['auth:sanctum', 'role:ga'])->group(function () {
+    // ===== ABSENSI RENUNGAN PAGI - ROUTES BARU - OPEN TO ALL USERS =====
+    Route::middleware(['auth:sanctum'])->group(function () {
         // Dashboard untuk absensi renungan pagi
         Route::get('/dashboard/morning-reflection', [GeneralAffairController::class, 'morningReflectionDashboard']);
         Route::get('/dashboard/morning-reflection-statistics', [GeneralAffairController::class, 'getMorningReflectionStatistics']);
@@ -101,6 +102,7 @@ Route::prefix('leave-quotas')->group(function () {
         Route::get('/my-current', [LeaveQuotaController::class, 'getMyCurrentQuotas']);
         Route::post('/bulk-update', [LeaveQuotaController::class, 'bulkUpdate']);
         Route::post('/reset-annual', [LeaveQuotaController::class, 'resetAnnualQuotas']);
+        Route::post('/reset-annual-manual', [LeaveQuotaController::class, 'resetAnnual']);
         Route::get('/usage-summary', [LeaveQuotaController::class, 'getUsageSummary']);
         Route::get('/employees-without-quota', [LeaveQuotaController::class, 'getEmployeesWithoutQuota']);
     });
@@ -111,13 +113,22 @@ Route::prefix('leave-quotas')->group(function () {
     Route::delete('/{id}', [LeaveQuotaController::class, 'destroy']);
 });
 
+// Public route: download surat cuti tanpa autentikasi
+Route::get('/leave-requests/{id}/letter', [LeaveRequestController::class, 'downloadLetter']);
+
 // Leave Request Routes (Sudah Disederhanakan dan Benar)
 Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     Route::get('/', [LeaveRequestController::class, 'index']);
+    Route::get('/{id}', [LeaveRequestController::class, 'show']);
     Route::post('/', [LeaveRequestController::class, 'store']);
     Route::put('/{id}/approve', [LeaveRequestController::class, 'approve']);
+    // Alternatif untuk upload file (multipart) menggunakan POST
+    Route::post('/{id}/approve', [LeaveRequestController::class, 'approve']);
     Route::put('/{id}/reject', [LeaveRequestController::class, 'reject']);
     Route::delete('/{id}', [LeaveRequestController::class, 'destroy']);
+    // Download surat cuti (PDF) dipindah menjadi route publik di luar middleware
+    // Upload tanda tangan atasan (opsional, jika tidak terunggah saat approve)
+    Route::post('/{id}/approver-signature', [LeaveRequestController::class, 'uploadApproverSignature']);
 });
 
 // Attendance Routes - Solution X304 Integration
@@ -155,16 +166,19 @@ Route::prefix('attendance')->group(function () {
     Route::get('/export/monthly', [AttendanceExportController::class, 'exportMonthly']);
     Route::get('/export/download/{filename}', [AttendanceExportController::class, 'downloadFile']);
     
+    // Monthly table route - open to all users
+    Route::get('/monthly-table', [AttendanceExportController::class, 'monthlyTable']);
+    
     // Leave integration routes
     Route::post('/sync-leave', [AttendanceController::class, 'syncLeaveToAttendance']);
     Route::post('/sync-leave-date-range', [AttendanceController::class, 'syncLeaveToAttendanceDateRange']);
     
     // Excel Upload routes
-    Route::post('/upload-excel', [AttendanceExcelUploadController::class, 'uploadExcel']);
-    Route::post('/upload-excel/preview', [AttendanceExcelUploadController::class, 'previewExcel']);
-    Route::get('/upload-excel/template', [AttendanceExcelUploadController::class, 'downloadTemplate']);
-    Route::get('/upload-excel/download-template', [AttendanceExcelUploadController::class, 'downloadTemplateFile']);
-    Route::get('/upload-excel/validation-rules', [AttendanceExcelUploadController::class, 'getValidationRules']);
+    // Route::post('/upload-excel', [AttendanceExcelUploadController::class, 'uploadExcel']);
+    // Route::post('/upload-excel/preview', [AttendanceExcelUploadController::class, 'previewExcel']);
+    // Route::get('/upload-excel/template', [AttendanceExcelUploadController::class, 'downloadTemplate']);
+    // Route::get('/upload-excel/download-template', [AttendanceExcelUploadController::class, 'downloadTemplateFile']);
+    // Route::get('/upload-excel/validation-rules', [AttendanceExcelUploadController::class, 'getValidationRules']);
 });
 
 // Attendance Routes (dari kode kedua)
@@ -241,8 +255,8 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 });
 
-// Worship Attendance Routes - GA (General Affairs)
-Route::prefix('ga')->middleware(['auth:sanctum', 'role:ga'])->group(function () {
+// Worship Attendance Routes - GA (General Affairs) - OPEN TO ALL USERS
+Route::prefix('ga')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/worship-dashboard', [WorshipAttendanceController::class, 'dashboard']);
     Route::get('/worship-dashboard-detailed', [WorshipAttendanceController::class, 'gaDashboard']);
     Route::get('/worship-attendances', [WorshipAttendanceController::class, 'getWorshipAttendances']);
@@ -306,8 +320,8 @@ Route::prefix('morning-reflection')->middleware(['auth:sanctum'])->group(functio
     Route::get('/statistics', [MorningReflectionController::class, 'statistics']);
 });
 
-// Routes untuk GA (General Affairs) - dengan role middleware
-Route::prefix('morning-reflection')->middleware(['auth:sanctum', 'role:General Affairs'])->group(function () {
+// Routes untuk GA (General Affairs) - OPEN TO ALL USERS
+Route::prefix('morning-reflection')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/today-attendance', [MorningReflectionController::class, 'getTodayAttendance']);
     Route::get('/today-attendance-admin', [MorningReflectionController::class, 'todayAttendance']);
     Route::put('/config', [MorningReflectionController::class, 'updateConfig']);
@@ -346,6 +360,11 @@ Route::prefix('personal')->group(function () {
     // Profile pribadi
     Route::get('/profile', [\App\Http\Controllers\PersonalProfileController::class, 'show']);
     Route::put('/profile', [\App\Http\Controllers\PersonalProfileController::class, 'update']);
+
+    // Office attendance (dengan autentikasi)
+    Route::middleware(['auth:sanctum'])->group(function () {
+        Route::get('/office-attendance', [\App\Http\Controllers\PersonalAttendanceController::class, 'getPersonalOfficeAttendance']);
+    });
 });
 
 // ===== EMPLOYEE SYNC ROUTES =====
@@ -368,22 +387,25 @@ Route::prefix('employee-sync')->middleware(['auth:sanctum'])->group(function () 
 });
 
 // ===== GA DASHBOARD ROUTES =====
-// Routes untuk GA Dashboard - Menampilkan SEMUA data tanpa batasan role
+// Routes untuk GA Dashboard - OPEN TO ALL USERS - Menampilkan SEMUA data tanpa batasan role
 Route::prefix('ga-dashboard')->middleware(['auth:sanctum'])->group(function () {
     // Worship attendance routes
     Route::get('/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
+    Route::get('/worship-attendance/week', [GaDashboardController::class, 'getWorshipAttendanceWeek']);
+    Route::get('/worship-attendance/month', [GaDashboardController::class, 'getWorshipAttendanceMonth']);
+        Route::get('/worship-attendance/export-month', [GaDashboardController::class, 'exportWorshipAttendanceMonth']);
+    Route::get('/worship-attendance/export-week', [GaDashboardController::class, 'exportWorshipAttendanceWeek']);
+    Route::get('/worship-attendance/all', [GaDashboardController::class, 'getWorshipAttendanceAll']);
     Route::get('/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
     
     // Manual worship attendance routes
-    Route::post('/manual-worship-attendance', [ManualWorshipAttendanceController::class, 'store']);
     Route::get('/employees-for-manual-input', [ManualWorshipAttendanceController::class, 'getEmployeesForManualInput']);
+    Route::post('/manual-worship-attendance', [ManualWorshipAttendanceController::class, 'store']);
     Route::post('/update-existing-worship-data', [ManualWorshipAttendanceController::class, 'updateExistingData']);
-    
-    // Export routes
     Route::get('/export-worship-attendance', [GaDashboardController::class, 'exportWorshipAttendance']);
     Route::get('/export-leave-requests', [GaDashboardController::class, 'exportLeaveRequests']);
     
-    // Leave requests routes
+    // Leave requests routes - open to all users
     Route::get('/leave-requests', [GaDashboardController::class, 'getAllLeaveRequests']);
     Route::get('/leave-statistics', [GaDashboardController::class, 'getLeaveStatistics']);
 });
@@ -399,8 +421,7 @@ Route::prefix('calendar')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/yearly-summary', [NationalHolidayController::class, 'getYearlySummary']);
     Route::get('/yearly-holidays', [NationalHolidayController::class, 'getYearlyHolidays']);
     
-    // Routes khusus HR untuk manage hari libur
-    Route::middleware(['role:HR'])->group(function () {
+    // Routes untuk manage hari libur - OPEN TO ALL USERS
         Route::post('/', [NationalHolidayController::class, 'store']);
         Route::put('/{id}', [NationalHolidayController::class, 'update']);
         Route::delete('/{id}', [NationalHolidayController::class, 'destroy']);
@@ -418,7 +439,6 @@ Route::prefix('calendar')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/sync-google', [NationalHolidayController::class, 'syncFromGoogleCalendar']);
         Route::get('/test-google-connection', [NationalHolidayController::class, 'testGoogleCalendarConnection']);
         Route::post('/clear-google-cache', [NationalHolidayController::class, 'clearGoogleCalendarCache']);
-    });
 });
 
 // Route publik untuk mengambil link Zoom
@@ -429,3 +449,46 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/ga/zoom-link', [ZoomLinkController::class, 'getZoomLink']);
     Route::post('/ga/zoom-link', [ZoomLinkController::class, 'updateZoomLink']);
 }); 
+
+// Upload dan preview TXT absensi
+Route::post('/attendance/upload-txt', [AttendanceTxtUploadController::class, 'uploadTxt']);
+Route::post('/attendance/upload-txt/preview', [AttendanceTxtUploadController::class, 'previewTxt']); 
+Route::post('/attendance/convert-raw-txt', [AttendanceTxtUploadController::class, 'convertRawTxt']);
+
+// Manual sync dan status sync employee_id
+Route::post('/attendance/upload-txt/manual-sync', [AttendanceTxtUploadController::class, 'manualBulkSync']);
+Route::get('/attendance/upload-txt/sync-status', [AttendanceTxtUploadController::class, 'getSyncStatus']);
+
+// Endpoint download template TXT absensi
+Route::get('/attendance/template-txt', function () {
+    $path = storage_path('app/template_attendance.txt');
+    return response()->download($path, 'template_attendance.txt');
+}); 
+
+// ================= GA DASHBOARD ROUTES (OPEN TO ALL USERS) =================
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Endpoint utama yang dipakai frontend - open to all users
+    Route::get('/ga-dashboard/get-all-worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
+    Route::get('/ga-dashboard/get-all-leave-requests', [GaDashboardController::class, 'getAllLeaveRequests']);
+    Route::get('/ga-dashboard/get-worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
+    Route::get('/ga-dashboard/get-leave-statistics', [GaDashboardController::class, 'getLeaveStatistics']);
+    // Export Excel - open to all users
+    Route::get('/ga-dashboard/export-worship-attendance', [GaDashboardController::class, 'exportWorshipAttendance']);
+    Route::get('/ga-dashboard/export-leave-requests', [GaDashboardController::class, 'exportLeaveRequests']);
+    // Legacy endpoints (opsional, untuk kompatibilitas lama) - open to all users
+    Route::get('/ga-dashboard/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
+    Route::get('/ga-dashboard/leave-requests', [GaDashboardController::class, 'getAllLeaveRequests']);
+    Route::get('/ga-dashboard/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
+    Route::get('/ga-dashboard/leave-statistics', [GaDashboardController::class, 'getLeaveStatistics']);
+});
+
+// ===== NOTIFICATIONS ROUTES =====
+Route::prefix('notifications')->middleware(['auth:sanctum'])->group(function () {
+    Route::put('/read-status/{id}', function($id) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Notification marked as read',
+            'data' => ['id' => $id, 'read_at' => now()]
+        ]);
+    });
+});

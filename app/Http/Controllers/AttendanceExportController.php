@@ -2,24 +2,16 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use App\Models\Attendance;
-use App\Models\Employee;
-use App\Models\EmployeeAttendance;
-use App\Services\LeaveAttendanceIntegrationService;
-use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
+use App\Models\Attendance;
+use App\Models\EmployeeAttendance;
+use App\Models\Employee;
 
 class AttendanceExportController extends Controller
 {
-    protected $leaveService;
-
-    public function __construct(LeaveAttendanceIntegrationService $leaveService)
-    {
-        $this->leaveService = $leaveService;
-    }
     /**
      * Export data absensi harian
      * GET /api/attendance/export/daily
@@ -27,47 +19,104 @@ class AttendanceExportController extends Controller
     public function exportDaily(Request $request): JsonResponse
     {
         try {
-            $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                'date' => 'nullable|date',
-                'format' => 'nullable|in:csv,excel'
+            $date = $request->get('date', now()->format('Y-m-d'));
+            $format = $request->get('format', 'excel');
+            
+            Log::info('Export daily attendance', [
+                'date' => $date,
+                'format' => $format
             ]);
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation error',
-                    'errors' => $validator->errors()
-                ], 422);
+            // Ambil data absensi untuk tanggal tertentu
+            $attendances = Attendance::where('date', $date)
+                ->with(['employee'])
+                ->get();
+
+            // Ambil semua employee yang terdaftar di mesin
+            $registeredEmployees = EmployeeAttendance::where('is_active', true)
+                ->with('employee')
+                ->get();
+
+            // Buat mapping employee
+            $employeeMap = [];
+            foreach ($registeredEmployees as $emp) {
+                $employeeMap[$emp->machine_user_id] = [
+                    'id' => $emp->employee_id,
+                    'nama' => $emp->employee ? $emp->employee->nama_lengkap : $emp->name,
+                    'pin' => $emp->machine_user_id,
+                    'card_number' => $emp->employee ? $emp->employee->NumCard : null
+                ];
             }
 
-            $date = $request->get('date', now()->format('Y-m-d'));
-            $format = $request->get('format', 'csv');
+            // Siapkan data untuk export
+            $exportData = [];
             
-            // Sinkronisasi status cuti sebelum export
-            $this->leaveService->syncLeaveStatusToAttendance($date);
-            
-            // Ambil data absensi untuk tanggal tertentu dengan relasi employee
-            $attendances = Attendance::where('date', $date)
-                ->with(['employeeAttendance.employee'])
-                ->get()
-                ->sortBy(function($attendance) {
-                    // Urutkan berdasarkan nama pegawai
-                    if ($attendance->employeeAttendance && $attendance->employeeAttendance->employee) {
-                        return $attendance->employeeAttendance->employee->nama_lengkap;
-                    } elseif ($attendance->employeeAttendance) {
-                        return $attendance->employeeAttendance->name;
-                    }
-                    return 'Unknown';
-                });
+            // Tambahkan data yang ada di attendance
+            foreach ($attendances as $attendance) {
+                $employeeInfo = $employeeMap[$attendance->user_pin] ?? [
+                    'id' => $attendance->employee_id,
+                    'nama' => $attendance->user_name,
+                    'pin' => $attendance->user_pin,
+                    'card_number' => $attendance->card_number
+                ];
+                
+                $exportData[] = [
+                    'employee_id' => $employeeInfo['id'],
+                    'nama' => $employeeInfo['nama'],
+                    'user_pin' => $employeeInfo['pin'],
+                    'card_number' => $employeeInfo['card_number'],
+                    'date' => $attendance->date,
+                    'check_in' => $attendance->check_in ? $attendance->check_in->format('H:i:s') : null,
+                    'check_out' => $attendance->check_out ? $attendance->check_out->format('H:i:s') : null,
+                    'status' => $attendance->status,
+                    'work_hours' => $attendance->work_hours,
+                    'total_taps' => $attendance->total_taps,
+                    'notes' => $attendance->notes
+                ];
+            }
+
+            // Tambahkan employee yang tidak ada data absensi (absent)
+            foreach ($registeredEmployees as $emp) {
+                $hasAttendance = $attendances->where('user_pin', $emp->machine_user_id)->count() > 0;
+                
+                if (!$hasAttendance) {
+                    $exportData[] = [
+                        'employee_id' => $emp->employee_id,
+                        'nama' => $emp->employee ? $emp->employee->nama_lengkap : $emp->name,
+                        'user_pin' => $emp->machine_user_id,
+                        'card_number' => $emp->employee ? $emp->employee->NumCard : null,
+                        'date' => $date,
+                        'check_in' => null,
+                        'check_out' => null,
+                        'status' => 'absent',
+                        'work_hours' => 0,
+                        'total_taps' => 0,
+                        'notes' => 'Tidak ada data absensi'
+                    ];
+                }
+            }
+
+            // Urutkan berdasarkan nama
+            usort($exportData, function($a, $b) {
+                return strcmp($a['nama'], $b['nama']);
+            });
 
             if ($format === 'excel') {
-                return $this->exportDailyExcel($attendances, $date);
+                return $this->generateExcelFile($exportData, $date, 'daily');
             } else {
-                return $this->exportDailyCSV($attendances, $date);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Export berhasil',
+                    'data' => [
+                        'date' => $date,
+                        'total_records' => count($exportData),
+                        'records' => $exportData
+                    ]
+                ]);
             }
 
         } catch (\Exception $e) {
-            Log::error('Error in export daily attendance: ' . $e->getMessage());
+            Log::error('Export daily attendance error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan: ' . $e->getMessage()
@@ -82,66 +131,160 @@ class AttendanceExportController extends Controller
     public function exportMonthly(Request $request): JsonResponse
     {
         try {
-            $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                'year' => 'nullable|integer|min:2020|max:2030',
-                'month' => 'nullable|integer|min:1|max:12',
-                'format' => 'nullable|in:csv,excel'
+            $month = (int) $request->get('month', now()->month);
+            $year = (int) $request->get('year', now()->year);
+            $format = $request->get('format', 'excel');
+            
+            Log::info('Export monthly attendance', [
+                'month' => $month,
+                'year' => $year,
+                'format' => $format
             ]);
 
-            if ($validator->fails()) {
+            // Validasi input
+            if ($month < 1 || $month > 12) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Validation error',
-                    'errors' => $validator->errors()
+                    'message' => 'Bulan harus antara 1-12'
                 ], 422);
             }
 
-            $year = $request->get('year', now()->year);
-            $month = $request->get('month', now()->month);
-            $format = $request->get('format', 'csv');
+            if ($year < 2020 || $year > 2030) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tahun harus antara 2020-2030'
+                ], 422);
+            }
 
-            // Ambil semua karyawan yang terdaftar di sistem dan urutkan berdasarkan nama
-            $employees = EmployeeAttendance::where('is_active', true)
-                ->with('employee')
-                ->get()
-                ->sortBy(function($emp) {
-                    // Urutkan berdasarkan nama lengkap atau name
-                    if ($emp->employee) {
-                        return $emp->employee->nama_lengkap;
-                    }
-                    return $emp->name;
-                });
-
-            // Sinkronisasi status cuti untuk seluruh bulan sebelum export
-            $startDate = Carbon::create($year, $month, 1)->format('Y-m-d');
-            $endDate = Carbon::create($year, $month, 1)->endOfMonth()->format('Y-m-d');
-            $this->leaveService->syncLeaveStatusForDateRange($startDate, $endDate);
-            
             // Ambil data absensi untuk bulan tertentu
             $attendances = Attendance::whereYear('date', $year)
                 ->whereMonth('date', $month)
+                ->with(['employee'])
                 ->get()
                 ->groupBy('user_pin');
 
-            // Debug: Log jumlah data yang ditemukan
-            Log::info("Export monthly: Found " . $attendances->count() . " unique user_pins with attendance data");
-            foreach ($attendances as $userPin => $data) {
-                Log::info("User PIN {$userPin}: " . $data->count() . " records");
+            // Ambil semua employee yang terdaftar di mesin
+            $registeredEmployees = EmployeeAttendance::where('is_active', true)
+                ->with('employee')
+                ->get();
+
+            // Buat mapping employee
+            $employeeMap = [];
+            foreach ($registeredEmployees as $emp) {
+                $employeeMap[$emp->machine_user_id] = [
+                    'id' => $emp->employee_id,
+                    'nama' => $emp->employee ? $emp->employee->nama_lengkap : $emp->name,
+                    'pin' => $emp->machine_user_id,
+                    'card_number' => $emp->employee ? $emp->employee->NumCard : null
+                ];
             }
 
-            // Generate working days (Senin-Jumat) untuk bulan ini
-            $workingDays = $this->getWorkingDays($year, $month);
+            // Generate working days untuk bulan tersebut
+            $workingDays = $this->generateWorkingDays($year, $month);
             $monthName = Carbon::create($year, $month)->format('F');
-            $yearName = $year;
+
+            // Siapkan data matrix untuk export
+            $exportData = [];
+            
+            foreach ($registeredEmployees as $emp) {
+                $userPin = $emp->machine_user_id;
+                $employeeInfo = $employeeMap[$userPin];
+                $empAttendances = $attendances->get($userPin, collect());
+                
+                $employeeData = [
+                    'employee_id' => $employeeInfo['id'],
+                    'nama' => $employeeInfo['nama'],
+                    'user_pin' => $employeeInfo['pin'],
+                    'card_number' => $employeeInfo['card_number'],
+                    'month' => $monthName,
+                    'year' => $year,
+                    'daily_data' => [],
+                    'total_hadir' => 0,
+                    'total_jam_kerja' => 0,
+                    'total_terlambat' => 0,
+                    'total_absen' => 0
+                ];
+
+                // Isi data harian
+                foreach ($workingDays as $workingDay) {
+                    $date = $workingDay['date'];
+                    $day = $workingDay['day'];
+                    
+                    $attendance = $empAttendances->filter(function($item) use ($date) {
+                        return $item->date->format('Y-m-d') === $date;
+                    })->first();
+
+                    if ($attendance) {
+                        if (in_array($attendance->status, ['on_leave', 'sick_leave'])) {
+                            $leaveType = $attendance->status === 'sick_leave' ? 'Sakit' : 'Cuti';
+                            $employeeData['daily_data'][$day] = [
+                                'status' => 'cuti',
+                                'type' => $leaveType,
+                                'check_in' => null,
+                                'check_out' => null,
+                                'work_hours' => 0
+                            ];
+                            $employeeData['total_hadir']++;
+                        } elseif ($attendance->check_in) {
+                            $isLate = $attendance->status === 'present_late';
+                            $employeeData['daily_data'][$day] = [
+                                'status' => $attendance->status,
+                                'type' => $isLate ? 'Terlambat' : 'Hadir',
+                                'check_in' => $attendance->check_in->format('H:i:s'),
+                                'check_out' => $attendance->check_out ? $attendance->check_out->format('H:i:s') : null,
+                                'work_hours' => $attendance->work_hours ?? 0
+                            ];
+                            $employeeData['total_hadir']++;
+                            $employeeData['total_jam_kerja'] += $attendance->work_hours ?? 0;
+                            if ($isLate) $employeeData['total_terlambat']++;
+                        } else {
+                            $employeeData['daily_data'][$day] = [
+                                'status' => 'absent',
+                                'type' => 'Absen',
+                                'check_in' => null,
+                                'check_out' => null,
+                                'work_hours' => 0
+                            ];
+                            $employeeData['total_absen']++;
+                        }
+                    } else {
+                        $employeeData['daily_data'][$day] = [
+                            'status' => 'no_data',
+                            'type' => 'Tidak Ada Data',
+                            'check_in' => null,
+                            'check_out' => null,
+                            'work_hours' => 0
+                        ];
+                        $employeeData['total_absen']++;
+                    }
+                }
+
+                $exportData[] = $employeeData;
+            }
+
+            // Urutkan berdasarkan nama
+            usort($exportData, function($a, $b) {
+                return strcmp($a['nama'], $b['nama']);
+            });
 
             if ($format === 'excel') {
-                return $this->exportMonthlyExcel($employees, $attendances, $year, $month, $workingDays, $monthName, $yearName);
+                return $this->generateExcelFile($exportData, $monthName . ' ' . $year, 'monthly');
             } else {
-                return $this->exportMonthlyCSV($employees, $attendances, $year, $month, $workingDays, $monthName, $yearName);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Export berhasil',
+                    'data' => [
+                        'month' => $monthName,
+                        'year' => $year,
+                        'total_employees' => count($exportData),
+                        'working_days' => count($workingDays),
+                        'records' => $exportData
+                    ]
+                ]);
             }
 
         } catch (\Exception $e) {
-            Log::error('Error in export monthly attendance: ' . $e->getMessage());
+            Log::error('Export monthly attendance error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan: ' . $e->getMessage()
@@ -150,9 +293,130 @@ class AttendanceExportController extends Controller
     }
 
     /**
-     * Generate working days (Senin-Jumat) untuk bulan tertentu
+     * Endpoint: GET /api/attendance/monthly-table
+     * Ambil data absensi bulanan, group by nama
      */
-    private function getWorkingDays($year, $month): array
+    public function monthlyTable(Request $request): JsonResponse
+    {
+        $month = (int) $request->get('month', now()->month);
+        $year = (int) $request->get('year', now()->year);
+
+        if ($month < 1 || $month > 12) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bulan harus antara 1-12'
+            ], 422);
+        }
+        if ($year < 2020 || $year > 2030) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tahun harus antara 2020-2030'
+            ], 422);
+        }
+
+        $attendances = \App\Models\Attendance::whereYear('date', $year)
+            ->whereMonth('date', $month)
+            ->orderBy('date')
+            ->orderBy('user_name')
+            ->get();
+
+        $workingDays = $this->generateWorkingDays($year, $month);
+        $monthName = \Carbon\Carbon::create($year, $month)->format('F');
+
+        // Group by nama normalisasi
+        $grouped = [];
+        foreach ($attendances as $att) {
+            $normName = strtolower(trim($att->user_name));
+            if (!isset($grouped[$normName])) {
+                $grouped[$normName] = collect();
+            }
+            $grouped[$normName]->push($att);
+        }
+
+        $tableData = [];
+        foreach ($grouped as $normName => $records) {
+            $first = $records->first();
+            $row = [
+                'user_pin' => $first->user_pin,
+                'nama' => $first->user_name, // tampilkan nama asli dari data pertama
+                'card_number' => $first->card_number,
+                'total_hadir' => 0,
+                'total_jam_kerja' => 0,
+                'total_absen' => 0,
+                'daily_data' => []
+            ];
+            foreach ($workingDays as $workingDay) {
+                $date = $workingDay['date'];
+                $dayKey = (string)$workingDay['day'];
+                // Perbandingan tanggal pakai string agar selalu cocok
+                $att = $records->first(function($item) use ($date) {
+                    $itemDate = $item->date instanceof \DateTime ? $item->date->format('Y-m-d') : (string)$item->date;
+                    return $itemDate == $date;
+                });
+                if ($att) {
+                    if (in_array($att->status, ['on_leave', 'sick_leave'])) {
+                        $row['daily_data'][$dayKey] = [
+                            'status' => 'cuti',
+                            'type' => $att->status === 'sick_leave' ? 'Sakit' : 'Cuti',
+                            'check_in' => null,
+                            'check_out' => null,
+                            'work_hours' => 0
+                        ];
+                        $row['total_hadir']++;
+                    } elseif ($att->check_in) {
+                        $row['daily_data'][$dayKey] = [
+                            'status' => $att->status,
+                            'type' => $att->status === 'present_late' ? 'Terlambat' : 'Hadir',
+                            'check_in' => is_string($att->check_in) ? $att->check_in : $att->check_in->format('H:i:s'),
+                            'check_out' => is_string($att->check_out) ? $att->check_out : $att->check_out->format('H:i:s'),
+                            'work_hours' => $att->work_hours ?? 0
+                        ];
+                        $row['total_hadir']++;
+                        $row['total_jam_kerja'] += $att->work_hours ?? 0;
+                    } else {
+                        $row['daily_data'][$dayKey] = [
+                            'status' => 'absent',
+                            'type' => 'Absen',
+                            'check_in' => null,
+                            'check_out' => null,
+                            'work_hours' => 0
+                        ];
+                        $row['total_absen']++;
+                    }
+                } else {
+                    $row['daily_data'][$dayKey] = [
+                        'status' => 'no_data',
+                        'type' => 'Tidak Ada Data',
+                        'check_in' => null,
+                        'check_out' => null,
+                        'work_hours' => 0
+                    ];
+                    $row['total_absen']++;
+                }
+            }
+            $tableData[] = $row;
+        }
+
+        usort($tableData, function($a, $b) {
+            return strcmp($a['nama'], $b['nama']);
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Data absensi bulanan berhasil diambil',
+            'data' => [
+                'month' => $monthName,
+                'year' => $year,
+                'working_days' => $workingDays,
+                'records' => $tableData
+            ]
+        ]);
+    }
+
+    /**
+     * Generate working days untuk bulan tertentu
+     */
+    private function generateWorkingDays($year, $month): array
     {
         $workingDays = [];
         $startDate = Carbon::create($year, $month, 1);
@@ -161,12 +425,11 @@ class AttendanceExportController extends Controller
         $currentDate = $startDate->copy();
         
         while ($currentDate <= $endDate) {
-            // Hanya ambil hari Senin (1) sampai Jumat (5)
             if ($currentDate->dayOfWeek >= 1 && $currentDate->dayOfWeek <= 5) {
                 $workingDays[] = [
                     'day' => $currentDate->day,
                     'date' => $currentDate->format('Y-m-d'),
-                    'dayName' => $currentDate->format('D') // Mon, Tue, Wed, Thu, Fri
+                    'dayName' => $currentDate->format('D')
                 ];
             }
             $currentDate->addDay();
@@ -176,317 +439,186 @@ class AttendanceExportController extends Controller
     }
 
     /**
-     * Export CSV harian
+     * Generate Excel file
      */
-    private function exportDailyCSV($attendances, $date): JsonResponse
+    private function generateExcelFile($data, $period, $type): JsonResponse
     {
-        // Buat CSV content
-        $csvContent = $this->generateDailyCSV($attendances, $date);
-
-        // Generate filename
-        $filename = 'Absensi_' . Carbon::parse($date)->format('d-m-Y') . '_Hope_Channel_Indonesia.csv';
-
-        // Save file
-        $filePath = storage_path('app/public/exports/' . $filename);
-        
-        // Create directory if not exists
-        if (!file_exists(dirname($filePath))) {
-            mkdir(dirname($filePath), 0755, true);
-        }
-        
-        file_put_contents($filePath, $csvContent);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Export berhasil',
-            'data' => [
-                'filename' => $filename,
-                'download_url' => url('storage/exports/' . $filename),
-                'total_records' => $attendances->count(),
-                'date' => $date,
-                'format' => 'csv'
-            ]
-        ]);
-    }
-
-    /**
-     * Export Excel harian (HTML table yang bisa dibuka di Excel)
-     */
-    private function exportDailyExcel($attendances, $date): JsonResponse
-    {
-        // Generate HTML table yang bisa dibuka di Excel
-        $htmlContent = $this->generateDailyExcel($attendances, $date);
-
-        // Generate filename
-        $filename = 'Absensi_' . Carbon::parse($date)->format('d-m-Y') . '_Hope_Channel_Indonesia.xls';
-
-        // Save file
-        $filePath = storage_path('app/public/exports/' . $filename);
-        
-        // Create directory if not exists
-        if (!file_exists(dirname($filePath))) {
-            mkdir(dirname($filePath), 0755, true);
-        }
-        
-        file_put_contents($filePath, $htmlContent);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Export berhasil',
-            'data' => [
-                'filename' => $filename,
-                'download_url' => url('storage/exports/' . $filename),
-                'total_records' => $attendances->count(),
-                'date' => $date,
-                'format' => 'excel'
-            ]
-        ]);
-    }
-
-    /**
-     * Export CSV bulanan
-     */
-    private function exportMonthlyCSV($employees, $attendances, $year, $month, $workingDays, $monthName, $yearName): JsonResponse
-    {
-        // Buat CSV content
-        $csvContent = $this->generateMonthlyCSV($employees, $attendances, $year, $month, $workingDays, $monthName, $yearName);
-
-        // Generate filename
-        $filename = 'Absensi_' . $monthName . '_' . $yearName . '_Hope_Channel_Indonesia.csv';
-
-        // Save file
-        $filePath = storage_path('app/public/exports/' . $filename);
-        
-        // Create directory if not exists
-        if (!file_exists(dirname($filePath))) {
-            mkdir(dirname($filePath), 0755, true);
-        }
-        
-        file_put_contents($filePath, $csvContent);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Export berhasil',
-            'data' => [
-                'filename' => $filename,
-                'download_url' => url('storage/exports/' . $filename),
-                'total_employees' => $employees->count(),
-                'working_days' => count($workingDays),
-                'month' => $monthName . ' ' . $yearName,
-                'format' => 'csv'
-            ]
-        ]);
-    }
-
-    /**
-     * Export Excel bulanan (HTML table yang bisa dibuka di Excel)
-     */
-    private function exportMonthlyExcel($employees, $attendances, $year, $month, $workingDays, $monthName, $yearName): JsonResponse
-    {
-        // Debug: Log employee data
-        Log::info("Export monthly: Processing " . $employees->count() . " employees");
-        
-        // Buat mapping dari user_pin ke employee data
-        $employeeMap = [];
-        $userPinToEmployee = [];
-        
-        foreach ($employees as $emp) {
-            $nama = $emp->employee ? $emp->employee->nama_lengkap : $emp->name;
-            $employeeMap[$emp->machine_user_id] = $nama;
-            $userPinToEmployee[$emp->machine_user_id] = $emp;
+        try {
+            $filename = 'Absensi_' . $type . '_' . str_replace(' ', '_', $period) . '_' . date('Y-m-d_H-i-s') . '.xlsx';
+            $filePath = storage_path('app/public/exports/' . $filename);
             
-            // Debug: Log mapping
-            Log::info("Mapping employee: machine_user_id {$emp->machine_user_id} -> {$nama}");
-        }
-
-        // Ambil semua user_pin yang pernah scan di bulan tsb
-        $userPins = $attendances->keys();
-        Log::info("Export monthly: Found " . $userPins->count() . " user_pins with attendance data: " . $userPins->implode(', '));
-
-        // Siapkan data matrix - gunakan semua employee yang aktif
-        $matrix = [];
-        foreach ($employees as $emp) {
-            $userPin = $emp->machine_user_id;
-            $nama = $employeeMap[$userPin] ?? $userPin;
-            $matrix[$userPin] = [
-                'nama' => $nama,
-                'data' => [],
-                'total_hadir' => 0,
-                'total_jam' => 0.0
-            ];
-        }
-        
-        // Isi data matrix hanya untuk hari kerja
-        foreach ($employees as $emp) {
-            $userPin = $emp->machine_user_id;
-            $empAttendances = $attendances->get($userPin, collect());
-            
-            // Debug: Log untuk setiap employee
-            Log::info("Processing employee {$userPin} ({$matrix[$userPin]['nama']}): " . $empAttendances->count() . " attendance records");
-            
-            foreach ($workingDays as $workingDay) {
-                $date = $workingDay['date'];
-                $day = $workingDay['day'];
-                $att = $empAttendances->filter(function($item) use ($date) {
-                    return $item->date->format('Y-m-d') === $date;
-                })->first();
-                
-                // Debug: Log untuk setiap hari
-                Log::info("  Checking attendance for {$userPin} on {$date}: " . ($att ? 'Found' : 'Not found'));
-                
-                if ($att) {
-                    // Cek apakah status adalah cuti
-                    if (in_array($att->status, ['on_leave', 'sick_leave'])) {
-                        // Status cuti - tampilkan jenis cuti
-                        $leaveType = $att->status === 'sick_leave' ? 'Sakit' : 'Cuti';
-                        $matrix[$userPin]['data'][$day] = 'CUTI_' . $leaveType;
-                        $matrix[$userPin]['total_hadir']++; // Cuti dihitung sebagai hadir
-                        Log::info("  Found leave status for {$date}: {$att->status}");
-                    } elseif ($att->check_in) {
-                        // Jika ada check-in, berarti hadir
-                        if ($att->check_out) {
-                            $jamKerja = $att->work_hours ? number_format($att->work_hours, 2) : '0.00';
-                            $matrix[$userPin]['data'][$day] = $att->check_in->format('H:i') . '-' . $att->check_out->format('H:i');
-                            $matrix[$userPin]['total_jam'] += (float)$jamKerja;
-                            Log::info("  Found complete attendance for {$date}: {$att->check_in->format('H:i')} - {$att->check_out->format('H:i')}");
-                        } else {
-                            $matrix[$userPin]['data'][$day] = $att->check_in->format('H:i') . '-';
-                            Log::info("  Found partial attendance for {$date}: {$att->check_in->format('H:i')} - (no check out)");
-                        }
-                        $matrix[$userPin]['total_hadir']++;
-                    } else {
-                        $matrix[$userPin]['data'][$day] = 'ABSEN';
-                        Log::info("  Found attendance record but no check in for {$date}");
-                    }
-                } else {
-                    $matrix[$userPin]['data'][$day] = '';
-                }
+            if (!file_exists(dirname($filePath))) {
+                mkdir(dirname($filePath), 0755, true);
             }
+
+            // Generate Excel content (simplified for now)
+            $html = $this->generateExcelHTML($data, $period, $type);
+            file_put_contents($filePath, $html);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Export berhasil',
+                'data' => [
+                    'filename' => $filename,
+                    'download_url' => url('storage/exports/' . $filename),
+                    'direct_download_url' => url('api/attendance/export/download/' . $filename),
+                    'total_records' => count($data)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Generate Excel file error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal generate file Excel: ' . $e->getMessage()
+            ], 500);
         }
+    }
 
-        // Urutkan matrix berdasarkan nama pegawai (A-Z)
-        $matrix = collect($matrix)->sortBy('nama')->toArray();
-
-        // Generate HTML table
+    /**
+     * Generate HTML untuk Excel
+     */
+    private function generateExcelHTML($data, $period, $type): string
+    {
         $html = '<!DOCTYPE html>';
         $html .= '<html>';
         $html .= '<head>';
         $html .= '<meta charset="UTF-8">';
-        $html .= '<title>Absensi ' . $monthName . ' ' . $yearName . ' Hope Channel Indonesia</title>';
+        $html .= '<title>Absensi ' . $period . ' Hope Channel Indonesia</title>';
         $html .= '<style>';
         $html .= 'table { border-collapse: collapse; width: 100%; font-size: 11px; }';
         $html .= 'th, td { border: 1px solid #333; padding: 6px; text-align: center; }';
-        $html .= 'th { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.3); }';
-        $html .= '.nama { text-align: left; font-weight: bold; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: black; text-shadow: 1px 1px 2px rgba(255,255,255,0.5); }';
-        $html .= '.hadir-lengkap { background-color: #4CAF50; color: white; font-weight: bold; }'; // Hijau untuk hadir lengkap
-        $html .= '.hadir-masuk { background-color: #FFC107; color: #333; font-weight: bold; }'; // Kuning untuk hanya masuk
-        $html .= '.tidak-hadir { background-color: #F44336; color: white; font-weight: bold; }'; // Merah untuk tidak hadir
-        $html .= '.cuti { background-color: #1565C0; color: white; font-weight: bold; }'; // Biru tua untuk cuti
-        $html .= '.total-col { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); font-weight: bold; color: #333; }';
-        $html .= '.title { text-align: center; font-weight: bold; font-size: 18px; margin: 15px 0; color: #333; text-shadow: 1px 1px 2px rgba(0,0,0,0.1); }';
-        $html .= '.subtitle { text-align: center; font-size: 14px; margin: 10px 0; color: #666; }';
+        $html .= 'th { background: #4CAF50; color: white; font-weight: bold; }';
+        $html .= '.nama { text-align: left; font-weight: bold; background: #f0f0f0; }';
+        $html .= '.hadir { background-color: #4CAF50; color: white; }';
+        $html .= '.terlambat { background-color: #FFC107; color: #333; }';
+        $html .= '.absen { background-color: #F44336; color: white; }';
+        $html .= '.cuti { background-color: #2196F3; color: white; }';
+        $html .= '.title { text-align: center; font-weight: bold; font-size: 18px; margin: 15px 0; }';
         $html .= '</style>';
         $html .= '</head>';
         $html .= '<body>';
-        $html .= '<div class="title">📊 LAPORAN ABSENSI ' . strtoupper($monthName) . ' ' . $yearName . '</div>';
+        $html .= '<div class="title">📊 LAPORAN ABSENSI ' . strtoupper($period) . '</div>';
         $html .= '<div class="title" style="font-size: 16px;">Hope Channel Indonesia</div>';
-        $html .= '<div class="subtitle">📅 Hari Kerja (Senin-Jumat)</div>';
-        $html .= '<table>';
-        $html .= '<thead><tr><th>👤 Nama Karyawan</th>';
-        foreach ($workingDays as $workingDay) {
-            $html .= '<th>' . $workingDay['day'] . '<br><small>(' . $workingDay['dayName'] . ')</small></th>';
-        }
-        $html .= '<th class="total-col">✅ Total Hadir</th><th class="total-col">⏰ Total Jam Kerja</th></tr></thead>';
-        $html .= '<tbody>';
-        foreach ($matrix as $row) {
-            $html .= '<tr>';
-            $html .= '<td class="nama">' . htmlspecialchars($row['nama']) . '</td>';
-            foreach ($workingDays as $workingDay) {
-                $day = $workingDay['day'];
-                $cellData = $row['data'][$day] ?? '';
-                
-                // Tentukan class CSS berdasarkan data
-                if ($cellData === '') {
-                    // Tidak ada data
-                    $cellClass = 'tidak-hadir';
-                    $cellContent = '-';
-                } elseif ($cellData === 'ABSEN') {
-                    // Ada record tapi tidak ada check-in
-                    $cellClass = 'tidak-hadir';
-                    $cellContent = '-';
-                } elseif (strpos($cellData, 'CUTI_') === 0) {
-                    // Status cuti
-                    $cellClass = 'cuti';
-                    $leaveType = str_replace('CUTI_', '', $cellData);
-                    $cellContent = $leaveType;
-                } elseif (strpos($cellData, '-') !== false && substr($cellData, -1) === '-') {
-                    // Hanya check-in (format: 08:00-)
-                    $cellClass = 'hadir-masuk';
-                    $cellContent = $cellData . ' (Hanya Masuk)';
-                } elseif (strpos($cellData, '-') !== false && substr($cellData, -1) !== '-') {
-                    // Check-in dan check-out lengkap (format: 08:00-17:00)
-                    $cellClass = 'hadir-lengkap';
-                    $cellContent = $cellData;
-                } else {
-                    // Default
-                    $cellClass = '';
-                    $cellContent = $cellData;
-                }
-                
-                $html .= '<td class="' . $cellClass . '">' . $cellContent . '</td>';
-            }
-            $html .= '<td class="total-col">' . $row['total_hadir'] . '</td>';
-            $html .= '<td class="total-col">' . number_format($row['total_jam'], 2) . ' jam</td>';
-            $html .= '</tr>';
-        }
-        $html .= '</tbody></table>';
         
-        // Legend
-        $html .= '<div style="margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background: #f9f9f9;">';
-        $html .= '<h3 style="margin-top: 0; color: #333;">📋 Keterangan Warna:</h3>';
-        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #4CAF50; margin-right: 10px; border-radius: 3px;"></span><strong>Hijau:</strong> Hadir Lengkap (Check-in & Check-out)</div>';
-        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #FFC107; margin-right: 10px; border-radius: 3px;"></span><strong>Kuning:</strong> Hanya Check-in</div>';
-        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #1565C0; margin-right: 10px; border-radius: 3px;"></span><strong>Biru Tua:</strong> Cuti/Sakit</div>';
-        $html .= '<div style="margin: 10px 0;"><span style="display: inline-block; width: 20px; height: 20px; background-color: #F44336; margin-right: 10px; border-radius: 3px;"></span><strong>Merah:</strong> Tidak Hadir (-)</div>';
-        $html .= '</div>';
-        
-        $html .= '</body></html>';
-
-        // Generate filename
-        $filename = 'Absensi_' . $monthName . '_' . $yearName . '_Hope_Channel_Indonesia.xls';
-        $filePath = storage_path('app/public/exports/' . $filename);
-        if (!file_exists(dirname($filePath))) {
-            mkdir(dirname($filePath), 0755, true);
+        if ($type === 'daily') {
+            $html .= $this->generateDailyTable($data);
+        } else {
+            $html .= $this->generateMonthlyTable($data);
         }
-        file_put_contents($filePath, $html);
-        // Log successful export
-        Log::info('Monthly Excel export completed', [
-            'filename' => $filename,
-            'total_employees' => count($matrix),
-            'working_days' => count($workingDays),
-            'month' => $monthName . ' ' . $yearName,
-            'file_size' => filesize($filePath)
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Export Excel berhasil dibuat',
-            'data' => [
-                'filename' => $filename,
-                'download_url' => url('storage/exports/' . $filename),
-                'direct_download_url' => url('api/attendance/export/download/' . $filename),
-                'total_employees' => count($matrix),
-                'working_days' => count($workingDays),
-                'month' => $monthName . ' ' . $yearName,
-                'format' => 'excel',
-                'file_size' => filesize($filePath),
-                'auto_download' => true
-            ]
-        ]);
+        
+        $html .= '</body>';
+        $html .= '</html>';
+        
+        return $html;
     }
 
     /**
-     * Download file Excel langsung
+     * Generate table untuk export harian
+     */
+    private function generateDailyTable($data): string
+    {
+        $html = '<table>';
+        $html .= '<thead>';
+        $html .= '<tr>';
+        $html .= '<th>No</th>';
+        $html .= '<th>Nama</th>';
+        $html .= '<th>PIN</th>';
+        $html .= '<th>Card Number</th>';
+        $html .= '<th>Tanggal</th>';
+        $html .= '<th>Check In</th>';
+        $html .= '<th>Check Out</th>';
+        $html .= '<th>Status</th>';
+        $html .= '<th>Jam Kerja</th>';
+        $html .= '<th>Total Taps</th>';
+        $html .= '</tr>';
+        $html .= '</thead>';
+        $html .= '<tbody>';
+        
+        foreach ($data as $index => $record) {
+            $html .= '<tr>';
+            $html .= '<td>' . ($index + 1) . '</td>';
+            $html .= '<td class="nama">' . htmlspecialchars($record['nama']) . '</td>';
+            $html .= '<td>' . htmlspecialchars($record['user_pin']) . '</td>';
+            $html .= '<td>' . htmlspecialchars($record['card_number']) . '</td>';
+            $html .= '<td>' . htmlspecialchars($record['date']) . '</td>';
+            $html .= '<td>' . htmlspecialchars($record['check_in'] ?? '-') . '</td>';
+            $html .= '<td>' . htmlspecialchars($record['check_out'] ?? '-') . '</td>';
+            $html .= '<td class="' . $this->getStatusClass($record['status']) . '">' . htmlspecialchars($record['status']) . '</td>';
+            $html .= '<td>' . htmlspecialchars($record['work_hours'] ?? 0) . '</td>';
+            $html .= '<td>' . htmlspecialchars($record['total_taps'] ?? 0) . '</td>';
+            $html .= '</tr>';
+        }
+        
+        $html .= '</tbody>';
+        $html .= '</table>';
+        
+        return $html;
+    }
+
+    /**
+     * Generate table untuk export bulanan
+     */
+    private function generateMonthlyTable($data): string
+    {
+        if (empty($data)) {
+            return '<p>Tidak ada data untuk ditampilkan</p>';
+        }
+
+        $html = '<table>';
+        $html .= '<thead>';
+        $html .= '<tr>';
+        $html .= '<th>No</th>';
+        $html .= '<th>Nama</th>';
+        $html .= '<th>PIN</th>';
+        $html .= '<th>Total Hadir</th>';
+        $html .= '<th>Total Jam Kerja</th>';
+        $html .= '<th>Total Terlambat</th>';
+        $html .= '<th>Total Absen</th>';
+        $html .= '</tr>';
+        $html .= '</thead>';
+        $html .= '<tbody>';
+        
+        foreach ($data as $index => $record) {
+            $html .= '<tr>';
+            $html .= '<td>' . ($index + 1) . '</td>';
+            $html .= '<td class="nama">' . htmlspecialchars($record['nama']) . '</td>';
+            $html .= '<td>' . htmlspecialchars($record['user_pin']) . '</td>';
+            $html .= '<td class="hadir">' . $record['total_hadir'] . '</td>';
+            $html .= '<td>' . number_format($record['total_jam_kerja'], 2) . '</td>';
+            $html .= '<td class="terlambat">' . $record['total_terlambat'] . '</td>';
+            $html .= '<td class="absen">' . $record['total_absen'] . '</td>';
+            $html .= '</tr>';
+        }
+        
+        $html .= '</tbody>';
+        $html .= '</table>';
+        
+        return $html;
+    }
+
+    /**
+     * Get CSS class berdasarkan status
+     */
+    private function getStatusClass($status): string
+    {
+        switch ($status) {
+            case 'present_ontime':
+                return 'hadir';
+            case 'present_late':
+                return 'terlambat';
+            case 'absent':
+                return 'absen';
+            case 'on_leave':
+            case 'sick_leave':
+                return 'cuti';
+            default:
+                return '';
+        }
+    }
+
+    /**
+     * Download file
      * GET /api/attendance/export/download/{filename}
      */
     public function downloadFile($filename)
@@ -500,226 +632,15 @@ class AttendanceExportController extends Controller
                     'message' => 'File tidak ditemukan'
                 ], 404);
             }
-            
-            // Set headers untuk download
-            $headers = [
-                'Content-Type' => 'application/vnd.ms-excel',
-                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
-                'Content-Length' => filesize($filePath)
-            ];
-            
-            return response()->download($filePath, $filename, $headers);
-            
+
+            return response()->download($filePath, $filename);
+
         } catch (\Exception $e) {
-            Log::error('Error downloading file: ' . $e->getMessage());
+            Log::error('Download file error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan saat download: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
             ], 500);
         }
     }
-
-    /**
-     * Generate CSV content untuk export harian
-     */
-    private function generateDailyCSV($attendances, $date): string
-    {
-        $csv = [];
-        
-        // Header
-        $csv[] = 'LAPORAN ABSENSI HARIAN';
-        $csv[] = 'Tanggal: ' . Carbon::parse($date)->format('d F Y');
-        $csv[] = 'Hope Channel Indonesia';
-        $csv[] = ''; // Empty line
-        
-        // Table header
-        $csv[] = 'No,Nama Pegawai,Tanggal Absen,Scan Masuk,Scan Pulang,Jam Kerja';
-        
-        // Data
-        $no = 1;
-        foreach ($attendances as $attendance) {
-            // Ambil nama pegawai
-            $employeeName = 'Unknown';
-            if ($attendance->employeeAttendance && $attendance->employeeAttendance->employee) {
-                $employeeName = $attendance->employeeAttendance->employee->nama_lengkap;
-            } elseif ($attendance->employeeAttendance) {
-                $employeeName = $attendance->employeeAttendance->name;
-            }
-            
-            // Cek status cuti
-            if (in_array($attendance->status, ['on_leave', 'sick_leave'])) {
-                $statusText = $attendance->status === 'sick_leave' ? 'Sakit' : 'Cuti';
-                $row = [
-                    $no,
-                    $employeeName,
-                    $attendance->date,
-                    $statusText,
-                    '-',
-                    '-'
-                ];
-            } else {
-                $row = [
-                    $no,
-                    $employeeName,
-                    $attendance->date,
-                    $attendance->check_in ? $attendance->check_in->format('H:i:s') : '-',
-                    $attendance->check_out ? $attendance->check_out->format('H:i:s') : '-',
-                    $attendance->work_hours ? number_format($attendance->work_hours, 2) . ' jam' : '-'
-                ];
-            }
-            $csv[] = implode(',', $row);
-            $no++;
-        }
-        
-        return implode("\n", $csv);
-    }
-
-    /**
-     * Generate Excel content untuk export harian (HTML table)
-     */
-    private function generateDailyExcel($attendances, $date): string
-    {
-        $html = '<!DOCTYPE html>';
-        $html .= '<html>';
-        $html .= '<head>';
-        $html .= '<meta charset="UTF-8">';
-        $html .= '<title>LAPORAN ABSENSI HARIAN</title>';
-        $html .= '<style>';
-        $html .= 'table { border-collapse: collapse; width: 100%; }';
-        $html .= 'th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }';
-        $html .= 'th { background-color: #4472C4; color: white; font-weight: bold; }';
-        $html .= '.title { text-align: center; font-weight: bold; font-size: 16px; margin: 10px 0; }';
-        $html .= '.subtitle { text-align: center; font-size: 14px; margin: 5px 0; }';
-        $html .= '.cuti { background-color: #1565C0; color: white; font-weight: bold; }'; // Biru tua untuk cuti
-        $html .= '</style>';
-        $html .= '</head>';
-        $html .= '<body>';
-        
-        // Title
-        $html .= '<div class="title">LAPORAN ABSENSI HARIAN</div>';
-        $html .= '<div class="subtitle">Tanggal: ' . Carbon::parse($date)->format('d F Y') . '</div>';
-        $html .= '<div class="subtitle">Hope Channel Indonesia</div>';
-        $html .= '<br>';
-        
-        // Table
-        $html .= '<table>';
-        $html .= '<thead>';
-        $html .= '<tr>';
-        $html .= '<th>No</th>';
-        $html .= '<th>Nama Pegawai</th>';
-        $html .= '<th>Tanggal Absen</th>';
-        $html .= '<th>Scan Masuk</th>';
-        $html .= '<th>Scan Pulang</th>';
-        $html .= '<th>Jam Kerja</th>';
-        $html .= '</tr>';
-        $html .= '</thead>';
-        $html .= '<tbody>';
-        
-        $no = 1;
-        foreach ($attendances as $attendance) {
-            // Ambil nama pegawai
-            $employeeName = 'Unknown';
-            if ($attendance->employeeAttendance && $attendance->employeeAttendance->employee) {
-                $employeeName = $attendance->employeeAttendance->employee->nama_lengkap;
-            } elseif ($attendance->employeeAttendance) {
-                $employeeName = $attendance->employeeAttendance->name;
-            }
-            
-            // Tentukan class CSS berdasarkan status
-            $rowClass = '';
-            $statusText = '';
-            if (in_array($attendance->status, ['on_leave', 'sick_leave'])) {
-                $rowClass = 'cuti';
-                $statusText = $attendance->status === 'sick_leave' ? 'Sakit' : 'Cuti';
-            }
-            
-            $html .= '<tr class="' . $rowClass . '">';
-            $html .= '<td>' . $no . '</td>';
-            $html .= '<td>' . htmlspecialchars($employeeName) . '</td>';
-            $html .= '<td>' . $attendance->date . '</td>';
-            if ($statusText) {
-                $html .= '<td colspan="3">' . $statusText . '</td>';
-            } else {
-                $html .= '<td>' . ($attendance->check_in ? $attendance->check_in->format('H:i:s') : '-') . '</td>';
-                $html .= '<td>' . ($attendance->check_out ? $attendance->check_out->format('H:i:s') : '-') . '</td>';
-                $html .= '<td>' . ($attendance->work_hours ? number_format($attendance->work_hours, 2) . ' jam' : '-') . '</td>';
-            }
-            $html .= '</tr>';
-            $no++;
-        }
-        
-        $html .= '</tbody>';
-        $html .= '</table>';
-        $html .= '</body>';
-        $html .= '</html>';
-        
-        return $html;
-    }
-
-    /**
-     * Generate CSV content untuk export bulanan
-     */
-    private function generateMonthlyCSV($employees, $attendances, $year, $month, $workingDays, $monthName, $yearName): string
-    {
-        $csv = [];
-        
-        // Header
-        $csv[] = 'Absensi ' . $monthName . ' ' . $yearName . ' Hope Channel Indonesia';
-        $csv[] = 'Hari Kerja (Senin-Jumat)';
-        $csv[] = ''; // Empty line
-        
-        // Header row dengan tanggal
-        $headerRow = ['Nama Karyawan'];
-        foreach ($workingDays as $workingDay) {
-            $headerRow[] = $workingDay['day'] . ' (' . $workingDay['dayName'] . ')';
-        }
-        $csv[] = implode(',', $headerRow);
-        
-        // Data karyawan
-        foreach ($employees as $employeeAttendance) {
-            $employeeName = $employeeAttendance->employee ? $employeeAttendance->employee->nama_lengkap : 'Unknown';
-            $row = [$employeeName];
-            
-            // Ambil data absensi untuk karyawan ini
-            $userPin = $employeeAttendance->machine_user_id;
-            $employeeAttendances = $attendances->get($userPin, collect());
-            
-            // Isi data per hari kerja
-            foreach ($workingDays as $workingDay) {
-                $date = $workingDay['date'];
-                $attendance = $employeeAttendances->where('date', $date)->first();
-                
-                if ($attendance) {
-                    // Cek status cuti
-                    if (in_array($attendance->status, ['on_leave', 'sick_leave'])) {
-                        $row[] = $attendance->status === 'sick_leave' ? 'SAKIT' : 'CUTI';
-                    } elseif ($attendance->check_in && $attendance->check_out) {
-                        $row[] = 'HADIR';
-                    } elseif ($attendance->check_in) {
-                        $row[] = 'IN';
-                    } else {
-                        $row[] = 'ABSEN';
-                    }
-                } else {
-                    $row[] = '';
-                }
-            }
-            
-            $csv[] = implode(',', $row);
-        }
-        
-        // Tambahkan legend
-        $csv[] = ''; // Empty line
-        $csv[] = 'Keterangan:';
-        $csv[] = 'HADIR = Hadir (Tap In & Tap Out)';
-        $csv[] = 'IN = Hanya Tap In';
-        $csv[] = 'CUTI = Sedang Cuti';
-        $csv[] = 'SAKIT = Sakit';
-        $csv[] = 'ABSEN = Tidak Hadir';
-        $csv[] = 'Kosong = Hari Libur (Sabtu-Minggu)';
-        
-        return implode("\n", $csv);
-    }
-
-
-}
+} 

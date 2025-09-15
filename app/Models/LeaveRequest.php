@@ -22,6 +22,10 @@ class LeaveRequest extends Model
         'overall_status', 
         'approved_at', 
         'rejection_reason', 
+        'employee_signature_path',
+        'approver_signature_path',
+        'leave_location',
+        'contact_phone',
     ]; 
 
     protected $casts = [ 

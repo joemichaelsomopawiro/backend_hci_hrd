@@ -220,6 +220,46 @@ class LeaveQuotaController extends Controller
         ]);
     }
 
+    // Endpoint untuk reset jatah cuti tahunan manual
+    public function resetAnnual(Request $request): JsonResponse
+    {
+        $request->validate([
+            'year' => 'required|integer|min:2020|max:2030',
+            'confirm' => 'required|boolean|accepted'
+        ]);
+
+        if (!$request->confirm) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Konfirmasi diperlukan untuk melakukan reset jatah cuti tahunan'
+            ], 422);
+        }
+
+        try {
+            // Jalankan command reset
+            \Artisan::call('leave:reset-annual', [
+                'year' => $request->year
+            ]);
+
+            $output = \Artisan::output();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Reset jatah cuti tahunan berhasil dilakukan',
+                'data' => [
+                    'year' => $request->year,
+                    'command_output' => $output
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal melakukan reset jatah cuti tahunan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     // Endpoint untuk mendapatkan jatah cuti user yang sedang login
     public function getMyCurrentQuotas(Request $request): JsonResponse
     {
