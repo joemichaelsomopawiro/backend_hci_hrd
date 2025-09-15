@@ -476,7 +476,7 @@ class LeaveRequestController extends Controller
 
         // Fallback: pakai signature dari profil atasan jika ada
         if (!$approverSignatureDataUri) {
-            $profileSig = $leave->approvedBy->user->signature_path ?? $leave->approvedBy->signature_path ?? null;
+            $profileSig = $leave->approvedBy?->user?->signature_path ?? $leave->approvedBy?->signature_path ?? null;
             $approverSignatureDataUri = $toDataUri($profileSig);
             Log::info('Approver signature fallback used', [
                 'leave_request_id' => $leave->id,
@@ -485,33 +485,75 @@ class LeaveRequestController extends Controller
             ]);
         }
 
-        // Format rentang tanggal seperti contoh (satu tahun di akhir bila memungkinkan)
-        $start = Carbon::parse($leave->start_date)->locale('id');
-        $end = Carbon::parse($leave->end_date)->locale('id');
+        // Format tanggal manual (tanpa ketergantungan intl)
+        $bulanId = [
+            1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April', 5 => 'Mei', 6 => 'Juni',
+            7 => 'Juli', 8 => 'Agustus', 9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember'
+        ];
+
+        $start = Carbon::parse($leave->start_date);
+        $end = Carbon::parse($leave->end_date);
+
+        $fmt = function (Carbon $d) use ($bulanId): string {
+            return ltrim($d->day, '0') . ' ' . ($bulanId[$d->month] ?? $d->format('F')) . ' ' . $d->year;
+        };
+
         if ($start->year === $end->year) {
             if ($start->month === $end->month) {
-                $dateRange = $start->translatedFormat('j F') . ' - ' . $end->translatedFormat('j F Y');
+                $dateRange = ltrim($start->day, '0') . ' ' . ($bulanId[$start->month] ?? $start->format('F')) . ' - '
+                    . ltrim($end->day, '0') . ' ' . ($bulanId[$end->month] ?? $end->format('F')) . ' ' . $end->year;
             } else {
-                $dateRange = $start->translatedFormat('j F') . ' - ' . $end->translatedFormat('j F Y');
+                $dateRange = ltrim($start->day, '0') . ' ' . ($bulanId[$start->month] ?? $start->format('F')) . ' - '
+                    . ltrim($end->day, '0') . ' ' . ($bulanId[$end->month] ?? $end->format('F')) . ' ' . $end->year;
             }
         } else {
-            $dateRange = $start->translatedFormat('j F Y') . ' - ' . $end->translatedFormat('j F Y');
+            $dateRange = $fmt($start) . ' - ' . $fmt($end);
         }
 
-        // Coba ambil logo perusahaan dari public/images atau favicon
-        $logoCandidates = [
-            public_path('images/image.png'),
-            public_path('images/hope_logo.png'),
-            public_path('images/hope-logo.png'),
-            public_path('images/logo_hope_channel.png'),
-            public_path('favicon.ico'),
-        ];
+        // Coba ambil logo perusahaan dari beberapa sumber yang umum (ENV/Config, storage/public, public/images)
         $companyLogoDataUri = null;
-        foreach ($logoCandidates as $logoPath) {
-            if ($logoPath && file_exists($logoPath)) {
-                $mime = function_exists('mime_content_type') ? mime_content_type($logoPath) : 'image/png';
-                $companyLogoDataUri = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($logoPath));
-                break;
+
+        // 1) Override melalui ENV/Config (bisa berupa relative path, absolute path, storage path, atau URL)
+        $customLogo = env('COMPANY_LOGO_PATH') ?? (config('app.company_logo_path') ?? null);
+        if (!empty($customLogo)) {
+            $companyLogoDataUri = $toDataUri($customLogo);
+        }
+
+        // 2) Jika belum ada, cek disk public (storage/app/public/...)
+        if (!$companyLogoDataUri) {
+            $publicDiskCandidates = [
+                'images/hope_logo.png',
+                'images/hope-logo.png',
+                'images/logo_hope_channel.png',
+                'images/logo.png',
+            ];
+            foreach ($publicDiskCandidates as $rel) {
+                if (Storage::disk('public')->exists($rel)) {
+                    $mime = function_exists('mime_content_type') ? mime_content_type(storage_path('app/public/'.$rel)) : 'image/png';
+                    $companyLogoDataUri = 'data:' . $mime . ';base64,' . base64_encode(Storage::disk('public')->get($rel));
+                    break;
+                }
+            }
+        }
+
+        // 3) Jika masih belum, cek folder public/images dan favicon
+        if (!$companyLogoDataUri) {
+            $logoCandidates = [
+                public_path('images/hope_logo.png'),
+                public_path('images/hope-logo.png'),
+                public_path('images/logo_hope_channel.png'),
+                public_path('images/logo.png'),
+                public_path('images/image.png'),
+                public_path('storage/images/hope_logo.png'), // via storage:link
+                public_path('storage/images/logo_hope_channel.png'),
+                public_path('favicon.ico'),
+            ];
+            foreach ($logoCandidates as $logoPath) {
+                if ($logoPath && file_exists($logoPath)) {
+                    $mime = function_exists('mime_content_type') ? mime_content_type($logoPath) : 'image/png';
+                    $companyLogoDataUri = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($logoPath));
+                    break;
+                }
             }
         }
 
@@ -527,7 +569,10 @@ class LeaveRequestController extends Controller
             'date_range_text' => $dateRange,
             'total_days' => $leave->total_days,
             'leave_type' => $leave->leave_type,
-            'letter_date' => now()->locale('id')->translatedFormat('j F Y'),
+            'letter_date' => (function() use ($bulanId) {
+                $n = now();
+                return ltrim($n->day, '0') . ' ' . ($bulanId[$n->month] ?? $n->format('F')) . ' ' . $n->year;
+            })(),
             'city' => 'Jakarta',
             'year' => $start->year,
             'employee_signature_path' => $employeeSignaturePath ? (storage_path('app/public/' . $employeeSignaturePath)) : null,
@@ -548,9 +593,40 @@ class LeaveRequestController extends Controller
             ],
         ];
 
-        // Jika paket dompdf telah terpasang, hasilkan PDF
         if (class_exists(\Barryvdh\DomPDF\Facade\Pdf::class)) {
-            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdfs.leave_letter_simple', $data)->setPaper('A4');
+            if (\View::exists('pdfs.leave_letter_simple')) {
+                $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdfs.leave_letter_simple', $data)->setPaper('A4');
+                return $pdf->download('surat_cuti_' . $leave->id . '.pdf');
+            }
+            $safe = fn($v) => htmlspecialchars((string)($v ?? ''), ENT_QUOTES, 'UTF-8');
+            $html = '<!DOCTYPE html><html lang="id"><head><meta charset="UTF-8"><title>Surat Cuti</title>' .
+                '<style>body{font-family:DejaVu Sans,Arial,sans-serif;font-size:12pt;line-height:1.5;color:#111} .center{text-align:center} .right{text-align:right} .row{display:flex;flex-direction:row;justify-content:space-between;align-items:flex-start;gap:40px;flex-wrap:wrap} .col{width:48%;box-sizing:border-box;padding-bottom:8px} .sig{height:72px;margin:6px 0 2px} .u{text-decoration:underline} .header{display:flex;align-items:center;gap:16px;border-bottom:2px solid #222;padding-bottom:8px;margin-bottom:12px} .header .logo{height:52px} .header .title{flex:1;text-align:center;font-size:12pt;line-height:1.3} .section{margin-top:12px} .spacer{height:6px} .footer{margin-top:40px;font-size:10pt;text-align:center;color:#333} .label{display:inline-block;min-width:120px} .pre{height:36px;display:flex;flex-direction:column;justify-content:flex-end} .sig-table{width:100%;margin-top:56px;border-collapse:collapse} .sig-table td{width:50%;vertical-align:top;padding-top:0;padding-bottom:0} .sig-table td.left{text-align:left;padding-right:14px} .sig-table td.right{text-align:right;padding-left:14px}</style>' .
+                '</head><body>' .
+                '<div class="header">' .
+                (!empty($data['company_logo_data_uri']) ? '<img class="logo" src="'.$safe($data['company_logo_data_uri']).'" alt="Logo"/>' : '') .
+                '<div class="title"><div style="font-weight:700;">'.$safe($data['company_name']).'</div>' .
+                (is_array($data['company_address_lines']) ? implode('', array_map(fn($l)=>'<div>'.$safe($l).'</div>', $data['company_address_lines'])) : '') .
+                '</div></div>' .
+                '<div class="right">'.$safe($data['city']).', '.$safe($data['letter_date']).'</div>' .
+                '<h3 class="center u" style="margin:4px 0 12px;">SURAT PERMOHONAN CUTI TAHUNAN</h3>' .
+                '<p>Yang bertandatangan di bawah ini:</p>' .
+                '<ol style="margin:0;padding-left:18px;">' .
+                '<li>Nama: '.$safe($data['employee_name']).'</li>' .
+                '<li>Jabatan: '.$safe($data['employee_position']).'</li>' .
+                '</ol>' .
+                '<p>Dengan ini mengajukan permintaan cuti '.($data['leave_type']==='annual'?'tahunan':$safe($data['leave_type'])).' untuk tahun '.$safe($data['year']).' selama '.$safe($data['total_days']).' hari kerja, terhitung mulai tanggal '.$safe($data['date_range_text']).'.</p>' .
+                '<p>Selama menjalankan cuti saya berada di '.($data['leave_location'] ? $safe($data['leave_location']) : '-').' dan nomor telepon yang bisa dihubungi adalah '.($data['emergency_contact'] ? $safe($data['emergency_contact']) : ($data['contact_phone'] ? $safe($data['contact_phone']) : '-')).'.</p>' .
+                '<table class="sig-table" cellspacing="0" cellpadding="0"><tr>' .
+                '<td class="left"><div>Mengetahui,</div><div>'.$safe($data['approver_position']).'</div><div class="spacer"></div>' .
+                (!empty($data['approver_signature_data_uri']) ? '<img class="sig" src="'.$safe($data['approver_signature_data_uri']).'" alt="Tanda Tangan Atasan"/>' : '<div class="sig"></div>') .
+                '<div style="margin-top:0;">'.$safe($data['approver_name']).'</div></td>' .
+                '<td class="right"><div>Hormat saya,</div><div class="spacer"></div>' .
+                (!empty($data['employee_signature_data_uri']) ? '<img class="sig" src="'.$safe($data['employee_signature_data_uri']).'" alt="Tanda Tangan Pegawai"/>' : '<div class="sig"></div>') .
+                '<div style="margin-top:0;">'.$safe($data['employee_name']).'</div></td>' .
+                '</tr></table>' .
+                '<div class="footer">© '.date('Y').' '.$safe($data['company_name']).'</div>' .
+                '</body></html>';
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadHTML($html)->setPaper('A4');
             return $pdf->download('surat_cuti_' . $leave->id . '.pdf');
         }
 
