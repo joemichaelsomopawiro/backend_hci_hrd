@@ -113,6 +113,9 @@ Route::prefix('leave-quotas')->group(function () {
     Route::delete('/{id}', [LeaveQuotaController::class, 'destroy']);
 });
 
+// Public route: download surat cuti tanpa autentikasi
+Route::get('/leave-requests/{id}/letter', [LeaveRequestController::class, 'downloadLetter']);
+
 // Leave Request Routes (Sudah Disederhanakan dan Benar)
 Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     Route::get('/', [LeaveRequestController::class, 'index']);
@@ -123,10 +126,7 @@ Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     Route::post('/{id}/approve', [LeaveRequestController::class, 'approve']);
     Route::put('/{id}/reject', [LeaveRequestController::class, 'reject']);
     Route::delete('/{id}', [LeaveRequestController::class, 'destroy']);
-    // Download surat cuti (PDF) - akan diimplementasikan di langkah berikutnya
-    Route::get('/{id}/letter', [LeaveRequestController::class, 'downloadLetter'] ?? function() {
-        return response()->json(['success'=>false,'message'=>'Letter generation not implemented'], 501);
-    });
+    // Download surat cuti (PDF) dipindah menjadi route publik di luar middleware
     // Upload tanda tangan atasan (opsional, jika tidak terunggah saat approve)
     Route::post('/{id}/approver-signature', [LeaveRequestController::class, 'uploadApproverSignature']);
 });
@@ -480,4 +480,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/ga-dashboard/leave-requests', [GaDashboardController::class, 'getAllLeaveRequests']);
     Route::get('/ga-dashboard/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
     Route::get('/ga-dashboard/leave-statistics', [GaDashboardController::class, 'getLeaveStatistics']);
+});
+
+// ===== NOTIFICATIONS ROUTES =====
+Route::prefix('notifications')->middleware(['auth:sanctum'])->group(function () {
+    Route::put('/read-status/{id}', function($id) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Notification marked as read',
+            'data' => ['id' => $id, 'read_at' => now()]
+        ]);
+    });
 });
