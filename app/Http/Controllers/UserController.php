@@ -55,4 +55,24 @@ class UserController extends Controller
             'data' => $users
         ]);
     }
+
+    /**
+     * Display the specified user
+     */
+    public function show(string $id): JsonResponse
+    {
+        try {
+            $user = User::with('employee')->findOrFail($id);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $user
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found'
+            ], 404);
+        }
+    }
 } 

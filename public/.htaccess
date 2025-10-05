@@ -19,3 +19,15 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
+# CORS Headers for Files
+<FilesMatch "\.(jpg|jpeg|png|gif|pdf|mp3|wav|ogg|doc|docx|mid|midi)$">
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, OPTIONS"
+    Header set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+    Header set Access-Control-Max-Age "86400"
+</FilesMatch>
+
+# Handle OPTIONS requests for files
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ $1 [R=200,L]
