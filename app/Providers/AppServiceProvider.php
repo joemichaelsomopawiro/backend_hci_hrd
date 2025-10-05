@@ -11,7 +11,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Bind MusicWorkflowService
+        $this->app->bind(\App\Services\MusicWorkflowService::class, function ($app) {
+            return new \App\Services\MusicWorkflowService();
+        });
     }
 
     /**
