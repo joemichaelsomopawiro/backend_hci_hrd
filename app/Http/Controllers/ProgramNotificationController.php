@@ -6,6 +6,7 @@ use App\Models\ProgramNotification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 
 class ProgramNotificationController extends Controller
 {
@@ -67,7 +68,7 @@ class ProgramNotificationController extends Controller
             $validator = Validator::make($request->all(), [
                 'title' => 'required|string|max:255',
                 'message' => 'required|string',
-                'type' => 'required|in:info,warning,success,error,reminder',
+                'type' => 'required|in:deadline,reminder,assignment,status_change,general',
                 'user_id' => 'required|exists:users,id',
                 'program_id' => 'nullable|exists:programs,id',
                 'episode_id' => 'nullable|exists:episodes,id',
@@ -237,7 +238,16 @@ class ProgramNotificationController extends Controller
     public function getUnreadCount(Request $request): JsonResponse
     {
         try {
-            $count = ProgramNotification::where('user_id', auth()->id())
+            $user = auth()->user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+
+            $count = ProgramNotification::where('user_id', $user->id)
                 ->where('is_read', false)
                 ->count();
 
@@ -247,6 +257,7 @@ class ProgramNotificationController extends Controller
                 'message' => 'Unread count retrieved successfully'
             ]);
         } catch (\Exception $e) {
+            Log::error('Error in getUnreadCount: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Error retrieving unread count: ' . $e->getMessage()

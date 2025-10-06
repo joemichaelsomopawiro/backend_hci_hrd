@@ -21,6 +21,7 @@ class User extends Authenticatable
         'employee_id',
         'role',
         'access_level',
+        'notification_preferences',
     ];
 
     protected $hidden = [
@@ -32,6 +33,7 @@ class User extends Authenticatable
         'email_verified_at' => 'datetime',
         'phone_verified_at' => 'datetime',
         'password' => 'hashed',
+        'notification_preferences' => 'array',
     ];
 
     protected $appends = ['profile_picture_url']; // <-- Tambahkan baris ini

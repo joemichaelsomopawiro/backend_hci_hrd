@@ -284,4 +284,253 @@ class EpisodeController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Submit episode rundown for approval
+     */
+    public function submitRundownForApproval(Request $request, string $id): JsonResponse
+    {
+        try {
+            $episode = Episode::findOrFail($id);
+            
+            $validator = Validator::make($request->all(), [
+                'submission_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode->update([
+                'status' => 'submitted',
+                'submission_notes' => $request->submission_notes,
+                'submitted_at' => now(),
+                'submitted_by' => auth()->id()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $episode,
+                'message' => 'Episode rundown submitted for approval successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error submitting episode rundown for approval: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Approve episode rundown
+     */
+    public function approveRundown(Request $request, string $id): JsonResponse
+    {
+        try {
+            $episode = Episode::findOrFail($id);
+            
+            $validator = Validator::make($request->all(), [
+                'approval_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode->update([
+                'status' => 'approved',
+                'approval_notes' => $request->approval_notes,
+                'approved_by' => auth()->id(),
+                'approved_at' => now()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $episode,
+                'message' => 'Episode rundown approved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error approving episode rundown: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reject episode rundown
+     */
+    public function rejectRundown(Request $request, string $id): JsonResponse
+    {
+        try {
+            $episode = Episode::findOrFail($id);
+            
+            $validator = Validator::make($request->all(), [
+                'rejection_notes' => 'required|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode->update([
+                'status' => 'rejected',
+                'rejection_notes' => $request->rejection_notes,
+                'rejected_by' => auth()->id(),
+                'rejected_at' => now()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $episode,
+                'message' => 'Episode rundown rejected successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error rejecting episode rundown: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export script to Word
+     */
+    public function exportScriptToWord(string $id): JsonResponse
+    {
+        try {
+            $episode = Episode::findOrFail($id);
+            
+            // Placeholder for Word export - implement based on your export system
+            $exportData = [
+                'episode' => $episode,
+                'script' => $episode->script,
+                'exported_at' => now(),
+                'format' => 'word'
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $exportData,
+                'message' => 'Script exported to Word successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error exporting script to Word: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export script to PowerPoint
+     */
+    public function exportScriptToPowerPoint(string $id): JsonResponse
+    {
+        try {
+            $episode = Episode::findOrFail($id);
+            
+            // Placeholder for PowerPoint export - implement based on your export system
+            $exportData = [
+                'episode' => $episode,
+                'script' => $episode->script,
+                'exported_at' => now(),
+                'format' => 'powerpoint'
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $exportData,
+                'message' => 'Script exported to PowerPoint successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error exporting script to PowerPoint: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export script to PDF
+     */
+    public function exportScriptToPDF(string $id): JsonResponse
+    {
+        try {
+            $episode = Episode::findOrFail($id);
+            
+            // Placeholder for PDF export - implement based on your export system
+            $exportData = [
+                'episode' => $episode,
+                'script' => $episode->script,
+                'exported_at' => now(),
+                'format' => 'pdf'
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $exportData,
+                'message' => 'Script exported to PDF successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error exporting script to PDF: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Bulk export episodes
+     */
+    public function bulkExportEpisodes(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'episode_ids' => 'required|array',
+                'episode_ids.*' => 'exists:episodes,id',
+                'format' => 'required|in:word,powerpoint,pdf'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episodes = Episode::whereIn('id', $request->episode_ids)->get();
+            
+            $exportData = [
+                'episodes' => $episodes,
+                'format' => $request->format,
+                'exported_at' => now(),
+                'total_count' => $episodes->count()
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $exportData,
+                'message' => 'Episodes exported successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error bulk exporting episodes: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

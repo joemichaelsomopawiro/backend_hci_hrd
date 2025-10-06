@@ -32,6 +32,7 @@ use App\Http\Controllers\MusicNotificationController;
 use App\Http\Controllers\AudioController;
 use App\Http\Controllers\MusicWorkflowController;
 use App\Http\Controllers\MusicArrangerHistoryController;
+use App\Http\Controllers\ReminderNotificationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -671,3 +672,129 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/ga-dashboard/worship-statistics', [GaDashboardController::class, 'getWorshipStatistics']);
     Route::get('/ga-dashboard/leave-statistics', [GaDashboardController::class, 'getLeaveStatistics']);
 });
+
+// Program Management System Routes
+use App\Http\Controllers\ProgramController;
+use App\Http\Controllers\TeamController;
+use App\Http\Controllers\EpisodeController;
+use App\Http\Controllers\ScheduleController;
+use App\Http\Controllers\MediaController;
+use App\Http\Controllers\ProductionController;
+use App\Http\Controllers\ProgramNotificationController;
+
+// Programs Routes
+Route::apiResource('programs', ProgramController::class);
+Route::post('/programs/{program}/assign-teams', [ProgramController::class, 'assignTeams']);
+Route::get('/programs/{program}/dashboard', [ProgramController::class, 'dashboard']);
+Route::get('/programs/{program}/statistics', [ProgramController::class, 'statistics']);
+
+// Teams Routes
+Route::post('/teams/{id}/add-members', [TeamController::class, 'addMembers']);
+Route::post('/teams/{id}/remove-members', [TeamController::class, 'removeMembers']);
+Route::put('/teams/{id}/update-member-role', [TeamController::class, 'updateMemberRole']);
+Route::apiResource('teams', TeamController::class);
+
+// Episodes Routes
+Route::apiResource('episodes', EpisodeController::class);
+Route::patch('/episodes/{episode}/update-status', [EpisodeController::class, 'updateStatus']);
+Route::get('/episodes/upcoming', [EpisodeController::class, 'getUpcoming']);
+Route::get('/episodes/aired', [EpisodeController::class, 'getAired']);
+Route::get('/episodes/by-program/{programId}', [EpisodeController::class, 'getByProgram']);
+
+// Schedules Routes
+Route::apiResource('schedules', ScheduleController::class);
+Route::patch('/schedules/{schedule}/update-status', [ScheduleController::class, 'updateStatus']);
+Route::get('/schedules/upcoming', [ScheduleController::class, 'getUpcoming']);
+Route::get('/schedules/today', [ScheduleController::class, 'getToday']);
+Route::get('/schedules/overdue', [ScheduleController::class, 'getOverdue']);
+
+// Media Files Routes
+Route::apiResource('media-files', MediaController::class);
+Route::post('/media-files/upload', [MediaController::class, 'upload']);
+Route::get('/media-files/type/{type}', [MediaController::class, 'getByType']);
+Route::get('/media-files/program/{programId}', [MediaController::class, 'getByProgram']);
+Route::get('/media-files/episode/{episodeId}', [MediaController::class, 'getByEpisode']);
+
+// Production Equipment Routes
+Route::apiResource('production-equipment', ProductionController::class);
+Route::post('/production-equipment/{equipment}/assign', [ProductionController::class, 'assign']);
+Route::post('/production-equipment/{equipment}/unassign', [ProductionController::class, 'unassign']);
+Route::get('/production-equipment/available', [ProductionController::class, 'getAvailable']);
+Route::get('/production-equipment/needs-maintenance', [ProductionController::class, 'getNeedsMaintenance']);
+
+// Program Notifications Routes
+Route::get('/program-notifications/unread-count', [ProgramNotificationController::class, 'getUnreadCount']);
+Route::get('/program-notifications/unread', [ProgramNotificationController::class, 'unread']);
+Route::get('/program-notifications/scheduled', [ProgramNotificationController::class, 'scheduled']);
+Route::post('/program-notifications/mark-all-read', [ProgramNotificationController::class, 'markAllAsRead']);
+Route::post('/program-notifications/{notification}/mark-read', [ProgramNotificationController::class, 'markAsRead']);
+Route::apiResource('program-notifications', ProgramNotificationController::class);
+
+// Users Routes (for Program Management)
+Route::get('/users', [UserController::class, 'index']);
+Route::get('/users/{id}', [UserController::class, 'show']);
+
+// Art & Set Properti Routes (using ProductionController)
+Route::get('/art-set-properti', [ProductionController::class, 'index']);
+Route::post('/art-set-properti', [ProductionController::class, 'store']);
+Route::get('/art-set-properti/{equipment}', [ProductionController::class, 'show']);
+Route::put('/art-set-properti/{equipment}', [ProductionController::class, 'update']);
+Route::delete('/art-set-properti/{equipment}', [ProductionController::class, 'destroy']);
+Route::post('/art-set-properti/{equipment}/assign', [ProductionController::class, 'assign']);
+Route::post('/art-set-properti/{equipment}/unassign', [ProductionController::class, 'unassign']);
+Route::get('/art-set-properti/available', [ProductionController::class, 'getAvailable']);
+Route::get('/art-set-properti/needs-maintenance', [ProductionController::class, 'getNeedsMaintenance']);
+
+// Approval Workflow Routes (simplified - using existing controllers)
+Route::post('/programs/{program}/submit-approval', [ProgramController::class, 'submitForApproval']);
+Route::post('/programs/{program}/approve', [ProgramController::class, 'approve']);
+Route::post('/programs/{program}/reject', [ProgramController::class, 'reject']);
+Route::post('/episodes/{episode}/submit-rundown', [EpisodeController::class, 'submitRundownForApproval']);
+Route::post('/episodes/{episode}/approve-rundown', [EpisodeController::class, 'approveRundown']);
+Route::post('/episodes/{episode}/reject-rundown', [EpisodeController::class, 'rejectRundown']);
+Route::post('/schedules/{schedule}/submit-approval', [ScheduleController::class, 'submitForApproval']);
+Route::post('/schedules/{schedule}/approve', [ScheduleController::class, 'approve']);
+Route::post('/schedules/{schedule}/reject', [ScheduleController::class, 'reject']);
+Route::get('/approvals/pending', [ProgramController::class, 'getPendingApprovals']);
+Route::get('/approvals/history', [ProgramController::class, 'getApprovalHistory']);
+
+// Analytics Routes (simplified - using existing controllers)
+Route::get('/programs/{program}/analytics', [ProgramController::class, 'getAnalytics']);
+Route::get('/programs/{program}/performance-metrics', [ProgramController::class, 'getPerformanceMetrics']);
+Route::get('/programs/{program}/kpi-summary', [ProgramController::class, 'getKPISummary']);
+Route::get('/programs/{program}/team-performance', [ProgramController::class, 'getTeamPerformance']);
+Route::get('/programs/{program}/content-analytics', [ProgramController::class, 'getContentAnalytics']);
+Route::get('/programs/{program}/trends', [ProgramController::class, 'getTrends']);
+Route::get('/programs/{program}/views-tracking', [ProgramController::class, 'getViewsTracking']);
+Route::get('/analytics/dashboard', [ProgramController::class, 'getDashboardAnalytics']);
+Route::get('/analytics/comparative', [ProgramController::class, 'getComparativeAnalytics']);
+Route::get('/programs/{program}/analytics/export', [ProgramController::class, 'exportAnalytics']);
+
+// Export Routes (simplified - using existing controllers)
+Route::get('/episodes/{episode}/export/word', [EpisodeController::class, 'exportScriptToWord']);
+Route::get('/episodes/{episode}/export/powerpoint', [EpisodeController::class, 'exportScriptToPowerPoint']);
+Route::get('/episodes/{episode}/export/pdf', [EpisodeController::class, 'exportScriptToPDF']);
+Route::get('/programs/{program}/export/data', [ProgramController::class, 'exportProgramData']);
+Route::get('/schedules/{schedule}/export/data', [ScheduleController::class, 'exportScheduleData']);
+Route::get('/programs/{program}/export/media', [ProgramController::class, 'exportMediaFiles']);
+Route::post('/episodes/bulk-export', [EpisodeController::class, 'bulkExportEpisodes']);
+
+// Reminder & Notification Routes (Extended)
+Route::get('/notifications', [ReminderNotificationController::class, 'index']);
+Route::get('/notifications/unread-count', [ReminderNotificationController::class, 'getUnreadCount']);
+Route::post('/notifications/{notification}/mark-read', [ReminderNotificationController::class, 'markAsRead']);
+Route::post('/notifications/mark-all-read', [ReminderNotificationController::class, 'markAllAsRead']);
+Route::post('/notifications/reminder', [ReminderNotificationController::class, 'createReminder']);
+Route::get('/notifications/upcoming', [ReminderNotificationController::class, 'getUpcomingReminders']);
+Route::get('/notifications/deadlines', [ReminderNotificationController::class, 'getDeadlineReminders']);
+Route::get('/notifications/overdue', [ReminderNotificationController::class, 'getOverdueAlerts']);
+Route::get('/notifications/preferences', [ReminderNotificationController::class, 'getNotificationPreferences']);
+Route::post('/notifications/preferences', [ReminderNotificationController::class, 'updateNotificationPreferences']);
+Route::delete('/notifications/{notification}', [ReminderNotificationController::class, 'destroy']);
+Route::post('/notifications/bulk-delete', [ReminderNotificationController::class, 'bulkDelete']);
+
+// Workflow Automation Routes (Cron Jobs)
+Route::post('/workflow/send-reminders', [ReminderNotificationController::class, 'sendReminderNotifications']);
+Route::post('/workflow/update-episode-statuses', [ReminderNotificationController::class, 'updateEpisodeStatuses']);
+Route::post('/workflow/auto-close-programs', [ReminderNotificationController::class, 'autoCloseInactivePrograms']);
+Route::post('/workflow/set-deadlines/{program}', [ReminderNotificationController::class, 'setAutomaticDeadlines']);

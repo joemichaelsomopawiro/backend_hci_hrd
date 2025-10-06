@@ -330,4 +330,152 @@ class ScheduleController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Submit schedule for approval
+     */
+    public function submitForApproval(Request $request, string $id): JsonResponse
+    {
+        try {
+            $schedule = Schedule::findOrFail($id);
+            
+            $validator = Validator::make($request->all(), [
+                'submission_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $schedule->update([
+                'status' => 'submitted',
+                'submission_notes' => $request->submission_notes,
+                'submitted_at' => now(),
+                'submitted_by' => auth()->id()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedule,
+                'message' => 'Schedule submitted for approval successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error submitting schedule for approval: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Approve schedule
+     */
+    public function approve(Request $request, string $id): JsonResponse
+    {
+        try {
+            $schedule = Schedule::findOrFail($id);
+            
+            $validator = Validator::make($request->all(), [
+                'approval_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $schedule->update([
+                'status' => 'approved',
+                'approval_notes' => $request->approval_notes,
+                'approved_by' => auth()->id(),
+                'approved_at' => now()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedule,
+                'message' => 'Schedule approved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error approving schedule: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reject schedule
+     */
+    public function reject(Request $request, string $id): JsonResponse
+    {
+        try {
+            $schedule = Schedule::findOrFail($id);
+            
+            $validator = Validator::make($request->all(), [
+                'rejection_notes' => 'required|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $schedule->update([
+                'status' => 'rejected',
+                'rejection_notes' => $request->rejection_notes,
+                'rejected_by' => auth()->id(),
+                'rejected_at' => now()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedule,
+                'message' => 'Schedule rejected successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error rejecting schedule: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export schedule data
+     */
+    public function exportScheduleData(string $id): JsonResponse
+    {
+        try {
+            $schedule = Schedule::with(['program', 'episode', 'team', 'assignedUser'])->findOrFail($id);
+            
+            // Placeholder for schedule export - implement based on your export system
+            $exportData = [
+                'schedule' => $schedule,
+                'exported_at' => now(),
+                'format' => 'json'
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $exportData,
+                'message' => 'Schedule data exported successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error exporting schedule data: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

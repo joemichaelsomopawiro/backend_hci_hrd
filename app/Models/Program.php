@@ -26,6 +26,15 @@ class Program extends Model
         'requirements',
         'manager_id',
         'producer_id',
+        'submission_notes',
+        'submitted_at',
+        'submitted_by',
+        'approval_notes',
+        'approved_by',
+        'approved_at',
+        'rejection_notes',
+        'rejected_by',
+        'rejected_at'
     ];
 
     protected $casts = [
@@ -33,6 +42,9 @@ class Program extends Model
         'end_date' => 'date',
         'air_time' => 'datetime:H:i',
         'requirements' => 'array',
+        'submitted_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'rejected_at' => 'datetime'
     ];
 
     // Relasi dengan User (Manager Program)
@@ -45,6 +57,24 @@ class Program extends Model
     public function producer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'producer_id');
+    }
+
+    // Relasi dengan User (Submitted By)
+    public function submittedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'submitted_by');
+    }
+
+    // Relasi dengan User (Approved By)
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    // Relasi dengan User (Rejected By)
+    public function rejectedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
     }
 
     // Relasi dengan Episode
