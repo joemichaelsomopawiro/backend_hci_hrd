@@ -817,6 +817,7 @@ Route::prefix('teams')->group(function () {
     Route::post('/{id}/members', [TeamManagementController::class, 'addMember']);
     Route::delete('/{id}/members', [TeamManagementController::class, 'removeMember']);
     Route::put('/{id}/members/role', [TeamManagementController::class, 'updateMemberRole']);
+    Route::get('/by-role', [TeamManagementController::class, 'getTeamsByRole']);
     Route::get('/department/{department}', [TeamManagementController::class, 'getTeamsByDepartment']);
     Route::get('/user/my-teams', [TeamManagementController::class, 'getUserTeams']);
 });
