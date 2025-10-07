@@ -62,7 +62,7 @@ class TeamManagementController extends Controller
                 'description' => 'nullable|string',
                 'program_id' => 'nullable|exists:programs,id',
                 'team_lead_id' => 'nullable|exists:users,id',
-                'role' => 'required|in:creative,promotion,design,production,art_set,editor',
+                'role' => 'required|in:kreatif,promosi,design_grafis,produksi,editor,art_set_properti',
                 'members' => 'nullable|array',
                 'members.*' => 'exists:users,id'
             ]);
@@ -347,6 +347,39 @@ class TeamManagementController extends Controller
     }
 
     /**
+     * Get teams by role
+     */
+    public function getTeamsByRole(Request $request): JsonResponse
+    {
+        try {
+            $role = $request->get('role');
+            
+            if (!$role) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Role is required'
+                ], 400);
+            }
+
+            $teams = Team::where('role', $role)
+                ->where('is_active', true)
+                ->with(['program', 'teamLead', 'members'])
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $teams,
+                'message' => 'Teams retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving teams: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Get user's teams
      */
     public function getUserTeams(Request $request): JsonResponse
@@ -391,7 +424,7 @@ class TeamManagementController extends Controller
             ProgramNotification::create([
                 'title' => 'Team Update',
                 'message' => $messages[$action] ?? "Team '{$team->name}' {$action}",
-                'type' => 'team_update',
+                'type' => 'assignment',
                 'user_id' => $member->id,
                 'program_id' => $team->program_id
             ]);
