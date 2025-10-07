@@ -5,8 +5,8 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Team extends Model
 {
@@ -18,11 +18,11 @@ class Team extends Model
         'role',
         'program_id',
         'team_lead_id',
-        'is_active',
+        'is_active'
     ];
 
     protected $casts = [
-        'is_active' => 'boolean',
+        'is_active' => 'boolean'
     ];
 
     // Relasi dengan Program
@@ -37,53 +37,72 @@ class Team extends Model
         return $this->belongsTo(User::class, 'team_lead_id');
     }
 
-    // Relasi dengan TeamMember
-    public function members(): HasMany
+    // Relasi dengan User (Created By)
+    public function createdBy(): BelongsTo
     {
-        return $this->hasMany(TeamMember::class);
+        return $this->belongsTo(User::class, 'created_by');
     }
 
-    // Relasi dengan User melalui TeamMember (Many-to-Many)
-    public function users(): BelongsToMany
+    // Relasi many-to-many dengan Users (Team Members)
+    public function members(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'team_members')
-                    ->withPivot(['role', 'is_active', 'joined_at', 'left_at', 'notes'])
-                    ->withTimestamps();
+            ->withPivot(['role', 'joined_at', 'is_active', 'left_at', 'notes'])
+            ->withTimestamps();
     }
 
-    // Relasi dengan Schedule
+    // Relasi dengan Schedules
     public function schedules(): HasMany
     {
         return $this->hasMany(Schedule::class);
     }
 
-    // Relasi dengan Program (Many-to-Many)
-    public function programs(): BelongsToMany
-    {
-        return $this->belongsToMany(Program::class, 'program_team');
-    }
-
-    // Scope untuk tim aktif
+    // Scope untuk team aktif
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
     }
 
-    // Scope untuk tim berdasarkan role
-    public function scopeByRole($query, $role)
+    // Method untuk menambah member ke team
+    public function addMember(User $user, string $role = 'member', bool $isActive = true): void
     {
-        return $query->where('role', $role);
+        $this->members()->attach($user->id, [
+            'role' => $role,
+            'is_active' => $isActive,
+            'joined_at' => now()
+        ]);
     }
 
-    // Method untuk mendapatkan jumlah anggota tim
-    public function getMemberCountAttribute()
+    // Method untuk menghapus member dari team
+    public function removeMember(User $user): void
     {
-        return $this->members()->where('is_active', true)->count();
+        $this->members()->detach($user->id);
     }
 
-    // Method untuk mendapatkan anggota aktif
-    public function getActiveMembersAttribute()
+    // Method untuk update role member
+    public function updateMemberRole(User $user, string $role): void
     {
-        return $this->members()->where('is_active', true)->get();
+        $this->members()->updateExistingPivot($user->id, [
+            'role' => $role,
+            'updated_at' => now()
+        ]);
+    }
+
+    // Method untuk mendapatkan members berdasarkan role
+    public function getMembersByRole(string $role)
+    {
+        return $this->members()->wherePivot('role', $role)->get();
+    }
+
+    // Method untuk check apakah user adalah member
+    public function hasMember(User $user): bool
+    {
+        return $this->members()->where('user_id', $user->id)->exists();
+    }
+
+    // Method untuk check apakah user adalah team lead
+    public function isTeamLead(User $user): bool
+    {
+        return $this->team_lead_id === $user->id;
     }
 }

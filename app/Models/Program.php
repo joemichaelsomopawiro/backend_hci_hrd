@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class Program extends Model
 {
@@ -83,10 +84,16 @@ class Program extends Model
         return $this->hasMany(Episode::class);
     }
 
-    // Relasi dengan Team (Many-to-Many)
-    public function teams(): BelongsToMany
+    // Relasi dengan Team (One-to-Many)
+    public function teams(): HasMany
     {
-        return $this->belongsToMany(Team::class, 'program_team');
+        return $this->hasMany(Team::class);
+    }
+
+    // Relasi dengan ProgramFile
+    public function files(): MorphMany
+    {
+        return $this->morphMany(ProgramFile::class, 'fileable');
     }
 
     // Relasi dengan Schedule

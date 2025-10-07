@@ -198,6 +198,14 @@ class ProgramAnalyticsController extends Controller
     {
         try {
             $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+            
             $period = $request->get('period', '30d');
             
             // Get programs accessible by user

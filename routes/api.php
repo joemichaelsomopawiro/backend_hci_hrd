@@ -33,6 +33,13 @@ use App\Http\Controllers\AudioController;
 use App\Http\Controllers\MusicWorkflowController;
 use App\Http\Controllers\MusicArrangerHistoryController;
 use App\Http\Controllers\ReminderNotificationController;
+use App\Http\Controllers\TeamManagementController;
+use App\Http\Controllers\WorkflowController;
+use App\Http\Controllers\FileManagementController;
+use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\ApprovalWorkflowController;
+use App\Http\Controllers\ArtSetPropertiController;
+use App\Http\Controllers\ProgramAnalyticsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -798,3 +805,96 @@ Route::post('/workflow/send-reminders', [ReminderNotificationController::class, 
 Route::post('/workflow/update-episode-statuses', [ReminderNotificationController::class, 'updateEpisodeStatuses']);
 Route::post('/workflow/auto-close-programs', [ReminderNotificationController::class, 'autoCloseInactivePrograms']);
 Route::post('/workflow/set-deadlines/{program}', [ReminderNotificationController::class, 'setAutomaticDeadlines']);
+
+// ===== NEW PROGRAM WORKFLOW SYSTEM ROUTES =====
+
+// Team Management Routes
+Route::prefix('teams')->group(function () {
+    Route::get('/', [TeamManagementController::class, 'index']);
+    Route::post('/', [TeamManagementController::class, 'store']);
+    Route::get('/{id}', [TeamManagementController::class, 'show']);
+    Route::put('/{id}', [TeamManagementController::class, 'update']);
+    Route::post('/{id}/members', [TeamManagementController::class, 'addMember']);
+    Route::delete('/{id}/members', [TeamManagementController::class, 'removeMember']);
+    Route::put('/{id}/members/role', [TeamManagementController::class, 'updateMemberRole']);
+    Route::get('/department/{department}', [TeamManagementController::class, 'getTeamsByDepartment']);
+    Route::get('/user/my-teams', [TeamManagementController::class, 'getUserTeams']);
+});
+
+// Workflow State Machine Routes
+Route::prefix('workflow')->group(function () {
+    Route::get('/{entityType}/{entityId}/transitions', [WorkflowController::class, 'getAvailableTransitions']);
+    Route::post('/{entityType}/{entityId}/execute', [WorkflowController::class, 'executeTransition']);
+    Route::get('/{entityType}/{entityId}/status', [WorkflowController::class, 'getWorkflowStatus']);
+    Route::get('/steps', [WorkflowController::class, 'getWorkflowSteps']);
+    Route::get('/states', [WorkflowController::class, 'getWorkflowStates']);
+    Route::get('/dashboard', [WorkflowController::class, 'getWorkflowDashboard']);
+});
+
+// File Management Routes
+Route::prefix('files')->group(function () {
+    Route::post('/upload', [FileManagementController::class, 'uploadFile']);
+    Route::post('/bulk-upload', [FileManagementController::class, 'bulkUpload']);
+    Route::get('/statistics', [FileManagementController::class, 'getFileStatistics']);
+    Route::get('/{entityType}/{entityId}', [FileManagementController::class, 'getFiles']);
+    Route::get('/{id}/download', [FileManagementController::class, 'downloadFile']);
+    Route::put('/{id}', [FileManagementController::class, 'updateFile']);
+    Route::delete('/{id}', [FileManagementController::class, 'deleteFile']);
+    Route::get('/{entityType}/{entityId}/statistics', [FileManagementController::class, 'getFileStatistics']);
+});
+
+// Enhanced Notification Routes
+Route::prefix('notifications')->group(function () {
+    Route::get('/', [NotificationController::class, 'index']);
+    Route::post('/{id}/read', [NotificationController::class, 'markAsRead']);
+    Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead']);
+    Route::delete('/{id}', [NotificationController::class, 'destroy']);
+    Route::get('/statistics', [NotificationController::class, 'getStatistics']);
+    Route::get('/workflow', [NotificationController::class, 'getWorkflowNotifications']);
+    Route::post('/test', [NotificationController::class, 'sendTestNotification']);
+    Route::get('/preferences', [NotificationController::class, 'getPreferences']);
+    Route::put('/preferences', [NotificationController::class, 'updatePreferences']);
+});
+
+// Enhanced Approval Workflow Routes
+Route::prefix('approvals')->group(function () {
+    Route::post('/programs/{id}/submit', [ApprovalWorkflowController::class, 'submitProgramForApproval']);
+    Route::post('/programs/{id}/approve', [ApprovalWorkflowController::class, 'approveProgram']);
+    Route::post('/programs/{id}/reject', [ApprovalWorkflowController::class, 'rejectProgram']);
+    Route::post('/rundowns/{id}/submit', [ApprovalWorkflowController::class, 'submitRundownForApproval']);
+    Route::post('/rundowns/{id}/approve', [ApprovalWorkflowController::class, 'approveRundown']);
+    Route::post('/rundowns/{id}/reject', [ApprovalWorkflowController::class, 'rejectRundown']);
+    Route::post('/schedules/{id}/submit', [ApprovalWorkflowController::class, 'submitScheduleForApproval']);
+    Route::post('/schedules/{id}/approve', [ApprovalWorkflowController::class, 'approveSchedule']);
+    Route::post('/schedules/{id}/reject', [ApprovalWorkflowController::class, 'rejectSchedule']);
+    Route::get('/pending', [ApprovalWorkflowController::class, 'getPendingApprovals']);
+    Route::get('/history', [ApprovalWorkflowController::class, 'getApprovalHistory']);
+});
+
+// Art & Set Properti Routes
+Route::prefix('art-set-properti')->group(function () {
+    Route::get('/', [ArtSetPropertiController::class, 'index']);
+    Route::post('/', [ArtSetPropertiController::class, 'store']);
+    Route::get('/{id}', [ArtSetPropertiController::class, 'show']);
+    Route::put('/{id}', [ArtSetPropertiController::class, 'update']);
+    Route::delete('/{id}', [ArtSetPropertiController::class, 'destroy']);
+    Route::post('/{id}/approve', [ArtSetPropertiController::class, 'approveRequest']);
+    Route::post('/{id}/reject', [ArtSetPropertiController::class, 'rejectRequest']);
+    Route::post('/{id}/assign', [ArtSetPropertiController::class, 'assignEquipment']);
+    Route::post('/{id}/return', [ArtSetPropertiController::class, 'returnEquipment']);
+    Route::get('/inventory/summary', [ArtSetPropertiController::class, 'getInventory']);
+});
+
+// Program Analytics Routes
+Route::prefix('analytics')->group(function () {
+    Route::get('/programs/{id}', [ProgramAnalyticsController::class, 'getProgramAnalytics']);
+    Route::get('/programs/{id}/performance', [ProgramAnalyticsController::class, 'getPerformanceMetrics']);
+    Route::get('/programs/{id}/kpi', [ProgramAnalyticsController::class, 'getKPISummary']);
+    Route::get('/programs/{id}/team-performance', [ProgramAnalyticsController::class, 'getTeamPerformance']);
+    Route::get('/programs/{id}/content', [ProgramAnalyticsController::class, 'getContentAnalytics']);
+    Route::get('/programs/{id}/trends', [ProgramAnalyticsController::class, 'getTrends']);
+    Route::get('/programs/{id}/views', [ProgramAnalyticsController::class, 'getViewsTracking']);
+    Route::get('/dashboard', [ProgramAnalyticsController::class, 'getDashboardAnalytics']);
+    Route::get('/comparative', [ProgramAnalyticsController::class, 'getComparativeAnalytics']);
+    Route::get('/programs/{id}/export', [ProgramAnalyticsController::class, 'exportAnalytics']);
+});

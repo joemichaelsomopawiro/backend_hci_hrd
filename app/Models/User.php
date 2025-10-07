@@ -43,6 +43,20 @@ class User extends Authenticatable
         return !is_null($this->phone_verified_at);
     }
 
+    // Relasi dengan Teams
+    public function teams()
+    {
+        return $this->belongsToMany(Team::class, 'team_members')
+            ->withPivot(['role', 'joined_at', 'is_active', 'left_at', 'notes'])
+            ->withTimestamps();
+    }
+
+    // Relasi dengan Teams sebagai Team Lead
+    public function ledTeams()
+    {
+        return $this->hasMany(Team::class, 'team_lead_id');
+    }
+
     public function getProfilePictureUrlAttribute()
     {
         if ($this->profile_picture) {

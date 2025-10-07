@@ -11,8 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('music_submissions', function (Blueprint $table) {
-            $table->boolean('is_urgent')->default(false)->after('submission_status');
+        Schema::table('program_notifications', function (Blueprint $table) {
+            $table->boolean('is_read')->default(false)->after('type');
         });
     }
 
@@ -21,23 +21,9 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('music_submissions', function (Blueprint $table) {
-            $table->dropColumn('is_urgent');
+        Schema::table('program_notifications', function (Blueprint $table) {
+            $table->dropColumn('is_read');
         });
     }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

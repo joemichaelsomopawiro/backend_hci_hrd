@@ -510,6 +510,14 @@ class ApprovalWorkflowController extends Controller
     {
         try {
             $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+            
             $pendingApprovals = [];
 
             // Get pending programs (for managers)
