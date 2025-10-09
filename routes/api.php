@@ -899,3 +899,93 @@ Route::prefix('analytics')->group(function () {
     Route::get('/comparative', [ProgramAnalyticsController::class, 'getComparativeAnalytics']);
     Route::get('/programs/{id}/export', [ProgramAnalyticsController::class, 'exportAnalytics']);
 });
+
+// ===== NEW PROGRAM REGULAR MANAGEMENT SYSTEM (2025) =====
+use App\Http\Controllers\ProductionTeamController;
+use App\Http\Controllers\ProgramRegularController;
+use App\Http\Controllers\ProgramEpisodeController;
+use App\Http\Controllers\ProgramProposalController;
+use App\Http\Controllers\ProgramApprovalController;
+
+// Production Teams Routes (Independen dari Program)
+Route::prefix('production-teams')->group(function () {
+    Route::get('/', [ProductionTeamController::class, 'index']);
+    Route::post('/', [ProductionTeamController::class, 'store']);
+    Route::get('/producers', [ProductionTeamController::class, 'getProducers']);
+    Route::get('/{id}', [ProductionTeamController::class, 'show']);
+    Route::put('/{id}', [ProductionTeamController::class, 'update']);
+    Route::delete('/{id}', [ProductionTeamController::class, 'destroy']);
+    Route::post('/{id}/members', [ProductionTeamController::class, 'addMembers']);
+    Route::delete('/{id}/members', [ProductionTeamController::class, 'removeMembers']);
+    Route::get('/{id}/available-users', [ProductionTeamController::class, 'getAvailableUsers']);
+});
+
+// Program Regular Routes (Program Mingguan 53 Episode)
+Route::prefix('program-regular')->group(function () {
+    Route::get('/', [ProgramRegularController::class, 'index']);
+    Route::post('/', [ProgramRegularController::class, 'store']);
+    Route::get('/available-teams', [ProgramRegularController::class, 'getAvailableTeams']);
+    Route::get('/{id}', [ProgramRegularController::class, 'show']);
+    Route::put('/{id}', [ProgramRegularController::class, 'update']);
+    Route::delete('/{id}', [ProgramRegularController::class, 'destroy']);
+    Route::get('/{id}/dashboard', [ProgramRegularController::class, 'dashboard']);
+    
+    // Program Workflow
+    Route::post('/{id}/submit-approval', [ProgramRegularController::class, 'submitForApproval']);
+    Route::post('/{id}/approve', [ProgramRegularController::class, 'approve']);
+    Route::post('/{id}/reject', [ProgramRegularController::class, 'reject']);
+});
+
+// Program Episodes Routes (53 Episode per Program)
+Route::prefix('program-episodes')->group(function () {
+    Route::get('/', [ProgramEpisodeController::class, 'index']);
+    Route::get('/upcoming', [ProgramEpisodeController::class, 'getUpcoming']);
+    Route::get('/{id}', [ProgramEpisodeController::class, 'show']);
+    Route::put('/{id}', [ProgramEpisodeController::class, 'update']);
+    Route::patch('/{id}/status', [ProgramEpisodeController::class, 'updateStatus']);
+    
+    // Episode Deadlines
+    Route::get('/{id}/deadlines', [ProgramEpisodeController::class, 'getDeadlines']);
+    Route::post('/{episodeId}/deadlines/{deadlineId}/complete', [ProgramEpisodeController::class, 'completeDeadline']);
+    
+    // Episode Rundown Approval
+    Route::post('/{id}/submit-rundown', [ProgramEpisodeController::class, 'submitRundown']);
+});
+
+// Program Proposals Routes (Google Spreadsheet Integration)
+Route::prefix('program-proposals')->group(function () {
+    Route::get('/', [ProgramProposalController::class, 'index']);
+    Route::post('/', [ProgramProposalController::class, 'store']);
+    Route::get('/{id}', [ProgramProposalController::class, 'show']);
+    Route::put('/{id}', [ProgramProposalController::class, 'update']);
+    Route::delete('/{id}', [ProgramProposalController::class, 'destroy']);
+    
+    // Spreadsheet Sync
+    Route::post('/{id}/sync', [ProgramProposalController::class, 'syncFromSpreadsheet']);
+    Route::get('/{id}/embedded-view', [ProgramProposalController::class, 'getEmbeddedView']);
+    
+    // Proposal Workflow
+    Route::post('/{id}/submit', [ProgramProposalController::class, 'submitForReview']);
+    Route::post('/{id}/review', [ProgramProposalController::class, 'markAsUnderReview']);
+    Route::post('/{id}/approve', [ProgramProposalController::class, 'approve']);
+    Route::post('/{id}/reject', [ProgramProposalController::class, 'reject']);
+    Route::post('/{id}/request-revision', [ProgramProposalController::class, 'requestRevision']);
+});
+
+// Program Approvals Routes (Unified Approval System)
+Route::prefix('program-approvals')->group(function () {
+    Route::get('/', [ProgramApprovalController::class, 'index']);
+    Route::post('/', [ProgramApprovalController::class, 'store']);
+    Route::get('/pending', [ProgramApprovalController::class, 'getPending']);
+    Route::get('/overdue', [ProgramApprovalController::class, 'getOverdue']);
+    Route::get('/urgent', [ProgramApprovalController::class, 'getUrgent']);
+    Route::get('/history', [ProgramApprovalController::class, 'getHistory']);
+    Route::get('/{id}', [ProgramApprovalController::class, 'show']);
+    Route::put('/{id}', [ProgramApprovalController::class, 'update']);
+    
+    // Approval Actions
+    Route::post('/{id}/review', [ProgramApprovalController::class, 'markAsReviewed']);
+    Route::post('/{id}/approve', [ProgramApprovalController::class, 'approve']);
+    Route::post('/{id}/reject', [ProgramApprovalController::class, 'reject']);
+    Route::post('/{id}/cancel', [ProgramApprovalController::class, 'cancel']);
+});
