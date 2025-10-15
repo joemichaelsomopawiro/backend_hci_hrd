@@ -300,4 +300,45 @@ Route::prefix('sound-engineer-recording')->middleware(['auth:sanctum'])->group(f
     Route::post('/recordings/{id}/complete', [\App\Http\Controllers\SoundEngineerRecordingController::class, 'completeRecording']);
 });
 
+// ===== PHASE 5: CREATIVE PRODUCTION ROUTES =====
+
+// ===== ART & SET PROPERTIES ROUTES =====
+Route::prefix('art-set-properties')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/requests', [\App\Http\Controllers\ArtSetPropertyController::class, 'getPropertyRequests']);
+    Route::post('/requests', [\App\Http\Controllers\ArtSetPropertyController::class, 'createPropertyRequest']);
+    Route::get('/requests/{id}', [\App\Http\Controllers\ArtSetPropertyController::class, 'getPropertyRequestDetail']);
+    Route::put('/requests/{id}', [\App\Http\Controllers\ArtSetPropertyController::class, 'updatePropertyRequest']);
+    Route::post('/requests/{id}/approve', [\App\Http\Controllers\ArtSetPropertyController::class, 'approvePropertyRequest']);
+    Route::post('/requests/{id}/reject', [\App\Http\Controllers\ArtSetPropertyController::class, 'rejectPropertyRequest']);
+    Route::post('/requests/{id}/deliver', [\App\Http\Controllers\ArtSetPropertyController::class, 'markAsDelivered']);
+    Route::post('/requests/{id}/return', [\App\Http\Controllers\ArtSetPropertyController::class, 'markAsReturned']);
+});
+
+// ===== EDITOR ROUTES =====
+Route::prefix('editor')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/assignments', [\App\Http\Controllers\EditorController::class, 'getEditorAssignments']);
+    Route::post('/works', [\App\Http\Controllers\EditorController::class, 'createEditorWork']);
+    Route::get('/works/{id}', [\App\Http\Controllers\EditorController::class, 'getEditorWorkDetail']);
+    Route::put('/works/{id}', [\App\Http\Controllers\EditorController::class, 'updateEditorWork']);
+    Route::post('/works/{id}/start', [\App\Http\Controllers\EditorController::class, 'startEditorWork']);
+    Route::post('/works/{id}/submit', [\App\Http\Controllers\EditorController::class, 'submitEditorWork']);
+    Route::post('/works/{id}/approve', [\App\Http\Controllers\EditorController::class, 'approveEditorWork']);
+    Route::post('/works/{id}/revision', [\App\Http\Controllers\EditorController::class, 'requestRevision']);
+    Route::post('/works/{id}/upload-files', [\App\Http\Controllers\EditorController::class, 'uploadEditorFiles']);
+});
+
+// ===== DESIGN GRAFIS ROUTES =====
+Route::prefix('design-grafis')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/requests', [\App\Http\Controllers\DesignGrafisController::class, 'getDesignRequests']);
+    Route::post('/requests', [\App\Http\Controllers\DesignGrafisController::class, 'createDesignRequest']);
+    Route::get('/requests/{id}', [\App\Http\Controllers\DesignGrafisController::class, 'getDesignRequestDetail']);
+    Route::put('/requests/{id}', [\App\Http\Controllers\DesignGrafisController::class, 'updateDesignRequest']);
+    Route::post('/requests/{id}/assign', [\App\Http\Controllers\DesignGrafisController::class, 'assignDesignRequest']);
+    Route::post('/requests/{id}/start', [\App\Http\Controllers\DesignGrafisController::class, 'startDesignWork']);
+    Route::post('/requests/{id}/submit', [\App\Http\Controllers\DesignGrafisController::class, 'submitDesignWork']);
+    Route::post('/requests/{id}/approve', [\App\Http\Controllers\DesignGrafisController::class, 'approveDesignWork']);
+    Route::post('/requests/{id}/revision', [\App\Http\Controllers\DesignGrafisController::class, 'requestDesignRevision']);
+    Route::post('/requests/{id}/upload-files', [\App\Http\Controllers\DesignGrafisController::class, 'uploadDesignFiles']);
+});
+
 
