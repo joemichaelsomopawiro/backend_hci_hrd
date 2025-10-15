@@ -159,6 +159,96 @@ class MusicSubmission extends Model
     }
 
     /**
+     * Relationship dengan Creative Work (Phase 2)
+     */
+    public function creativeWork(): HasOne
+    {
+        return $this->hasOne(CreativeWork::class, 'music_submission_id');
+    }
+
+    /**
+     * Relationship dengan Budget (Phase 2)
+     */
+    public function budget(): HasOne
+    {
+        return $this->hasOne(Budget::class, 'music_submission_id');
+    }
+
+    /**
+     * Relationship dengan Budget Approvals (Phase 2)
+     */
+    public function budgetApprovals(): HasMany
+    {
+        return $this->hasMany(BudgetApproval::class, 'music_submission_id');
+    }
+
+    /**
+     * Relationship dengan Music Schedules (Phase 2)
+     */
+    public function schedules(): HasMany
+    {
+        return $this->hasMany(MusicSchedule::class, 'music_submission_id');
+    }
+
+    /**
+     * Get recording schedule (Phase 2)
+     */
+    public function recordingSchedule(): HasOne
+    {
+        return $this->hasOne(MusicSchedule::class, 'music_submission_id')
+            ->where('schedule_type', 'recording')
+            ->latest();
+    }
+
+    /**
+     * Get shooting schedule (Phase 2)
+     */
+    public function shootingSchedule(): HasOne
+    {
+        return $this->hasOne(MusicSchedule::class, 'music_submission_id')
+            ->where('schedule_type', 'shooting')
+            ->latest();
+    }
+
+    /**
+     * Relationship dengan Production Team Assignments (Phase 2)
+     */
+    public function productionTeamAssignments(): HasMany
+    {
+        return $this->hasMany(ProductionTeamAssignment::class, 'music_submission_id');
+    }
+
+    /**
+     * Get shooting team (Phase 2)
+     */
+    public function shootingTeam(): HasOne
+    {
+        return $this->hasOne(ProductionTeamAssignment::class, 'music_submission_id')
+            ->where('team_type', 'shooting')
+            ->latest();
+    }
+
+    /**
+     * Get setting team (Phase 2)
+     */
+    public function settingTeam(): HasOne
+    {
+        return $this->hasOne(ProductionTeamAssignment::class, 'music_submission_id')
+            ->where('team_type', 'setting')
+            ->latest();
+    }
+
+    /**
+     * Get recording team (Phase 2)
+     */
+    public function recordingTeam(): HasOne
+    {
+        return $this->hasOne(ProductionTeamAssignment::class, 'music_submission_id')
+            ->where('team_type', 'recording')
+            ->latest();
+    }
+
+    /**
      * Scope untuk submissions berdasarkan state
      */
     public function scopeByState($query, $state)

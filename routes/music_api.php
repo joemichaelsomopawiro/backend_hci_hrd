@@ -106,6 +106,9 @@ Route::prefix('producer/music')->middleware(['auth:sanctum'])->group(function ()
     // Songs management
     Route::get('/songs', [ProducerMusicController::class, 'getSongs']);
     Route::post('/songs', [ProducerMusicController::class, 'addSong']);
+    Route::put('/songs/{id}', [ProducerMusicController::class, 'updateSong']);
+    Route::patch('/songs/{id}', [ProducerMusicController::class, 'updateSong']);
+    Route::delete('/songs/{id}', [ProducerMusicController::class, 'deleteSong']);
     Route::get('/songs/{id}/audio', [ProducerMusicController::class, 'getSongAudio']);
     
     // Singers management
@@ -211,6 +214,90 @@ Route::prefix('audio')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/{songId}/info', [AudioController::class, 'info']);
     Route::post('/{songId}/upload', [AudioController::class, 'upload']);
     Route::delete('/{songId}', [AudioController::class, 'delete']);
+});
+
+// ===== PHASE 2: CREATIVE WORKFLOW ROUTES =====
+
+// ===== CREATIVE (KREATIF) ROUTES =====
+Route::prefix('creative')->middleware(['auth:sanctum'])->group(function () {
+    // Get creative work
+    Route::get('/submissions/{id}/creative-work', [\App\Http\Controllers\CreativeController::class, 'getCreativeWork']);
+    
+    // Submit creative work (script, storyboard, budget, schedules)
+    Route::post('/submissions/{id}/submit-creative-work', [\App\Http\Controllers\CreativeController::class, 'submitCreativeWork']);
+    
+    // Update creative work (for revision)
+    Route::patch('/submissions/{id}/creative-work', [\App\Http\Controllers\CreativeController::class, 'updateCreativeWork']);
+});
+
+// ===== PRODUCER ROUTES (PHASE 2 ADDITIONS) =====
+Route::prefix('producer')->middleware(['auth:sanctum'])->group(function () {
+    // Get creative work for review
+    Route::get('/submissions/{id}/creative-work', [ProducerMusicController::class, 'getCreativeWorkForReview']);
+    
+    // Review creative work (script, storyboard, budget)
+    Route::post('/submissions/{id}/review-creative-work', [ProducerMusicController::class, 'reviewCreativeWork']);
+    
+    // Assign production teams (shooting, setting, recording)
+    Route::post('/submissions/{id}/assign-teams', [ProducerMusicController::class, 'assignProductionTeams']);
+    
+    // Schedule management
+    Route::post('/schedules/{id}/cancel', [ProducerMusicController::class, 'cancelSchedule']);
+    Route::post('/schedules/{id}/reschedule', [ProducerMusicController::class, 'rescheduleSchedule']);
+});
+
+// ===== MANAGER PROGRAM ROUTES =====
+Route::prefix('manager-program')->middleware(['auth:sanctum'])->group(function () {
+    // Dashboard
+    Route::get('/dashboard', [\App\Http\Controllers\ManagerProgramController::class, 'getDashboard']);
+    
+    // Budget approvals
+    Route::get('/budget-approvals', [\App\Http\Controllers\ManagerProgramController::class, 'getBudgetApprovals']);
+    Route::get('/budget-approvals/{id}', [\App\Http\Controllers\ManagerProgramController::class, 'getBudgetApprovalDetail']);
+    Route::post('/budget-approvals/{id}/approve', [\App\Http\Controllers\ManagerProgramController::class, 'approveBudget']);
+    Route::post('/budget-approvals/{id}/reject', [\App\Http\Controllers\ManagerProgramController::class, 'rejectBudget']);
+});
+
+// ===== PHASE 4: PRODUCTION SYSTEM ROUTES =====
+
+// ===== GENERAL AFFAIRS ROUTES =====
+Route::prefix('general-affairs')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/budget-requests', [\App\Http\Controllers\GeneralAffairsController::class, 'getBudgetRequests']);
+    Route::post('/budget-requests', [\App\Http\Controllers\GeneralAffairsController::class, 'createBudgetRequest']);
+    Route::post('/budget-requests/{id}/approve', [\App\Http\Controllers\GeneralAffairsController::class, 'approveBudgetRequest']);
+    Route::post('/budget-requests/{id}/reject', [\App\Http\Controllers\GeneralAffairsController::class, 'rejectBudgetRequest']);
+    Route::post('/budget-requests/{id}/release', [\App\Http\Controllers\GeneralAffairsController::class, 'releaseFunds']);
+    Route::get('/budget-requests/{id}/status', [\App\Http\Controllers\GeneralAffairsController::class, 'getBudgetStatus']);
+});
+
+// ===== PROMOSI ROUTES =====
+Route::prefix('promosi')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/bts-assignments', [\App\Http\Controllers\PromosiController::class, 'getBTSAssignments']);
+    Route::post('/bts', [\App\Http\Controllers\PromosiController::class, 'createBTS']);
+    Route::post('/bts/{id}/start', [\App\Http\Controllers\PromosiController::class, 'startBTS']);
+    Route::post('/bts/{id}/upload-video', [\App\Http\Controllers\PromosiController::class, 'uploadBTSVideo']);
+    Route::post('/bts/{id}/upload-photos', [\App\Http\Controllers\PromosiController::class, 'uploadTalentPhotos']);
+    Route::post('/bts/{id}/complete', [\App\Http\Controllers\PromosiController::class, 'completeBTS']);
+});
+
+// ===== PRODUKSI ROUTES =====
+Route::prefix('produksi')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/equipment-requests', [\App\Http\Controllers\ProduksiController::class, 'getEquipmentRequests']);
+    Route::post('/equipment-requests', [\App\Http\Controllers\ProduksiController::class, 'createEquipmentRequest']);
+    Route::post('/run-sheets', [\App\Http\Controllers\ProduksiController::class, 'createRunSheet']);
+    Route::put('/run-sheets/{id}', [\App\Http\Controllers\ProduksiController::class, 'updateRunSheet']);
+    Route::post('/run-sheets/{id}/start', [\App\Http\Controllers\ProduksiController::class, 'startShooting']);
+    Route::post('/run-sheets/{id}/complete', [\App\Http\Controllers\ProduksiController::class, 'completeShooting']);
+});
+
+// ===== SOUND ENGINEER RECORDING ROUTES =====
+Route::prefix('sound-engineer-recording')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/assignments', [\App\Http\Controllers\SoundEngineerRecordingController::class, 'getRecordingAssignments']);
+    Route::post('/recordings', [\App\Http\Controllers\SoundEngineerRecordingController::class, 'createRecording']);
+    Route::get('/recordings/{id}', [\App\Http\Controllers\SoundEngineerRecordingController::class, 'getRecordingDetails']);
+    Route::post('/recordings/{id}/start', [\App\Http\Controllers\SoundEngineerRecordingController::class, 'startRecording']);
+    Route::post('/recordings/{id}/upload-audio', [\App\Http\Controllers\SoundEngineerRecordingController::class, 'uploadAudioFiles']);
+    Route::post('/recordings/{id}/complete', [\App\Http\Controllers\SoundEngineerRecordingController::class, 'completeRecording']);
 });
 
 

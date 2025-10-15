@@ -108,7 +108,7 @@ class AudioController extends BaseController
             $song = Song::findOrFail($songId);
 
             $request->validate([
-                'audio_file' => 'required|file|mimes:mp3,wav,ogg|max:10240' // 10MB max
+                'audio' => 'required|file|mimes:mp3,wav,ogg|max:10240' // 10MB max
             ]);
 
             // Delete old file if exists
@@ -116,7 +116,7 @@ class AudioController extends BaseController
                 Storage::disk('public')->delete($song->audio_file_path);
             }
 
-            $file = $request->file('audio_file');
+            $file = $request->file('audio');
             $filename = time() . '_' . $file->getClientOriginalName();
             $path = $file->storeAs('songs', $filename, 'public');
 
