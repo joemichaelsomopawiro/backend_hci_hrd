@@ -342,7 +342,20 @@ class LeaveRequestController extends Controller
         $user = auth()->user(); 
         $leaveRequest = LeaveRequest::findOrFail($id); 
 
-        $request->validate(['rejection_reason' => 'required|string|max:1000']); 
+        // Kompatibilitas FE lama: terima 'reason' atau 'notes' jika 'rejection_reason' tidak dikirim
+        if (!$request->filled('rejection_reason')) {
+            $fallbackReason = $request->input('reason') ?? $request->input('notes');
+            if (!empty($fallbackReason)) {
+                $request->merge(['rejection_reason' => $fallbackReason]);
+            }
+        }
+
+        // Validasi fleksibel: wajib ada salah satu dari rejection_reason|reason|notes
+        $request->validate([
+            'rejection_reason' => 'required_without_all:reason,notes|string|max:1000',
+            'reason' => 'nullable|string|max:1000',
+            'notes' => 'nullable|string|max:1000',
+        ]); 
         
         // Check if request is expired
         $leaveRequest->checkAndExpire();
@@ -360,7 +373,7 @@ class LeaveRequestController extends Controller
         $leaveRequest->update([ 
             'overall_status' => 'rejected', 
             'approved_by' => $user->employee_id, // Tetap catat siapa yang memproses 
-            'rejection_reason' => $request->rejection_reason, 
+            'rejection_reason' => $request->input('rejection_reason') ?? $request->input('reason') ?? $request->input('notes'), 
         ]); 
 
         // Reset status attendance jika ada

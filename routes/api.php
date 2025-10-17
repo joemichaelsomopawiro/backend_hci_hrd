@@ -144,6 +144,8 @@ Route::prefix('leave-requests')->middleware('auth:sanctum')->group(function () {
     // Alternatif untuk upload file (multipart) menggunakan POST
     Route::post('/{id}/approve', [LeaveRequestController::class, 'approve']);
     Route::put('/{id}/reject', [LeaveRequestController::class, 'reject']);
+    // Tambahkan alternatif method POST agar kompatibel dengan FE lama
+    Route::post('/{id}/reject', [LeaveRequestController::class, 'reject']);
     Route::delete('/{id}', [LeaveRequestController::class, 'destroy']);
     // Download surat cuti (PDF) dipindah menjadi route publik di luar middleware
     // Upload tanda tangan atasan (opsional, jika tidak terunggah saat approve)
