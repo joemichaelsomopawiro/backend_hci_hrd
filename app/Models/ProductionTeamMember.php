@@ -4,66 +4,123 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProductionTeamMember extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'production_team_id',
+        'assignment_id',
         'user_id',
         'role',
-        'is_active',
-        'joined_at',
-        'left_at',
-        'notes'
-    ];
-
-    protected $casts = [
-        'is_active' => 'boolean',
-        'joined_at' => 'date',
-        'left_at' => 'date'
+        'role_notes',
+        'status',
     ];
 
     /**
-     * Relasi dengan Production Team
+     * Relationships
      */
-    public function productionTeam(): BelongsTo
+    public function assignment()
     {
-        return $this->belongsTo(ProductionTeam::class);
+        return $this->belongsTo(ProductionTeamAssignment::class, 'assignment_id');
     }
 
-    /**
-     * Relasi dengan User
-     */
-    public function user(): BelongsTo
+    public function user()
     {
         return $this->belongsTo(User::class);
     }
 
     /**
-     * Get role label
+     * Scopes
      */
-    public function getRoleLabelAttribute(): string
+    public function scopeLeader($query)
     {
-        return ProductionTeam::ROLE_LABELS[$this->role] ?? $this->role;
+        return $query->where('role', 'leader');
+    }
+
+    public function scopeCrew($query)
+    {
+        return $query->where('role', 'crew');
+    }
+
+    public function scopeTalent($query)
+    {
+        return $query->where('role', 'talent');
+    }
+
+    public function scopeSupport($query)
+    {
+        return $query->where('role', 'support');
+    }
+
+    public function scopePresent($query)
+    {
+        return $query->whereIn('status', ['present', 'completed']);
+    }
+
+    public function scopeAbsent($query)
+    {
+        return $query->where('status', 'absent');
     }
 
     /**
-     * Scope: Active members only
+     * Helpers
      */
-    public function scopeActive($query)
+    public function isLeader()
     {
-        return $query->where('is_active', true);
+        return $this->role === 'leader';
     }
 
-    /**
-     * Scope: By role
-     */
-    public function scopeByRole($query, string $role)
+    public function isPresent()
     {
-        return $query->where('role', $role);
+        return in_array($this->status, ['present', 'completed']);
+    }
+
+    public function isAbsent()
+    {
+        return $this->status === 'absent';
+    }
+
+    public function isConfirmed()
+    {
+        return $this->status === 'confirmed';
+    }
+
+    public function getRoleLabel()
+    {
+        $labels = [
+            'leader' => 'Team Leader',
+            'crew' => 'Crew',
+            'talent' => 'Talent',
+            'support' => 'Support',
+        ];
+
+        return $labels[$this->role] ?? $this->role;
+    }
+
+    public function getStatusLabel()
+    {
+        $labels = [
+            'assigned' => 'Assigned',
+            'confirmed' => 'Confirmed',
+            'present' => 'Present',
+            'absent' => 'Absent',
+            'completed' => 'Completed',
+        ];
+
+        return $labels[$this->status] ?? $this->status;
+    }
+
+    public function getStatusColor()
+    {
+        $colors = [
+            'assigned' => 'blue',
+            'confirmed' => 'green',
+            'present' => 'green',
+            'absent' => 'red',
+            'completed' => 'green',
+        ];
+
+        return $colors[$this->status] ?? 'gray';
     }
 }
-

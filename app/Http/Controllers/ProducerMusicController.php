@@ -1422,4 +1422,177 @@ class ProducerMusicController extends BaseController
             ], 500);
         }
     }
+
+    // ==================== PHASE 2: CREATIVE WORKFLOW ====================
+
+    /**
+     * Get creative work for review
+     * GET /api/music/producer/submissions/{id}/creative-work
+     */
+    public function getCreativeWorkForReview($id)
+    {
+        try {
+            $submission = MusicSubmission::with([
+                'creativeWork.creator',
+                'budget',
+                'schedules',
+                'song',
+                'musicArranger'
+            ])->findOrFail($id);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'submission' => $submission,
+                    'creative_work' => $submission->creativeWork,
+                    'budget' => $submission->budget,
+                    'schedules' => $submission->schedules,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get creative work: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Review creative work (script, storyboard, budget)
+     * POST /api/music/producer/submissions/{id}/review-creative-work
+     */
+    public function reviewCreativeWork(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'script_approved' => 'required|boolean',
+            'storyboard_approved' => 'required|boolean',
+            'budget_approved' => 'nullable|boolean',
+            'review_notes' => 'nullable|string|max:1000',
+            'budget_review_notes' => 'nullable|string|max:1000',
+            'budget_edits' => 'nullable|array',
+            'budget_edits.talent_budget' => 'nullable|numeric|min:0',
+            'budget_edits.production_budget' => 'nullable|numeric|min:0',
+            'budget_edits.other_budget' => 'nullable|numeric|min:0',
+            'request_special_approval' => 'nullable|boolean',
+            'special_approval_reason' => 'nullable|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        // Inject CreativeWorkflowService
+        $workflowService = app(\App\Services\CreativeWorkflowService::class);
+        $result = $workflowService->reviewCreativeWork($id, $request->all());
+
+        if ($result['success']) {
+            return response()->json($result);
+        } else {
+            return response()->json($result, 500);
+        }
+    }
+
+    /**
+     * Assign production teams (shooting, setting, recording)
+     * POST /api/music/producer/submissions/{id}/assign-teams
+     */
+    public function assignProductionTeams(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'shooting_team_ids' => 'nullable|array',
+            'shooting_team_ids.*' => 'exists:users,id',
+            'shooting_team_notes' => 'nullable|string|max:500',
+            'shooting_schedule_id' => 'nullable|exists:music_schedules,id',
+            
+            'setting_team_ids' => 'nullable|array',
+            'setting_team_ids.*' => 'exists:users,id',
+            'setting_team_notes' => 'nullable|string|max:500',
+            
+            'recording_team_ids' => 'nullable|array',
+            'recording_team_ids.*' => 'exists:users,id',
+            'recording_team_notes' => 'nullable|string|max:500',
+            'recording_schedule_id' => 'nullable|exists:music_schedules,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        // Inject CreativeWorkflowService
+        $workflowService = app(\App\Services\CreativeWorkflowService::class);
+        $result = $workflowService->assignProductionTeams($id, $request->all());
+
+        if ($result['success']) {
+            return response()->json($result);
+        } else {
+            return response()->json($result, 500);
+        }
+    }
+
+    /**
+     * Cancel schedule
+     * POST /api/music/producer/schedules/{id}/cancel
+     */
+    public function cancelSchedule(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'reason' => 'required|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        // Inject CreativeWorkflowService
+        $workflowService = app(\App\Services\CreativeWorkflowService::class);
+        $result = $workflowService->manageSchedule($id, 'cancel', $request->all());
+
+        if ($result['success']) {
+            return response()->json($result);
+        } else {
+            return response()->json($result, 500);
+        }
+    }
+
+    /**
+     * Reschedule
+     * POST /api/music/producer/schedules/{id}/reschedule
+     */
+    public function rescheduleSchedule(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'new_datetime' => 'required|date|after_or_equal:today',
+            'reason' => 'required|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        // Inject CreativeWorkflowService
+        $workflowService = app(\App\Services\CreativeWorkflowService::class);
+        $result = $workflowService->manageSchedule($id, 'reschedule', $request->all());
+
+        if ($result['success']) {
+            return response()->json($result);
+        } else {
+            return response()->json($result, 500);
+        }
+    }
 }

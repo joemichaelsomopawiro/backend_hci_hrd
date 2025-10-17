@@ -22,7 +22,7 @@ class MusicWorkflowController extends Controller
     /** @var MusicWorkflowService */
     protected $workflowService;
 
-    public function __construct(\App\Services\MusicWorkflowService $workflowService)
+    public function __construct(MusicWorkflowService $workflowService)
     {
         $this->workflowService = $workflowService;
     }

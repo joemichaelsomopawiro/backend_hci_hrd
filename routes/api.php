@@ -991,3 +991,9 @@ Route::prefix('program-approvals')->group(function () {
     Route::post('/{id}/reject', [ProgramApprovalController::class, 'reject']);
     Route::post('/{id}/cancel', [ProgramApprovalController::class, 'cancel']);
 });
+
+// ===== MUSIC PROGRAM ROUTES =====
+// Load Music System API routes
+Route::prefix('music')->group(function () {
+    require __DIR__.'/music_api.php';
+});
