@@ -26,12 +26,6 @@ use App\Http\Controllers\ZoomLinkController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ManualWorshipAttendanceController;
 use App\Http\Controllers\AttendanceTxtUploadController;
-use App\Http\Controllers\MusicArrangerController;
-use App\Http\Controllers\ProducerMusicController;
-use App\Http\Controllers\MusicNotificationController;
-use App\Http\Controllers\AudioController;
-use App\Http\Controllers\MusicWorkflowController;
-use App\Http\Controllers\MusicArrangerHistoryController;
 use App\Http\Controllers\ReminderNotificationController;
 use App\Http\Controllers\TeamManagementController;
 use App\Http\Controllers\WorkflowController;
@@ -992,8 +986,3 @@ Route::prefix('program-approvals')->group(function () {
     Route::post('/{id}/cancel', [ProgramApprovalController::class, 'cancel']);
 });
 
-// ===== MUSIC PROGRAM ROUTES =====
-// Load Music System API routes
-Route::prefix('music')->group(function () {
-    require __DIR__.'/music_api.php';
-});
