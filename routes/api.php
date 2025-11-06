@@ -48,6 +48,7 @@ use App\Http\Controllers\ProgramAnalyticsController;
 
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
+Route::get('/employees/roles', [EmployeeController::class, 'getRoles']); // Endpoint untuk get roles
 Route::get('/employees/{id}', [EmployeeController::class, 'show']);
 Route::post('/employees', [EmployeeController::class, 'store']);
 Route::put('/employees/{id}', [EmployeeController::class, 'update']);
@@ -467,173 +468,174 @@ Route::prefix('calendar')->middleware(['auth:sanctum'])->group(function () {
 });
 
 // ===== MUSIC ARRANGER ROUTES =====
-// Routes untuk Music Arranger workflow
-Route::prefix('music-arranger')->middleware(['auth:sanctum'])->group(function () {
-    Route::get('/dashboard', [MusicArrangerController::class, 'dashboard']);
-    Route::get('/songs', [MusicArrangerController::class, 'getSongs']);
-    Route::get('/singers', [MusicArrangerController::class, 'getSingers']);
-    Route::get('/singers-fixed', [MusicArrangerController::class, 'getSingersFixed']);
-    Route::get('/test-profile-url', [MusicArrangerController::class, 'testProfileUrl']);
-    Route::get('/songs/{id}/audio', [MusicArrangerController::class, 'getSongAudio']);
-    
-    // Add new song and singer
-    Route::post('/songs', [MusicArrangerController::class, 'addSong']);
-    Route::post('/singers', [MusicArrangerController::class, 'addSinger']);
-    
-    // Update and delete songs
-    Route::put('/songs/{id}', [MusicArrangerController::class, 'updateSong']);
-    Route::patch('/songs/{id}', [MusicArrangerController::class, 'updateSong']);
-    Route::delete('/songs/{id}', [MusicArrangerController::class, 'deleteSong']);
-    
-    // Update and delete singers
-    Route::put('/singers/{id}', [MusicArrangerController::class, 'updateSinger']);
-    Route::patch('/singers/{id}', [MusicArrangerController::class, 'updateSinger']);
-    Route::post('/singers/{id}', [MusicArrangerController::class, 'updateSinger']); // For _method override
-    Route::delete('/singers/{id}', [MusicArrangerController::class, 'deleteSinger']);
-    
-    // Music request routes
-    Route::post('/requests', [MusicArrangerController::class, 'submitRequest']);
-    Route::get('/requests', [MusicArrangerController::class, 'getMyRequests']);
-    Route::get('/requests/{id}', [MusicArrangerController::class, 'getRequestDetail']);
-    Route::put('/requests/{id}', [MusicArrangerController::class, 'updateRequest']);
-    Route::put('/requests/{id}/update', [MusicArrangerController::class, 'updateRequest']); // Alias for frontend compatibility
-    Route::post('/requests/{id}/update', [MusicArrangerController::class, 'updateRequest']); // POST alias for frontend compatibility
-    Route::delete('/requests/{id}', [MusicArrangerController::class, 'cancelRequest']);
-    
-    // Music submission routes
-    Route::get('/submissions', [MusicArrangerController::class, 'getSubmissions']);
-    Route::get('/submissions/{id}', [MusicArrangerController::class, 'getSubmission']);
-});
+// Routes untuk Music Arranger workflow - DISABLED (using new live_tv_api.php)
+// Route::prefix('music-arranger')->middleware(['auth:sanctum'])->group(function () {
+//     Route::get('/dashboard', [MusicArrangerController::class, 'dashboard']);
+//     Route::get('/songs', [MusicArrangerController::class, 'getSongs']);
+//     Route::get('/singers', [MusicArrangerController::class, 'getSingers']);
+//     Route::get('/singers-fixed', [MusicArrangerController::class, 'getSingersFixed']);
+//     Route::get('/test-profile-url', [MusicArrangerController::class, 'testProfileUrl']);
+//     Route::get('/songs/{id}/audio', [MusicArrangerController::class, 'getSongAudio']);
+//     
+//     // Add new song and singer
+//     Route::post('/songs', [MusicArrangerController::class, 'addSong']);
+//     Route::post('/singers', [MusicArrangerController::class, 'addSinger']);
+//     
+//     // Update and delete songs
+//     Route::put('/songs/{id}', [MusicArrangerController::class, 'updateSong']);
+//     Route::patch('/songs/{id}', [MusicArrangerController::class, 'updateSong']);
+//     Route::delete('/songs/{id}', [MusicArrangerController::class, 'deleteSong']);
+//     
+//     // Update and delete singers
+//     Route::put('/singers/{id}', [MusicArrangerController::class, 'updateSinger']);
+//     Route::patch('/singers/{id}', [MusicArrangerController::class, 'updateSinger']);
+//     Route::post('/singers/{id}', [MusicArrangerController::class, 'updateSinger']); // For _method override
+//     Route::delete('/singers/{id}', [MusicArrangerController::class, 'deleteSinger']);
+//     
+//     // Music request routes
+//     Route::post('/requests', [MusicArrangerController::class, 'submitRequest']);
+//     Route::get('/requests', [MusicArrangerController::class, 'getMyRequests']);
+//     Route::get('/requests/{id}', [MusicArrangerController::class, 'getRequestDetail']);
+//     Route::put('/requests/{id}', [MusicArrangerController::class, 'updateRequest']);
+//     Route::put('/requests/{id}/update', [MusicArrangerController::class, 'updateRequest']); // Alias for frontend compatibility
+//     Route::post('/requests/{id}/update', [MusicArrangerController::class, 'updateRequest']); // POST alias for frontend compatibility
+//     Route::delete('/requests/{id}', [MusicArrangerController::class, 'cancelRequest']);
+//     
+//     // Music submission routes
+//     Route::get('/submissions', [MusicArrangerController::class, 'getSubmissions']);
+//     Route::get('/submissions/{id}', [MusicArrangerController::class, 'getSubmission']);
+// });
 
        // ===== PRODUCER MUSIC ROUTES =====
-       // Routes untuk Producer music workflow
-       Route::prefix('producer/music')->middleware(['auth:sanctum'])->group(function () {
-           Route::get('/dashboard', [ProducerMusicController::class, 'dashboard']);
-           Route::get('/songs', [ProducerMusicController::class, 'getSongs']); // Get available songs
-           Route::get('/songs/{id}/audio', [ProducerMusicController::class, 'getSongAudio']); // Get song audio
-           Route::get('/requests', [ProducerMusicController::class, 'getAllRequests']); // Add missing route
-           Route::get('/submissions', [ProducerMusicController::class, 'getAllSubmissions']); // Get all submissions with detailed data
-           Route::get('/requests/pending', [ProducerMusicController::class, 'getPendingRequests']);
-           Route::get('/requests/approved', [ProducerMusicController::class, 'getApprovedRequests']);
-           Route::get('/requests/rejected', [ProducerMusicController::class, 'getRejectedRequests']);
-           Route::get('/requests/status/{status}', [ProducerMusicController::class, 'getRequestsByStatus']);
-           Route::get('/requests/my', [ProducerMusicController::class, 'getMyRequests']);
-           Route::get('/requests/{id}', [ProducerMusicController::class, 'getRequestDetail']);
-           Route::get('/singers', [ProducerMusicController::class, 'getSingers']);
+       // Routes untuk Producer music workflow - DISABLED (using new live_tv_api.php)
+       // Route::prefix('producer/music')->middleware(['auth:sanctum'])->group(function () {
+       //     Route::get('/dashboard', [ProducerMusicController::class, 'dashboard']);
+       //     Route::get('/songs', [ProducerMusicController::class, 'getSongs']); // Get available songs
+       //     Route::get('/songs/{id}/audio', [ProducerMusicController::class, 'getSongAudio']); // Get song audio
+       //     Route::get('/requests', [ProducerMusicController::class, 'getAllRequests']); // Add missing route
+       //     Route::get('/submissions', [ProducerMusicController::class, 'getAllSubmissions']); // Get all submissions with detailed data
+       //     Route::get('/requests/pending', [ProducerMusicController::class, 'getPendingRequests']);
+       //     Route::get('/requests/approved', [ProducerMusicController::class, 'getApprovedRequests']);
+       //     Route::get('/requests/rejected', [ProducerMusicController::class, 'getRejectedRequests']);
+       //     Route::get('/requests/status/{status}', [ProducerMusicController::class, 'getRequestsByStatus']);
+       //     Route::get('/requests/my', [ProducerMusicController::class, 'getMyRequests']);
+       //     Route::get('/requests/{id}', [ProducerMusicController::class, 'getRequestDetail']);
+       //     Route::get('/singers', [ProducerMusicController::class, 'getSingers']);
 
-           // Add new song and singer (Producer can also add)
-           Route::post('/songs', [ProducerMusicController::class, 'addSong']);
-           Route::post('/singers', [ProducerMusicController::class, 'addSinger']);
+       //     // Add new song and singer (Producer can also add)
+       //     Route::post('/songs', [ProducerMusicController::class, 'addSong']);
+       //     Route::post('/singers', [ProducerMusicController::class, 'addSinger']);
 
-           // Update and delete songs (Producer CRUD)
-           Route::put('/songs/{id}', [ProducerMusicController::class, 'updateSong']);
-           Route::patch('/songs/{id}', [ProducerMusicController::class, 'updateSong']);
-           Route::delete('/songs/{id}', [ProducerMusicController::class, 'deleteSong']);
+       //     // Update and delete songs (Producer CRUD)
+       //     Route::put('/songs/{id}', [ProducerMusicController::class, 'updateSong']);
+       //     Route::patch('/songs/{id}', [ProducerMusicController::class, 'updateSong']);
+       //     Route::delete('/songs/{id}', [ProducerMusicController::class, 'deleteSong']);
 
-           // Update and delete singers (Producer CRUD)
-           Route::put('/singers/{id}', [ProducerMusicController::class, 'updateSinger']);
-           Route::patch('/singers/{id}', [ProducerMusicController::class, 'updateSinger']);
-           Route::delete('/singers/{id}', [ProducerMusicController::class, 'deleteSinger']);
+       //     // Update and delete singers (Producer CRUD)
+       //     Route::put('/singers/{id}', [ProducerMusicController::class, 'updateSinger']);
+       //     Route::patch('/singers/{id}', [ProducerMusicController::class, 'updateSinger']);
+       //     Route::delete('/singers/{id}', [ProducerMusicController::class, 'deleteSinger']);
 
-           // Producer actions
-           Route::post('/requests/{id}/take', [ProducerMusicController::class, 'takeRequest']);
-           Route::post('/requests/{id}/modify', [ProducerMusicController::class, 'modifyRequest']);
-           Route::post('/requests/{id}/approve', [ProducerMusicController::class, 'approveRequest']);
-           Route::post('/requests/{id}/reject', [ProducerMusicController::class, 'rejectRequest']);
-       });
+       //     // Producer actions
+       //     Route::post('/requests/{id}/take', [ProducerMusicController::class, 'takeRequest']);
+       //     Route::post('/requests/{id}/modify', [ProducerMusicController::class, 'modifyRequest']);
+       //     Route::post('/requests/{id}/approve', [ProducerMusicController::class, 'approveRequest']);
+       //     Route::post('/requests/{id}/reject', [ProducerMusicController::class, 'rejectRequest']);
+       // });
 
 // ===== TEST ROUTES =====
-Route::get('/test/singers', [App\Http\Controllers\TestController::class, 'testSingers']);
-Route::get('/test/cors', [App\Http\Controllers\TestController::class, 'testCors']);
-Route::get('/test/producer-modify-workflow', [App\Http\Controllers\TestController::class, 'testProducerModifyWorkflow']);
-Route::get('/test/database-schema', [App\Http\Controllers\TestController::class, 'testDatabaseSchema']);
-Route::get('/test/validation-fix', [App\Http\Controllers\TestController::class, 'testValidationFix']);
-Route::get('/test/database-column-fix', [App\Http\Controllers\TestController::class, 'testDatabaseColumnFix']);
+// DISABLED - Test routes causing controller issues
+// Route::get('/test/singers', [App\Http\Controllers\TestController::class, 'testSingers']);
+// Route::get('/test/cors', [App\Http\Controllers\TestController::class, 'testCors']);
+// Route::get('/test/producer-modify-workflow', [App\Http\Controllers\TestController::class, 'testProducerModifyWorkflow']);
+// Route::get('/test/database-schema', [App\Http\Controllers\TestController::class, 'testDatabaseSchema']);
+// Route::get('/test/validation-fix', [App\Http\Controllers\TestController::class, 'testValidationFix']);
+// Route::get('/test/database-column-fix', [App\Http\Controllers\TestController::class, 'testDatabaseColumnFix']);
 
 // ===== MUSIC NOTIFICATION ROUTES =====
-// Routes untuk notifikasi music workflow
-       Route::prefix('music/notifications')->middleware(['auth:sanctum'])->group(function () {
-           Route::get('/', [MusicNotificationController::class, 'index']);
-           Route::get('/unread-count', [MusicNotificationController::class, 'unreadCount']);
-           Route::get('/count', [MusicNotificationController::class, 'unreadCount']); // Alias for frontend compatibility
-           Route::put('/{id}/read', [MusicNotificationController::class, 'markAsRead']);
-           Route::put('/mark-all-read', [MusicNotificationController::class, 'markAllAsRead']);
-       });
+// Routes untuk notifikasi music workflow - DISABLED (using new live_tv_api.php)
+       // Route::prefix('music/notifications')->middleware(['auth:sanctum'])->group(function () {
+       //     Route::get('/', [MusicNotificationController::class, 'index']);
+       //     Route::get('/unread-count', [MusicNotificationController::class, 'unreadCount']);
+       //     Route::get('/count', [MusicNotificationController::class, 'unreadCount']); // Alias for frontend compatibility
+       //     Route::put('/{id}/read', [MusicNotificationController::class, 'markAsRead']);
+       //     Route::put('/mark-all-read', [MusicNotificationController::class, 'markAllAsRead']);
+       // });
 
        // ===== GENERAL NOTIFICATION ROUTES =====
-       // Routes untuk notifikasi umum (compatibility dengan frontend)
-       Route::prefix('notifications')->middleware(['auth:sanctum'])->group(function () {
-           Route::get('/count', [MusicNotificationController::class, 'unreadCount']);
-           Route::get('/read-status/{id}', [MusicNotificationController::class, 'getReadStatus']);
-           Route::put('/{id}/read', [MusicNotificationController::class, 'markAsRead']);
-           Route::put('/mark-read', [MusicNotificationController::class, 'markAsReadWithoutId']); // Alias for frontend compatibility
-           Route::get('/', [MusicNotificationController::class, 'index']);
-       });
+       // Routes untuk notifikasi umum (compatibility dengan frontend) - DISABLED
+       // Route::prefix('notifications')->middleware(['auth:sanctum'])->group(function () {
+       //     Route::get('/count', [MusicNotificationController::class, 'unreadCount']);
+       //     Route::get('/read-status/{id}', [MusicNotificationController::class, 'getReadStatus']);
+       //     Route::put('/{id}/read', [MusicNotificationController::class, 'markAsRead']);
+       //     Route::put('/mark-read', [MusicNotificationController::class, 'markAsReadWithoutId']); // Alias for frontend compatibility
+       //     Route::get('/', [MusicNotificationController::class, 'index']);
+       // });
 
        // ===== AUDIO ROUTES =====
-       // Routes untuk audio playback dan upload
-       Route::prefix('audio')->middleware(['auth:sanctum'])->group(function () {
-           Route::get('/{songId}', [AudioController::class, 'stream']);
-           Route::get('/{songId}/info', [AudioController::class, 'info']);
-           Route::post('/{songId}/upload', [AudioController::class, 'upload']);
-           Route::delete('/{songId}', [AudioController::class, 'delete']);
-       });
+       // Routes untuk audio playback dan upload - DISABLED
+       // Route::prefix('audio')->middleware(['auth:sanctum'])->group(function () {
+       //     Route::get('/{songId}', [AudioController::class, 'stream']);
+       //     Route::get('/{songId}/info', [AudioController::class, 'info']);
+       //     Route::post('/{songId}/upload', [AudioController::class, 'upload']);
+       //     Route::delete('/{songId}', [AudioController::class, 'delete']);
+       // });
 
        // ===== MUSIC WORKFLOW ROUTES =====
-       // Routes untuk music workflow system
-       Route::prefix('music-workflow')->middleware(['auth:sanctum'])->group(function () {
-           // General workflow routes
-           Route::get('/current-submission', [MusicWorkflowController::class, 'getCurrentSubmission']);
-           Route::get('/list', [MusicWorkflowController::class, 'getWorkflowList']);
-           Route::get('/submissions/{id}/history', [MusicWorkflowController::class, 'getWorkflowHistory']);
-           Route::post('/submissions/{id}/transition', [MusicWorkflowController::class, 'transitionState']);
-           Route::post('/submissions', [MusicWorkflowController::class, 'createSubmission']);
-           Route::put('/submissions/{id}', [MusicWorkflowController::class, 'update']);
-           Route::patch('/submissions/{id}', [MusicWorkflowController::class, 'update']);
-           Route::delete('/submissions/{id}', [MusicWorkflowController::class, 'destroy']);
-           
-           // Notification routes
-           Route::get('/notifications', [MusicWorkflowController::class, 'getNotifications']);
-           Route::post('/notifications/{id}/read', [MusicWorkflowController::class, 'markNotificationAsRead']);
-           Route::post('/notifications/mark-all-read', [MusicWorkflowController::class, 'markAllNotificationsAsRead']);
-           
-           // Analytics routes
-           Route::get('/stats', [MusicWorkflowController::class, 'getWorkflowStats']);
-           Route::get('/analytics', [MusicWorkflowController::class, 'getAnalytics']);
-           
-           // Music Arranger routes
-           Route::post('/music-arranger/workflow/{id}/arrange', [MusicWorkflowController::class, 'submitArrangement']);
-           Route::post('/music-arranger/workflow/{id}/resubmit-arrangement', [MusicWorkflowController::class, 'resubmitArrangement']);
-           
-           // Producer routes
-           Route::post('/producer/workflow/{id}/approve', [MusicWorkflowController::class, 'approveSubmission']);
-           Route::post('/producer/workflow/{id}/reject', [MusicWorkflowController::class, 'rejectSubmission']);
-           Route::post('/producer/workflow/{id}/process', [MusicWorkflowController::class, 'processArrangement']);
-           Route::post('/producer/workflow/{id}/qc-music', [MusicWorkflowController::class, 'qcMusic']);
-           Route::post('/producer/workflow/{id}/approve-quality', [MusicWorkflowController::class, 'approveQuality']);
-           Route::post('/producer/workflow/{id}/final-approve', [MusicWorkflowController::class, 'finalApprove']);
-           
-           // Sound Engineer routes
-           Route::post('/sound-engineer/workflow/{id}/accept', [MusicWorkflowController::class, 'acceptSoundEngineeringWork']);
-           Route::post('/sound-engineer/workflow/{id}/complete', [MusicWorkflowController::class, 'completeSoundEngineering']);
-           Route::post('/sound-engineer/workflow/{id}/reject-to-arranger', [MusicWorkflowController::class, 'rejectArrangementBackToArranger']);
-           
-           // Creative routes
-           Route::post('/creative/workflow/{id}/accept', [MusicWorkflowController::class, 'acceptCreativeWork']);
-           Route::post('/creative/workflow/{id}/submit-work', [MusicWorkflowController::class, 'submitCreativeWork']);
-       });
+       // Routes untuk music workflow system - DISABLED (using new live_tv_api.php)
+       // Route::prefix('music-workflow')->middleware(['auth:sanctum'])->group(function () {
+       //     // General workflow routes
+       //     Route::get('/current-submission', [MusicWorkflowController::class, 'getCurrentSubmission']);
+       //     Route::get('/list', [MusicWorkflowController::class, 'getWorkflowList']);
+       //     Route::get('/submissions/{id}/history', [MusicWorkflowController::class, 'getWorkflowHistory']);
+       //     Route::post('/submissions/{id}/transition', [MusicWorkflowController::class, 'transitionState']);
+       //     Route::post('/submissions', [MusicWorkflowController::class, 'createSubmission']);
+       //     Route::put('/submissions/{id}', [MusicWorkflowController::class, 'update']);
+       //     Route::patch('/submissions/{id}', [MusicWorkflowController::class, 'update']);
+       //     Route::delete('/submissions/{id}', [MusicWorkflowController::class, 'destroy']);
+       //     
+       //     // Notification routes
+       //     Route::get('/notifications', [MusicWorkflowController::class, 'getNotifications']);
+       //     Route::post('/notifications/{id}/read', [MusicWorkflowController::class, 'markNotificationAsRead']);
+       //     Route::post('/notifications/mark-all-read', [MusicWorkflowController::class, 'markAllNotificationsAsRead']);
+       //     
+       //     // Analytics routes
+       //     Route::get('/stats', [MusicWorkflowController::class, 'getWorkflowStats']);
+       //     Route::get('/analytics', [MusicWorkflowController::class, 'getAnalytics']);
+       //     
+       //     // Music Arranger routes
+       //     Route::post('/music-arranger/workflow/{id}/arrange', [MusicWorkflowController::class, 'submitArrangement']);
+       //     Route::post('/music-arranger/workflow/{id}/resubmit-arrangement', [MusicWorkflowController::class, 'resubmitArrangement']);
+       //     
+       //     // Producer routes
+       //     Route::post('/producer/workflow/{id}/approve', [MusicWorkflowController::class, 'approveSubmission']);
+       //     Route::post('/producer/workflow/{id}/reject', [MusicWorkflowController::class, 'rejectSubmission']);
+       //     Route::post('/producer/workflow/{id}/process', [MusicWorkflowController::class, 'processArrangement']);
+       //     Route::post('/producer/workflow/{id}/qc-music', [MusicWorkflowController::class, 'qcMusic']);
+       //     Route::post('/producer/workflow/{id}/approve-quality', [MusicWorkflowController::class, 'approveQuality']);
+       //     Route::post('/producer/workflow/{id}/final-approve', [MusicWorkflowController::class, 'finalApprove']);
+       //     
+       //     // Sound Engineer routes
+       //     Route::post('/sound-engineer/workflow/{id}/accept', [MusicWorkflowController::class, 'acceptSoundEngineeringWork']);
+       //     Route::post('/sound-engineer/workflow/{id}/complete', [MusicWorkflowController::class, 'completeSoundEngineering']);
+       //     Route::post('/sound-engineer/workflow/{id}/reject-to-arranger', [MusicWorkflowController::class, 'rejectArrangementBackToArranger']);
+       //     
+       //     // Creative routes
+       //     Route::post('/creative/workflow/{id}/accept', [MusicWorkflowController::class, 'acceptCreativeWork']);
+       //     Route::post('/creative/workflow/{id}/submit-work', [MusicWorkflowController::class, 'submitCreativeWork']);
+       // });
 
-    // Music Arranger History Routes
-    Route::prefix('music-arranger-history')->middleware(['auth:sanctum'])->group(function () {
-        Route::get('/submissions', [MusicArrangerHistoryController::class, 'getSubmissions']);
-        Route::get('/submissions/{id}', [MusicArrangerHistoryController::class, 'getSubmission']);
-        Route::put('/submissions/{id}', [MusicArrangerHistoryController::class, 'updateSubmission']);
-        Route::delete('/submissions/{id}', [MusicArrangerHistoryController::class, 'deleteSubmission']);
-        Route::post('/submissions/{id}/submit', [MusicArrangerHistoryController::class, 'submitSubmission']);
-        Route::post('/submissions/{id}/cancel', [MusicArrangerHistoryController::class, 'cancelSubmission']);
-        Route::post('/submissions/{id}/resubmit', [MusicArrangerHistoryController::class, 'resubmitSubmission']);
-        Route::get('/submissions/{id}/download', [MusicArrangerHistoryController::class, 'downloadFiles']);
-    });
+    // Music Arranger History Routes - DISABLED (using new live_tv_api.php)
+    // Route::prefix('music-arranger-history')->middleware(['auth:sanctum'])->group(function () {
+    //     Route::get('/submissions', [MusicArrangerHistoryController::class, 'getSubmissions']);
+    //     Route::get('/submissions/{id}', [MusicArrangerHistoryController::class, 'getSubmission']);
+    //     Route::put('/submissions/{id}', [MusicArrangerHistoryController::class, 'updateSubmission']);
+    //     Route::delete('/submissions/{id}', [MusicArrangerHistoryController::class, 'deleteSubmission']);
+    //     Route::post('/submissions/{id}/submit', [MusicArrangerHistoryController::class, 'submitSubmission']);
+    //     Route::post('/submissions/{id}/cancel', [MusicArrangerHistoryController::class, 'cancelSubmission']);
+    //     Route::post('/submissions/{id}/resubmit', [MusicArrangerHistoryController::class, 'resubmitSubmission']);
+    //     Route::get('/submissions/{id}/download', [MusicArrangerHistoryController::class, 'downloadFiles']);
+    // });
 
 // Route publik untuk mengambil link Zoom
 Route::get('/zoom-link', [ZoomLinkController::class, 'getZoomLink']);
@@ -853,6 +855,11 @@ Route::prefix('notifications')->group(function () {
     Route::put('/preferences', [NotificationController::class, 'updatePreferences']);
 });
 
+// Music Notification Routes (Compatibility for frontend)
+Route::prefix('music/notifications')->middleware('auth:sanctum')->group(function () {
+    Route::get('/read-status/{id}', [\App\Http\Controllers\Api\NotificationController::class, 'getReadStatus']);
+});
+
 // Enhanced Approval Workflow Routes
 Route::prefix('approvals')->group(function () {
     Route::post('/programs/{id}/submit', [ApprovalWorkflowController::class, 'submitProgramForApproval']);
@@ -985,4 +992,7 @@ Route::prefix('program-approvals')->group(function () {
     Route::post('/{id}/reject', [ProgramApprovalController::class, 'reject']);
     Route::post('/{id}/cancel', [ProgramApprovalController::class, 'cancel']);
 });
+
+// Include Live TV Program API Routes
+require __DIR__.'/live_tv_api.php';
 

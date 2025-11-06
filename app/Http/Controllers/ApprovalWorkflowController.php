@@ -523,7 +523,7 @@ class ApprovalWorkflowController extends Controller
             // Get pending programs (for managers)
             if (in_array($user->role, ['Manager', 'Program Manager'])) {
                 $pendingPrograms = Program::where('status', 'pending_approval')
-                    ->with(['manager', 'producer'])
+                    ->with(['managerProgram', 'productionTeam'])
                     ->get();
                     
                 foreach ($pendingPrograms as $program) {
@@ -607,7 +607,7 @@ class ApprovalWorkflowController extends Controller
             // Get programs approved/rejected by user
             $programs = Program::where('approved_by', $user->id)
                 ->orWhere('rejected_by', $user->id)
-                ->with(['manager', 'producer'])
+                ->with(['managerProgram', 'productionTeam'])
                 ->get();
                 
             foreach ($programs as $program) {

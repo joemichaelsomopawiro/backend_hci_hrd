@@ -13,6 +13,7 @@ class ProductionTeamAssignment extends Model
 
     protected $fillable = [
         'music_submission_id',
+        'episode_id',
         'schedule_id',
         'assigned_by',
         'team_type',

@@ -4,139 +4,160 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CreativeWork extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'music_submission_id',
-        'created_by',
+        'episode_id',
         'script_content',
-        'storyboard_file_path',
-        'storyboard_file_name',
-        'storyboard_file_size',
-        'creative_notes',
+        'storyboard_data',
+        'budget_data',
+        'recording_schedule',
+        'shooting_schedule',
+        'shooting_location',
         'status',
-        'submitted_at',
-        'reviewed_at',
+        'created_by',
         'reviewed_by',
+        'reviewed_at',
         'review_notes',
-        'script_approved',
-        'storyboard_approved',
+        'rejection_reason'
     ];
 
     protected $casts = [
-        'submitted_at' => 'datetime',
-        'reviewed_at' => 'datetime',
-        'script_approved' => 'boolean',
-        'storyboard_approved' => 'boolean',
+        'storyboard_data' => 'array',
+        'budget_data' => 'array',
+        'recording_schedule' => 'datetime',
+        'shooting_schedule' => 'datetime',
+        'reviewed_at' => 'datetime'
     ];
 
     /**
-     * Relationships
+     * Relationship dengan Episode
      */
-    public function musicSubmission()
+    public function episode(): BelongsTo
     {
-        return $this->belongsTo(MusicSubmission::class, 'music_submission_id');
+        return $this->belongsTo(Episode::class);
     }
 
-    public function creator()
+    /**
+     * Relationship dengan User yang create
+     */
+    public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    public function reviewer()
+    /**
+     * Relationship dengan User yang review
+     */
+    public function reviewedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reviewed_by');
     }
 
     /**
-     * Scopes
+     * Submit creative work for review
      */
-    public function scopePending($query)
+    public function submitForReview(): void
     {
-        return $query->whereIn('status', ['draft', 'submitted', 'under_review']);
+        $this->update(['status' => 'submitted']);
     }
 
+    /**
+     * Approve creative work
+     */
+    public function approve(int $reviewedBy, ?string $notes = null): void
+    {
+        $this->update([
+            'status' => 'approved',
+            'reviewed_by' => $reviewedBy,
+            'reviewed_at' => now(),
+            'review_notes' => $notes
+        ]);
+    }
+
+    /**
+     * Reject creative work
+     */
+    public function reject(int $reviewedBy, string $reason): void
+    {
+        $this->update([
+            'status' => 'rejected',
+            'reviewed_by' => $reviewedBy,
+            'reviewed_at' => now(),
+            'rejection_reason' => $reason
+        ]);
+    }
+
+    /**
+     * Get total budget amount
+     */
+    public function getTotalBudgetAttribute(): float
+    {
+        if (!$this->budget_data) return 0;
+        
+        $total = 0;
+        foreach ($this->budget_data as $item) {
+            if (isset($item['amount'])) {
+                $total += (float) $item['amount'];
+            }
+        }
+        
+        return $total;
+    }
+
+    /**
+     * Get formatted budget data
+     */
+    public function getFormattedBudgetDataAttribute(): array
+    {
+        if (!$this->budget_data) return [];
+        
+        $formatted = [];
+        foreach ($this->budget_data as $item) {
+            $formatted[] = [
+                'category' => $item['category'] ?? 'Unknown',
+                'description' => $item['description'] ?? '',
+                'amount' => number_format($item['amount'] ?? 0, 0, ',', '.'),
+                'currency' => $item['currency'] ?? 'IDR'
+            ];
+        }
+        
+        return $formatted;
+    }
+
+    /**
+     * Scope berdasarkan status
+     */
+    public function scopeByStatus($query, $status)
+    {
+        return $query->where('status', $status);
+    }
+
+    /**
+     * Scope untuk creative work yang submitted
+     */
+    public function scopeSubmitted($query)
+    {
+        return $query->where('status', 'submitted');
+    }
+
+    /**
+     * Scope untuk creative work yang approved
+     */
     public function scopeApproved($query)
     {
         return $query->where('status', 'approved');
     }
 
+    /**
+     * Scope untuk creative work yang rejected
+     */
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
     }
-
-    /**
-     * Helpers
-     */
-    public function isApproved()
-    {
-        return $this->status === 'approved' && $this->script_approved && $this->storyboard_approved;
-    }
-
-    public function isPending()
-    {
-        return in_array($this->status, ['draft', 'submitted', 'under_review']);
-    }
-
-    public function getStoryboardUrl()
-    {
-        if ($this->storyboard_file_path) {
-            return asset('storage/' . $this->storyboard_file_path);
-        }
-        return null;
-    }
-
-    public function getStoryboardSizeFormatted()
-    {
-        if ($this->storyboard_file_size) {
-            $size = $this->storyboard_file_size;
-            if ($size < 1024) {
-                return $size . ' B';
-            } elseif ($size < 1024 * 1024) {
-                return round($size / 1024, 2) . ' KB';
-            } else {
-                return round($size / (1024 * 1024), 2) . ' MB';
-            }
-        }
-        return null;
-    }
-
-    public function getStatusLabel()
-    {
-        $labels = [
-            'draft' => 'Draft',
-            'submitted' => 'Submitted',
-            'under_review' => 'Under Review',
-            'approved' => 'Approved',
-            'rejected' => 'Rejected',
-            'revision' => 'Needs Revision',
-        ];
-
-        return $labels[$this->status] ?? $this->status;
-    }
-
-    public function getStatusColor()
-    {
-        $colors = [
-            'draft' => 'gray',
-            'submitted' => 'blue',
-            'under_review' => 'yellow',
-            'approved' => 'green',
-            'rejected' => 'red',
-            'revision' => 'orange',
-        ];
-
-        return $colors[$this->status] ?? 'gray';
-    }
 }
-
-
-
-
-
-
-

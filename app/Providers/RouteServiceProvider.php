@@ -36,6 +36,11 @@ class RouteServiceProvider extends ServiceProvider
             Route::middleware('api')
                 ->prefix('api')
                 ->group(base_path('routes/api.php'));
+            
+            // Live TV Program API Routes
+            Route::middleware('api')
+                ->prefix('api')
+                ->group(base_path('routes/live_tv_api.php'));
 
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
