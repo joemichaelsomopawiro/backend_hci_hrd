@@ -84,10 +84,12 @@ class Program extends Model
         return $this->hasMany(Episode::class);
     }
 
-    // Relasi dengan Team (One-to-Many)
-    public function teams(): HasMany
+    // Relasi dengan Team (Many-to-Many through program_team pivot table)
+    // Satu program bisa memiliki banyak teams, dan satu team bisa di-assign ke banyak programs
+    public function teams(): BelongsToMany
     {
-        return $this->hasMany(Team::class);
+        return $this->belongsToMany(Team::class, 'program_team')
+            ->withTimestamps();
     }
 
     // Relasi dengan ProgramFile

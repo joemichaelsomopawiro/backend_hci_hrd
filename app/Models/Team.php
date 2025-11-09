@@ -25,10 +25,18 @@ class Team extends Model
         'is_active' => 'boolean'
     ];
 
-    // Relasi dengan Program
+    // Relasi dengan Program (Legacy - untuk backward compatibility jika ada teams yang dibuat langsung dengan program_id)
     public function program(): BelongsTo
     {
         return $this->belongsTo(Program::class);
+    }
+
+    // Relasi dengan Programs (Many-to-Many through program_team pivot table)
+    // Satu team bisa di-assign ke banyak programs
+    public function programs(): BelongsToMany
+    {
+        return $this->belongsToMany(Program::class, 'program_team')
+            ->withTimestamps();
     }
 
     // Relasi dengan User (Team Lead)
