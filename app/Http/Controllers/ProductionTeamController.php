@@ -54,6 +54,26 @@ class ProductionTeamController extends Controller
                 $team->roles_summary = $team->getRolesSummary();
                 $team->missing_roles = $team->getMissingRoles();
                 $team->ready_for_production = $team->isReadyForProduction();
+                
+                // Transform members to include user data explicitly
+                $team->members = $team->members->map(function ($member) {
+                    return [
+                        'id' => $member->id,
+                        'user_id' => $member->user_id,
+                        'user' => $member->user ? [
+                            'id' => $member->user->id,
+                            'name' => $member->user->name,
+                            'email' => $member->user->email,
+                            'role' => $member->user->role
+                        ] : null,
+                        'role' => $member->role,
+                        'role_label' => $member->role_label,
+                        'is_active' => $member->is_active,
+                        'joined_at' => $member->joined_at,
+                        'notes' => $member->notes
+                    ];
+                });
+                
                 return $team;
             });
 
@@ -168,6 +188,25 @@ class ProductionTeamController extends Controller
             $team->roles_summary = $team->getRolesSummary();
             $team->missing_roles = $team->getMissingRoles();
             $team->ready_for_production = $team->isReadyForProduction();
+
+            // Transform members to include user data explicitly
+            $team->members = $team->members->map(function ($member) {
+                return [
+                    'id' => $member->id,
+                    'user_id' => $member->user_id,
+                    'user' => $member->user ? [
+                        'id' => $member->user->id,
+                        'name' => $member->user->name,
+                        'email' => $member->user->email,
+                        'role' => $member->user->role
+                    ] : null,
+                    'role' => $member->role,
+                    'role_label' => $member->role_label,
+                    'is_active' => $member->is_active,
+                    'joined_at' => $member->joined_at,
+                    'notes' => $member->notes
+                ];
+            });
 
             return response()->json([
                 'success' => true,

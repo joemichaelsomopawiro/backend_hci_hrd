@@ -11,76 +11,76 @@ class MediaFile extends Model
     use HasFactory;
 
     protected $fillable = [
-        'filename',
-        'original_name',
-        'file_path',
-        'file_url',
-        'mime_type',
-        'file_size',
-        'file_type',
-        'program_id',
         'episode_id',
-        'uploaded_by',
-        'description',
+        'file_type',
+        'file_path',
+        'file_name',
+        'file_extension',
+        'file_size',
+        'mime_type',
+        'storage_disk',
+        'status',
+        'file_description',
         'metadata',
-        'is_processed',
-        'is_public',
+        'thumbnail_path',
+        'duration',
+        'dimensions',
+        'uploaded_by',
+        'uploaded_at',
+        'processed_at',
+        'error_message'
     ];
 
     protected $casts = [
-        'file_size' => 'integer',
         'metadata' => 'array',
-        'is_processed' => 'boolean',
-        'is_public' => 'boolean',
+        'dimensions' => 'array',
+        'uploaded_at' => 'datetime',
+        'processed_at' => 'datetime',
+        'file_size' => 'integer',
+        'duration' => 'integer'
     ];
 
-    // Relasi dengan Program
-    public function program(): BelongsTo
-    {
-        return $this->belongsTo(Program::class);
-    }
-
-    // Relasi dengan Episode
+    /**
+     * Relationship dengan Episode
+     */
     public function episode(): BelongsTo
     {
         return $this->belongsTo(Episode::class);
     }
 
-    // Relasi dengan User (uploaded by)
-    public function uploader(): BelongsTo
+    /**
+     * Relationship dengan User yang upload
+     */
+    public function uploadedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by');
     }
 
-    // Scope untuk file berdasarkan tipe
-    public function scopeByType($query, $type)
+    /**
+     * Get file URL
+     */
+    public function getFileUrlAttribute(): ?string
     {
-        return $query->where('file_type', $type);
+        return $this->file_path ? asset('storage/' . $this->file_path) : null;
     }
 
-    // Scope untuk file yang sudah diproses
-    public function scopeProcessed($query)
+    /**
+     * Get thumbnail URL
+     */
+    public function getThumbnailUrlAttribute(): ?string
     {
-        return $query->where('is_processed', true);
+        return $this->thumbnail_path ? asset('storage/' . $this->thumbnail_path) : null;
     }
 
-    // Scope untuk file publik
-    public function scopePublic($query)
+    /**
+     * Get formatted file size
+     */
+    public function getFormattedFileSizeAttribute(): string
     {
-        return $query->where('is_public', true);
-    }
-
-    // Method untuk mendapatkan URL file
-    public function getUrlAttribute()
-    {
-        return $this->file_url ?: asset('storage/' . $this->file_path);
-    }
-
-    // Method untuk mendapatkan ukuran file yang readable
-    public function getFileSizeFormattedAttribute()
-    {
+        if (!$this->file_size) return 'N/A';
+        
         $bytes = $this->file_size;
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $units = ['B', 'KB', 'MB', 'GB'];
         
         for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
             $bytes /= 1024;
@@ -89,21 +89,66 @@ class MediaFile extends Model
         return round($bytes, 2) . ' ' . $units[$i];
     }
 
-    // Method untuk mengecek apakah file adalah gambar
-    public function isImage()
+    /**
+     * Get formatted duration
+     */
+    public function getFormattedDurationAttribute(): string
     {
-        return str_starts_with($this->mime_type, 'image/');
+        if (!$this->duration) return 'N/A';
+        
+        $minutes = floor($this->duration / 60);
+        $seconds = $this->duration % 60;
+        
+        return sprintf('%02d:%02d', $minutes, $seconds);
     }
 
-    // Method untuk mengecek apakah file adalah video
-    public function isVideo()
+    /**
+     * Get formatted dimensions
+     */
+    public function getFormattedDimensionsAttribute(): string
     {
-        return str_starts_with($this->mime_type, 'video/');
+        if (!$this->dimensions) return 'N/A';
+        
+        return $this->dimensions['width'] . 'x' . $this->dimensions['height'];
     }
 
-    // Method untuk mengecek apakah file adalah audio
-    public function isAudio()
+    /**
+     * Scope berdasarkan file type
+     */
+    public function scopeByFileType($query, $type)
     {
-        return str_starts_with($this->mime_type, 'audio/');
+        return $query->where('file_type', $type);
+    }
+
+    /**
+     * Scope berdasarkan status
+     */
+    public function scopeByStatus($query, $status)
+    {
+        return $query->where('status', $status);
+    }
+
+    /**
+     * Scope untuk file yang uploaded
+     */
+    public function scopeUploaded($query)
+    {
+        return $query->where('status', 'uploaded');
+    }
+
+    /**
+     * Scope untuk file yang processed
+     */
+    public function scopeProcessed($query)
+    {
+        return $query->where('status', 'processed');
+    }
+
+    /**
+     * Scope untuk file yang failed
+     */
+    public function scopeFailed($query)
+    {
+        return $query->where('status', 'failed');
     }
 }

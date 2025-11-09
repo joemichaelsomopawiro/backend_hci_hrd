@@ -6,111 +6,336 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Carbon\Carbon;
 
 class Episode extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
+        'program_id',
+        'episode_number',
         'title',
         'description',
-        'episode_number',
-        'program_id',
         'air_date',
         'production_date',
+        'format_type',
+        'kwartal',
+        'pelajaran',
         'status',
+        'rundown',
         'script',
         'talent_data',
         'location',
         'notes',
         'production_notes',
+        'current_workflow_state',
+        'assigned_to_role',
+        'assigned_to_user',
+        'production_team_id',
+        'team_assignment_notes',
+        'team_assigned_by',
+        'team_assigned_at',
+        'actual_views',
+        'views_last_updated',
+        'views_growth_rate'
     ];
 
     protected $casts = [
-        'air_date' => 'date',
-        'production_date' => 'date',
-        'talent_data' => 'array',
-        'production_notes' => 'array',
+        'air_date' => 'datetime',
+        'production_date' => 'datetime',
+        'talent_data' => 'array'
     ];
 
-    // Relasi dengan Program
+    /**
+     * Relationship dengan Program
+     */
     public function program(): BelongsTo
     {
         return $this->belongsTo(Program::class);
     }
 
-    // Relasi dengan Schedule
-    public function schedules(): HasMany
+    /**
+     * Episode belongs to production team
+     */
+    public function productionTeam(): BelongsTo
     {
-        return $this->hasMany(Schedule::class);
+        return $this->belongsTo(ProductionTeam::class);
     }
 
-    // Relasi dengan MediaFile
+    /**
+     * Relationship dengan Deadlines
+     */
+    public function deadlines(): HasMany
+    {
+        return $this->hasMany(Deadline::class);
+    }
+
+    /**
+     * Relationship dengan Workflow States
+     */
+    public function workflowStates(): HasMany
+    {
+        return $this->hasMany(WorkflowState::class);
+    }
+
+    /**
+     * Generate auto deadlines for episode
+     */
+    public function generateDeadlines()
+    {
+        $airDate = Carbon::parse($this->air_date);
+        
+        // Deadline Editor: 7 hari sebelum tayang
+        $this->deadlines()->create([
+            'role' => 'editor',
+            'deadline_date' => $airDate->copy()->subDays(7),
+            'description' => 'Deadline editing episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+        
+        // Deadline Creative & Production: 9 hari sebelum tayang
+        $this->deadlines()->create([
+            'role' => 'kreatif',
+            'deadline_date' => $airDate->copy()->subDays(9),
+            'description' => 'Deadline creative work episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+        
+        $this->deadlines()->create([
+            'role' => 'produksi',
+            'deadline_date' => $airDate->copy()->subDays(9),
+            'description' => 'Deadline production episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+
+        // Notifikasi ke semua role yang terkait
+        $this->notifyDeadlineCreation();
+    }
+
+    /**
+     * Notify deadline creation to relevant roles
+     */
+    private function notifyDeadlineCreation()
+    {
+        $roles = ['Editor', 'Creative', 'Production'];
+        
+        foreach ($roles as $role) {
+            $users = User::where('role', $role)->get();
+            foreach ($users as $user) {
+                \App\Models\Notification::create([
+                    'user_id' => $user->id,
+                    'type' => 'deadline_created',
+                    'title' => 'Deadline Baru Dibuat',
+                    'message' => "Deadline baru untuk episode '{$this->title}' telah dibuat",
+                    'data' => [
+                        'episode_id' => $this->id,
+                        'episode_title' => $this->title,
+                        'role' => $role,
+                        'deadline_date' => $this->air_date->subDays($role === 'Editor' ? 7 : 9)
+                    ]
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Update deadline if needed
+     */
+    public function updateDeadline($role, $newDeadlineDate, $reason = null)
+    {
+        $deadline = $this->deadlines()->where('role', $role)->first();
+        
+        if ($deadline) {
+            $deadline->update([
+                'deadline_date' => $newDeadlineDate,
+                'updated_by' => auth()->id(),
+                'update_reason' => $reason,
+                'updated_at' => now()
+            ]);
+
+            // Notifikasi ke role yang terkait
+            $users = User::where('role', $role)->get();
+            foreach ($users as $user) {
+                \App\Models\Notification::create([
+                    'user_id' => $user->id,
+                    'type' => 'deadline_updated',
+                    'title' => 'Deadline Diperbarui',
+                    'message' => "Deadline untuk episode '{$this->title}' telah diperbarui",
+                    'data' => [
+                        'episode_id' => $this->id,
+                        'episode_title' => $this->title,
+                        'role' => $role,
+                        'new_deadline' => $newDeadlineDate,
+                        'reason' => $reason
+                    ]
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Relationship dengan Media Files
+     */
     public function mediaFiles(): HasMany
     {
         return $this->hasMany(MediaFile::class);
     }
 
-    // Relasi dengan ProductionEquipment
+    /**
+     * Relationship dengan Music Arrangements
+     */
+    public function musicArrangements(): HasMany
+    {
+        return $this->hasMany(MusicArrangement::class);
+    }
+
+    /**
+     * Relationship dengan Creative Works
+     */
+    public function creativeWorks(): HasMany
+    {
+        return $this->hasMany(CreativeWork::class);
+    }
+
+    /**
+     * Relationship dengan Production Equipment
+     */
     public function productionEquipment(): HasMany
     {
         return $this->hasMany(ProductionEquipment::class);
     }
 
-    // Relasi dengan ProgramNotification
-    public function notifications(): HasMany
+    /**
+     * Relationship dengan Sound Engineer Recordings
+     */
+    public function soundEngineerRecordings(): HasMany
     {
-        return $this->hasMany(ProgramNotification::class);
+        return $this->hasMany(SoundEngineerRecording::class);
     }
 
-    // Scope untuk episode berdasarkan status
-    public function scopeByStatus($query, $status)
+    /**
+     * Relationship dengan Editor Works
+     */
+    public function editorWorks(): HasMany
     {
-        return $query->where('status', $status);
+        return $this->hasMany(EditorWork::class);
     }
 
-    // Scope untuk episode yang akan tayang
+    /**
+     * Relationship dengan Design Grafis Works
+     */
+    public function designGrafisWorks(): HasMany
+    {
+        return $this->hasMany(DesignGrafisWork::class);
+    }
+
+    /**
+     * Relationship dengan Promotion Materials
+     */
+    public function promotionMaterials(): HasMany
+    {
+        return $this->hasMany(PromotionMaterial::class);
+    }
+
+    /**
+     * Relationship dengan Broadcasting Schedules
+     */
+    public function broadcastingSchedules(): HasMany
+    {
+        return $this->hasMany(BroadcastingSchedule::class);
+    }
+
+    /**
+     * Relationship dengan Quality Controls
+     */
+    public function qualityControls(): HasMany
+    {
+        return $this->hasMany(QualityControl::class);
+    }
+
+    /**
+     * Relationship dengan Budgets
+     */
+    public function budgets(): HasMany
+    {
+        return $this->hasMany(Budget::class);
+    }
+
+    /**
+     * Get deadline untuk role tertentu
+     */
+    public function getDeadlineForRole(string $role): ?Deadline
+    {
+        return $this->deadlines()->where('role', $role)->first();
+    }
+
+    /**
+     * Get overdue deadlines
+     */
+    public function getOverdueDeadlines()
+    {
+        return $this->deadlines()
+            ->where('deadline_date', '<', now())
+            ->where('is_completed', false)
+            ->where('status', '!=', 'cancelled')
+            ->get();
+    }
+
+    /**
+     * Check if all deadlines completed
+     */
+    public function allDeadlinesCompleted(): bool
+    {
+        return $this->deadlines()
+            ->where('is_completed', false)
+            ->where('status', '!=', 'cancelled')
+            ->count() === 0;
+    }
+
+    /**
+     * Scope untuk episode yang akan datang
+     */
     public function scopeUpcoming($query)
     {
-        return $query->where('air_date', '>=', now()->toDateString())
-                    ->where('status', '!=', 'aired');
+        return $query->where('air_date', '>', now())
+            ->where('status', '!=', 'aired');
     }
 
-    // Scope untuk episode yang sudah tayang
+    /**
+     * Scope untuk episode yang sudah tayang
+     */
     public function scopeAired($query)
     {
         return $query->where('status', 'aired');
     }
 
-    // Method untuk mendapatkan status episode
-    public function getStatusAttribute($value)
+    /**
+     * Scope untuk episode yang overdue
+     */
+    public function scopeOverdue($query)
     {
-        return ucfirst(str_replace('_', ' ', $value));
+        return $query->where('air_date', '<', now())
+            ->where('status', '!=', 'aired');
     }
 
-    // Method untuk mendapatkan durasi sampai tayang
-    public function getDaysUntilAirAttribute()
+    /**
+     * Scope berdasarkan status
+     */
+    public function scopeByStatus($query, $status)
     {
-        return now()->diffInDays($this->air_date, false);
+        return $query->where('status', $status);
     }
 
-    // Method untuk mengecek apakah episode sudah siap tayang
-    public function isReadyToAir()
+    /**
+     * Scope berdasarkan workflow state
+     */
+    public function scopeByWorkflowState($query, $state)
     {
-        return $this->status === 'ready_to_air' && 
-               $this->air_date <= now()->addDays(1)->toDateString();
-    }
-
-    // Method untuk mendapatkan progress episode
-    public function getProgressAttribute()
-    {
-        $statuses = ['draft', 'in_production', 'post_production', 'ready_to_air', 'aired'];
-        $currentIndex = array_search($this->status, $statuses);
-        
-        if ($currentIndex === false) {
-            return 0;
-        }
-        
-        return round(($currentIndex + 1) / count($statuses) * 100);
+        return $query->where('current_workflow_state', $state);
     }
 }

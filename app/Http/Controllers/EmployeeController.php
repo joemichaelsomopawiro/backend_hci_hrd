@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 // --- TAMBAHAN ---
 use App\Services\RoleHierarchyService;
+use App\Services\DatabaseEnumService;
 use Illuminate\Validation\Rule;
 // --- AKHIR TAMBAHAN ---
 
@@ -916,6 +917,37 @@ class EmployeeController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat upload dokumen',
                 'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all available roles for dropdown/select options
+     * Endpoint untuk frontend saat edit employee
+     */
+    public function getRoles()
+    {
+        try {
+            $roles = DatabaseEnumService::getAllAvailableRoles();
+            
+            // Sort roles alphabetically
+            sort($roles);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $roles,
+                'message' => 'Roles retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            try {
+                Log::error('Error in getRoles: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil daftar roles',
+                'error' => $e->getMessage()
             ], 500);
         }
     }

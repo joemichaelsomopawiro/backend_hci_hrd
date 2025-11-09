@@ -11,33 +11,42 @@ class SoundEngineerRecording extends Model
     use HasFactory;
 
     protected $fillable = [
-        'submission_id',
-        'recording_date',
-        'recording_location',
-        'equipment_list',
-        'audio_files',
+        'episode_id',
         'recording_notes',
+        'file_path',
+        'file_name',
+        'file_size',
+        'mime_type',
+        'equipment_used',
         'status',
-        'completion_notes',
-        'created_by'
+        'recording_schedule',
+        'recording_started_at',
+        'recording_completed_at',
+        'created_by',
+        'reviewed_by',
+        'reviewed_at',
+        'review_notes'
     ];
 
     protected $casts = [
-        'equipment_list' => 'array',
-        'audio_files' => 'array',
-        'recording_date' => 'date'
+        'equipment_used' => 'array',
+        'recording_schedule' => 'datetime',
+        'recording_started_at' => 'datetime',
+        'recording_completed_at' => 'datetime',
+        'reviewed_at' => 'datetime',
+        'file_size' => 'integer'
     ];
 
     /**
-     * Relasi dengan Music Submission
+     * Relationship dengan Episode
      */
-    public function submission(): BelongsTo
+    public function episode(): BelongsTo
     {
-        return $this->belongsTo(MusicSubmission::class);
+        return $this->belongsTo(Episode::class);
     }
 
     /**
-     * Relasi dengan User (Created By)
+     * Relationship dengan User yang create
      */
     public function createdBy(): BelongsTo
     {
@@ -45,58 +54,120 @@ class SoundEngineerRecording extends Model
     }
 
     /**
-     * Check if recording can be started
+     * Relationship dengan User yang review
      */
-    public function canBeStarted(): bool
+    public function reviewedBy(): BelongsTo
     {
-        return $this->status === 'scheduled';
-    }
-
-    /**
-     * Check if recording can be completed
-     */
-    public function canBeCompleted(): bool
-    {
-        return $this->status === 'in_progress' && !empty($this->audio_files);
+        return $this->belongsTo(User::class, 'reviewed_by');
     }
 
     /**
      * Start recording
      */
-    public function startRecording(): bool
+    public function startRecording(): void
     {
-        if (!$this->canBeStarted()) {
-            return false;
-        }
-
-        $this->update(['status' => 'in_progress']);
-        return true;
+        $this->update([
+            'status' => 'recording',
+            'recording_started_at' => now()
+        ]);
     }
 
     /**
      * Complete recording
      */
-    public function completeRecording($audioFiles, $completionNotes = null): bool
+    public function completeRecording(): void
     {
-        if (!$this->canBeCompleted()) {
-            return false;
-        }
-
         $this->update([
             'status' => 'completed',
-            'audio_files' => $audioFiles,
-            'completion_notes' => $completionNotes
+            'recording_completed_at' => now()
         ]);
-
-        return true;
     }
 
     /**
-     * Upload audio files
+     * Review recording
      */
-    public function uploadAudioFiles($files): bool
+    public function review(int $reviewedBy, ?string $notes = null): void
     {
-        $this->update(['audio_files' => $files]);
-        return true;
+        $this->update([
+            'status' => 'reviewed',
+            'reviewed_by' => $reviewedBy,
+            'reviewed_at' => now(),
+            'review_notes' => $notes
+        ]);
+    }
+
+    /**
+     * Get file URL
+     */
+    public function getFileUrlAttribute(): ?string
+    {
+        return $this->file_path ? asset('storage/' . $this->file_path) : null;
+    }
+
+    /**
+     * Get formatted file size
+     */
+    public function getFormattedFileSizeAttribute(): string
+    {
+        if (!$this->file_size) return 'N/A';
+        
+        $bytes = $this->file_size;
+        $units = ['B', 'KB', 'MB', 'GB'];
+        
+        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
+            $bytes /= 1024;
+        }
+        
+        return round($bytes, 2) . ' ' . $units[$i];
+    }
+
+    /**
+     * Get formatted equipment list
+     */
+    public function getFormattedEquipmentListAttribute(): string
+    {
+        if (!$this->equipment_used) return 'N/A';
+        
+        return implode(', ', $this->equipment_used);
+    }
+
+    /**
+     * Scope berdasarkan status
+     */
+    public function scopeByStatus($query, $status)
+    {
+        return $query->where('status', $status);
+    }
+
+    /**
+     * Scope untuk recording yang draft
+     */
+    public function scopeDraft($query)
+    {
+        return $query->where('status', 'draft');
+    }
+
+    /**
+     * Scope untuk recording yang recording
+     */
+    public function scopeRecording($query)
+    {
+        return $query->where('status', 'recording');
+    }
+
+    /**
+     * Scope untuk recording yang completed
+     */
+    public function scopeCompleted($query)
+    {
+        return $query->where('status', 'completed');
+    }
+
+    /**
+     * Scope untuk recording yang reviewed
+     */
+    public function scopeReviewed($query)
+    {
+        return $query->where('status', 'reviewed');
     }
 }

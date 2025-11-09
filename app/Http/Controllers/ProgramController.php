@@ -20,7 +20,7 @@ class ProgramController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = Program::with(['manager', 'producer', 'teams', 'episodes']);
+            $query = Program::with(['managerProgram', 'productionTeam', 'episodes', 'episodes']);
 
             // Filter berdasarkan status
             if ($request->has('status')) {
@@ -94,7 +94,7 @@ class ProgramController extends Controller
             $program = Program::create($request->all());
 
             // Load relationships
-            $program->load(['manager', 'producer', 'teams']);
+            $program->load(['managerProgram', 'productionTeam', 'episodes']);
 
             return response()->json([
                 'success' => true,
@@ -116,14 +116,10 @@ class ProgramController extends Controller
     {
         try {
             $program = Program::with([
-                'manager',
-                'producer',
-                'teams.members.user',
-                'episodes',
-                'schedules',
-                'mediaFiles',
-                'productionEquipment',
-                'notifications'
+                'managerProgram',
+                'productionTeam',
+                'productionTeam.members.user',
+                'episodes'
             ])->findOrFail($id);
 
             return response()->json([
@@ -172,7 +168,7 @@ class ProgramController extends Controller
             }
 
             $program->update($request->all());
-            $program->load(['manager', 'producer', 'teams']);
+            $program->load(['managerProgram', 'productionTeam', 'episodes']);
 
             return response()->json([
                 'success' => true,
@@ -282,7 +278,7 @@ class ProgramController extends Controller
                     break;
             }
 
-            $program->load(['teams.teamLead', 'teams.members']);
+            $program->load(['teams.teamLead', 'teams.members', 'episodes']);
 
             return response()->json([
                 'success' => true,
@@ -315,7 +311,7 @@ class ProgramController extends Controller
                     ->selectRaw('status, count(*) as count')
                     ->groupBy('status')
                     ->pluck('count', 'status'),
-                'total_teams' => $program->teams()->count(),
+                'total_teams' => $program->productionTeam()->count(),
                 'total_schedules' => $program->schedules()->count(),
                 'schedules_by_status' => $program->schedules()
                     ->selectRaw('status, count(*) as count')
@@ -358,7 +354,7 @@ class ProgramController extends Controller
             $program = Program::findOrFail($id);
 
             $dashboard = [
-                'program' => $program->load(['manager', 'producer']),
+                'program' => $program->load(['managerProgram', 'productionTeam']),
                 'recent_episodes' => $program->episodes()
                     ->orderBy('air_date', 'desc')
                     ->limit(5)
@@ -368,7 +364,7 @@ class ProgramController extends Controller
                     ->orderBy('start_time', 'asc')
                     ->limit(10)
                     ->get(),
-                'team_performance' => $program->teams()
+                'team_performance' => $program->productionTeam()
                     ->withCount(['schedules as completed_schedules' => function($query) {
                         $query->where('status', 'completed');
                     }])
@@ -409,7 +405,7 @@ class ProgramController extends Controller
                 'total_teams' => \App\Models\Team::count(),
                 'active_teams' => \App\Models\Team::where('is_active', true)->count(),
                 'recent_activity' => [
-                    'programs' => Program::with(['manager', 'producer'])
+                    'programs' => Program::with(['managerProgram', 'productionTeam'])
                         ->orderBy('created_at', 'desc')
                         ->limit(5)
                         ->get(),
@@ -457,7 +453,7 @@ class ProgramController extends Controller
                 'upcoming_episodes' => $program->episodes()->where('air_date', '>=', now())->count(),
                 'schedules_count' => $program->schedules()->count(),
                 'completed_schedules' => $program->schedules()->where('status', 'completed')->count(),
-                'teams_count' => $program->teams()->count(),
+                'teams_count' => $program->productionTeam()->count(),
                 'media_files_count' => $program->mediaFiles()->count(),
             ];
 
@@ -539,7 +535,7 @@ class ProgramController extends Controller
         try {
             $program = Program::findOrFail($id);
             
-            $teams = $program->teams()->with(['users', 'schedules'])->get();
+            $teams = $program->productionTeam()->with(['users', 'schedules'])->get();
             
             $teamPerformance = $teams->map(function($team) {
                 return [
@@ -745,7 +741,7 @@ class ProgramController extends Controller
     private function calculateTeamProductivity($program = null)
     {
         if ($program) {
-            $teams = $program->teams()->withCount('schedules')->get();
+            $teams = $program->productionTeam()->withCount('schedules')->get();
             return $teams->avg('schedules_count') ?? 0;
         }
         
@@ -778,7 +774,7 @@ class ProgramController extends Controller
 
     private function getTeamTrends($program)
     {
-        return $program->teams()
+        return $program->productionTeam()
             ->selectRaw('DATE(created_at) as date, COUNT(*) as count')
             ->groupBy('date')
             ->orderBy('date')
@@ -787,7 +783,7 @@ class ProgramController extends Controller
 
     private function getProgramsComparison()
     {
-        return Program::withCount(['episodes', 'schedules', 'teams'])
+        return Program::withCount(['episodes', 'schedules', 'episodes'])
             ->get()
             ->map(function($program) {
                 return [
@@ -829,7 +825,7 @@ class ProgramController extends Controller
         try {
             $pendingApprovals = [
                 'programs' => Program::where('status', 'submitted')
-                    ->with(['manager', 'producer'])
+                    ->with(['managerProgram', 'productionTeam'])
                     ->get(),
                 'episodes' => Episode::where('status', 'submitted')
                     ->with(['program'])
@@ -860,7 +856,7 @@ class ProgramController extends Controller
         try {
             $approvalHistory = [
                 'programs' => Program::whereIn('status', ['approved', 'rejected'])
-                    ->with(['manager', 'producer'])
+                    ->with(['managerProgram', 'productionTeam'])
                     ->orderBy('updated_at', 'desc')
                     ->get(),
                 'episodes' => Episode::whereIn('status', ['approved', 'rejected'])
@@ -1012,7 +1008,7 @@ class ProgramController extends Controller
     public function exportProgramData(string $id): JsonResponse
     {
         try {
-            $program = Program::with(['manager', 'producer', 'teams', 'episodes', 'schedules', 'mediaFiles', 'productionEquipment'])
+            $program = Program::with(['managerProgram', 'productionTeam', 'episodes', 'episodes', 'schedules', 'mediaFiles', 'productionEquipment'])
                 ->findOrFail($id);
             
             // Placeholder for program export - implement based on your export system

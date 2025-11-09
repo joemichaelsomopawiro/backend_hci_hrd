@@ -24,27 +24,8 @@ class ProductionTeam extends Model
         'is_active' => 'boolean'
     ];
 
-    // 6 Role wajib yang harus ada di setiap tim
-    const REQUIRED_ROLES = [
-        'kreatif',
-        'musik_arr',
-        'sound_eng',
-        'produksi',
-        'editor',
-        'art_set_design'
-    ];
-
-    const ROLE_LABELS = [
-        'kreatif' => 'Kreatif',
-        'musik_arr' => 'Musik Arranger',
-        'sound_eng' => 'Sound Engineer',
-        'produksi' => 'Produksi',
-        'editor' => 'Editor',
-        'art_set_design' => 'Art & Set Design'
-    ];
-
     /**
-     * Relasi dengan User (Producer sebagai Team Leader)
+     * Relationship dengan Producer
      */
     public function producer(): BelongsTo
     {
@@ -52,7 +33,7 @@ class ProductionTeam extends Model
     }
 
     /**
-     * Relasi dengan User (Created By)
+     * Relationship dengan User yang create
      */
     public function createdBy(): BelongsTo
     {
@@ -60,7 +41,7 @@ class ProductionTeam extends Model
     }
 
     /**
-     * Relasi dengan Production Team Members
+     * Relationship dengan Team Members
      */
     public function members(): HasMany
     {
@@ -68,108 +49,72 @@ class ProductionTeam extends Model
     }
 
     /**
-     * Relasi dengan Program Regular
+     * Relationship dengan Programs
      */
     public function programs(): HasMany
     {
-        return $this->hasMany(ProgramRegular::class);
+        return $this->hasMany(Program::class);
     }
 
     /**
-     * Get active members only
-     */
-    public function activeMembers(): HasMany
-    {
-        return $this->members()->where('is_active', true);
-    }
-
-    /**
-     * Get members by specific role
-     */
-    public function membersByRole(string $role)
-    {
-        return $this->members()
-            ->where('role', $role)
-            ->where('is_active', true)
-            ->with('user')
-            ->get();
-    }
-
-    /**
-     * Check if team has all required roles (minimum 1 person per role)
+     * Check if team has all required roles
      */
     public function hasAllRequiredRoles(): bool
     {
-        $existingRoles = $this->activeMembers()
-            ->pluck('role')
-            ->unique()
-            ->toArray();
-
-        foreach (self::REQUIRED_ROLES as $role) {
-            if (!in_array($role, $existingRoles)) {
-                return false;
-            }
-        }
-
-        return true;
+        $requiredRoles = ['kreatif', 'musik_arr', 'sound_eng', 'produksi', 'editor', 'art_set_design'];
+        $existingRoles = $this->members()->where('is_active', true)->pluck('role')->toArray();
+        
+        return count(array_intersect($requiredRoles, $existingRoles)) === count($requiredRoles);
     }
 
     /**
-     * Get missing roles (roles that don't have any member yet)
+     * Get missing roles
      */
     public function getMissingRoles(): array
     {
-        $existingRoles = $this->activeMembers()
-            ->pluck('role')
-            ->unique()
-            ->toArray();
-
-        return array_diff(self::REQUIRED_ROLES, $existingRoles);
+        $requiredRoles = ['kreatif', 'musik_arr', 'sound_eng', 'produksi', 'editor', 'art_set_design'];
+        $existingRoles = $this->members()->where('is_active', true)->pluck('role')->toArray();
+        
+        return array_diff($requiredRoles, $existingRoles);
     }
 
     /**
-     * Check if team is ready for production (has all roles + producer)
+     * Check if team is ready for production
      */
     public function isReadyForProduction(): bool
     {
-        return $this->is_active && 
-               $this->producer_id !== null && 
-               $this->hasAllRequiredRoles();
+        return $this->is_active && $this->hasAllRequiredRoles();
     }
 
     /**
-     * Get team summary (roles count)
+     * Get roles summary
      */
     public function getRolesSummary(): array
     {
+        $members = $this->members()->where('is_active', true)->get();
         $summary = [];
         
-        foreach (self::REQUIRED_ROLES as $role) {
-            $count = $this->activeMembers()
-                ->where('role', $role)
-                ->count();
-            
-            $summary[$role] = [
-                'label' => self::ROLE_LABELS[$role],
-                'count' => $count,
-                'has_member' => $count > 0
+        foreach ($members as $member) {
+            $summary[$member->role] = [
+                'user_id' => $member->user_id,
+                'user_name' => $member->user->name ?? 'Unknown',
+                'joined_at' => $member->joined_at
             ];
         }
-
+        
         return $summary;
     }
 
     /**
-     * Add member to team with role
+     * Add member to team
      */
     public function addMember(int $userId, string $role, ?string $notes = null): ProductionTeamMember
     {
         return $this->members()->create([
             'user_id' => $userId,
             'role' => $role,
-            'joined_at' => now(),
             'notes' => $notes,
-            'is_active' => true
+            'joined_at' => now()
         ]);
     }
 
@@ -178,17 +123,32 @@ class ProductionTeam extends Model
      */
     public function removeMember(int $userId, string $role): bool
     {
-        return $this->members()
+        $member = $this->members()
             ->where('user_id', $userId)
             ->where('role', $role)
-            ->update([
-                'is_active' => false,
-                'left_at' => now()
-            ]);
+            ->where('is_active', true)
+            ->first();
+            
+        if (!$member) return false;
+        
+        // Check if this is the last member for this role
+        $roleCount = $this->members()
+            ->where('role', $role)
+            ->where('is_active', true)
+            ->count();
+            
+        if ($roleCount <= 1) {
+            throw new \Exception("Cannot remove the last member for role: {$role}");
+        }
+        
+        return $member->update([
+            'is_active' => false,
+            'left_at' => now()
+        ]);
     }
 
     /**
-     * Scope: Active teams only
+     * Scope untuk team yang aktif
      */
     public function scopeActive($query)
     {
@@ -196,22 +156,18 @@ class ProductionTeam extends Model
     }
 
     /**
-     * Scope: Ready for production (has all required roles)
+     * Scope untuk team yang ready for production
      */
     public function scopeReadyForProduction($query)
     {
-        return $query->where('is_active', true)
-            ->whereHas('members', function ($q) {
-                $q->where('is_active', true);
-            });
+        return $query->where('is_active', true);
     }
 
     /**
-     * Scope: Teams by producer
+     * Scope berdasarkan producer
      */
-    public function scopeByProducer($query, int $producerId)
+    public function scopeByProducer($query, $producerId)
     {
         return $query->where('producer_id', $producerId);
     }
 }
-

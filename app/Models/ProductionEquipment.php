@@ -11,109 +11,176 @@ class ProductionEquipment extends Model
     use HasFactory;
 
     protected $fillable = [
-        'name',
-        'description',
-        'category',
-        'brand',
-        'model',
-        'serial_number',
-        'status',
-        'assigned_to',
-        'program_id',
         'episode_id',
-        'last_maintenance',
-        'next_maintenance',
-        'notes',
-        'specifications',
+        'equipment_list',
+        'request_notes',
+        'status',
+        'requested_by',
+        'requested_at',
+        'approved_by',
+        'approved_at',
+        'rejected_by',
+        'rejected_at',
+        'approval_notes',
+        'rejection_reason',
+        'assigned_at',
+        'returned_at',
+        'assigned_to'
     ];
 
     protected $casts = [
-        'last_maintenance' => 'date',
-        'next_maintenance' => 'date',
-        'specifications' => 'array',
+        'equipment_list' => 'array',
+        'requested_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'rejected_at' => 'datetime',
+        'assigned_at' => 'datetime',
+        'returned_at' => 'datetime'
     ];
 
-    // Relasi dengan User (assigned to)
-    public function assignedUser(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'assigned_to');
-    }
-
-    // Relasi dengan Program
-    public function program(): BelongsTo
-    {
-        return $this->belongsTo(Program::class);
-    }
-
-    // Relasi dengan Episode
+    /**
+     * Relationship dengan Episode
+     */
     public function episode(): BelongsTo
     {
         return $this->belongsTo(Episode::class);
     }
 
-    // Scope untuk equipment berdasarkan status
+    /**
+     * Relationship dengan User yang request
+     */
+    public function requestedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    /**
+     * Relationship dengan User yang approve
+     */
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    /**
+     * Relationship dengan User yang reject
+     */
+    public function rejectedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
+    }
+
+    /**
+     * Relationship dengan User yang assigned
+     */
+    public function assignedTo(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_to');
+    }
+
+    /**
+     * Approve equipment request
+     */
+    public function approve(int $approvedBy, ?string $notes = null): void
+    {
+        $this->update([
+            'status' => 'approved',
+            'approved_by' => $approvedBy,
+            'approved_at' => now(),
+            'approval_notes' => $notes
+        ]);
+    }
+
+    /**
+     * Reject equipment request
+     */
+    public function reject(int $rejectedBy, string $reason): void
+    {
+        $this->update([
+            'status' => 'rejected',
+            'rejected_by' => $rejectedBy,
+            'rejected_at' => now(),
+            'rejection_reason' => $reason
+        ]);
+    }
+
+    /**
+     * Assign equipment
+     */
+    public function assign(int $assignedTo): void
+    {
+        $this->update([
+            'status' => 'in_use',
+            'assigned_to' => $assignedTo,
+            'assigned_at' => now()
+        ]);
+    }
+
+    /**
+     * Return equipment
+     */
+    public function return(): void
+    {
+        $this->update([
+            'status' => 'returned',
+            'returned_at' => now()
+        ]);
+    }
+
+    /**
+     * Get equipment list as formatted string
+     */
+    public function getFormattedEquipmentListAttribute(): string
+    {
+        if (!$this->equipment_list) return 'N/A';
+        
+        return implode(', ', $this->equipment_list);
+    }
+
+    /**
+     * Scope berdasarkan status
+     */
     public function scopeByStatus($query, $status)
     {
         return $query->where('status', $status);
     }
 
-    // Scope untuk equipment berdasarkan kategori
-    public function scopeByCategory($query, $category)
+    /**
+     * Scope untuk request yang pending
+     */
+    public function scopePending($query)
     {
-        return $query->where('category', $category);
+        return $query->where('status', 'pending');
     }
 
-    // Scope untuk equipment yang tersedia
-    public function scopeAvailable($query)
+    /**
+     * Scope untuk request yang approved
+     */
+    public function scopeApproved($query)
     {
-        return $query->where('status', 'available');
+        return $query->where('status', 'approved');
     }
 
-    // Scope untuk equipment yang sedang digunakan
+    /**
+     * Scope untuk request yang rejected
+     */
+    public function scopeRejected($query)
+    {
+        return $query->where('status', 'rejected');
+    }
+
+    /**
+     * Scope untuk equipment yang in use
+     */
     public function scopeInUse($query)
     {
         return $query->where('status', 'in_use');
     }
 
-    // Scope untuk equipment yang perlu maintenance
-    public function scopeNeedsMaintenance($query)
+    /**
+     * Scope untuk equipment yang returned
+     */
+    public function scopeReturned($query)
     {
-        return $query->where('next_maintenance', '<=', now()->addDays(7))
-                    ->where('status', '!=', 'retired');
-    }
-
-    // Method untuk mendapatkan status equipment
-    public function getStatusAttribute($value)
-    {
-        return ucfirst(str_replace('_', ' ', $value));
-    }
-
-    // Method untuk mengecek apakah equipment tersedia
-    public function isAvailable()
-    {
-        return $this->status === 'available';
-    }
-
-    // Method untuk mengecek apakah equipment perlu maintenance
-    public function needsMaintenance()
-    {
-        return $this->next_maintenance && $this->next_maintenance <= now()->addDays(7);
-    }
-
-    // Method untuk mendapatkan hari sampai maintenance
-    public function getDaysUntilMaintenanceAttribute()
-    {
-        if (!$this->next_maintenance) {
-            return null;
-        }
-        
-        return now()->diffInDays($this->next_maintenance, false);
-    }
-
-    // Method untuk mendapatkan full name equipment
-    public function getFullNameAttribute()
-    {
-        $parts = array_filter([$this->brand, $this->model, $this->name]);
-        return implode(' ', $parts);
+        return $query->where('status', 'returned');
     }
 }

@@ -4,188 +4,208 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Budget extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'music_submission_id',
-        'created_by',
-        'talent_budget',
-        'production_budget',
-        'other_budget',
-        'total_budget',
-        'budget_notes',
-        'talent_budget_notes',
-        'production_budget_notes',
-        'other_budget_notes',
+        'episode_id',
+        'budget_type',
+        'amount',
+        'description',
         'status',
-        'submitted_at',
-        'reviewed_at',
-        'reviewed_by',
-        'review_notes',
-        'requires_special_approval',
-        'standard_budget_limit',
+        'requested_by',
+        'requested_at',
+        'approved_by',
+        'approved_at',
+        'rejected_by',
+        'rejected_at',
+        'approval_notes',
+        'rejection_reason',
+        'used_amount',
+        'remaining_amount',
+        'used_at'
     ];
 
     protected $casts = [
-        'talent_budget' => 'decimal:2',
-        'production_budget' => 'decimal:2',
-        'other_budget' => 'decimal:2',
-        'total_budget' => 'decimal:2',
-        'standard_budget_limit' => 'decimal:2',
-        'submitted_at' => 'datetime',
-        'reviewed_at' => 'datetime',
-        'requires_special_approval' => 'boolean',
+        'amount' => 'decimal:2',
+        'used_amount' => 'decimal:2',
+        'remaining_amount' => 'decimal:2',
+        'requested_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'rejected_at' => 'datetime',
+        'used_at' => 'datetime'
     ];
 
     /**
-     * Relationships
+     * Relationship dengan Episode
      */
-    public function musicSubmission()
+    public function episode(): BelongsTo
     {
-        return $this->belongsTo(MusicSubmission::class, 'music_submission_id');
-    }
-
-    public function creator()
-    {
-        return $this->belongsTo(User::class, 'created_by');
-    }
-
-    public function reviewer()
-    {
-        return $this->belongsTo(User::class, 'reviewed_by');
-    }
-
-    public function approvals()
-    {
-        return $this->hasMany(BudgetApproval::class);
-    }
-
-    public function latestApproval()
-    {
-        return $this->hasOne(BudgetApproval::class)->latestOfMany();
+        return $this->belongsTo(Episode::class);
     }
 
     /**
-     * Scopes
+     * Relationship dengan User yang request
      */
-    public function scopePending($query)
+    public function requestedBy(): BelongsTo
     {
-        return $query->whereIn('status', ['draft', 'submitted', 'under_review']);
-    }
-
-    public function scopeRequiresSpecialApproval($query)
-    {
-        return $query->where('requires_special_approval', true)
-                     ->where('status', 'pending_special_approval');
-    }
-
-    public function scopeApproved($query)
-    {
-        return $query->whereIn('status', ['approved', 'special_approved']);
+        return $this->belongsTo(User::class, 'requested_by');
     }
 
     /**
-     * Helpers
+     * Relationship dengan User yang approve
      */
-    public function calculateTotal()
+    public function approvedBy(): BelongsTo
     {
-        $this->total_budget = $this->talent_budget + $this->production_budget + $this->other_budget;
-        return $this->total_budget;
+        return $this->belongsTo(User::class, 'approved_by');
     }
 
-    public function checkIfRequiresSpecialApproval($limit = null)
+    /**
+     * Relationship dengan User yang reject
+     */
+    public function rejectedBy(): BelongsTo
     {
-        $limit = $limit ?? $this->standard_budget_limit ?? 10000000; // Default 10 juta
-        $this->requires_special_approval = $this->total_budget > $limit;
-        return $this->requires_special_approval;
+        return $this->belongsTo(User::class, 'rejected_by');
     }
 
-    public function isApproved()
+    /**
+     * Approve budget
+     */
+    public function approve(int $approvedBy, ?string $notes = null): void
     {
-        return in_array($this->status, ['approved', 'special_approved']);
+        $this->update([
+            'status' => 'approved',
+            'approved_by' => $approvedBy,
+            'approved_at' => now(),
+            'approval_notes' => $notes
+        ]);
     }
 
-    public function isPending()
+    /**
+     * Reject budget
+     */
+    public function reject(int $rejectedBy, string $reason): void
     {
-        return in_array($this->status, ['draft', 'submitted', 'under_review', 'pending_special_approval']);
+        $this->update([
+            'status' => 'rejected',
+            'rejected_by' => $rejectedBy,
+            'rejected_at' => now(),
+            'rejection_reason' => $reason
+        ]);
     }
 
-    public function formatCurrency($amount)
+    /**
+     * Use budget
+     */
+    public function useBudget(float $amount): void
     {
-        return 'Rp ' . number_format($amount, 0, ',', '.');
+        $newUsedAmount = $this->used_amount + $amount;
+        $newRemainingAmount = $this->amount - $newUsedAmount;
+        
+        $this->update([
+            'used_amount' => $newUsedAmount,
+            'remaining_amount' => $newRemainingAmount,
+            'used_at' => now()
+        ]);
     }
 
-    public function getTalentBudgetFormatted()
-    {
-        return $this->formatCurrency($this->talent_budget);
-    }
-
-    public function getProductionBudgetFormatted()
-    {
-        return $this->formatCurrency($this->production_budget);
-    }
-
-    public function getOtherBudgetFormatted()
-    {
-        return $this->formatCurrency($this->other_budget);
-    }
-
-    public function getTotalBudgetFormatted()
-    {
-        return $this->formatCurrency($this->total_budget);
-    }
-
-    public function getStatusLabel()
+    /**
+     * Get budget type label
+     */
+    public function getBudgetTypeLabelAttribute(): string
     {
         $labels = [
-            'draft' => 'Draft',
-            'submitted' => 'Submitted',
-            'under_review' => 'Under Review',
-            'approved' => 'Approved',
-            'pending_special_approval' => 'Pending Special Approval',
-            'special_approved' => 'Special Approved',
-            'rejected' => 'Rejected',
-            'revision' => 'Needs Revision',
+            'talent_fee' => 'Talent Fee',
+            'equipment_rental' => 'Equipment Rental',
+            'location_fee' => 'Location Fee',
+            'transportation' => 'Transportation',
+            'food_catering' => 'Food & Catering',
+            'special_request' => 'Special Request'
         ];
 
-        return $labels[$this->status] ?? $this->status;
-    }
-
-    public function getStatusColor()
-    {
-        $colors = [
-            'draft' => 'gray',
-            'submitted' => 'blue',
-            'under_review' => 'yellow',
-            'approved' => 'green',
-            'pending_special_approval' => 'purple',
-            'special_approved' => 'green',
-            'rejected' => 'red',
-            'revision' => 'orange',
-        ];
-
-        return $colors[$this->status] ?? 'gray';
+        return $labels[$this->budget_type] ?? $this->budget_type;
     }
 
     /**
-     * Auto-calculate total on save
+     * Get formatted amount
      */
-    protected static function boot()
+    public function getFormattedAmountAttribute(): string
     {
-        parent::boot();
+        return 'Rp ' . number_format($this->amount, 0, ',', '.');
+    }
 
-        static::saving(function ($budget) {
-            $budget->calculateTotal();
-        });
+    /**
+     * Get formatted used amount
+     */
+    public function getFormattedUsedAmountAttribute(): string
+    {
+        return 'Rp ' . number_format($this->used_amount, 0, ',', '.');
+    }
+
+    /**
+     * Get formatted remaining amount
+     */
+    public function getFormattedRemainingAmountAttribute(): string
+    {
+        return 'Rp ' . number_format($this->remaining_amount, 0, ',', '.');
+    }
+
+    /**
+     * Scope berdasarkan budget type
+     */
+    public function scopeByBudgetType($query, $type)
+    {
+        return $query->where('budget_type', $type);
+    }
+
+    /**
+     * Scope berdasarkan status
+     */
+    public function scopeByStatus($query, $status)
+    {
+        return $query->where('status', $status);
+    }
+
+    /**
+     * Scope untuk budget yang draft
+     */
+    public function scopeDraft($query)
+    {
+        return $query->where('status', 'draft');
+    }
+
+    /**
+     * Scope untuk budget yang submitted
+     */
+    public function scopeSubmitted($query)
+    {
+        return $query->where('status', 'submitted');
+    }
+
+    /**
+     * Scope untuk budget yang approved
+     */
+    public function scopeApproved($query)
+    {
+        return $query->where('status', 'approved');
+    }
+
+    /**
+     * Scope untuk budget yang rejected
+     */
+    public function scopeRejected($query)
+    {
+        return $query->where('status', 'rejected');
+    }
+
+    /**
+     * Scope untuk budget yang revised
+     */
+    public function scopeRevised($query)
+    {
+        return $query->where('status', 'revised');
     }
 }
-
-
-
-
-
-
-
