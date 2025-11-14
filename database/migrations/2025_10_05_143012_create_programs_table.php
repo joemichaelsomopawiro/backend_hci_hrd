@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('programs', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('programs')) {
+            Schema::create('programs', function (Blueprint $table) {
             $table->id();
             $table->string('name');
             $table->text('description')->nullable();
@@ -27,7 +29,8 @@ return new class extends Migration
             $table->foreignId('manager_id')->constrained('users')->onDelete('cascade'); // Manager Program
             $table->foreignId('producer_id')->nullable()->constrained('users')->onDelete('set null'); // Producer
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

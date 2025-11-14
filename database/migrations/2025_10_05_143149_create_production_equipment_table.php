@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('production_equipment', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('production_equipment')) {
+            Schema::create('production_equipment', function (Blueprint $table) {
             $table->id();
             $table->string('name');
             $table->text('description')->nullable();
@@ -28,7 +30,8 @@ return new class extends Migration
             $table->text('notes')->nullable();
             $table->json('specifications')->nullable(); // Spesifikasi teknis
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

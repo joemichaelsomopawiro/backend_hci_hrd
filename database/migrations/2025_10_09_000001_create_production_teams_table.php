@@ -14,7 +14,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('production_teams', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('production_teams')) {
+            Schema::create('production_teams', function (Blueprint $table) {
             $table->id();
             $table->string('name')->unique(); // Nama tim (contoh: "Tim Producer 1", "Tim Producer 2")
             $table->text('description')->nullable();
@@ -25,7 +27,8 @@ return new class extends Migration
             $table->softDeletes(); // Soft delete untuk history
             
             $table->index(['producer_id', 'is_active']);
-        });
+            });
+        }
     }
 
     /**

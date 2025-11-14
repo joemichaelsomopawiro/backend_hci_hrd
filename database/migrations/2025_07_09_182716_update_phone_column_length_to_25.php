@@ -12,22 +12,44 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Drop existing unique constraint first
-        try {
-            DB::statement('ALTER TABLE users DROP INDEX users_phone_unique');
-        } catch (\Exception $e) {
-            // Index doesn't exist, continue
+        // Check if table exists
+        if (!Schema::hasTable('users')) {
+            return;
         }
+        
+        // Check if column exists
+        if (!Schema::hasColumn('users', 'phone')) {
+            return;
+        }
+        
+        try {
+            // Get current column type
+            $result = DB::select("SHOW COLUMNS FROM users WHERE Field = 'phone'");
+            if (!empty($result)) {
+                $currentType = $result[0]->Type;
+                // Check if column is already varchar(25) or longer
+                if (strpos($currentType, 'varchar(25)') === false && strpos($currentType, 'varchar(30)') === false) {
+                    // Drop existing unique constraint first
+                    try {
+                        DB::statement('ALTER TABLE users DROP INDEX users_phone_unique');
+                    } catch (\Exception $e) {
+                        // Index doesn't exist, continue
+                    }
 
-        Schema::table('users', function (Blueprint $table) {
-            // Update phone column to support up to 25 characters for longer phone numbers
-            $table->string('phone', 25)->change();
-        });
+                    Schema::table('users', function (Blueprint $table) {
+                        // Update phone column to support up to 25 characters for longer phone numbers
+                        $table->string('phone', 25)->change();
+                    });
 
-        // Add unique constraint back
-        Schema::table('users', function (Blueprint $table) {
-            $table->unique('phone', 'users_phone_unique');
-        });
+                    // Add unique constraint back
+                    Schema::table('users', function (Blueprint $table) {
+                        $table->unique('phone', 'users_phone_unique');
+                    });
+                }
+            }
+        } catch (\Exception $e) {
+            // Column change failed, skip
+        }
     }
 
     /**

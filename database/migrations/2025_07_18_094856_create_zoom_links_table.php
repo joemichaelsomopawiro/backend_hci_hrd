@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('zoom_links', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('zoom_links')) {
+            Schema::create('zoom_links', function (Blueprint $table) {
             $table->id();
             $table->string('zoom_link', 500);
             $table->string('meeting_id', 100)->nullable();
@@ -24,7 +26,8 @@ return new class extends Migration
             $table->index('is_active');
             $table->index('created_by');
             $table->index('updated_by');
-        });
+            });
+        }
     }
 
     /**

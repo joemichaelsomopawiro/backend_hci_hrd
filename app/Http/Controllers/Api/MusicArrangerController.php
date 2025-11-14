@@ -181,16 +181,19 @@ class MusicArrangerController extends Controller
             ]);
 
             // Create notification for Producer
+            $producers = \App\Models\User::where('role', 'Producer')->get();
+            foreach ($producers as $producer) {
             Notification::create([
-                'user_id' => $user->id, // Will be updated to producer ID
+                    'user_id' => $producer->id,
                 'type' => 'music_arrangement_created',
                 'title' => 'New Music Arrangement Created',
-                'message' => "New music arrangement '{$arrangement->song_title}' has been created.",
+                    'message' => "New music arrangement '{$arrangement->song_title}' has been created for Episode {$arrangement->episode->episode_number}.",
                 'data' => [
                     'arrangement_id' => $arrangement->id,
                     'episode_id' => $arrangement->episode_id
                 ]
             ]);
+            }
 
             return response()->json([
                 'success' => true,
@@ -272,9 +275,17 @@ class MusicArrangerController extends Controller
                 ], 404);
             }
 
+            // Check if arrangement is still in draft status
+            if ($arrangement->status !== 'draft') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only draft arrangements can be updated'
+                ], 400);
+            }
+
             $validator = Validator::make($request->all(), [
-                'title' => 'sometimes|string|max:255',
-                'description' => 'nullable|string',
+                'song_title' => 'sometimes|string|max:255',
+                'singer_name' => 'nullable|string|max:255',
                 'arrangement_notes' => 'nullable|string',
                 'file' => 'nullable|file|mimes:mp3,wav,midi|max:102400',
             ]);
@@ -287,7 +298,7 @@ class MusicArrangerController extends Controller
                 ], 422);
             }
 
-            $updateData = $request->only(['title', 'description', 'arrangement_notes']);
+            $updateData = $request->only(['song_title', 'singer_name', 'arrangement_notes']);
 
             if ($request->hasFile('file')) {
                 // Delete old file if exists
@@ -358,16 +369,20 @@ class MusicArrangerController extends Controller
             ]);
 
             // Create notification for Producer
+            $producers = \App\Models\User::where('role', 'Producer')->get();
+            foreach ($producers as $producer) {
             Notification::create([
-                'user_id' => $user->id, // Will be updated to producer ID
+                    'user_id' => $producer->id,
                 'type' => 'music_arrangement_submitted',
                 'title' => 'Music Arrangement Submitted for Review',
-                'message' => "Music arrangement '{$arrangement->title}' has been submitted for review.",
+                    'message' => "Music arrangement '{$arrangement->song_title}' has been submitted for review by {$user->name}.",
                 'data' => [
                     'arrangement_id' => $arrangement->id,
-                    'episode_id' => $arrangement->episode_id
+                        'episode_id' => $arrangement->episode_id,
+                        'episode_number' => $arrangement->episode->episode_number
                 ]
             ]);
+            }
 
             return response()->json([
                 'success' => true,

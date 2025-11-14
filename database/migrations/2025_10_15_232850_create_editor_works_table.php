@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('editor_works', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('editor_works')) {
+            Schema::create('editor_works', function (Blueprint $table) {
             $table->id();
             $table->foreignId('submission_id')->constrained('music_submissions')->onDelete('cascade');
             $table->string('work_title');
@@ -30,7 +32,8 @@ return new class extends Migration
             $table->integer('estimated_hours')->nullable();
             $table->integer('actual_hours')->nullable();
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

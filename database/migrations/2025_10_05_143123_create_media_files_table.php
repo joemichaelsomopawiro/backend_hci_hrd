@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('media_files', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('media_files')) {
+            Schema::create('media_files', function (Blueprint $table) {
             $table->id();
             $table->string('filename');
             $table->string('original_name');
@@ -28,7 +30,8 @@ return new class extends Migration
             $table->boolean('is_processed')->default(false);
             $table->boolean('is_public')->default(false); // Apakah file bisa diakses publik
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

@@ -11,9 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('employees', function (Blueprint $table) {
-            $table->enum('department', ['hr', 'production', 'distribution', 'executive'])->nullable()->after('jabatan_saat_ini');
-        });
+        // Check if table exists
+        if (!Schema::hasTable('employees')) {
+            return;
+        }
+        
+        // Only add column if it doesn't exist
+        if (!Schema::hasColumn('employees', 'department')) {
+            Schema::table('employees', function (Blueprint $table) {
+                $table->enum('department', ['hr', 'production', 'distribution', 'executive'])->nullable()->after('jabatan_saat_ini');
+            });
+        }
     }
 
     /**

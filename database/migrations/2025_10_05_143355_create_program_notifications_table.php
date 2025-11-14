@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('program_notifications', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('program_notifications')) {
+            Schema::create('program_notifications', function (Blueprint $table) {
             $table->id();
             $table->string('title');
             $table->text('message');
@@ -25,7 +27,8 @@ return new class extends Migration
             $table->datetime('scheduled_at')->nullable(); // Untuk notifikasi terjadwal
             $table->json('data')->nullable(); // Data tambahan untuk notifikasi
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

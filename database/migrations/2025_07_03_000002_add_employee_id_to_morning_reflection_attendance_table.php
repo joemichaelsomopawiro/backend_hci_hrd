@@ -8,7 +8,7 @@ return new class extends Migration
 {
     public function up()
     {
-        // Cek apakah tabel ada
+        // Check if table exists
         if (!Schema::hasTable('morning_reflection_attendance')) {
             Schema::create('morning_reflection_attendance', function (Blueprint $table) {
                 $table->id();

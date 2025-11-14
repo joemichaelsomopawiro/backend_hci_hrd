@@ -12,8 +12,30 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Update enum status untuk menambahkan 'Cuti'
-        DB::statement("ALTER TABLE morning_reflection_attendance MODIFY COLUMN status ENUM('Hadir', 'Terlambat', 'Absen', 'Cuti') DEFAULT 'Hadir'");
+        // Check if table exists
+        if (!Schema::hasTable('morning_reflection_attendance')) {
+            return;
+        }
+        
+        // Check if column exists
+        if (!Schema::hasColumn('morning_reflection_attendance', 'status')) {
+            return;
+        }
+        
+        try {
+            // Get current enum values
+            $result = DB::select("SHOW COLUMNS FROM morning_reflection_attendance WHERE Field = 'status'");
+            if (!empty($result)) {
+                $currentType = $result[0]->Type;
+                // Check if 'Cuti' is already in the enum
+                if (strpos($currentType, 'Cuti') === false) {
+                    // Update enum status untuk menambahkan 'Cuti'
+                    DB::statement("ALTER TABLE morning_reflection_attendance MODIFY COLUMN status ENUM('Hadir', 'Terlambat', 'Absen', 'Cuti') DEFAULT 'Hadir'");
+                }
+            }
+        } catch (\Exception $e) {
+            // Enum change failed, skip
+        }
     }
 
     /**

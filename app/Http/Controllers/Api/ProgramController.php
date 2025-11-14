@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Program;
+use App\Models\Episode;
 use App\Services\ProgramWorkflowService;
 use App\Services\AnalyticsService;
 use Illuminate\Http\Request;
@@ -62,10 +63,18 @@ class ProgramController extends Controller
         try {
             $program = Program::with([
                 'managerProgram',
-                'productionTeam.members.user',
-                'episodes.deadlines',
-                'episodes.workflowStates'
+                'productionTeam.members.user'
             ])->findOrFail($id);
+            
+            // Load episodes secara terpisah untuk memastikan tidak ada masalah dengan relasi
+            $episodes = Episode::where('program_id', $id)
+                ->whereNull('deleted_at')
+                ->with(['deadlines', 'workflowStates'])
+                ->orderBy('episode_number')
+                ->get();
+            
+            // Attach episodes ke program object
+            $program->setRelation('episodes', $episodes);
             
             $analytics = null; // Removed analytics service dependency
             
@@ -111,6 +120,16 @@ class ProgramController extends Controller
         }
         
         try {
+            $user = auth()->user();
+            
+            // Validate: User harus Manager Program atau manager_program_id harus sesuai dengan user login
+            if ($user->role !== 'Manager Program' && $user->role !== 'Program Manager' && $user->id != $request->manager_program_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: Only Manager Program can create programs or manager_program_id must match logged in user'
+                ], 403);
+            }
+            
             // Create program dengan data yang sudah divalidasi
             $programData = $request->only([
                 'name',
@@ -129,12 +148,13 @@ class ProgramController extends Controller
                 $programData['status'] = 'draft';
             }
             
-            $program = Program::create($programData);
+            // Use ProgramWorkflowService to create program (auto-generate episodes, notifications, workflow states)
+            $program = $this->programWorkflowService->createProgram($programData);
             
             return response()->json([
                 'success' => true,
-                'data' => $program,
-                'message' => 'Program created successfully'
+                'data' => $program->load(['episodes', 'managerProgram', 'productionTeam']),
+                'message' => 'Program created successfully with 53 episodes generated'
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
@@ -150,7 +170,24 @@ class ProgramController extends Controller
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        $user = auth()->user();
         $program = Program::findOrFail($id);
+        
+        // Validate: Only Manager Program of this program can update
+        if ($user->role !== 'Manager Program' && $user->role !== 'Program Manager' && $user->id != $program->manager_program_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized: Only Manager Program of this program can update'
+            ], 403);
+        }
+        
+        // Cannot update if program is already approved or in production
+        if (in_array($program->status, ['approved', 'in_production', 'completed'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot update program that is already approved or in production'
+            ], 400);
+        }
         
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
@@ -193,7 +230,16 @@ class ProgramController extends Controller
      */
     public function submit(Request $request, int $id): JsonResponse
     {
+        $user = auth()->user();
         $program = Program::findOrFail($id);
+        
+        // Validate: Only Manager Program of this program can submit
+        if ($user->role !== 'Manager Program' && $user->role !== 'Program Manager' && $user->id != $program->manager_program_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized: Only Manager Program of this program can submit for approval'
+            ], 403);
+        }
         
         if ($program->status !== 'draft') {
             return response()->json([
@@ -203,7 +249,7 @@ class ProgramController extends Controller
         }
         
         try {
-            $program = $this->programWorkflowService->submitProgram($program, auth()->id());
+            $program = $this->programWorkflowService->submitProgram($program, $user->id);
             
             return response()->json([
                 'success' => true,
@@ -224,7 +270,16 @@ class ProgramController extends Controller
      */
     public function approve(Request $request, int $id): JsonResponse
     {
+        $user = auth()->user();
         $program = Program::findOrFail($id);
+        
+        // Validate: Only Distribution Manager can approve
+        if ($user->role !== 'Distribution Manager') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized: Only Distribution Manager can approve programs'
+            ], 403);
+        }
         
         if ($program->status !== 'pending_approval') {
             return response()->json([
@@ -248,7 +303,7 @@ class ProgramController extends Controller
         try {
             $program = $this->programWorkflowService->approveProgram(
                 $program, 
-                auth()->id(), 
+                $user->id, 
                 $request->approval_notes
             );
             
@@ -271,7 +326,16 @@ class ProgramController extends Controller
      */
     public function reject(Request $request, int $id): JsonResponse
     {
+        $user = auth()->user();
         $program = Program::findOrFail($id);
+        
+        // Validate: Only Distribution Manager can reject
+        if ($user->role !== 'Distribution Manager') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized: Only Distribution Manager can reject programs'
+            ], 403);
+        }
         
         if ($program->status !== 'pending_approval') {
             return response()->json([
@@ -295,7 +359,7 @@ class ProgramController extends Controller
         try {
             $program = $this->programWorkflowService->rejectProgram(
                 $program, 
-                auth()->id(), 
+                $user->id, 
                 $request->rejection_notes
             );
             
@@ -318,7 +382,16 @@ class ProgramController extends Controller
      */
     public function destroy(int $id): JsonResponse
     {
+        $user = auth()->user();
         $program = Program::findOrFail($id);
+        
+        // Validate: Only Manager Program of this program can delete
+        if ($user->role !== 'Manager Program' && $user->role !== 'Program Manager' && $user->id != $program->manager_program_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized: Only Manager Program of this program can delete'
+            ], 403);
+        }
         
         if ($program->status === 'in_production') {
             return response()->json([
@@ -457,7 +530,10 @@ class ProgramController extends Controller
     public function episodes(int $id): JsonResponse
     {
         $program = Program::findOrFail($id);
-        $episodes = $program->episodes()
+        
+        // Query episodes langsung untuk memastikan tidak ada masalah dengan relasi
+        $episodes = Episode::where('program_id', $id)
+            ->whereNull('deleted_at')
             ->with(['deadlines', 'workflowStates'])
             ->orderBy('episode_number')
             ->get();

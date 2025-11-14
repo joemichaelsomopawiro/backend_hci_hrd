@@ -93,7 +93,7 @@ Route::prefix('manager-program')->middleware('auth:sanctum')->group(function () 
     
     // Episode Management
     Route::post('/episodes/{episodeId}/assign-team', [ManagerProgramController::class, 'assignTeamToEpisode']);
-    Route::put('/deadlines/{deadlineId}', [ManagerProgramController::class, 'editDeadline']);
+    Route::put('/deadlines/{deadlineId}', [ManagerProgramController::class, 'editDeadlineById']);
     
     // Program Management
     Route::post('/programs/{programId}/generate-episodes', [ManagerProgramController::class, 'generateEpisodes']);
@@ -108,6 +108,17 @@ Route::prefix('manager-program')->middleware('auth:sanctum')->group(function () 
     // Schedule Options (NEW)
     Route::post('/programs/{programId}/submit-schedule-options', [ManagerProgramController::class, 'submitScheduleOptions']);
     Route::get('/programs/{programId}/schedule-options', [ManagerProgramController::class, 'getScheduleOptions']);
+    
+    // Schedule Interference (Override Authority)
+    Route::post('/schedules/{scheduleId}/cancel', [ManagerProgramController::class, 'cancelSchedule']);
+    Route::post('/schedules/{scheduleId}/reschedule', [ManagerProgramController::class, 'reschedule']);
+    
+    // Approval Override (Override Authority)
+    Route::post('/approvals/{approvalId}/override', [ManagerProgramController::class, 'overrideApproval']);
+    
+    // Quality Control Monitoring (GET only)
+    Route::get('/programs/{programId}/quality-controls', [ManagerProgramController::class, 'getQualityControls']);
+    Route::get('/episodes/{episodeId}/quality-controls', [ManagerProgramController::class, 'getEpisodeQualityControls']);
 });
 
 // Episode Management Routes

@@ -15,6 +15,7 @@ use App\Models\PromotionMaterial;
 use App\Models\BroadcastingSchedule;
 use App\Models\QualityControl;
 use App\Models\Budget;
+use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -27,11 +28,24 @@ class ProducerController extends Controller
     public function getApprovals(Request $request): JsonResponse
     {
         try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+            
             $approvals = [];
             
             // Music arrangements pending approval
+            // Producer hanya bisa melihat arrangement dari ProductionTeam mereka
             $musicArrangements = MusicArrangement::where('status', 'submitted')
-                ->with(['episode', 'createdBy'])
+                ->with(['episode.program.productionTeam', 'createdBy'])
+                ->whereHas('episode.program.productionTeam', function ($q) use ($user) {
+                    $q->where('producer_id', $user->id);
+                })
                 ->get();
             
             // Creative works pending approval
@@ -93,8 +107,42 @@ class ProducerController extends Controller
             
             switch ($request->type) {
                 case 'music_arrangement':
-                    $item = MusicArrangement::findOrFail($id);
+                    $item = MusicArrangement::with(['episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                    
+                    // Validate Producer has access to this arrangement
+                    if ($item->episode->program->productionTeam->producer_id !== $user->id) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Unauthorized: This arrangement is not from your production team.'
+                        ], 403);
+                    }
+                    
                     $item->approve(auth()->id(), $request->notes);
+                    
+                    // Notify Music Arranger
+                    Notification::create([
+                        'user_id' => $item->created_by,
+                        'type' => 'music_arrangement_approved',
+                        'title' => 'Music Arrangement Approved',
+                        'message' => "Your music arrangement '{$item->song_title}' has been approved by Producer.",
+                        'data' => [
+                            'arrangement_id' => $item->id,
+                            'episode_id' => $item->episode_id,
+                            'review_notes' => $request->notes
+                        ]
+                    ]);
+                    
+                    // Auto-update episode workflow state if needed
+                    if ($item->episode->current_workflow_state === 'music_arrangement') {
+                        $workflowService = new \App\Services\WorkflowStateService();
+                        $workflowService->updateWorkflowState(
+                            $item->episode,
+                            'creative_work',
+                            'kreatif',
+                            null,
+                            'Music arrangement approved, proceeding to creative work'
+                        );
+                    }
                     break;
                     
                 case 'creative_work':
@@ -132,6 +180,15 @@ class ProducerController extends Controller
      */
     public function reject(Request $request, int $id): JsonResponse
     {
+        $user = auth()->user();
+        
+        if (!$user || $user->role !== 'Producer') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized access.'
+            ], 403);
+        }
+        
         $validator = Validator::make($request->all(), [
             'type' => 'required|in:music_arrangement,creative_work,equipment_request,budget_request',
             'reason' => 'required|string'
@@ -150,8 +207,30 @@ class ProducerController extends Controller
             
             switch ($request->type) {
                 case 'music_arrangement':
-                    $item = MusicArrangement::findOrFail($id);
+                    $item = MusicArrangement::with(['episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                    
+                    // Validate Producer has access to this arrangement
+                    if ($item->episode->program->productionTeam->producer_id !== $user->id) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Unauthorized: This arrangement is not from your production team.'
+                        ], 403);
+                    }
+                    
                     $item->reject(auth()->id(), $request->reason);
+                    
+                    // Notify Music Arranger
+                    Notification::create([
+                        'user_id' => $item->created_by,
+                        'type' => 'music_arrangement_rejected',
+                        'title' => 'Music Arrangement Rejected',
+                        'message' => "Your music arrangement '{$item->song_title}' has been rejected. Reason: {$request->reason}",
+                        'data' => [
+                            'arrangement_id' => $item->id,
+                            'episode_id' => $item->episode_id,
+                            'rejection_reason' => $request->reason
+                        ]
+                    ]);
                     break;
                     
                 case 'creative_work':

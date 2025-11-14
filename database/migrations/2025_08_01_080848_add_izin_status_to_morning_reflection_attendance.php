@@ -12,14 +12,36 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Tahap aman: izinkan sementara nilai lama 'Cuti' agar alter tidak gagal
-        DB::statement("ALTER TABLE morning_reflection_attendance MODIFY COLUMN status ENUM('Hadir','Terlambat','Absen','Cuti','izin') DEFAULT 'Hadir'");
+        // Check if table exists
+        if (!Schema::hasTable('morning_reflection_attendance')) {
+            return;
+        }
+        
+        // Check if status column exists
+        if (!Schema::hasColumn('morning_reflection_attendance', 'status')) {
+            return;
+        }
+        
+        try {
+            // Check current enum values
+            $result = DB::select("SHOW COLUMNS FROM morning_reflection_attendance WHERE Field = 'status'");
+            if (!empty($result)) {
+                $currentType = $result[0]->Type;
+                // Check if 'izin' is already in the enum
+                if (strpos($currentType, 'izin') === false) {
+                    // Tahap aman: izinkan sementara nilai lama 'Cuti' agar alter tidak gagal
+                    DB::statement("ALTER TABLE morning_reflection_attendance MODIFY COLUMN status ENUM('Hadir','Terlambat','Absen','Cuti','izin') DEFAULT 'Hadir'");
 
-        // Migrasi data: ubah semua 'Cuti' menjadi 'izin'
-        DB::statement("UPDATE morning_reflection_attendance SET status = 'izin' WHERE status = 'Cuti'");
+                    // Migrasi data: ubah semua 'Cuti' menjadi 'izin'
+                    DB::statement("UPDATE morning_reflection_attendance SET status = 'izin' WHERE status = 'Cuti'");
 
-        // Rapikan enum final: hapus 'Cuti', pertahankan 'izin'
-        DB::statement("ALTER TABLE morning_reflection_attendance MODIFY COLUMN status ENUM('Hadir','Terlambat','Absen','izin') DEFAULT 'Hadir'");
+                    // Rapikan enum final: hapus 'Cuti', pertahankan 'izin'
+                    DB::statement("ALTER TABLE morning_reflection_attendance MODIFY COLUMN status ENUM('Hadir','Terlambat','Absen','izin') DEFAULT 'Hadir'");
+                }
+            }
+        } catch (\Exception $e) {
+            // Enum change failed, skip
+        }
     }
 
     /**

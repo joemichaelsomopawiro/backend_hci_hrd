@@ -26,11 +26,12 @@ class Program extends Model
         'target_views_per_episode',
         'submitted_by',
         'submitted_at',
+        'submission_notes',
         'approved_by',
         'approved_at',
+        'approval_notes',
         'rejected_by',
         'rejected_at',
-        'approval_notes',
         'rejection_notes',
         'budget_amount',
         'budget_approved',
@@ -76,10 +77,11 @@ class Program extends Model
 
     /**
      * Relationship dengan Episodes
+     * Exclude soft deleted episodes
      */
     public function episodes(): HasMany
     {
-        return $this->hasMany(Episode::class);
+        return $this->hasMany(Episode::class, 'program_id')->whereNull('episodes.deleted_at');
     }
 
     /**
@@ -107,10 +109,54 @@ class Program extends Model
     }
 
     /**
-     * Generate 53 episodes untuk program
+     * Boot method untuk handle soft delete cascade
      */
-    public function generateEpisodes(): void
+    protected static function boot()
     {
+        parent::boot();
+
+        // Saat program di-soft delete, soft delete semua episodes juga
+        static::deleting(function ($program) {
+            if ($program->isForceDeleting()) {
+                // Hard delete: cascade akan dihandle oleh database foreign key
+                return;
+            }
+
+            // Soft delete: manually soft delete semua episodes
+            $program->episodes()->each(function ($episode) {
+                $episode->delete();
+            });
+        });
+
+        // Saat program di-restore, restore semua episodes juga
+        static::restoring(function ($program) {
+            $program->episodes()->onlyTrashed()->each(function ($episode) {
+                $episode->restore();
+            });
+        });
+    }
+
+    /**
+     * Generate 53 episodes untuk program
+     * @param bool $regenerate Jika true, akan hapus episode yang sudah ada dulu
+     */
+    public function generateEpisodes(bool $regenerate = false): void
+    {
+        // Check if episodes already exist (exclude soft deleted)
+        $existingEpisodes = $this->episodes()->whereNull('deleted_at')->count();
+        
+        if ($existingEpisodes > 0 && !$regenerate) {
+            // Episode sudah ada, tidak perlu generate lagi
+            return;
+        }
+        
+        // Jika regenerate, hapus episode yang lama dulu (soft delete)
+        if ($regenerate && $existingEpisodes > 0) {
+            $this->episodes()->whereNull('deleted_at')->each(function($episode) {
+                $episode->delete(); // Soft delete
+            });
+        }
+        
         $startDate = Carbon::parse($this->start_date);
         
         for ($i = 1; $i <= 53; $i++) {
@@ -122,7 +168,7 @@ class Program extends Model
                 'description' => "Episode {$i} dari program {$this->name}",
                 'air_date' => $airDate,
                 'production_date' => $airDate->copy()->subDays(7), // 7 hari sebelum tayang
-                'status' => 'planning',
+                'status' => 'draft',
                 'current_workflow_state' => 'program_created'
             ]);
 

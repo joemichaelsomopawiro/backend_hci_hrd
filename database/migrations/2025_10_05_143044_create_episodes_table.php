@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('episodes', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('episodes')) {
+            Schema::create('episodes', function (Blueprint $table) {
             $table->id();
             $table->string('title');
             $table->text('description')->nullable();
@@ -26,7 +28,8 @@ return new class extends Migration
             $table->text('notes')->nullable(); // Catatan khusus
             $table->json('production_notes')->nullable(); // Catatan produksi
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

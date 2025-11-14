@@ -11,9 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Check if table exists
+        if (!Schema::hasTable('users')) {
+            return;
+        }
+        
+        // Check if column already exists
+        if (!Schema::hasColumn('users', 'notification_preferences')) {
         Schema::table('users', function (Blueprint $table) {
             $table->json('notification_preferences')->nullable();
         });
+        }
     }
 
     /**

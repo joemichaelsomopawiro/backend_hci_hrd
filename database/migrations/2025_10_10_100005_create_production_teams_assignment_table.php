@@ -14,7 +14,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('production_teams_assignment', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('production_teams_assignment')) {
+            Schema::create('production_teams_assignment', function (Blueprint $table) {
             $table->id();
             $table->foreignId('music_submission_id')->constrained('music_submissions')->onDelete('cascade');
             $table->foreignId('schedule_id')->nullable()->constrained('music_schedules')->onDelete('set null');
@@ -45,12 +47,14 @@ return new class extends Migration
             
             $table->timestamps();
             
-            $table->index(['music_submission_id', 'team_type', 'status']);
-            $table->index(['schedule_id', 'team_type']);
-        });
+            $table->index(['music_submission_id', 'team_type', 'status'], 'prod_teams_submission_type_status_idx');
+            $table->index(['schedule_id', 'team_type'], 'prod_teams_schedule_type_idx');
+            });
+        }
         
         // Members of each team
-        Schema::create('production_team_members', function (Blueprint $table) {
+        if (!Schema::hasTable('production_team_members')) {
+            Schema::create('production_team_members', function (Blueprint $table) {
             $table->id();
             $table->foreignId('assignment_id')->constrained('production_teams_assignment')->onDelete('cascade');
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
@@ -79,7 +83,8 @@ return new class extends Migration
             $table->unique(['assignment_id', 'user_id'], 'unique_assignment_user');
             $table->index(['assignment_id', 'role']);
             $table->index(['user_id', 'status']);
-        });
+            });
+        }
     }
 
     /**

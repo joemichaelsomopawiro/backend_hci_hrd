@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('national_holidays', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('national_holidays')) {
+            Schema::create('national_holidays', function (Blueprint $table) {
             $table->id();
             $table->date('date');
             $table->string('name');
@@ -25,7 +27,8 @@ return new class extends Migration
             $table->unique('date');
             $table->foreign('created_by')->references('id')->on('users')->onDelete('set null');
             $table->foreign('updated_by')->references('id')->on('users')->onDelete('set null');
-        });
+            });
+        }
     }
 
     /**

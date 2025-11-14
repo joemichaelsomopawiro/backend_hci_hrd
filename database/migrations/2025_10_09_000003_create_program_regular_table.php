@@ -14,7 +14,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('program_regular', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('program_regular')) {
+            Schema::create('program_regular', function (Blueprint $table) {
             $table->id();
             $table->string('name');
             $table->text('description')->nullable();
@@ -59,7 +61,8 @@ return new class extends Migration
             
             $table->index(['production_team_id', 'status']);
             $table->index(['manager_program_id', 'status']);
-        });
+            });
+        }
     }
 
     /**

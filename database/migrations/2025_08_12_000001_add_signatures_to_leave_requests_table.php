@@ -8,11 +8,25 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Check if table exists
+        if (!Schema::hasTable('leave_requests')) {
+            return;
+        }
+        
         Schema::table('leave_requests', function (Blueprint $table) {
-            $table->string('employee_signature_path')->nullable()->after('rejection_reason');
-            $table->string('approver_signature_path')->nullable()->after('employee_signature_path');
-            $table->string('leave_location')->nullable()->after('approver_signature_path');
-            $table->string('contact_phone')->nullable()->after('leave_location');
+            // Add columns only if they don't exist
+            if (!Schema::hasColumn('leave_requests', 'employee_signature_path')) {
+                $table->string('employee_signature_path')->nullable()->after('rejection_reason');
+            }
+            if (!Schema::hasColumn('leave_requests', 'approver_signature_path')) {
+                $table->string('approver_signature_path')->nullable()->after('employee_signature_path');
+            }
+            if (!Schema::hasColumn('leave_requests', 'leave_location')) {
+                $table->string('leave_location')->nullable()->after('approver_signature_path');
+            }
+            if (!Schema::hasColumn('leave_requests', 'contact_phone')) {
+                $table->string('contact_phone')->nullable()->after('leave_location');
+            }
         });
     }
 

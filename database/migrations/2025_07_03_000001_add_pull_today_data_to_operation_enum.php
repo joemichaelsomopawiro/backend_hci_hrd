@@ -12,8 +12,25 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Update enum to add 'pull_today_data'
-        DB::statement("ALTER TABLE attendance_sync_logs MODIFY COLUMN operation ENUM(
+        // Check if table exists
+        if (!Schema::hasTable('attendance_sync_logs')) {
+            return;
+        }
+        
+        // Check if column exists
+        if (!Schema::hasColumn('attendance_sync_logs', 'operation')) {
+            return;
+        }
+        
+        try {
+            // Get current enum values
+            $result = DB::select("SHOW COLUMNS FROM attendance_sync_logs WHERE Field = 'operation'");
+            if (!empty($result)) {
+                $currentType = $result[0]->Type;
+                // Check if 'pull_today_data' is already in the enum
+                if (strpos($currentType, 'pull_today_data') === false) {
+                    // Update enum to add 'pull_today_data'
+                    DB::statement("ALTER TABLE attendance_sync_logs MODIFY COLUMN operation ENUM(
             'pull_data',
             'pull_today_data',
             'pull_user_data',
@@ -23,7 +40,12 @@ return new class extends Migration
             'sync_time',
             'restart_machine',
             'test_connection'
-        )");
+                    )");
+                }
+            }
+        } catch (\Exception $e) {
+            // Enum change failed, skip
+        }
     }
 
     /**

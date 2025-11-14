@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Carbon\Carbon;
+use App\Models\User;
 
 class Episode extends Model
 {
@@ -39,13 +40,34 @@ class Episode extends Model
         'team_assigned_at',
         'actual_views',
         'views_last_updated',
-        'views_growth_rate'
+        'views_growth_rate',
+        'production_deadline',
+        'script_deadline',
+        'production_started_at',
+        'production_completed_at',
+        'submission_notes',
+        'submitted_at',
+        'submitted_by',
+        'approval_notes',
+        'approved_by',
+        'approved_at',
+        'rejection_notes',
+        'rejected_by',
+        'rejected_at'
     ];
 
     protected $casts = [
         'air_date' => 'datetime',
         'production_date' => 'datetime',
-        'talent_data' => 'array'
+        'talent_data' => 'array',
+        'production_deadline' => 'datetime',
+        'script_deadline' => 'datetime',
+        'production_started_at' => 'datetime',
+        'production_completed_at' => 'datetime',
+        'submitted_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'rejected_at' => 'datetime',
+        'views_last_updated' => 'datetime'
     ];
 
     /**
@@ -54,6 +76,16 @@ class Episode extends Model
     public function program(): BelongsTo
     {
         return $this->belongsTo(Program::class);
+    }
+    
+    /**
+     * Scope untuk exclude episodes dari program yang sudah dihapus
+     */
+    public function scopeActiveProgram($query)
+    {
+        return $query->whereHas('program', function($q) {
+            $q->whereNull('deleted_at');
+        });
     }
 
     /**
@@ -122,23 +154,35 @@ class Episode extends Model
      */
     private function notifyDeadlineCreation()
     {
-        $roles = ['Editor', 'Creative', 'Production'];
+        // Map deadline role to user role
+        $roleMapping = [
+            'editor' => 'Editor',
+            'kreatif' => 'Creative',
+            'produksi' => 'Production'
+        ];
         
-        foreach ($roles as $role) {
-            $users = User::where('role', $role)->get();
-            foreach ($users as $user) {
-                \App\Models\Notification::create([
-                    'user_id' => $user->id,
-                    'type' => 'deadline_created',
-                    'title' => 'Deadline Baru Dibuat',
-                    'message' => "Deadline baru untuk episode '{$this->title}' telah dibuat",
-                    'data' => [
-                        'episode_id' => $this->id,
-                        'episode_title' => $this->title,
-                        'role' => $role,
-                        'deadline_date' => $this->air_date->subDays($role === 'Editor' ? 7 : 9)
-                    ]
-                ]);
+        // Get deadlines for this episode
+        $deadlines = $this->deadlines()->get();
+        
+        foreach ($deadlines as $deadline) {
+            $userRole = $roleMapping[$deadline->role] ?? null;
+            
+            if ($userRole) {
+                $users = User::where('role', $userRole)->get();
+                foreach ($users as $user) {
+                    \App\Models\Notification::create([
+                        'user_id' => $user->id,
+                        'type' => 'deadline_created',
+                        'title' => 'Deadline Baru Dibuat',
+                        'message' => "Deadline baru untuk episode '{$this->title}' telah dibuat",
+                        'data' => [
+                            'episode_id' => $this->id,
+                            'episode_title' => $this->title,
+                            'role' => $deadline->role,
+                            'deadline_date' => $deadline->deadline_date->format('Y-m-d')
+                        ]
+                    ]);
+                }
             }
         }
     }

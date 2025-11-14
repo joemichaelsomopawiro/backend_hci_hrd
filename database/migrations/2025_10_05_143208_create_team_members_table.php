@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('team_members', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('team_members')) {
+            Schema::create('team_members', function (Blueprint $table) {
             $table->id();
             $table->foreignId('team_id')->constrained('teams')->onDelete('cascade');
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
@@ -23,7 +25,8 @@ return new class extends Migration
             $table->timestamps();
             
             $table->unique(['team_id', 'user_id']); // Satu user hanya bisa dalam satu team per program
-        });
+            });
+        }
     }
 
     /**

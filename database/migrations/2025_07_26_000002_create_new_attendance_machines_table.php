@@ -8,7 +8,9 @@ return new class extends Migration
 {
     public function up()
     {
-        Schema::create('attendance_machines', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('attendance_machines')) {
+            Schema::create('attendance_machines', function (Blueprint $table) {
             $table->id();
             $table->string('name', 100)->comment('Nama mesin absensi');
             $table->string('ip_address', 15)->unique()->comment('IP Address mesin');
@@ -23,7 +25,8 @@ return new class extends Migration
             $table->timestamps();
             
             $table->index(['status', 'last_sync_at']);
-        });
+            });
+        }
     }
 
     public function down()
