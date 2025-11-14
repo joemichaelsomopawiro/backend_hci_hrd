@@ -84,6 +84,14 @@ class Program extends Model
         return $this->hasMany(Episode::class, 'program_id')->whereNull('episodes.deleted_at');
     }
 
+    // Relasi dengan Team (Many-to-Many through program_team pivot table)
+    // Satu program bisa memiliki banyak teams, dan satu team bisa di-assign ke banyak programs
+    public function teams(): BelongsToMany
+    {
+        return $this->belongsToMany(Team::class, 'program_team')
+            ->withTimestamps();
+    }
+
     /**
      * Relationship dengan User yang submit
      */

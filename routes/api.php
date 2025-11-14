@@ -993,6 +993,121 @@ Route::prefix('program-approvals')->group(function () {
     Route::post('/{id}/cancel', [ProgramApprovalController::class, 'cancel']);
 });
 
+// ========================================
+// WORKFLOW PROGRAM REGULAR ROUTES
+// ========================================
+
+use App\Http\Controllers\BroadcastingController;
+use App\Http\Controllers\QualityControlController;
+use App\Http\Controllers\WorkflowProgramRegularController;
+use App\Http\Controllers\DesignGrafisController;
+use App\Http\Controllers\DistribusiController;
+
+// Broadcasting Routes
+Route::prefix('broadcasting')->group(function () {
+    Route::get('/episodes/ready', [BroadcastingController::class, 'getReadyEpisodes']);
+    Route::get('/episodes/{id}', [BroadcastingController::class, 'getEpisode']);
+    Route::put('/episodes/{id}/metadata', [BroadcastingController::class, 'updateMetadata']);
+    Route::post('/episodes/{id}/upload-youtube', [BroadcastingController::class, 'uploadToYouTube']);
+    Route::post('/episodes/{id}/youtube-link', [BroadcastingController::class, 'setYouTubeLink']);
+    Route::post('/episodes/{id}/upload-website', [BroadcastingController::class, 'uploadToWebsite']);
+    Route::post('/episodes/{id}/complete', [BroadcastingController::class, 'completeBroadcast']);
+    Route::get('/statistics', [BroadcastingController::class, 'getStatistics']);
+    Route::get('/my-tasks', [BroadcastingController::class, 'getMyTasks']);
+});
+
+// Quality Control Routes
+Route::prefix('qc')->group(function () {
+    Route::get('/episodes/pending', [QualityControlController::class, 'getPendingEpisodes']);
+    Route::get('/episodes/{id}', [QualityControlController::class, 'getEpisode']);
+    Route::post('/episodes/{id}/review', [QualityControlController::class, 'submitReview']);
+    Route::get('/episodes/{id}/history', [QualityControlController::class, 'getQCHistory']);
+    Route::get('/episodes/{id}/revision-feedback', [QualityControlController::class, 'getRevisionFeedback']);
+    Route::get('/statistics', [QualityControlController::class, 'getStatistics']);
+    Route::get('/my-tasks', [QualityControlController::class, 'getMyTasks']);
+});
+
+// Workflow Routes (Creative, Producer, Produksi)
+Route::prefix('workflow')->group(function () {
+    // Creative workflow
+    Route::post('/creative/episodes/{id}/script', [WorkflowProgramRegularController::class, 'submitScript']);
+    
+    // Producer workflow
+    Route::post('/producer/episodes/{id}/review-rundown', [WorkflowProgramRegularController::class, 'reviewRundown']);
+    
+    // Produksi workflow
+    Route::post('/produksi/episodes/{id}/request-equipment', [WorkflowProgramRegularController::class, 'requestEquipment']);
+    Route::post('/produksi/episodes/{id}/complete-shooting', [WorkflowProgramRegularController::class, 'completeShooting']);
+    
+    // General workflow
+    Route::get('/episodes/{id}/status', [WorkflowProgramRegularController::class, 'getWorkflowStatus']);
+    Route::get('/dashboard', [WorkflowProgramRegularController::class, 'getDashboard']);
+});
+
+// Design Grafis Routes
+Route::prefix('design-grafis')->group(function () {
+    Route::get('/episodes/pending', [DesignGrafisController::class, 'getPendingEpisodes']);
+    Route::get('/episodes/{id}', [DesignGrafisController::class, 'getEpisode']);
+    Route::post('/episodes/{id}/receive-assets', [DesignGrafisController::class, 'receiveAssets']);
+    Route::post('/episodes/{id}/upload-thumbnail-youtube', [DesignGrafisController::class, 'uploadThumbnailYouTube']);
+    Route::post('/episodes/{id}/upload-thumbnail-bts', [DesignGrafisController::class, 'uploadThumbnailBTS']);
+    Route::post('/episodes/{id}/complete', [DesignGrafisController::class, 'completeDesign']);
+    Route::get('/my-tasks', [DesignGrafisController::class, 'getMyTasks']);
+    Route::get('/statistics', [DesignGrafisController::class, 'getStatistics']);
+});
+
+// Distribusi/Analytics Routes (Manager Distribusi)
+Route::prefix('distribusi')->group(function () {
+    Route::get('/dashboard', [DistribusiController::class, 'getDashboard']);
+    Route::get('/analytics/youtube', [DistribusiController::class, 'getYouTubeAnalytics']);
+    Route::get('/analytics/facebook', [DistribusiController::class, 'getFacebookAnalytics']);
+    Route::get('/analytics/instagram', [DistribusiController::class, 'getInstagramAnalytics']);
+    Route::get('/analytics/tiktok', [DistribusiController::class, 'getTikTokAnalytics']);
+    Route::get('/analytics/website', [DistribusiController::class, 'getWebsiteAnalytics']);
+    Route::get('/kpi/weekly', [DistribusiController::class, 'getWeeklyKPI']);
+    Route::post('/kpi/export', [DistribusiController::class, 'exportKPI']);
+    Route::get('/episodes/{id}/performance', [DistribusiController::class, 'getEpisodePerformance']);
+});
+
+// Editor Routes
+Route::prefix('editor')->group(function () {
+    Route::get('/episodes/pending', [\App\Http\Controllers\EditorController::class, 'getPendingEpisodes']);
+    Route::get('/my-tasks', [\App\Http\Controllers\EditorController::class, 'getMyTasks']);
+    Route::get('/episodes/{id}/check-files', [\App\Http\Controllers\EditorController::class, 'checkFileCompleteness']);
+    Route::post('/episodes/{id}/start-editing', [\App\Http\Controllers\EditorController::class, 'startEditing']);
+    Route::post('/episodes/{id}/upload-draft', [\App\Http\Controllers\EditorController::class, 'uploadDraft']);
+    Route::post('/episodes/{id}/complete', [\App\Http\Controllers\EditorController::class, 'completeEditing']);
+    Route::post('/episodes/{id}/handle-revision', [\App\Http\Controllers\EditorController::class, 'handleRevision']);
+    Route::get('/statistics', [\App\Http\Controllers\EditorController::class, 'getStatistics']);
+});
+
+use App\Http\Controllers\EditorController;
+use App\Http\Controllers\PromosiController;
+
+// Promosi Routes (Extended for Program Regular)
+Route::prefix('promosi')->group(function () {
+    // Program Regular routes
+    Route::get('/episodes/shooting-schedule', [\App\Http\Controllers\PromosiController::class, 'getEpisodesWithShootingSchedule']);
+    Route::get('/episodes/published', [\App\Http\Controllers\PromosiController::class, 'getPublishedEpisodes']);
+    Route::post('/episodes/{id}/create-bts', [\App\Http\Controllers\PromosiController::class, 'createBTSForEpisode']);
+    Route::post('/episodes/{id}/create-highlight', [\App\Http\Controllers\PromosiController::class, 'createHighlight']);
+    Route::post('/episodes/{id}/share-social-media', [\App\Http\Controllers\PromosiController::class, 'shareSocialMedia']);
+    Route::get('/my-tasks', [\App\Http\Controllers\PromosiController::class, 'getMyPromosiTasks']);
+    Route::get('/statistics', [\App\Http\Controllers\PromosiController::class, 'getPromosiStatistics']);
+    
+    // Music Program routes (existing)
+    Route::get('/bts-assignments', [\App\Http\Controllers\PromosiController::class, 'getBTSAssignments']);
+    Route::post('/bts-assignments', [\App\Http\Controllers\PromosiController::class, 'createBTSAssignment']);
+    Route::put('/bts-assignments/{id}', [\App\Http\Controllers\PromosiController::class, 'updateBTSAssignment']);
+    Route::delete('/bts-assignments/{id}', [\App\Http\Controllers\PromosiController::class, 'deleteBTSAssignment']);
+    Route::post('/bts-assignments/{id}/start', [\App\Http\Controllers\PromosiController::class, 'startBTSWork']);
+});
+
+// ===== MUSIC PROGRAM ROUTES =====
+// Load Music System API routes
+Route::prefix('music')->group(function () {
+    require __DIR__.'/music_api.php';
+});
+
 // Include Live TV Program API Routes
 require __DIR__.'/live_tv_api.php';
-

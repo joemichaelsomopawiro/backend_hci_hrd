@@ -215,13 +215,32 @@ class ProgramController extends Controller
 
     /**
      * Assign teams to program
+     * 
+     * Method ini mendukung 2 format:
+     * 1. Assign single team: { "team_id": 2 } atau { "teamId": 2 }
+     * 2. Assign multiple teams: { "team_ids": [1, 2, 3] }
+     * 
+     * Mode:
+     * - attach (default): Menambahkan team baru tanpa menghapus yang lama (satu team bisa di banyak program)
+     * - sync: Replace semua teams dengan yang baru
+     * - detach: Remove team dari program
      */
     public function assignTeams(Request $request, string $id): JsonResponse
     {
         try {
             $program = Program::findOrFail($id);
 
-            $validator = Validator::make($request->all(), [
+            // Support both formats: teamId (single) and team_ids (multiple)
+            $teamId = $request->input('teamId') ?? $request->input('team_id');
+            $teamIds = $request->input('team_ids');
+            $mode = $request->input('mode', 'attach'); // attach, sync, detach
+
+            // Convert single team to array
+            if ($teamId && !$teamIds) {
+                $teamIds = [$teamId];
+            }
+
+            $validator = Validator::make(['team_ids' => $teamIds], [
                 'team_ids' => 'required|array',
                 'team_ids.*' => 'exists:teams,id'
             ]);
@@ -234,14 +253,41 @@ class ProgramController extends Controller
                 ], 422);
             }
 
-            $program->productionTeam()->sync($request->team_ids);
+            // Handle different modes
+            switch ($mode) {
+                case 'sync':
+                    // Replace all teams
+                    $program->teams()->sync($teamIds);
+                    break;
+                    
+                case 'detach':
+                    // Remove teams
+                    $program->teams()->detach($teamIds);
+                    break;
+                    
+                case 'attach':
+                default:
+                    // Add teams without removing existing ones
+                    // Check for duplicates before attaching
+                    $existingTeamIds = $program->teams()->pluck('teams.id')->toArray();
+                    $newTeamIds = array_diff($teamIds, $existingTeamIds);
+                    
+                    if (!empty($newTeamIds)) {
+                        $program->teams()->attach($newTeamIds);
+                    }
+                    break;
+            }
 
-            $program->load('episodes');
+            $program->load(['teams.teamLead', 'teams.members', 'episodes']);
 
             return response()->json([
                 'success' => true,
                 'data' => $program,
-                'message' => 'Teams assigned successfully'
+                'message' => match($mode) {
+                    'sync' => 'Teams synced successfully',
+                    'detach' => 'Teams removed successfully',
+                    default => 'Teams assigned successfully'
+                }
             ]);
         } catch (\Exception $e) {
             return response()->json([
