@@ -37,7 +37,7 @@ return [
 
     'google' => [
         'calendar_api_key' => env('GOOGLE_CALENDAR_API_KEY'),
-        'calendar_id' => env('GOOGLE_CALENDAR_ID', 'en.indonesian%23holiday%40group.v.calendar.google.com'),
+        'calendar_id' => env('GOOGLE_CALENDAR_ID', 'id.indonesian#holiday@group.v.calendar.google.com'),
     ],
 
 ];

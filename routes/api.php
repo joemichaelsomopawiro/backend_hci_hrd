@@ -437,7 +437,10 @@ Route::prefix('ga-dashboard')->middleware(['auth:sanctum'])->group(function () {
 });
 
 // ===== CALENDAR ROUTES =====
-// Routes untuk kalender nasional
+// Public route untuk national holidays (tidak perlu auth)
+Route::get('/calendar/national-holidays', [NationalHolidayController::class, 'getNationalHolidays']);
+
+// Routes untuk kalender nasional (perlu auth)
 Route::prefix('calendar')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/', [NationalHolidayController::class, 'index']);
     Route::get('/check', [NationalHolidayController::class, 'checkHoliday']);

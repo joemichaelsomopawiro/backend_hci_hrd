@@ -16,7 +16,33 @@ class GoogleCalendarService
     public function __construct()
     {
         $this->apiKey = config('services.google.calendar_api_key');
-        $this->calendarId = config('services.google.calendar_id', 'en.indonesian%23holiday%40group.v.calendar.google.com');
+        $rawCalendarId = config('services.google.calendar_id', 'id.indonesian#holiday@group.v.calendar.google.com');
+        
+        // Fix: Jika Calendar ID tidak lengkap (kurang dari 40 karakter), gunakan default lengkap
+        // Ini terjadi jika karakter # di .env dianggap sebagai komentar
+        if (strlen($rawCalendarId) < 40) {
+            \Illuminate\Support\Facades\Log::warning('Calendar ID from config is incomplete, using default', [
+                'config_calendar_id' => $rawCalendarId,
+                'config_length' => strlen($rawCalendarId),
+                'using_default' => 'id.indonesian#holiday@group.v.calendar.google.com'
+            ]);
+            $this->calendarId = 'id.indonesian#holiday@group.v.calendar.google.com';
+        } else {
+            $this->calendarId = $rawCalendarId;
+        }
+        
+        // Validasi API key
+        if (empty($this->apiKey)) {
+            \Illuminate\Support\Facades\Log::warning('Google Calendar API key is empty');
+        }
+        
+        // Log untuk debugging
+        \Illuminate\Support\Facades\Log::info('GoogleCalendarService initialized', [
+            'calendar_id' => $this->calendarId,
+            'calendar_id_length' => strlen($this->calendarId),
+            'has_api_key' => !empty($this->apiKey),
+            'api_key_preview' => !empty($this->apiKey) ? substr($this->apiKey, 0, 10) . '...' : 'empty'
+        ]);
     }
 
     /**
@@ -35,7 +61,20 @@ class GoogleCalendarService
             $startDate = "{$year}-01-01T00:00:00Z";
             $endDate = "{$year}-12-31T23:59:59Z";
             
-            $url = "{$this->baseUrl}/calendars/{$this->calendarId}/events";
+            // Encode calendar ID untuk URL
+            // Format: id.indonesian#holiday@group.v.calendar.google.com
+            // Perlu encode karakter # menjadi %23 dan @ menjadi %40
+            // Pastikan Calendar ID lengkap sebelum encode
+            if (empty($this->calendarId) || strlen($this->calendarId) < 40) {
+                // Fallback ke default jika masih tidak lengkap
+                $this->calendarId = 'id.indonesian#holiday@group.v.calendar.google.com';
+                \Illuminate\Support\Facades\Log::warning('Using fallback Calendar ID', [
+                    'calendar_id' => $this->calendarId
+                ]);
+            }
+            
+            $encodedCalendarId = str_replace(['#', '@'], ['%23', '%40'], $this->calendarId);
+            $url = "{$this->baseUrl}/calendars/{$encodedCalendarId}/events";
             $params = [
                 'key' => $this->apiKey,
                 'timeMin' => $startDate,
@@ -43,8 +82,16 @@ class GoogleCalendarService
                 'singleEvents' => 'true',
                 'orderBy' => 'startTime'
             ];
+            
+            \Illuminate\Support\Facades\Log::info('Google Calendar API Request', [
+                'url' => $url,
+                'calendar_id' => $this->calendarId,
+                'encoded_calendar_id' => $encodedCalendarId,
+                'has_api_key' => !empty($this->apiKey),
+                'api_key_preview' => !empty($this->apiKey) ? substr($this->apiKey, 0, 10) . '...' : 'empty'
+            ]);
 
-            $response = Http::get($url, $params);
+            $response = Http::timeout(10)->get($url, $params);
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -56,14 +103,34 @@ class GoogleCalendarService
                 return $holidays;
             }
 
-            // Jika API gagal, gunakan data statis
-            return $this->getStaticHolidays($year);
+            // Jika API gagal, log error dan throw exception
+            $errorBody = $response->json();
+            $errorMessage = $errorBody['error']['message'] ?? $response->body();
+            $errorDetails = $errorBody['error'] ?? [];
+            
+            \Illuminate\Support\Facades\Log::error('Google Calendar API Error', [
+                'status' => $response->status(),
+                'error' => $errorMessage,
+                'error_details' => $errorDetails,
+                'url' => $url,
+                'full_url' => $url . '?' . http_build_query($params),
+                'has_api_key' => !empty($this->apiKey),
+                'calendar_id' => $this->calendarId,
+                'encoded_calendar_id' => $encodedCalendarId,
+                'response_body' => $response->body()
+            ]);
+            
+            // Throw exception agar error ter-handle di controller
+            throw new \Exception("Google Calendar API Error: {$errorMessage} (Status: {$response->status()})");
 
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Google Calendar API Error: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::error('Google Calendar API Exception', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             
-            // Fallback ke data statis
-            return $this->getStaticHolidays($year);
+            // Re-throw exception agar ter-handle di controller
+            throw $e;
         }
     }
 
@@ -78,11 +145,22 @@ class GoogleCalendarService
             $startDate = $event['start']['date'] ?? null;
             if (!$startDate) continue;
 
+            $summary = $event['summary'] ?? 'Holiday';
+            $description = $event['description'] ?? '';
+            
+            // Deteksi cuti bersama dari nama/description
+            $isCutiBersama = stripos($summary, 'cuti bersama') !== false || 
+                            stripos($description, 'cuti bersama') !== false;
+            
+            // Deteksi perayaan (bukan hari libur nasional)
+            $isPerayaan = stripos($description, 'Perayaan') !== false ||
+                         stripos($summary, 'Malam') !== false;
+
             $holidays[] = [
                 'date' => $startDate,
-                'name' => $event['summary'],
-                'description' => $event['description'] ?? null,
-                'type' => 'national',
+                'name' => $summary,
+                'description' => $description,
+                'type' => $isCutiBersama ? 'cuti_bersama' : ($isPerayaan ? 'perayaan' : 'national'),
                 'is_active' => true,
                 'google_event_id' => $event['id'] ?? null
             ];
@@ -243,7 +321,9 @@ class GoogleCalendarService
             $startDate = "{$year}-01-01T00:00:00Z";
             $endDate = "{$year}-01-31T23:59:59Z";
             
-            $url = "{$this->baseUrl}/calendars/{$this->calendarId}/events";
+            // Encode calendar ID untuk URL
+            $encodedCalendarId = str_replace(['#', '@'], ['%23', '%40'], $this->calendarId);
+            $url = "{$this->baseUrl}/calendars/{$encodedCalendarId}/events";
             $params = [
                 'key' => $this->apiKey,
                 'timeMin' => $startDate,
