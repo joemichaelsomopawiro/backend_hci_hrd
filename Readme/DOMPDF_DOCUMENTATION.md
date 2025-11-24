@@ -253,3 +253,4 @@ public function downloadLetter($id)
 **Version**: DomPDF v3.1.0, Laravel DomPDF v3.1.1
 
 
+
