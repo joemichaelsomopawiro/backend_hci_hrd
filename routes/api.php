@@ -250,21 +250,22 @@ Route::get('/test-cors', function () {
     ]);
 });
 
-// Auth routes
+// Auth routes - dengan rate limiting untuk prevent brute force
 Route::prefix('auth')->group(function () {
-    Route::post('/send-register-otp', [AuthController::class, 'sendRegisterOtp']);
-    Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
-    Route::post('/resend-otp', [AuthController::class, 'resendOtp']);
-    Route::post('/register', [AuthController::class, 'register']);
-    Route::post('/login', [AuthController::class, 'login']);
-    Route::post('/send-forgot-password-otp', [AuthController::class, 'sendForgotPasswordOtp']);
-    Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+    Route::post('/send-register-otp', [AuthController::class, 'sendRegisterOtp'])->middleware('throttle:auth');
+    Route::post('/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:auth');
+    Route::post('/resend-otp', [AuthController::class, 'resendOtp'])->middleware('throttle:auth');
+    Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:auth');
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:auth');
+    Route::post('/send-forgot-password-otp', [AuthController::class, 'sendForgotPasswordOtp'])->middleware('throttle:auth');
+    Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:auth');
     
     Route::middleware('auth:sanctum')->group(function () {
+        Route::post('/refresh', [AuthController::class, 'refresh'])->middleware('throttle:sensitive'); // Refresh token
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
         Route::get('/check-employee-status', [AuthController::class, 'checkEmployeeStatus']);
-        Route::post('/upload-profile-picture', [AuthController::class, 'uploadProfilePicture']);
+        Route::post('/upload-profile-picture', [AuthController::class, 'uploadProfilePicture'])->middleware('throttle:uploads');
         Route::delete('/delete-profile-picture', [AuthController::class, 'deleteProfilePicture']);
     });
 });

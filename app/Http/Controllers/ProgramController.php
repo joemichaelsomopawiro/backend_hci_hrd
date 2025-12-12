@@ -20,7 +20,18 @@ class ProgramController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            $user = auth()->user();
+            
             $query = Program::with(['managerProgram', 'productionTeam', 'episodes', 'episodes']);
+
+            // Filter: HR tidak boleh melihat program musik
+            // Program musik adalah program yang memiliki production team dengan member role 'musik_arr'
+            if ($user && $user->role === 'HR') {
+                $query->whereDoesntHave('productionTeam.members', function ($q) {
+                    $q->where('role', 'musik_arr')
+                      ->where('is_active', true);
+                });
+            }
 
             // Filter berdasarkan status
             if ($request->has('status')) {

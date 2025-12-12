@@ -440,4 +440,90 @@ class DesignGrafisController extends Controller
             ]);
         }
     }
+
+    /**
+     * Ajukan ke QC - Design Grafis submit file locations ke QC
+     * POST /api/live-tv/design-grafis/works/{id}/submit-to-qc
+     */
+    public function submitToQC(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Design Grafis') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = \App\Models\DesignGrafisWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            if (!$work->file_paths || empty($work->file_paths)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please upload files before submitting to QC'
+                ], 400);
+            }
+
+            // Create or update QualityControlWork
+            $qcWork = \App\Models\QualityControlWork::updateOrCreate(
+                [
+                    'episode_id' => $work->episode_id,
+                    'qc_type' => 'thumbnail_yt' // Default, bisa disesuaikan
+                ],
+                [
+                    'title' => "QC Work - Episode {$work->episode->episode_number}",
+                    'description' => "File dari Design Grafis untuk QC",
+                    'design_grafis_file_locations' => array_map(function($path) {
+                        return [
+                            'file_path' => $path,
+                            'file_name' => basename($path),
+                            'source' => 'design_grafis'
+                        ];
+                    }, $work->file_paths),
+                    'status' => 'pending',
+                    'created_by' => $user->id
+                ]
+            );
+
+            // Notify Quality Control
+            $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+            foreach ($qcUsers as $qcUser) {
+                Notification::create([
+                    'user_id' => $qcUser->id,
+                    'type' => 'qc_work_assigned',
+                    'title' => 'Tugas QC Baru',
+                    'message' => "Design Grafis telah mengajukan file untuk QC Episode {$work->episode->episode_number}.",
+                    'data' => [
+                        'qc_work_id' => $qcWork->id,
+                        'episode_id' => $work->episode_id,
+                        'design_grafis_work_id' => $work->id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'qc_work' => $qcWork->fresh(['episode', 'createdBy']),
+                    'design_grafis_work' => $work->fresh(['episode', 'createdBy'])
+                ],
+                'message' => 'Files submitted to QC successfully. Quality Control has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error submitting to QC: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

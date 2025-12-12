@@ -540,6 +540,793 @@ class PromosiController extends Controller
     }
 
     /**
+     * Terima Jadwal Syuting - Promosi terima jadwal syuting dari Creative Work
+     * POST /api/live-tv/roles/promosi/works/{id}/accept-schedule
+     */
+    public function acceptSchedule(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = PromotionWork::with(['episode.creativeWork'])->findOrFail($id);
+
+            // Get shooting schedule from Creative Work
+            $creativeWork = $work->episode->creativeWork;
+            if (!$creativeWork || !$creativeWork->shooting_schedule) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Shooting schedule not found in Creative Work'
+                ], 400);
+            }
+
+            // Update work with shooting schedule
+            $work->update([
+                'shooting_date' => $creativeWork->shooting_schedule,
+                'shooting_time' => $creativeWork->shooting_schedule ? \Carbon\Carbon::parse($creativeWork->shooting_schedule)->format('H:i') : null,
+                'location_data' => [
+                    'shooting_location' => $creativeWork->shooting_location ?? null,
+                    'accepted_at' => now()->toDateTimeString(),
+                    'accepted_by' => $user->id
+                ]
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Shooting schedule accepted successfully. Date: ' . \Carbon\Carbon::parse($creativeWork->shooting_schedule)->format('d M Y') . 
+                            ($creativeWork->shooting_location ? ', Location: ' . $creativeWork->shooting_location : '')
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting shooting schedule: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Terima Pekerjaan - Promosi terima pekerjaan setelah Producer approve Creative Work
+     * POST /api/live-tv/roles/promosi/works/{id}/accept-work
+     */
+    public function acceptWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+
+            if ($work->status !== 'planning') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is planning'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'shooting',
+                'created_by' => $user->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work accepted successfully. You can now proceed with shooting.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload BTS Video
+     * POST /api/live-tv/roles/promosi/works/{id}/upload-bts-video
+     */
+    public function uploadBTSVideo(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'bts_video' => 'required|file|mimes:mp4,avi,mov|max:102400' // 100MB max
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This work is not assigned to you.'
+                ], 403);
+            }
+
+            $file = $request->file('bts_video');
+            $filename = time() . '_' . $file->getClientOriginalName();
+            $path = $file->storeAs('promosi/bts_videos', $filename, 'public');
+
+            $filePaths = $work->file_paths ?? [];
+            $filePaths[] = [
+                'type' => 'bts_video',
+                'filename' => $filename,
+                'path' => $path,
+                'url' => asset('storage/' . $path),
+                'size' => $file->getSize(),
+                'mime_type' => $file->getMimeType(),
+                'uploaded_at' => now()->toDateTimeString()
+            ];
+
+            $work->update([
+                'file_paths' => $filePaths
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'work' => $work->fresh(['episode']),
+                    'bts_video_path' => $path,
+                    'bts_video_url' => asset('storage/' . $path)
+                ],
+                'message' => 'BTS video uploaded successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading BTS video: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload Talent Photos
+     * POST /api/live-tv/roles/promosi/works/{id}/upload-talent-photos
+     */
+    public function uploadTalentPhotos(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'talent_photos' => 'required|array|min:1',
+                'talent_photos.*' => 'file|mimes:jpg,jpeg,png|max:10240' // 10MB max per photo
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This work is not assigned to you.'
+                ], 403);
+            }
+
+            $filePaths = $work->file_paths ?? [];
+            foreach ($request->file('talent_photos') as $index => $photo) {
+                $filename = time() . '_' . $index . '_' . $photo->getClientOriginalName();
+                $path = $photo->storeAs('promosi/talent_photos', $filename, 'public');
+                
+                $filePaths[] = [
+                    'type' => 'talent_photo',
+                    'filename' => $filename,
+                    'path' => $path,
+                    'url' => asset('storage/' . $path),
+                    'size' => $photo->getSize(),
+                    'mime_type' => $photo->getMimeType(),
+                    'uploaded_at' => now()->toDateTimeString()
+                ];
+            }
+
+            $work->update([
+                'file_paths' => $filePaths
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode']),
+                'message' => 'Talent photos uploaded successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading talent photos: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Selesaikan Pekerjaan - Promosi selesaikan setelah upload semua file
+     * POST /api/live-tv/roles/promosi/works/{id}/complete-work
+     */
+    public function completeWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This work is not assigned to you.'
+                ], 403);
+            }
+
+            if ($work->status !== 'shooting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be completed when status is shooting'
+                ], 400);
+            }
+
+            // Validate files uploaded
+            $filePaths = $work->file_paths ?? [];
+            $hasBTSVideo = collect($filePaths)->contains('type', 'bts_video');
+            $hasTalentPhotos = collect($filePaths)->where('type', 'talent_photo')->isNotEmpty();
+
+            if (!$hasBTSVideo || !$hasTalentPhotos) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please upload BTS video and talent photos before completing work'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'published'
+            ]);
+
+            // Notify Producer
+            $episode = $work->episode;
+            $productionTeam = $episode->program->productionTeam;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'promosi_work_completed',
+                    'title' => 'Promosi Work Selesai',
+                    'message' => "Promosi telah menyelesaikan BTS video dan foto talent untuk Episode {$episode->episode_number}.",
+                    'data' => [
+                        'promotion_work_id' => $work->id,
+                        'episode_id' => $work->episode_id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work completed successfully. Producer has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error completing work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Terima Link YouTube dan Website - Promosi terima link dari Broadcasting
+     * POST /api/live-tv/promosi/episodes/{id}/receive-links
+     */
+    public function receiveLinks(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'youtube_url' => 'required|url',
+                'website_url' => 'required|url'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode = Episode::findOrFail($id);
+
+            // Update episode with links
+            $episode->update([
+                'youtube_url' => $request->youtube_url,
+                'website_url' => $request->website_url
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $episode->fresh(),
+                'message' => 'Links received successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error receiving links: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Terima Pekerjaan - Promosi terima pekerjaan setelah QC/Broadcasting
+     * POST /api/live-tv/promosi/works/{id}/accept-work
+     */
+    public function acceptPromotionWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+
+            if ($work->status !== 'planning' && $work->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is planning or pending'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'in_progress',
+                'created_by' => $user->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work accepted successfully. You can now proceed with promotion tasks.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Share Link Website ke Facebook dengan Bukti
+     * POST /api/live-tv/promosi/episodes/{id}/share-facebook
+     */
+    public function shareFacebook(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'website_url' => 'required|url',
+                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:5120',
+                'post_url' => 'nullable|url',
+                'notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode = Episode::findOrFail($id);
+
+            // Upload proof file
+            $proofFile = $request->file('proof_file');
+            $proofPath = $proofFile->storeAs('promosi/facebook_proofs', time() . '_' . $proofFile->getClientOriginalName(), 'public');
+            $proofUrl = Storage::url($proofPath);
+
+            // Store sharing info
+            $shares = $episode->promosi_social_shares ?? [];
+            $shares[] = [
+                'platform' => 'facebook',
+                'type' => 'website_link_share',
+                'website_url' => $request->website_url,
+                'post_url' => $request->post_url,
+                'proof_url' => $proofUrl,
+                'proof_path' => $proofPath,
+                'notes' => $request->notes,
+                'shared_at' => now()->toDateTimeString(),
+                'shared_by' => $user->id
+            ];
+
+            $episode->update([
+                'promosi_social_shares' => $shares
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode' => $episode->fresh(),
+                    'share_info' => end($shares)
+                ],
+                'message' => 'Facebook share recorded successfully with proof'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error sharing to Facebook: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Buat Video Highlight untuk Story IG dengan Bukti
+     * POST /api/live-tv/promosi/episodes/{id}/create-ig-story-highlight
+     */
+    public function createIGStoryHighlight(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'video_file' => 'required|file|mimes:mp4,mov|max:100000',
+                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:5120',
+                'story_url' => 'nullable|url',
+                'notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode = Episode::findOrFail($id);
+
+            // Upload video file
+            $videoFile = $request->file('video_file');
+            $videoPath = $videoFile->storeAs('promosi/ig_story_highlights', time() . '_' . $videoFile->getClientOriginalName(), 'public');
+            $videoUrl = Storage::url($videoPath);
+
+            // Upload proof file
+            $proofFile = $request->file('proof_file');
+            $proofPath = $proofFile->storeAs('promosi/ig_story_proofs', time() . '_' . $proofFile->getClientOriginalName(), 'public');
+            $proofUrl = Storage::url($proofPath);
+
+            // Store highlight info
+            $highlights = $episode->promosi_ig_story_urls ?? [];
+            $highlights[] = [
+                'video_url' => $videoUrl,
+                'video_path' => $videoPath,
+                'story_url' => $request->story_url,
+                'proof_url' => $proofUrl,
+                'proof_path' => $proofPath,
+                'notes' => $request->notes,
+                'created_at' => now()->toDateTimeString(),
+                'created_by' => $user->id
+            ];
+
+            $episode->update([
+                'promosi_ig_story_urls' => $highlights
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode' => $episode->fresh(),
+                    'highlight' => end($highlights)
+                ],
+                'message' => 'IG Story highlight created successfully with proof'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error creating IG Story highlight: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Buat Video Highlight untuk Reels Facebook dengan Bukti
+     * POST /api/live-tv/promosi/episodes/{id}/create-fb-reels-highlight
+     */
+    public function createFBReelsHighlight(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'video_file' => 'required|file|mimes:mp4,mov|max:100000',
+                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:5120',
+                'reels_url' => 'nullable|url',
+                'notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode = Episode::findOrFail($id);
+
+            // Upload video file
+            $videoFile = $request->file('video_file');
+            $videoPath = $videoFile->storeAs('promosi/fb_reels_highlights', time() . '_' . $videoFile->getClientOriginalName(), 'public');
+            $videoUrl = Storage::url($videoPath);
+
+            // Upload proof file
+            $proofFile = $request->file('proof_file');
+            $proofPath = $proofFile->storeAs('promosi/fb_reels_proofs', time() . '_' . $proofFile->getClientOriginalName(), 'public');
+            $proofUrl = Storage::url($proofPath);
+
+            // Store highlight info
+            $highlights = $episode->promosi_fb_reel_urls ?? [];
+            $highlights[] = [
+                'video_url' => $videoUrl,
+                'video_path' => $videoPath,
+                'reels_url' => $request->reels_url,
+                'proof_url' => $proofUrl,
+                'proof_path' => $proofPath,
+                'notes' => $request->notes,
+                'created_at' => now()->toDateTimeString(),
+                'created_by' => $user->id
+            ];
+
+            $episode->update([
+                'promosi_fb_reel_urls' => $highlights
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode' => $episode->fresh(),
+                    'highlight' => end($highlights)
+                ],
+                'message' => 'Facebook Reels highlight created successfully with proof'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error creating Facebook Reels highlight: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Share ke Grup Promosi WA dengan Bukti
+     * POST /api/live-tv/promosi/episodes/{id}/share-wa-group
+     */
+    public function shareWAGroup(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'group_name' => 'required|string|max:255',
+                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:5120',
+                'message' => 'nullable|string',
+                'notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode = Episode::findOrFail($id);
+
+            // Upload proof file
+            $proofFile = $request->file('proof_file');
+            $proofPath = $proofFile->storeAs('promosi/wa_group_proofs', time() . '_' . $proofFile->getClientOriginalName(), 'public');
+            $proofUrl = Storage::url($proofPath);
+
+            // Store sharing info
+            $shares = $episode->promosi_social_shares ?? [];
+            $shares[] = [
+                'platform' => 'whatsapp',
+                'type' => 'group_share',
+                'group_name' => $request->group_name,
+                'message' => $request->message,
+                'proof_url' => $proofUrl,
+                'proof_path' => $proofPath,
+                'notes' => $request->notes,
+                'shared_at' => now()->toDateTimeString(),
+                'shared_by' => $user->id
+            ];
+
+            $episode->update([
+                'promosi_social_shares' => $shares
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode' => $episode->fresh(),
+                    'share_info' => end($shares)
+                ],
+                'message' => 'WhatsApp group share recorded successfully with proof'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error sharing to WhatsApp group: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Selesaikan Pekerjaan Promosi
+     * POST /api/live-tv/promosi/works/{id}/complete-promotion-work
+     */
+    public function completePromotionWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = PromotionWork::with(['episode'])->findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            if ($work->status !== 'in_progress') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be completed when status is in_progress'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'published',
+                'reviewed_at' => now()
+            ]);
+
+            // Notify Producer
+            $episode = $work->episode;
+            $productionTeam = $episode->program->productionTeam ?? null;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'promotion_work_completed',
+                    'title' => 'Promosi Work Selesai',
+                    'message' => "Promosi telah menyelesaikan pekerjaan untuk Episode {$episode->episode_number}.",
+                    'data' => [
+                        'promotion_work_id' => $work->id,
+                        'episode_id' => $work->episode_id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Promotion work completed successfully. Producer has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error completing promotion work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Notify Design Grafis about new BTS content
      */
     private function notifyDesignGrafis($work, $files): void

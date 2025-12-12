@@ -51,7 +51,8 @@ class ProgramApproval extends Model
         'production_schedule' => 'Approval Jadwal Syuting',
         'schedule_change' => 'Approval Perubahan Jadwal',
         'schedule_cancellation' => 'Approval Pembatalan Jadwal',
-        'deadline_extension' => 'Approval Perpanjangan Deadline'
+        'deadline_extension' => 'Approval Perpanjangan Deadline',
+        'special_budget' => 'Approval Budget Khusus'
     ];
 
     const PRIORITIES = [

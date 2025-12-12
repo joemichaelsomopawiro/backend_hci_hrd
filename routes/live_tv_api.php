@@ -27,6 +27,7 @@ use App\Http\Controllers\Api\QualityControlController;
 use App\Http\Controllers\Api\BroadcastingController;
 use App\Http\Controllers\Api\ArtSetPropertiController;
 use App\Http\Controllers\Api\PromosiController;
+use App\Http\Controllers\Api\ProduksiController;
 use App\Http\Controllers\Api\ManagerBroadcastingController;
 use App\Http\Controllers\Api\ProductionEquipmentController;
 use App\Http\Controllers\Api\DistributionManagerController;
@@ -119,6 +120,16 @@ Route::prefix('manager-program')->middleware('auth:sanctum')->group(function () 
     // Quality Control Monitoring (GET only)
     Route::get('/programs/{programId}/quality-controls', [ManagerProgramController::class, 'getQualityControls']);
     Route::get('/episodes/{episodeId}/quality-controls', [ManagerProgramController::class, 'getEpisodeQualityControls']);
+    
+    // Rundown Edit Approval
+    Route::get('/rundown-edit-requests', [ManagerProgramController::class, 'getRundownEditRequests']);
+    Route::post('/rundown-edit-requests/{approvalId}/approve', [ManagerProgramController::class, 'approveRundownEdit']);
+    Route::post('/rundown-edit-requests/{approvalId}/reject', [ManagerProgramController::class, 'rejectRundownEdit']);
+    
+    // Special Budget Approval
+    Route::get('/special-budget-approvals', [ManagerProgramController::class, 'getSpecialBudgetApprovals']);
+    Route::post('/special-budget-approvals/{id}/approve', [ManagerProgramController::class, 'approveSpecialBudget']);
+    Route::post('/special-budget-approvals/{id}/reject', [ManagerProgramController::class, 'rejectSpecialBudget']);
 });
 
 // Episode Management Routes
@@ -235,8 +246,8 @@ Route::prefix('production-teams')->middleware('auth:sanctum')->group(function ()
     Route::post('/{id}/reactivate', [ProductionTeamController::class, 'reactivate']);
 });
 
-// File Upload Routes
-Route::prefix('files')->group(function () {
+// File Upload Routes - dengan rate limiting
+Route::prefix('files')->middleware(['auth:sanctum', 'throttle:uploads'])->group(function () {
     Route::post('/upload', [FileUploadController::class, 'upload']);
     Route::post('/upload-multiple', [FileUploadController::class, 'uploadMultiple']);
     Route::delete('/{id}', [FileUploadController::class, 'delete']);
@@ -263,11 +274,17 @@ Route::prefix('roles')->group(function () {
     // Music Arranger Routes
     Route::prefix('music-arranger')->middleware('auth:sanctum')->group(function () {
         Route::get('/arrangements', [MusicArrangerController::class, 'index']);
-        Route::post('/arrangements', [MusicArrangerController::class, 'store']);
+        Route::post('/arrangements', [MusicArrangerController::class, 'store'])->middleware('throttle:uploads'); // Rate limit untuk upload
         Route::get('/arrangements/{id}', [MusicArrangerController::class, 'show']);
-        Route::put('/arrangements/{id}', [MusicArrangerController::class, 'update']);
-        Route::post('/arrangements/{id}/submit', [MusicArrangerController::class, 'submit']);
+        Route::put('/arrangements/{id}', [MusicArrangerController::class, 'update'])->middleware('throttle:uploads'); // Rate limit untuk upload
+        Route::post('/arrangements/{id}/submit-song-proposal', [MusicArrangerController::class, 'submitSongProposal'])->middleware('throttle:sensitive'); // Ajukan lagu & penyanyi
+        Route::post('/arrangements/{id}/submit', [MusicArrangerController::class, 'submit'])->middleware('throttle:uploads'); // Submit arrangement file
+        Route::post('/arrangements/{id}/accept-work', [MusicArrangerController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima pekerjaan
+        Route::post('/arrangements/{id}/complete-work', [MusicArrangerController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
         Route::get('/statistics', [MusicArrangerController::class, 'statistics']);
+        // Optional: Pilih lagu dari database
+        Route::get('/songs', [MusicArrangerController::class, 'getAvailableSongs']);
+        Route::get('/singers', [MusicArrangerController::class, 'getAvailableSingers']);
     });
 
     // Production Equipment Routes
@@ -280,22 +297,47 @@ Route::prefix('roles')->group(function () {
     });
     
     // Creative Routes
-    Route::prefix('creative')->group(function () {
+    Route::prefix('creative')->middleware('auth:sanctum')->group(function () {
         Route::get('/works', [CreativeController::class, 'index']);
         Route::post('/works', [CreativeController::class, 'store']);
         Route::get('/works/{id}', [CreativeController::class, 'show']);
         Route::put('/works/{id}', [CreativeController::class, 'update']);
         Route::post('/works/{id}/submit', [CreativeController::class, 'submit']);
+        Route::post('/works/{id}/accept-work', [CreativeController::class, 'acceptWork']); // Terima pekerjaan
+        Route::post('/works/{id}/complete-work', [CreativeController::class, 'completeWork']); // Selesaikan pekerjaan
+        Route::put('/works/{id}/revise', [CreativeController::class, 'reviseCreativeWork']); // Revisi setelah budget ditolak
+        Route::post('/works/{id}/resubmit', [CreativeController::class, 'resubmitCreativeWork']); // Resubmit setelah revisi
     });
     
     // Sound Engineer Routes
-    Route::prefix('sound-engineer')->group(function () {
+    Route::prefix('sound-engineer')->middleware('auth:sanctum')->group(function () {
+        // Approved Arrangements (new endpoints)
+        Route::get('/approved-arrangements', [SoundEngineerController::class, 'getApprovedArrangements']);
+        Route::get('/episodes/{episodeId}/arrangement', [SoundEngineerController::class, 'getArrangementByEpisode']);
+        Route::post('/arrangements/{arrangementId}/create-recording', [SoundEngineerController::class, 'createRecordingFromArrangement']);
+
+        // Recording Management
         Route::get('/recordings', [SoundEngineerController::class, 'index']);
         Route::post('/recordings', [SoundEngineerController::class, 'store']);
         Route::get('/recordings/{id}', [SoundEngineerController::class, 'show']);
         Route::put('/recordings/{id}', [SoundEngineerController::class, 'update']);
         Route::post('/recordings/{id}/start', [SoundEngineerController::class, 'startRecording']);
         Route::post('/recordings/{id}/complete', [SoundEngineerController::class, 'completeRecording']);
+        Route::get('/statistics', [SoundEngineerController::class, 'getStatistics']);
+        
+        // Help fix rejected arrangements
+        Route::get('/rejected-arrangements', [SoundEngineerController::class, 'getRejectedArrangementsNeedingHelp']);
+        Route::post('/arrangements/{arrangementId}/help-fix', [SoundEngineerController::class, 'helpFixArrangement']);
+        
+        // Bantu perbaikan song proposal yang ditolak
+        Route::get('/rejected-song-proposals', [SoundEngineerController::class, 'getRejectedSongProposals']); // Terima Notifikasi
+        Route::post('/song-proposals/{arrangementId}/help-fix', [SoundEngineerController::class, 'helpFixSongProposal']); // Bantu Perbaikan
+        
+        // Terima jadwal rekaman vokal dan request equipment
+        Route::post('/recordings/{id}/accept-work', [SoundEngineerController::class, 'acceptWork']); // Terima pekerjaan
+        Route::post('/recordings/{id}/accept-schedule', [SoundEngineerController::class, 'acceptRecordingSchedule']); // Terima jadwal rekaman vokal
+        Route::post('/recordings/{id}/request-equipment', [SoundEngineerController::class, 'requestEquipment']); // Input list alat dan ajukan ke Art & Set Properti
+        Route::post('/recordings/{id}/complete-work', [SoundEngineerController::class, 'completeWork']); // Selesaikan pekerjaan setelah input list alat
     });
     
     // Editor Routes
@@ -306,6 +348,8 @@ Route::prefix('roles')->group(function () {
         Route::put('/works/{id}', [EditorController::class, 'update']);
         Route::post('/works/{id}/submit', [EditorController::class, 'submit']);
         Route::post('/works/{id}/report-missing-files', [EditorController::class, 'reportMissingFiles']);
+        Route::get('/episodes/{episodeId}/approved-audio', [EditorController::class, 'getApprovedAudioFiles']);
+        Route::get('/episodes/{id}/run-sheet', [EditorController::class, 'getRunSheet']); // Lihat catatan syuting (run sheet)
     });
     
     // Design Grafis Routes
@@ -317,6 +361,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/works/{id}/upload', [DesignGrafisController::class, 'uploadFiles']);
         Route::get('/shared-files', [DesignGrafisController::class, 'getSharedFiles']);
         Route::get('/statistics', [DesignGrafisController::class, 'statistics']);
+        Route::post('/works/{id}/submit-to-qc', [DesignGrafisController::class, 'submitToQC']); // Ajukan ke QC
     });
 
     // Editor Promosi Routes
@@ -328,6 +373,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/works/{id}/upload', [EditorPromosiController::class, 'uploadFiles']);
         Route::get('/source-files', [EditorPromosiController::class, 'getSourceFiles']);
         Route::get('/statistics', [EditorPromosiController::class, 'statistics']);
+        Route::post('/works/{id}/submit-to-qc', [EditorPromosiController::class, 'submitToQC']); // Ajukan ke QC
     });
 
     // File Sharing Routes
@@ -349,6 +395,14 @@ Route::prefix('roles')->group(function () {
         Route::post('/controls/{id}/approve', [QualityControlController::class, 'approve']);
         Route::post('/controls/{id}/reject', [QualityControlController::class, 'reject']);
         Route::get('/statistics', [QualityControlController::class, 'statistics']);
+        
+        // New workflow methods
+        Route::get('/works', [QualityControlController::class, 'index']); // Get QC works
+        Route::post('/works/{id}/receive-editor-promosi-files', [QualityControlController::class, 'receiveEditorPromosiFiles']); // Terima lokasi file dari Editor Promosi
+        Route::post('/works/{id}/receive-design-grafis-files', [QualityControlController::class, 'receiveDesignGrafisFiles']); // Terima lokasi file dari Design Grafis
+        Route::post('/works/{id}/accept-work', [QualityControlController::class, 'acceptWork']); // Terima pekerjaan
+        Route::post('/works/{id}/qc-content', [QualityControlController::class, 'qcContent']); // QC berbagai konten
+        Route::post('/works/{id}/finalize', [QualityControlController::class, 'finalize']); // Selesaikan pekerjaan (approve/reject)
     });
 
     // Broadcasting Routes
@@ -361,6 +415,14 @@ Route::prefix('roles')->group(function () {
         Route::post('/schedules/{id}/publish', [BroadcastingController::class, 'publish']);
         Route::post('/schedules/{id}/schedule-playlist', [BroadcastingController::class, 'schedulePlaylist']);
         Route::get('/statistics', [BroadcastingController::class, 'statistics']);
+        
+        // New workflow methods
+        Route::get('/works', [BroadcastingController::class, 'index']); // Get broadcasting works
+        Route::post('/works/{id}/accept-work', [BroadcastingController::class, 'acceptWork']); // Terima pekerjaan
+        Route::post('/works/{id}/upload-youtube', [BroadcastingController::class, 'uploadYouTube']); // Upload ke YouTube dengan SEO
+        Route::post('/works/{id}/upload-website', [BroadcastingController::class, 'uploadWebsite']); // Upload ke website
+        Route::post('/works/{id}/input-youtube-link', [BroadcastingController::class, 'inputYouTubeLink']); // Input link YT ke sistem
+        Route::post('/works/{id}/complete-work', [BroadcastingController::class, 'completeWork']); // Selesaikan pekerjaan
     });
 
     // Art & Set Properti Routes
@@ -378,10 +440,37 @@ Route::prefix('roles')->group(function () {
         Route::get('/works', [PromosiController::class, 'index']);
         Route::post('/works', [PromosiController::class, 'store']);
         Route::post('/works/{id}/upload-bts', [PromosiController::class, 'uploadBTSContent']);
+        Route::post('/works/{id}/accept-schedule', [PromosiController::class, 'acceptSchedule']); // Terima jadwal syuting
+        Route::post('/works/{id}/accept-work', [PromosiController::class, 'acceptWork']); // Terima pekerjaan
+        Route::post('/works/{id}/upload-bts-video', [PromosiController::class, 'uploadBTSVideo']); // Upload BTS video
+        Route::post('/works/{id}/upload-talent-photos', [PromosiController::class, 'uploadTalentPhotos']); // Upload foto talent
+        Route::post('/works/{id}/complete-work', [PromosiController::class, 'completeWork']); // Selesaikan pekerjaan
         Route::post('/social-media', [PromosiController::class, 'createSocialMediaPost']);
         Route::get('/social-media', [PromosiController::class, 'getSocialMediaPosts']);
         Route::post('/social-media/{id}/submit-proof', [PromosiController::class, 'submitSocialProof']);
         Route::get('/statistics', [PromosiController::class, 'statistics']);
+        
+        // New workflow methods (setelah QC/Broadcasting)
+        Route::post('/episodes/{id}/receive-links', [PromosiController::class, 'receiveLinks']); // Terima link YouTube dan website
+        Route::post('/works/{id}/accept-promotion-work', [PromosiController::class, 'acceptPromotionWork']); // Terima pekerjaan promosi
+        Route::post('/episodes/{id}/share-facebook', [PromosiController::class, 'shareFacebook']); // Share link website ke Facebook dengan bukti
+        Route::post('/episodes/{id}/create-ig-story-highlight', [PromosiController::class, 'createIGStoryHighlight']); // Buat video highlight untuk story IG dengan bukti
+        Route::post('/episodes/{id}/create-fb-reels-highlight', [PromosiController::class, 'createFBReelsHighlight']); // Buat video highlight untuk reels Facebook dengan bukti
+        Route::post('/episodes/{id}/share-wa-group', [PromosiController::class, 'shareWAGroup']); // Share ke grup promosi WA dengan bukti
+        Route::post('/works/{id}/complete-promotion-work', [PromosiController::class, 'completePromotionWork']); // Selesaikan pekerjaan promosi
+    });
+
+    // Produksi Routes
+    Route::prefix('produksi')->middleware('auth:sanctum')->group(function () {
+        Route::get('/works', [ProduksiController::class, 'index']);
+        Route::post('/works/{id}/accept-work', [ProduksiController::class, 'acceptWork']); // Terima pekerjaan
+        Route::post('/works/{id}/request-equipment', [ProduksiController::class, 'requestEquipment']); // Input list alat dan ajukan ke Art & Set Properti
+        Route::post('/works/{id}/request-needs', [ProduksiController::class, 'requestNeeds']); // Ajukan kebutuhan
+        Route::post('/works/{id}/create-run-sheet', [ProduksiController::class, 'createRunSheet']); // Input form catatan syuting (run sheet)
+        Route::post('/works/{id}/upload-shooting-results', [ProduksiController::class, 'uploadShootingResults']); // Upload hasil syuting ke storage
+        Route::post('/works/{id}/input-file-links', [ProduksiController::class, 'inputFileLinks']); // Input link file di sistem
+        Route::post('/works/{id}/complete-work', [ProduksiController::class, 'completeWork']); // Selesaikan pekerjaan
+        Route::get('/qc-results/{episode_id}', [ProduksiController::class, 'getQCResults']); // Baca hasil QC
     });
 
     // Manager Broadcasting Routes
@@ -417,6 +506,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/budget-requests/{id}/reject', [GeneralAffairsController::class, 'reject']);
         Route::post('/budget-requests/{id}/process-payment', [GeneralAffairsController::class, 'processPayment']);
         Route::get('/budget-requests/program/{programId}', [GeneralAffairsController::class, 'getByProgram']);
+        Route::get('/budget-requests/from-creative-work', [GeneralAffairsController::class, 'getCreativeWorkBudgetRequests']); // Permohonan dana dari Creative Work
         Route::get('/statistics', [GeneralAffairsController::class, 'statistics']);
     });
 
@@ -482,6 +572,29 @@ Route::prefix('producer')->middleware('auth:sanctum')->group(function () {
     Route::post('/creative-works/{creativeWorkId}/assign-teams', [ProducerController::class, 'assignProductionTeams']);
     Route::post('/schedules/{id}/cancel', [ProducerController::class, 'cancelSchedule']);
     Route::put('/schedules/{scheduleId}/emergency-reassign-team', [ProducerController::class, 'emergencyReassignTeam']);
+    Route::post('/episodes/{episodeId}/edit-rundown', [ProducerController::class, 'editRundown']);
+    
+    // Edit arrangement song/singer sebelum approve
+    Route::put('/arrangements/{arrangementId}/edit-song-singer', [ProducerController::class, 'editArrangementSongSinger']);
+    
+    // Kirim reminder manual ke crew
+    Route::post('/send-reminder-to-crew', [ProducerController::class, 'sendReminderToCrew']);
+    
+    // Weekly Airing Control
+    Route::get('/weekly-airing-control', [ProducerController::class, 'getWeeklyAiringControl']);
+    Route::get('/episodes/upcoming-this-week', [ProducerController::class, 'getUpcomingEpisodesThisWeek']);
+    Route::get('/episodes/ready-this-week', [ProducerController::class, 'getReadyEpisodesThisWeek']);
+    
+    // Creative Work Management
+    Route::post('/creative-works/{id}/review', [ProducerController::class, 'reviewCreativeWork']); // Cek script, storyboard, budget
+    Route::post('/creative-works/{id}/assign-team', [ProducerController::class, 'assignTeamToCreativeWork']); // Tambah tim syuting/setting/rekam vokal
+    Route::put('/creative-works/{id}/edit', [ProducerController::class, 'editCreativeWork']); // Edit creative work langsung
+    Route::post('/creative-works/{id}/cancel-shooting', [ProducerController::class, 'cancelShootingSchedule']); // Cancel jadwal syuting
+    Route::post('/creative-works/{id}/request-special-budget', [ProducerController::class, 'requestSpecialBudget']); // Ajukan budget khusus ke Manager Program
+    Route::post('/creative-works/{id}/final-approval', [ProducerController::class, 'finalApproveCreativeWork']); // Approve/reject dengan review detail
+    
+    // Team Management
+    Route::put('/team-assignments/{assignmentId}/replace-team', [ProducerController::class, 'replaceTeamMembers']); // Ganti tim syuting secara dadakan
 });
 
 // Production Routes (Alias untuk shooting schedules)

@@ -219,15 +219,24 @@ class AuthController extends Controller
             ], 401);
         }
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        // Create access token dengan expiration (1 hour)
+        $token = $user->createToken('auth_token', ['*'], now()->addHour())->plainTextToken;
 
         return response()->json([
             'success' => true,
             'message' => 'Login berhasil',
             'data' => [
-                'user' => $user,
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'role' => $user->role,
+                    // Jangan expose password, token, dll
+                ],
                 'token' => $token,
-                'token_type' => 'Bearer'
+                'token_type' => 'Bearer',
+                'expires_in' => 3600 // 1 hour in seconds
             ]
         ]);
     }
@@ -393,6 +402,68 @@ class AuthController extends Controller
         }
     }
     
+    /**
+     * Refresh Token - Generate new token untuk user yang sudah authenticated
+     * POST /api/auth/refresh
+     */
+    public function refresh(Request $request)
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengguna tidak terautentikasi'
+                ], 401);
+            }
+
+            // Delete current token
+            $request->user()->currentAccessToken()->delete();
+
+            // Create new token dengan expiration (1 hour)
+            $token = $user->createToken('auth_token', ['*'], now()->addHour())->plainTextToken;
+
+            // Log audit
+            \Illuminate\Support\Facades\Log::channel('audit')->info('Token refreshed', [
+                'user_id' => $user->id,
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'timestamp' => now()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Token berhasil di-refresh',
+                'data' => [
+                    'token' => $token,
+                    'token_type' => 'Bearer',
+                    'expires_in' => 3600, // 1 hour in seconds
+                    'user' => [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'phone' => $user->phone,
+                        'role' => $user->role,
+                        // Jangan expose password, token, dll
+                    ]
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Token refresh failed', [
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+                'ip_address' => $request->ip()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal refresh token'
+                // Jangan expose error details ke frontend
+            ], 500);
+        }
+    }
+
     public function deleteProfilePicture(Request $request)
     {
         try {

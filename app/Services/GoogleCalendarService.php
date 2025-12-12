@@ -82,7 +82,7 @@ class GoogleCalendarService
                 'singleEvents' => 'true',
                 'orderBy' => 'startTime'
             ];
-            
+
             \Illuminate\Support\Facades\Log::info('Google Calendar API Request', [
                 'url' => $url,
                 'calendar_id' => $this->calendarId,

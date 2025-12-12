@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CreativeWork;
 use App\Models\Episode;
+use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
 
 class CreativeController extends Controller
 {
@@ -16,30 +18,54 @@ class CreativeController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = CreativeWork::with(['episode', 'createdBy', 'reviewedBy']);
-        
-        // Filter by episode
-        if ($request->has('episode_id')) {
-            $query->where('episode_id', $request->episode_id);
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 401);
+            }
+
+            $query = CreativeWork::with(['episode', 'createdBy', 'reviewedBy']);
+            
+            // Filter by episode
+            if ($request->has('episode_id')) {
+                $query->where('episode_id', $request->episode_id);
+            }
+            
+            // Filter by status
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+            
+            // Filter by creator - default to current user if Creative role
+            if ($request->has('created_by')) {
+                $query->where('created_by', $request->created_by);
+            } elseif ($user->role === 'Creative') {
+                $query->where('created_by', $user->id);
+            }
+
+            // Filter untuk "Terima Pekerjaan" - hanya creative work dengan status draft
+            if ($request->has('ready_for_work') && $request->ready_for_work == 'true') {
+                $query->where('status', 'draft');
+            }
+            
+            $works = $query->orderBy('created_at', 'desc')->paginate(15);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $works,
+                'message' => 'Creative works retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve creative works',
+                'error' => $e->getMessage()
+            ], 500);
         }
-        
-        // Filter by status
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-        
-        // Filter by creator
-        if ($request->has('created_by')) {
-            $query->where('created_by', $request->created_by);
-        }
-        
-        $works = $query->orderBy('created_at', 'desc')->paginate(15);
-        
-        return response()->json([
-            'success' => true,
-            'data' => $works,
-            'message' => 'Creative works retrieved successfully'
-        ]);
     }
 
     /**
@@ -338,6 +364,308 @@ class CreativeController extends Controller
                 'success' => false,
                 'message' => 'Failed to get budget summary',
                 'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Terima Pekerjaan - Creative terima pekerjaan setelah arrangement approved
+     * User: "Terima Pekerjaan"
+     */
+    public function acceptWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Creative') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = CreativeWork::where('id', $id)
+                ->where('created_by', $user->id)
+                ->firstOrFail();
+
+            // Only allow accept work if status is draft
+            if ($work->status !== 'draft') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is draft'
+                ], 400);
+            }
+
+            // Change status to in_progress
+            $work->update([
+                'status' => 'in_progress'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work accepted successfully. You can now start working on script, storyboard, schedules, and budget.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Selesaikan Pekerjaan - Creative selesaikan setelah selesai semua tugas
+     * User: "Selesaikan Pekerjaan"
+     * Includes: script, storyboard, recording schedule, shooting schedule, location, budget
+     */
+    public function completeWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Creative') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'script_content' => 'required|string',
+                'storyboard_data' => 'required|array',
+                'recording_schedule' => 'required|date',
+                'shooting_schedule' => 'required|date',
+                'shooting_location' => 'required|string|max:255',
+                'budget_data' => 'required|array',
+                'completion_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = CreativeWork::where('id', $id)
+                ->where('created_by', $user->id)
+                ->firstOrFail();
+
+            // Only allow complete if status is in_progress
+            if ($work->status !== 'in_progress') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be completed when status is in_progress'
+                ], 400);
+            }
+
+            // Update all fields and auto-submit
+            $work->update([
+                'script_content' => $request->script_content,
+                'storyboard_data' => $request->storyboard_data,
+                'recording_schedule' => $request->recording_schedule,
+                'shooting_schedule' => $request->shooting_schedule,
+                'shooting_location' => $request->shooting_location,
+                'budget_data' => $request->budget_data,
+                'status' => 'submitted', // Auto-submit untuk Producer review
+                'review_notes' => $request->completion_notes ? 
+                    ($work->review_notes ? $work->review_notes . "\n\n" : '') . "Completion notes: " . $request->completion_notes 
+                    : $work->review_notes
+            ]);
+
+            // Notify Producer
+            $episode = $work->episode;
+            $productionTeam = $episode->program->productionTeam;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'creative_work_submitted',
+                    'title' => 'Creative Work Selesai',
+                    'message' => "Creative {$user->name} telah menyelesaikan creative work untuk Episode {$episode->episode_number}. Script, storyboard, schedules, dan budget telah disubmit untuk review.",
+                    'data' => [
+                        'creative_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
+                        'completion_notes' => $request->completion_notes
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work completed successfully. Creative work has been submitted for Producer review.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error completing work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Revisi Creative Work setelah budget ditolak
+     * PUT /api/live-tv/roles/creative/works/{id}/revise
+     */
+    public function reviseCreativeWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Creative') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'script_content' => 'nullable|string',
+                'storyboard_data' => 'nullable|array',
+                'budget_data' => 'nullable|array',
+                'recording_schedule' => 'nullable|date',
+                'shooting_schedule' => 'nullable|date',
+                'shooting_location' => 'nullable|string|max:255',
+                'revision_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = CreativeWork::where('id', $id)
+                ->where('created_by', $user->id)
+                ->firstOrFail();
+
+            // Only allow revise if status is rejected or revised
+            if (!in_array($work->status, ['rejected', 'revised'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be revised when status is rejected or revised'
+                ], 400);
+            }
+
+            // Update fields
+            $updateData = [];
+            if ($request->has('script_content')) $updateData['script_content'] = $request->script_content;
+            if ($request->has('storyboard_data')) $updateData['storyboard_data'] = $request->storyboard_data;
+            if ($request->has('budget_data')) $updateData['budget_data'] = $request->budget_data;
+            if ($request->has('recording_schedule')) $updateData['recording_schedule'] = $request->recording_schedule;
+            if ($request->has('shooting_schedule')) $updateData['shooting_schedule'] = $request->shooting_schedule;
+            if ($request->has('shooting_location')) $updateData['shooting_location'] = $request->shooting_location;
+
+            // Reset review fields
+            $updateData['script_approved'] = null;
+            $updateData['storyboard_approved'] = null;
+            $updateData['budget_approved'] = null;
+            $updateData['script_review_notes'] = null;
+            $updateData['storyboard_review_notes'] = null;
+            $updateData['budget_review_notes'] = null;
+            $updateData['requires_special_budget_approval'] = false;
+            $updateData['special_budget_reason'] = null;
+            $updateData['special_budget_approval_id'] = null;
+            $updateData['status'] = 'revised';
+
+            if ($request->revision_notes) {
+                $updateData['review_notes'] = ($work->review_notes ? $work->review_notes . "\n\n" : '') . 
+                    "[Revisi] " . $request->revision_notes;
+            }
+
+            $work->update($updateData);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Creative work revised successfully. You can now resubmit to Producer.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error revising creative work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Resubmit Creative Work setelah revisi
+     * POST /api/live-tv/roles/creative/works/{id}/resubmit
+     */
+    public function resubmitCreativeWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Creative') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = CreativeWork::where('id', $id)
+                ->where('created_by', $user->id)
+                ->firstOrFail();
+
+            // Only allow resubmit if status is revised
+            if ($work->status !== 'revised') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be resubmitted when status is revised'
+                ], 400);
+            }
+
+            // Validate required fields
+            if (!$work->script_content || !$work->storyboard_data || !$work->budget_data) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please complete script, storyboard, and budget before resubmitting'
+                ], 400);
+            }
+
+            // Resubmit
+            $work->update([
+                'status' => 'submitted'
+            ]);
+
+            // Notify Producer
+            $episode = $work->episode;
+            $productionTeam = $episode->program->productionTeam;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'creative_work_resubmitted',
+                    'title' => 'Creative Work Diresubmit',
+                    'message' => "Creative {$user->name} telah meresubmit creative work untuk Episode {$episode->episode_number} setelah revisi.",
+                    'data' => [
+                        'creative_work_id' => $work->id,
+                        'episode_id' => $work->episode_id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Creative work resubmitted successfully. Producer has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error resubmitting creative work: ' . $e->getMessage()
             ], 500);
         }
     }

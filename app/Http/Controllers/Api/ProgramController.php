@@ -10,6 +10,7 @@ use App\Services\AnalyticsService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Storage;
 
 class ProgramController extends Controller
 {
@@ -25,11 +26,27 @@ class ProgramController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $user = auth()->user();
+        
         $query = Program::with(['managerProgram', 'productionTeam', 'episodes']);
+        
+        // Filter: HR tidak boleh melihat program musik
+        // Program musik adalah program yang memiliki production team dengan member role 'musik_arr'
+        if ($user && $user->role === 'HR') {
+            $query->whereDoesntHave('productionTeam.members', function ($q) {
+                $q->where('role', 'musik_arr')
+                  ->where('is_active', true);
+            });
+        }
         
         // Filter by status
         if ($request->has('status')) {
             $query->where('status', $request->status);
+        }
+        
+        // Filter by category
+        if ($request->has('category')) {
+            $query->where('category', $request->category);
         }
         
         // Filter by manager
@@ -102,13 +119,15 @@ class ProgramController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'category' => 'nullable|in:musik,live_tv,regular,special,other',
             'manager_program_id' => 'required|exists:users,id',
             'production_team_id' => 'nullable|exists:production_teams,id',
             'start_date' => 'required|date|after_or_equal:today',
             'air_time' => 'required|date_format:H:i',
             'duration_minutes' => 'nullable|integer|min:1',
             'broadcast_channel' => 'nullable|string|max:255',
-            'target_views_per_episode' => 'nullable|integer|min:0'
+            'target_views_per_episode' => 'nullable|integer|min:0',
+            'proposal_file' => 'nullable|file|mimes:pdf,doc,docx|max:10240' // Max 10MB
         ]);
         
         if ($validator->fails()) {
@@ -130,10 +149,25 @@ class ProgramController extends Controller
                 ], 403);
             }
             
+            // Handle proposal file upload
+            $proposalFilePath = null;
+            $proposalFileName = null;
+            $proposalFileSize = null;
+            $proposalFileMimeType = null;
+            
+            if ($request->hasFile('proposal_file')) {
+                $file = $request->file('proposal_file');
+                $proposalFilePath = $file->store('programs/proposals', 'public');
+                $proposalFileName = $file->getClientOriginalName();
+                $proposalFileSize = $file->getSize();
+                $proposalFileMimeType = $file->getMimeType();
+            }
+            
             // Create program dengan data yang sudah divalidasi
             $programData = $request->only([
                 'name',
-                'description', 
+                'description',
+                'category',
                 'manager_program_id',
                 'production_team_id',
                 'start_date',
@@ -142,6 +176,19 @@ class ProgramController extends Controller
                 'broadcast_channel',
                 'target_views_per_episode'
             ]);
+            
+            // Set default category jika tidak ada
+            if (!isset($programData['category'])) {
+                $programData['category'] = 'regular';
+            }
+            
+            // Add proposal file data
+            if ($proposalFilePath) {
+                $programData['proposal_file_path'] = $proposalFilePath;
+                $programData['proposal_file_name'] = $proposalFileName;
+                $programData['proposal_file_size'] = $proposalFileSize;
+                $programData['proposal_file_mime_type'] = $proposalFileMimeType;
+            }
             
             // Set default status jika tidak ada
             if (!isset($programData['status'])) {

@@ -16,6 +16,7 @@ class Program extends Model
     protected $fillable = [
         'name',
         'description',
+        'category',
         'status',
         'manager_program_id',
         'production_team_id',
@@ -24,6 +25,10 @@ class Program extends Model
         'duration_minutes',
         'broadcast_channel',
         'target_views_per_episode',
+        'proposal_file_path',
+        'proposal_file_name',
+        'proposal_file_size',
+        'proposal_file_mime_type',
         'submitted_by',
         'submitted_at',
         'submission_notes',
@@ -54,6 +59,7 @@ class Program extends Model
         'rejected_at' => 'datetime',
         'target_views_per_episode' => 'integer',
         'duration_minutes' => 'integer',
+        'proposal_file_size' => 'integer',
         'budget_amount' => 'decimal:2',
         'budget_approved' => 'boolean',
         'budget_approved_at' => 'datetime'
@@ -230,5 +236,29 @@ class Program extends Model
     public function scopeByStatus($query, $status)
     {
         return $query->where('status', $status);
+    }
+
+    /**
+     * Scope untuk program berdasarkan kategori
+     */
+    public function scopeByCategory($query, $category)
+    {
+        return $query->where('category', $category);
+    }
+
+    /**
+     * Scope untuk program musik
+     */
+    public function scopeMusik($query)
+    {
+        return $query->where('category', 'musik');
+    }
+
+    /**
+     * Scope untuk program live TV
+     */
+    public function scopeLiveTv($query)
+    {
+        return $query->where('category', 'live_tv');
     }
 }

@@ -23,7 +23,22 @@ class CreativeWork extends Model
         'reviewed_by',
         'reviewed_at',
         'review_notes',
-        'rejection_reason'
+        'rejection_reason',
+        // Review fields
+        'script_approved',
+        'storyboard_approved',
+        'budget_approved',
+        'script_review_notes',
+        'storyboard_review_notes',
+        'budget_review_notes',
+        // Special budget approval
+        'requires_special_budget_approval',
+        'special_budget_reason',
+        'special_budget_approval_id',
+        // Shooting schedule cancellation
+        'shooting_schedule_cancelled',
+        'shooting_cancellation_reason',
+        'shooting_schedule_new'
     ];
 
     protected $casts = [
@@ -31,7 +46,13 @@ class CreativeWork extends Model
         'budget_data' => 'array',
         'recording_schedule' => 'datetime',
         'shooting_schedule' => 'datetime',
-        'reviewed_at' => 'datetime'
+        'shooting_schedule_new' => 'datetime',
+        'reviewed_at' => 'datetime',
+        'script_approved' => 'boolean',
+        'storyboard_approved' => 'boolean',
+        'budget_approved' => 'boolean',
+        'requires_special_budget_approval' => 'boolean',
+        'shooting_schedule_cancelled' => 'boolean'
     ];
 
     /**
@@ -56,6 +77,22 @@ class CreativeWork extends Model
     public function reviewedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reviewed_by');
+    }
+
+    /**
+     * Relationship dengan ProductionTeamAssignment (tim syuting, setting, recording)
+     */
+    public function teamAssignments()
+    {
+        return $this->hasMany(\App\Models\ProductionTeamAssignment::class, 'episode_id', 'episode_id');
+    }
+
+    /**
+     * Relationship dengan ProgramApproval untuk special budget
+     */
+    public function specialBudgetApproval()
+    {
+        return $this->belongsTo(\App\Models\ProgramApproval::class, 'special_budget_approval_id');
     }
 
     /**

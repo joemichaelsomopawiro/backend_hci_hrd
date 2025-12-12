@@ -139,10 +139,19 @@ class Handler extends ExceptionHandler
         }
 
         // Generic server error
+        // Jangan expose error details atau kode PHP ke frontend
+        $message = 'Internal server error';
+        
+        // Hanya tampilkan error details jika APP_DEBUG=true (development only)
+        if (config('app.debug')) {
+            $message = $exception->getMessage();
+        }
+        
         return response()->json([
             'success' => false,
-            'message' => 'Internal server error',
+            'message' => $message,
             'timestamp' => now()->toISOString()
+            // Jangan include stack trace, file path, atau kode PHP
         ], 500);
     }
 }

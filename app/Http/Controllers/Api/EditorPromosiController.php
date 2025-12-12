@@ -90,7 +90,7 @@ class EditorPromosiController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
-                'work_type' => 'required|in:bts_video,bts_photo,highlight_ig,highlight_facebook,highlight_tv,story_ig,reels_facebook,tiktok,website_content',
+                'work_type' => 'required|in:bts_video,bts_photo,highlight_ig,highlight_facebook,highlight_tv,iklan_episode_tv,story_ig,reels_facebook,tiktok,website_content',
                 'title' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'content_plan' => 'nullable|string',
@@ -319,7 +319,7 @@ class EditorPromosiController extends Controller
     }
 
     /**
-     * Get source files from Promosi team
+     * Get source files from Promosi team or Editor (main editor)
      */
     public function getSourceFiles(Request $request): JsonResponse
     {
@@ -341,19 +341,64 @@ class EditorPromosiController extends Controller
             }
 
             $episodeId = $request->get('episode_id');
+            $sourceRole = $request->get('source_role'); // 'editor' or 'promosi'
 
-            $files = MediaFile::with(['episode', 'uploadedBy'])
-                ->where('episode_id', $episodeId)
-                ->where('file_type', 'promotion')
-                ->whereHas('uploadedBy', function($q) {
-                    $q->where('role', 'Promosi');
+            $query = MediaFile::with(['episode', 'uploadedBy'])
+                ->where('episode_id', $episodeId);
+
+            if ($sourceRole === 'editor') {
+                // Ambil file dari Editor (main editor)
+                $query->where(function($q) {
+                    $q->where('file_type', 'editor')
+                      ->orWhere('file_type', 'editor_work');
                 })
-                ->orderBy('created_at', 'desc')
-                ->get();
+                ->whereHas('uploadedBy', function($q) {
+                    $q->where('role', 'Editor');
+                });
+
+                // Juga ambil dari EditorWork jika ada
+                $editorWorks = \App\Models\EditorWork::where('episode_id', $episodeId)
+                    ->whereIn('status', ['completed', 'approved'])
+                    ->get();
+
+                $files = $query->orderBy('created_at', 'desc')->get();
+
+                // Convert EditorWork to file-like structure
+                $editorWorkFiles = $editorWorks->map(function($work) {
+                    return [
+                        'id' => 'editor_work_' . $work->id,
+                        'file_name' => $work->file_name,
+                        'file_path' => $work->file_path,
+                        'file_size' => $work->file_size,
+                        'mime_type' => $work->mime_type,
+                        'file_type' => 'editor_work',
+                        'work_type' => $work->work_type,
+                        'uploaded_by' => $work->created_by,
+                        'uploaded_at' => $work->created_at,
+                        'episode_id' => $work->episode_id
+                    ];
+                });
+
+                $allFiles = $files->merge($editorWorkFiles);
+
+            } elseif ($sourceRole === 'promosi' || !$sourceRole) {
+                // Default: Ambil file dari Promosi (BTS)
+                $query->where('file_type', 'promotion')
+                      ->whereHas('uploadedBy', function($q) {
+                          $q->where('role', 'Promosi');
+                      });
+
+                $allFiles = $query->orderBy('created_at', 'desc')->get();
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid source_role. Use "editor" or "promosi".'
+                ], 400);
+            }
 
             return response()->json([
                 'success' => true,
-                'data' => $files,
+                'data' => $allFiles,
                 'message' => 'Source files retrieved successfully'
             ]);
 
@@ -453,6 +498,92 @@ class EditorPromosiController extends Controller
                 'user_id' => $qcUser->id,
                 'episode_id' => $work->episode_id
             ]);
+        }
+    }
+
+    /**
+     * Ajukan ke QC - Editor Promosi submit file locations ke QC
+     * POST /api/live-tv/editor-promosi/works/{id}/submit-to-qc
+     */
+    public function submitToQC(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Editor Promosi') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = \App\Models\EditorPromosiWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            if (!$work->file_paths || empty($work->file_paths)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please upload files before submitting to QC'
+                ], 400);
+            }
+
+            // Create or update QualityControlWork
+            $qcWork = \App\Models\QualityControlWork::updateOrCreate(
+                [
+                    'episode_id' => $work->episode_id,
+                    'qc_type' => 'main_episode'
+                ],
+                [
+                    'title' => "QC Work - Episode {$work->episode->episode_number}",
+                    'description' => "File dari Editor Promosi untuk QC",
+                    'editor_promosi_file_locations' => array_map(function($path) {
+                        return [
+                            'file_path' => $path,
+                            'file_name' => basename($path),
+                            'source' => 'editor_promosi'
+                        ];
+                    }, $work->file_paths),
+                    'status' => 'pending',
+                    'created_by' => $user->id
+                ]
+            );
+
+            // Notify Quality Control
+            $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+            foreach ($qcUsers as $qcUser) {
+                Notification::create([
+                    'user_id' => $qcUser->id,
+                    'type' => 'qc_work_assigned',
+                    'title' => 'Tugas QC Baru',
+                    'message' => "Editor Promosi telah mengajukan file untuk QC Episode {$work->episode->episode_number}.",
+                    'data' => [
+                        'qc_work_id' => $qcWork->id,
+                        'episode_id' => $work->episode_id,
+                        'editor_promosi_work_id' => $work->id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'qc_work' => $qcWork->fresh(['episode', 'createdBy']),
+                    'editor_promosi_work' => $work->fresh(['episode', 'createdBy'])
+                ],
+                'message' => 'Files submitted to QC successfully. Quality Control has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error submitting to QC: ' . $e->getMessage()
+            ], 500);
         }
     }
 }

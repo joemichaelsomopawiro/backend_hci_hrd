@@ -17,6 +17,8 @@ class QualityControlWork extends Model
         'title',
         'description',
         'files_to_check',
+        'editor_promosi_file_locations',
+        'design_grafis_file_locations',
         'qc_checklist',
         'quality_standards',
         'quality_score',
@@ -24,6 +26,7 @@ class QualityControlWork extends Model
         'improvements_needed',
         'qc_notes',
         'screenshots',
+        'qc_results',
         'status',
         'reviewed_by',
         'reviewed_at',
@@ -32,11 +35,14 @@ class QualityControlWork extends Model
 
     protected $casts = [
         'files_to_check' => 'array',
+        'editor_promosi_file_locations' => 'array',
+        'design_grafis_file_locations' => 'array',
         'qc_checklist' => 'array',
         'quality_standards' => 'array',
         'issues_found' => 'array',
         'improvements_needed' => 'array',
         'screenshots' => 'array',
+        'qc_results' => 'array',
         'reviewed_at' => 'datetime'
     ];
 

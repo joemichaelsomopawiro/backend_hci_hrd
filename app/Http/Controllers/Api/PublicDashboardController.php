@@ -8,7 +8,9 @@ use App\Models\Episode;
 use App\Models\Program;
 use App\Models\BroadcastingSchedule;
 use App\Models\CreativeWork;
+use App\Models\MusicSchedule;
 use App\Models\User;
+use App\Models\Deadline;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -33,40 +35,77 @@ class PublicDashboardController extends Controller
             }
 
             // Get creative works yang sudah approved (berisi jadwal syuting)
-            $query = CreativeWork::with(['episode.program', 'createdBy'])
+            $creativeWorksQuery = CreativeWork::with(['episode.program', 'createdBy'])
                 ->where('status', 'approved')
                 ->whereNotNull('shooting_schedule');
+            
+            // Get music schedules yang sudah confirmed/scheduled (untuk program musik)
+            $musicSchedulesQuery = MusicSchedule::with(['musicSubmission.episode.program', 'creator'])
+                ->whereIn('status', ['scheduled', 'confirmed'])
+                ->where('schedule_type', 'shooting');
 
-            // Filter by date range (untuk calendar)
+            // Filter creative works by date range
             if ($request->has('start_date')) {
-                $query->where('shooting_schedule', '>=', $request->start_date);
+                $creativeWorksQuery->where('shooting_schedule', '>=', $request->start_date);
             }
             if ($request->has('end_date')) {
-                $query->where('shooting_schedule', '<=', $request->end_date);
+                $creativeWorksQuery->where('shooting_schedule', '<=', $request->end_date);
             }
-
-            // Filter by month (untuk calendar view)
             if ($request->has('month') && $request->has('year')) {
-                $query->whereMonth('shooting_schedule', $request->month)
-                      ->whereYear('shooting_schedule', $request->year);
+                $creativeWorksQuery->whereMonth('shooting_schedule', $request->month)
+                              ->whereYear('shooting_schedule', $request->year);
+            }
+            
+            // Filter music schedules by date range
+            if ($request->has('start_date')) {
+                $musicSchedulesQuery->where('scheduled_datetime', '>=', $request->start_date);
+            }
+            if ($request->has('end_date')) {
+                $musicSchedulesQuery->where('scheduled_datetime', '<=', $request->end_date);
+            }
+            if ($request->has('month') && $request->has('year')) {
+                $musicSchedulesQuery->whereMonth('scheduled_datetime', $request->month)
+                              ->whereYear('scheduled_datetime', $request->year);
             }
 
-            $schedules = $query->orderBy('shooting_schedule', 'asc')->get();
+            $creativeSchedules = $creativeWorksQuery->get();
+            $musicScheduleList = $musicSchedulesQuery->get();
 
-            // Format untuk calendar
-            $calendarEvents = $schedules->map(function ($work) {
+            // Format creative works untuk calendar
+            $calendarEvents = $creativeSchedules->map(function ($work) {
                 return [
-                    'id' => $work->id,
+                    'id' => 'creative_' . $work->id,
                     'title' => $work->episode->program->name . ' - Episode ' . $work->episode->episode_number,
                     'start' => $work->shooting_schedule,
                     'location' => $work->shooting_location,
                     'episode_title' => $work->episode->title,
                     'program_name' => $work->episode->program->name,
                     'type' => 'shooting',
+                    'source' => 'creative_work',
                     'status' => 'approved',
                     'description' => $work->script_content ? 'Script ready' : null
                 ];
             });
+            
+            // Format music schedules untuk calendar
+            $musicEvents = $musicScheduleList->map(function ($schedule) {
+                $episode = $schedule->musicSubmission->episode ?? null;
+                return [
+                    'id' => 'music_' . $schedule->id,
+                    'title' => ($episode ? $episode->program->name . ' - Episode ' . $episode->episode_number : 'Music Schedule') . ' (Syuting Video Klip)',
+                    'start' => $schedule->getEffectiveDatetime(),
+                    'location' => $schedule->location,
+                    'episode_title' => $episode ? $episode->title : null,
+                    'program_name' => $episode ? $episode->program->name : null,
+                    'type' => 'shooting',
+                    'source' => 'music_schedule',
+                    'status' => $schedule->status,
+                    'description' => $schedule->schedule_notes
+                ];
+            });
+            
+            // Merge events
+            $calendarEvents = $calendarEvents->merge($musicEvents)->sortBy('start')->values();
 
             return response()->json([
                 'success' => true,
@@ -165,7 +204,7 @@ class PublicDashboardController extends Controller
 
             $events = [];
 
-            // Get shooting schedules
+            // Get shooting schedules from Creative Work
             $shootingQuery = CreativeWork::with(['episode.program'])
                 ->where('status', 'approved')
                 ->whereNotNull('shooting_schedule');
@@ -189,6 +228,34 @@ class PublicDashboardController extends Controller
                     'color' => '#3b82f6', // Blue
                     'program_id' => $work->episode->program_id,
                     'episode_id' => $work->episode_id
+                ];
+            }
+            
+            // Get shooting schedules from Music Schedule (program musik)
+            $musicShootingQuery = MusicSchedule::with(['musicSubmission.episode.program'])
+                ->whereIn('status', ['scheduled', 'confirmed'])
+                ->where('schedule_type', 'shooting');
+
+            if ($request->has('start_date') && $request->has('end_date')) {
+                $musicShootingQuery->whereBetween('scheduled_datetime', [
+                    $request->start_date, 
+                    $request->end_date
+                ]);
+            }
+
+            $musicShootingSchedules = $musicShootingQuery->get();
+
+            foreach ($musicShootingSchedules as $schedule) {
+                $episode = $schedule->musicSubmission->episode ?? null;
+                $events[] = [
+                    'id' => 'music_shooting_' . $schedule->id,
+                    'title' => ($episode ? $episode->program->name . ' - Syuting Episode ' . $episode->episode_number : 'Music Shooting') . ' (Video Klip)',
+                    'start' => $schedule->getEffectiveDatetime()->format('Y-m-d H:i:s'),
+                    'location' => $schedule->location,
+                    'type' => 'shooting',
+                    'color' => '#3b82f6', // Blue
+                    'program_id' => $episode ? $episode->program_id : null,
+                    'episode_id' => $episode ? $episode->id : null
                 ];
             }
 
@@ -287,12 +354,26 @@ class PublicDashboardController extends Controller
                     'shooting_schedules' => CreativeWork::where('status', 'approved')
                         ->whereDate('shooting_schedule', today())
                         ->with(['episode.program'])
-                        ->get(),
+                        ->get()
+                        ->merge(
+                            MusicSchedule::whereIn('status', ['scheduled', 'confirmed'])
+                                ->where('schedule_type', 'shooting')
+                                ->whereDate('scheduled_datetime', today())
+                                ->with(['musicSubmission.episode.program'])
+                                ->get()
+                        ),
                     
                     'recording_schedules' => CreativeWork::where('status', 'approved')
                         ->whereDate('recording_schedule', today())
                         ->with(['episode.program'])
-                        ->get(),
+                        ->get()
+                        ->merge(
+                            MusicSchedule::whereIn('status', ['scheduled', 'confirmed'])
+                                ->where('schedule_type', 'recording')
+                                ->whereDate('scheduled_datetime', today())
+                                ->with(['musicSubmission.episode.program'])
+                                ->get()
+                        ),
                     
                     'air_schedules' => BroadcastingSchedule::whereIn('status', ['scheduled', 'uploaded', 'published'])
                         ->whereDate('schedule_date', today())
@@ -307,7 +388,17 @@ class PublicDashboardController extends Controller
                         ->with(['episode.program'])
                         ->orderBy('shooting_schedule')
                         ->limit(5)
-                        ->get(),
+                        ->get()
+                        ->merge(
+                            MusicSchedule::whereIn('status', ['scheduled', 'confirmed'])
+                                ->where('schedule_type', 'shooting')
+                                ->where('scheduled_datetime', '>', now())
+                                ->where('scheduled_datetime', '<=', now()->addDays(7))
+                                ->with(['musicSubmission.episode.program'])
+                                ->orderBy('scheduled_datetime')
+                                ->limit(5)
+                                ->get()
+                        ),
                     
                     'air_schedules' => BroadcastingSchedule::whereIn('status', ['scheduled', 'uploaded', 'published'])
                         ->where('schedule_date', '>', now())
@@ -324,6 +415,12 @@ class PublicDashboardController extends Controller
                     'upcoming_air_this_week' => BroadcastingSchedule::whereIn('status', ['scheduled'])
                         ->whereBetween('schedule_date', [now()->startOfWeek(), now()->endOfWeek()])
                         ->count()
+                ],
+                
+                'kpi' => [
+                    'on_time_completion_rate' => $this->getOnTimeCompletionRate(),
+                    'deadline_compliance' => $this->getDeadlineCompliance(),
+                    'work_completion' => $this->getWorkCompletion()
                 ]
             ];
 
@@ -405,6 +502,76 @@ class PublicDashboardController extends Controller
                 'message' => 'Error retrieving team progress: ' . $e->getMessage()
             ], 500);
         }
+    }
+    
+    /**
+     * Get on-time completion rate (KPI)
+     */
+    private function getOnTimeCompletionRate()
+    {
+        $completedDeadlines = Deadline::where('is_completed', true)
+            ->whereNotNull('completed_at')
+            ->whereNotNull('deadline_date')
+            ->get();
+
+        if ($completedDeadlines->isEmpty()) {
+            return 0;
+        }
+
+        $onTimeCount = $completedDeadlines->filter(function ($deadline) {
+            return $deadline->completed_at <= $deadline->deadline_date;
+        })->count();
+
+        return round(($onTimeCount / $completedDeadlines->count()) * 100, 2);
+    }
+    
+    /**
+     * Get deadline compliance (KPI)
+     */
+    private function getDeadlineCompliance()
+    {
+        $totalDeadlines = Deadline::count();
+        $completedDeadlines = Deadline::where('is_completed', true)->count();
+        $onTimeDeadlines = Deadline::where('is_completed', true)
+            ->whereColumn('completed_at', '<=', 'deadline_date')
+            ->count();
+
+        return [
+            'total_deadlines' => $totalDeadlines,
+            'completed_deadlines' => $completedDeadlines,
+            'on_time_deadlines' => $onTimeDeadlines,
+            'compliance_rate' => $totalDeadlines > 0 ? round(($completedDeadlines / $totalDeadlines) * 100, 2) : 0,
+            'on_time_rate' => $completedDeadlines > 0 ? round(($onTimeDeadlines / $completedDeadlines) * 100, 2) : 0
+        ];
+    }
+    
+    /**
+     * Get work completion (KPI)
+     */
+    private function getWorkCompletion()
+    {
+        $roles = ['kreatif', 'musik_arr', 'sound_eng', 'produksi', 'editor'];
+        
+        $completion = [];
+        foreach ($roles as $role) {
+            $total = Deadline::where('role', $role)->count();
+            $completed = Deadline::where('role', $role)->where('is_completed', true)->count();
+            $onTime = Deadline::where('role', $role)
+                ->where('is_completed', true)
+                ->whereColumn('completed_at', '<=', 'deadline_date')
+                ->count();
+
+            $completion[] = [
+                'role' => $role,
+                'total' => $total,
+                'completed' => $completed,
+                'on_time' => $onTime,
+                'completion_rate' => $total > 0 ? round(($completed / $total) * 100, 2) : 0,
+                'on_time_rate' => $completed > 0 ? round(($onTime / $completed) * 100, 2) : 0
+            ];
+        }
+
+        return $completion;
     }
 }
 

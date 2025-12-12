@@ -28,7 +28,7 @@ class SoundEngineerEditingController extends Controller
             return response()->json(['message' => 'Access denied'], 403);
         }
 
-        $query = SoundEngineerEditing::with(['episode', 'soundEngineer']);
+        $query = SoundEngineerEditing::with(['episode', 'soundEngineer', 'recording']);
 
         // Filter by status
         if ($request->has('status')) {
@@ -107,7 +107,7 @@ class SoundEngineerEditingController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        $work = SoundEngineerEditing::with(['episode', 'soundEngineer'])
+        $work = SoundEngineerEditing::with(['episode', 'soundEngineer', 'recording'])
             ->findOrFail($id);
 
         return response()->json([

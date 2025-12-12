@@ -141,7 +141,32 @@ class QualityControlController extends Controller
                 ]);
 
                 // Notify Broadcasting team
-                // TODO: Implement notification
+                $broadcastingUsers = \App\Models\User::where('role', 'Broadcasting')->orWhere('role', 'Distribution Manager')->get();
+                foreach ($broadcastingUsers as $broadcastingUser) {
+                    \App\Models\Notification::create([
+                        'user_id' => $broadcastingUser->id,
+                        'type' => 'qc_approved_broadcasting',
+                        'title' => 'Episode Ready for Broadcasting',
+                        'message' => "Episode {$episode->episode_number}: {$episode->title} has passed QC and is ready for broadcasting.",
+                        'data' => [
+                            'episode_id' => $episode->id,
+                            'qc_id' => $qc->id,
+                            'quality_score' => $request->quality_score
+                        ]
+                    ]);
+                }
+                
+                // Update workflow state to broadcasting
+                if ($episode->current_workflow_state === 'quality_control') {
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $episode,
+                        'broadcasting',
+                        'broadcasting',
+                        null,
+                        'QC approved, episode ready for broadcasting'
+                    );
+                }
             } else {
                 // Send back to Editor
                 $episode->update([
@@ -152,11 +177,51 @@ class QualityControlController extends Controller
                 ]);
 
                 // Notify Editor
-                // TODO: Implement notification
+                $editors = \App\Models\User::where('role', 'Editor')->get();
+                foreach ($editors as $editor) {
+                    \App\Models\Notification::create([
+                        'user_id' => $editor->id,
+                        'type' => 'qc_revision_requested',
+                        'title' => 'QC Revision Requested',
+                        'message' => "Episode {$episode->episode_number}: {$episode->title} needs revision based on QC feedback.",
+                        'data' => [
+                            'episode_id' => $episode->id,
+                            'qc_id' => $qc->id,
+                            'revision_points' => $request->revision_points,
+                            'revision_count' => ($episode->qc_revision_count ?? 0) + 1
+                        ]
+                    ]);
+                }
+                
+                // Update workflow state back to editing
+                if ($episode->current_workflow_state === 'quality_control') {
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $episode,
+                        'editing',
+                        'editor',
+                        null,
+                        'QC revision requested, sent back to editing'
+                    );
+                }
             }
 
             // Notify Producer in both cases
-            // TODO: Implement notification to Producer
+            $productionTeam = $episode->program->productionTeam;
+            if ($productionTeam && $productionTeam->producer) {
+                \App\Models\Notification::create([
+                    'user_id' => $productionTeam->producer_id,
+                    'type' => $request->decision === 'approved' ? 'qc_approved_producer' : 'qc_revision_producer',
+                    'title' => $request->decision === 'approved' ? 'QC Approved' : 'QC Revision Requested',
+                    'message' => "QC for Episode {$episode->episode_number}: {$episode->title} - " . ($request->decision === 'approved' ? 'Approved' : 'Revision Requested'),
+                    'data' => [
+                        'episode_id' => $episode->id,
+                        'qc_id' => $qc->id,
+                        'decision' => $request->decision,
+                        'quality_score' => $request->quality_score
+                    ]
+                ]);
+            }
 
             DB::commit();
 

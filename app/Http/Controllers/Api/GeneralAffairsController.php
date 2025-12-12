@@ -232,14 +232,80 @@ class GeneralAffairsController extends Controller
             'processed_by' => $user->id
         ]);
 
-        // Notify requester
+        // Notify requester (Producer)
         $this->notifyRequester($budgetRequest, 'paid');
+
+        // Notify Producer bahwa dana telah diberikan
+        if ($budgetRequest->requestedBy) {
+            Notification::create([
+                'user_id' => $budgetRequest->requested_by,
+                'type' => 'fund_released',
+                'title' => 'Dana Telah Diberikan',
+                'message' => "Dana sebesar Rp " . number_format($budgetRequest->approved_amount ?? $budgetRequest->requested_amount, 0, ',', '.') . " untuk {$budgetRequest->title} telah diberikan oleh General Affairs.",
+                'data' => [
+                    'budget_request_id' => $budgetRequest->id,
+                    'program_id' => $budgetRequest->program_id,
+                    'amount' => $budgetRequest->approved_amount ?? $budgetRequest->requested_amount,
+                    'payment_receipt' => $request->payment_receipt,
+                    'payment_date' => $request->payment_date ?? now()
+                ]
+            ]);
+        }
 
         return response()->json([
             'success' => true,
-            'message' => 'Payment processed successfully',
+            'message' => 'Payment processed successfully. Producer has been notified.',
             'data' => $budgetRequest->load(['program', 'requestedBy', 'approvedBy'])
         ]);
+    }
+
+    /**
+     * Get budget requests from Creative Work (permohonan dana setelah Producer approve)
+     * GET /api/live-tv/general-affairs/budget-requests/from-creative-work
+     */
+    public function getCreativeWorkBudgetRequests(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'General Affairs') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $query = BudgetRequest::where('request_type', 'creative_work')
+                ->with(['program', 'requestedBy', 'approvedBy', 'processedBy']);
+
+            // Filter by status
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            } else {
+                // Default: show pending requests
+                $query->where('status', 'pending');
+            }
+
+            // Filter by program
+            if ($request->has('program_id')) {
+                $query->where('program_id', $request->program_id);
+            }
+
+            $requests = $query->orderBy('created_at', 'desc')->paginate(15);
+
+            return response()->json([
+                'success' => true,
+                'data' => $requests,
+                'message' => 'Creative work budget requests retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve budget requests',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

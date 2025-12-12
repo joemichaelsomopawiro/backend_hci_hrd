@@ -37,6 +37,11 @@ class ProductionTeamAssignment extends Model
         return $this->belongsTo(MusicSubmission::class, 'music_submission_id');
     }
 
+    public function episode()
+    {
+        return $this->belongsTo(\App\Models\Episode::class, 'episode_id');
+    }
+
     public function schedule()
     {
         return $this->belongsTo(MusicSchedule::class, 'schedule_id');
