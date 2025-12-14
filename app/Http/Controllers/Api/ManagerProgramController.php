@@ -1927,5 +1927,53 @@ class ManagerProgramController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get revised schedules for Manager Program
+     * Schedules that have been revised by Manager Broadcasting
+     */
+    public function getRevisedSchedules(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only Manager Program can access revised schedules'
+                ], 403);
+            }
+
+            $status = $request->get('status', 'revised,approved');
+            $statusArray = explode(',', $status);
+
+            // Get schedules that have been revised (have upload_notes containing "REVISED")
+            $schedules = BroadcastingSchedule::whereHas('episode.program', function ($query) use ($user) {
+                // Filter by programs managed by this Manager Program
+                $query->where('manager_program_id', $user->id);
+            })
+            ->where(function ($query) use ($statusArray) {
+                $query->whereIn('status', $statusArray)
+                      ->orWhere('upload_notes', 'like', '%REVISED%');
+            })
+            ->with([
+                'episode.program.managerProgram',
+                'episode.program.productionTeam'
+            ])
+            ->orderBy('schedule_date', 'desc')
+            ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedules,
+                'message' => 'Revised schedules retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving revised schedules: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
 

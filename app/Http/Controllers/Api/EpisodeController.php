@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Episode;
 use App\Services\ProgramWorkflowService;
 use App\Services\WorkflowStateService;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -26,44 +27,75 @@ class EpisodeController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Episode::with(['program', 'deadlines', 'workflowStates']);
-        
-        // Filter by program
-        if ($request->has('program_id')) {
-            $query->where('program_id', $request->program_id);
-        }
-        
-        // Filter by status
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-        
-        // Filter by workflow state
-        if ($request->has('workflow_state')) {
-            $query->where('current_workflow_state', $request->workflow_state);
-        }
-        
-        // Filter by assigned user
-        if ($request->has('assigned_to_user')) {
-            $query->where('assigned_to_user', $request->assigned_to_user);
-        }
-        
-        // Search
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('title', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%");
+        try {
+            // Build cache key based on request parameters
+            $cacheKey = 'episodes_index_' . md5(json_encode([
+                'program_id' => $request->get('program_id'),
+                'status' => $request->get('status'),
+                'workflow_state' => $request->get('workflow_state'),
+                'assigned_to_user' => $request->get('assigned_to_user'),
+                'search' => $request->get('search'),
+                'page' => $request->get('page', 1)
+            ]));
+            
+            // Use cache with 5 minutes TTL
+            $episodes = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request) {
+                // Optimize eager loading dengan nested relations
+                $query = Episode::with([
+                    'program.managerProgram',
+                    'program.productionTeam.members.user', // Fix N+1 problem
+                    'deadlines',
+                    'workflowStates'
+                ]);
+                
+                // Filter by program
+                if ($request->has('program_id')) {
+                    $query->where('program_id', $request->program_id);
+                }
+                
+                // Filter by status
+                if ($request->has('status')) {
+                    $query->where('status', $request->status);
+                }
+                
+                // Filter by workflow state
+                if ($request->has('workflow_state')) {
+                    $query->where('current_workflow_state', $request->workflow_state);
+                }
+                
+                // Filter by assigned user
+                if ($request->has('assigned_to_user')) {
+                    $query->where('assigned_to_user', $request->assigned_to_user);
+                }
+                
+                // Search
+                if ($request->has('search')) {
+                    $search = $request->search;
+                    $query->where(function ($q) use ($search) {
+                        $q->where('title', 'like', "%{$search}%")
+                          ->orWhere('description', 'like', "%{$search}%");
+                    });
+                }
+                
+                return $query->orderBy('episode_number')->paginate(15);
             });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $episodes,
+                'message' => 'Episodes retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error retrieving episodes', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving episodes: ' . $e->getMessage()
+            ], 500);
         }
-        
-        $episodes = $query->orderBy('episode_number')->paginate(15);
-        
-        return response()->json([
-            'success' => true,
-            'data' => $episodes,
-            'message' => 'Episodes retrieved successfully'
-        ]);
     }
 
     /**

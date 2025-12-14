@@ -242,6 +242,14 @@ class MusicArrangerController extends Controller
                 'created_by' => $user->id,
             ]);
 
+            // Audit logging
+            \App\Helpers\ControllerSecurityHelper::logCreate($arrangement, [
+                'episode_id' => $arrangement->episode_id,
+                'song_title' => $songTitle,
+                'singer_name' => $singerName,
+                'status' => $status
+            ], $request);
+
             // Create notification for Producer
             $productionTeam = $episode->productionTeam ?? $episode->program->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
@@ -401,7 +409,14 @@ class MusicArrangerController extends Controller
                 }
             }
 
+            $oldStatus = $arrangement->status;
+            $oldData = $arrangement->toArray();
             $arrangement->update($updateData);
+
+            // Audit logging
+            \App\Helpers\ControllerSecurityHelper::logUpdate($arrangement, [
+                'status' => $oldStatus
+            ], $updateData, $request);
 
             return response()->json([
                 'success' => true,
@@ -454,6 +469,13 @@ class MusicArrangerController extends Controller
                 'status' => 'song_proposal', // Tetap song_proposal, sudah di-submit
                 'submitted_at' => now()
             ]);
+
+            // Audit logging
+            \App\Helpers\ControllerSecurityHelper::logApproval('song_proposal_submitted', $arrangement, [
+                'episode_id' => $arrangement->episode_id,
+                'song_title' => $arrangement->song_title,
+                'singer_name' => $arrangement->singer_name
+            ], $request);
 
             // Create notification for Producer
             $episode = $arrangement->episode;
@@ -535,6 +557,12 @@ class MusicArrangerController extends Controller
                 'status' => 'arrangement_submitted',
                 'submitted_at' => now()
             ]);
+
+            // Audit logging
+            \App\Helpers\ControllerSecurityHelper::logApproval('arrangement_submitted', $arrangement, [
+                'episode_id' => $arrangement->episode_id,
+                'song_title' => $arrangement->song_title
+            ], $request);
 
             // Create notification for Producer
             $episode = $arrangement->episode;
@@ -746,9 +774,17 @@ class MusicArrangerController extends Controller
             }
 
             // Change status to arrangement_in_progress
+            $oldStatus = $arrangement->status;
             $arrangement->update([
                 'status' => 'arrangement_in_progress'
             ]);
+
+            // Audit logging
+            \App\Helpers\ControllerSecurityHelper::logCrud('music_arrangement_work_accepted', $arrangement, [
+                'episode_id' => $arrangement->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'arrangement_in_progress'
+            ], $request);
 
             return response()->json([
                 'success' => true,
@@ -812,6 +848,7 @@ class MusicArrangerController extends Controller
             }
 
             // Auto-submit arrangement file after completion
+            $oldStatus = $arrangement->status;
             $arrangement->update([
                 'status' => 'arrangement_submitted',
                 'submitted_at' => now(),
@@ -819,6 +856,14 @@ class MusicArrangerController extends Controller
                     ($arrangement->arrangement_notes ? $arrangement->arrangement_notes . "\n\n" : '') . "Completion notes: " . $request->completion_notes 
                     : $arrangement->arrangement_notes
             ]);
+
+            // Audit logging
+            \App\Helpers\ControllerSecurityHelper::logCrud('music_arrangement_work_completed', $arrangement, [
+                'episode_id' => $arrangement->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'arrangement_submitted',
+                'completion_notes' => $request->completion_notes
+            ], $request);
 
             // Notify Producer
             $episode = $arrangement->episode;

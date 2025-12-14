@@ -9,6 +9,8 @@ use App\Models\Episode;
 use App\Models\Notification;
 use App\Models\ProductionEquipment;
 use App\Models\EquipmentInventory;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -44,7 +46,15 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            $query = SoundEngineerRecording::with(['episode', 'musicArrangement', 'createdBy', 'reviewedBy']);
+            // Optimize query with eager loading
+            $query = SoundEngineerRecording::with([
+                'episode.program.managerProgram',
+                'episode.program.productionTeam.members.user',
+                'musicArrangement.song',
+                'musicArrangement.singer',
+                'createdBy',
+                'reviewedBy'
+            ]);
             
             // Filter by episode
             if ($request->has('episode_id')) {
@@ -193,6 +203,13 @@ class SoundEngineerController extends Controller
                 'created_by' => $user->id
             ]);
             
+            // Audit logging
+            ControllerSecurityHelper::logCreate($recording, [
+                'episode_id' => $recording->episode_id,
+                'music_arrangement_id' => $recording->music_arrangement_id,
+                'status' => 'draft'
+            ], $request);
+            
             return response()->json([
                 'success' => true,
                 'data' => $recording,
@@ -262,7 +279,16 @@ class SoundEngineerController extends Controller
                 ], 422);
             }
             
-            $recording->update($request->all());
+            $oldData = $recording->toArray();
+            $updateData = $request->only([
+                'recording_notes',
+                'equipment_used',
+                'recording_schedule'
+            ]);
+            $recording->update($updateData);
+            
+            // Audit logging
+            ControllerSecurityHelper::logUpdate($recording, $oldData, $updateData, $request);
             
             return response()->json([
                 'success' => true,

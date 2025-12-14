@@ -7,10 +7,14 @@ use App\Models\Program;
 use App\Models\Episode;
 use App\Services\ProgramWorkflowService;
 use App\Services\AnalyticsService;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class ProgramController extends Controller
 {
@@ -26,50 +30,90 @@ class ProgramController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $user = auth()->user();
-        
-        $query = Program::with(['managerProgram', 'productionTeam', 'episodes']);
-        
-        // Filter: HR tidak boleh melihat program musik
-        // Program musik adalah program yang memiliki production team dengan member role 'musik_arr'
-        if ($user && $user->role === 'HR') {
-            $query->whereDoesntHave('productionTeam.members', function ($q) {
-                $q->where('role', 'musik_arr')
-                  ->where('is_active', true);
+        try {
+            $user = auth()->user();
+            
+            // Build cache key based on request parameters
+            $cacheKey = 'programs_index_' . md5(json_encode([
+                'user_role' => $user?->role,
+                'status' => $request->get('status'),
+                'category' => $request->get('category'),
+                'manager_id' => $request->get('manager_id'),
+                'search' => $request->get('search'),
+                'page' => $request->get('page', 1)
+            ]));
+            
+            // Use cache with 5 minutes TTL
+            $programs = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request, $user) {
+                // Optimize eager loading - jangan load semua episodes, hanya count
+                $query = Program::with([
+                    'managerProgram',
+                    'productionTeam.members.user', // Fix N+1 problem
+                    'episodes' => function ($q) {
+                        $q->select('id', 'program_id', 'episode_number', 'title', 'status')
+                          ->orderBy('episode_number', 'desc')
+                          ->limit(5); // Hanya load 5 episodes terbaru untuk preview
+                    }
+                ]);
+                
+                // Filter: HR tidak boleh melihat program musik
+                // Program musik adalah program yang memiliki production team dengan member role 'musik_arr'
+                if ($user && $user->role === 'HR') {
+                    $query->whereDoesntHave('productionTeam.members', function ($q) {
+                        $q->where('role', 'musik_arr')
+                          ->where('is_active', true);
+                    });
+                }
+                
+                // Filter by status
+                if ($request->has('status')) {
+                    $query->where('status', $request->status);
+                }
+                
+                // Filter by category
+                if ($request->has('category')) {
+                    $query->where('category', $request->category);
+                }
+                
+                // Filter by manager
+                if ($request->has('manager_id')) {
+                    $query->where('manager_program_id', $request->manager_id);
+                }
+                
+                // Search
+                if ($request->has('search')) {
+                    $search = $request->search;
+                    $query->where(function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                          ->orWhere('description', 'like', "%{$search}%");
+                    });
+                }
+                
+                return $query->orderBy('created_at', 'desc')->paginate(15);
             });
-        }
-        
-        // Filter by status
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-        
-        // Filter by category
-        if ($request->has('category')) {
-            $query->where('category', $request->category);
-        }
-        
-        // Filter by manager
-        if ($request->has('manager_id')) {
-            $query->where('manager_program_id', $request->manager_id);
-        }
-        
-        // Search
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%");
+            
+            // Add episode count to each program (tanpa load semua episodes)
+            $programs->getCollection()->transform(function ($program) {
+                $program->episode_count = $program->episodes()->count();
+                return $program;
             });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $programs,
+                'message' => 'Programs retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error retrieving programs', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving programs: ' . $e->getMessage()
+            ], 500);
         }
-        
-        $programs = $query->orderBy('created_at', 'desc')->paginate(15);
-        
-        return response()->json([
-            'success' => true,
-            'data' => $programs,
-            'message' => 'Programs retrieved successfully'
-        ]);
     }
 
     /**
@@ -177,23 +221,54 @@ class ProgramController extends Controller
                 'target_views_per_episode'
             ]);
             
-            // Set default category jika tidak ada
-            if (!isset($programData['category'])) {
+            // Filter out null values dan kolom yang tidak ada di database
+            $programData = array_filter($programData, function($value) {
+                return $value !== null;
+            });
+            
+            // Set default category jika tidak ada dan kolom category ada di database
+            if (!isset($programData['category']) && Schema::hasColumn('programs', 'category')) {
                 $programData['category'] = 'regular';
+            } elseif (!Schema::hasColumn('programs', 'category')) {
+                // Hapus category dari data jika kolom tidak ada
+                unset($programData['category']);
             }
             
-            // Add proposal file data
+            // Add proposal file data hanya jika kolom ada di database
             if ($proposalFilePath) {
-                $programData['proposal_file_path'] = $proposalFilePath;
-                $programData['proposal_file_name'] = $proposalFileName;
-                $programData['proposal_file_size'] = $proposalFileSize;
-                $programData['proposal_file_mime_type'] = $proposalFileMimeType;
+                if (Schema::hasColumn('programs', 'proposal_file_path')) {
+                    $programData['proposal_file_path'] = $proposalFilePath;
+                }
+                if (Schema::hasColumn('programs', 'proposal_file_name')) {
+                    $programData['proposal_file_name'] = $proposalFileName;
+                }
+                if (Schema::hasColumn('programs', 'proposal_file_size')) {
+                    $programData['proposal_file_size'] = $proposalFileSize;
+                }
+                if (Schema::hasColumn('programs', 'proposal_file_mime_type')) {
+                    $programData['proposal_file_mime_type'] = $proposalFileMimeType;
+                }
             }
             
             // Set default status jika tidak ada
             if (!isset($programData['status'])) {
                 $programData['status'] = 'draft';
             }
+            
+            // Hapus kolom yang tidak ada di database sebelum insert
+            $existingColumns = Schema::getColumnListing('programs');
+            $programData = array_intersect_key($programData, array_flip($existingColumns));
+            
+            // Pastikan kolom required ada
+            if (!isset($programData['status'])) {
+                $programData['status'] = 'draft';
+            }
+            
+            // Log untuk debugging
+            Log::info('Creating program with data:', [
+                'columns' => array_keys($programData),
+                'existing_columns' => $existingColumns
+            ]);
             
             // Use ProgramWorkflowService to create program (auto-generate episodes, notifications, workflow states)
             $program = $this->programWorkflowService->createProgram($programData);
@@ -550,25 +625,62 @@ class ProgramController extends Controller
      */
     public function getBudgetRequests(Request $request): JsonResponse
     {
-        $user = auth()->user();
-        
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        try {
+            $user = auth()->user();
+            
+            if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            // Cek apakah tabel budget_requests ada dan gunakan model BudgetRequest
+            if (class_exists(\App\Models\BudgetRequest::class) && 
+                Schema::hasTable('budget_requests')) {
+                try {
+                    // Gunakan Eloquent query
+                    $query = \App\Models\BudgetRequest::with([
+                        'program.managerProgram',
+                        'program.productionTeam',
+                        'requestedBy',
+                        'approvedBy'
+                    ]);
+                    
+                    // Hanya filter deleted_at jika kolom ada
+                    if (Schema::hasColumn('budget_requests', 'deleted_at')) {
+                        $query->whereNull('deleted_at');
+                    }
+                    
+                    $budgetRequests = $query->orderBy('created_at', 'desc')->get();
+                } catch (\Exception $e) {
+                    // Jika ada error, fallback ke Program
+                    Log::warning('Error loading BudgetRequest, falling back to Program: ' . $e->getMessage());
+                    $budgetRequests = Program::where('budget_approved', false)
+                        ->whereNotNull('budget_amount')
+                        ->with(['managerProgram', 'productionTeam'])
+                        ->orderBy('created_at', 'desc')
+                        ->get();
+                }
+            } else {
+                // Fallback: gunakan Program jika BudgetRequest tidak ada
+                $budgetRequests = Program::where('budget_approved', false)
+                    ->whereNotNull('budget_amount')
+                    ->with(['managerProgram', 'productionTeam'])
+                    ->orderBy('created_at', 'desc')
+                    ->get();
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $budgetRequests
+            ]);
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized access.'
-            ], 403);
+                'message' => 'Error retrieving budget requests: ' . $e->getMessage()
+            ], 500);
         }
-
-        $budgetRequests = Program::where('budget_approved', false)
-            ->whereNotNull('budget_amount')
-            ->with(['managerProgram', 'productionTeam'])
-            ->orderBy('created_at', 'desc')
-            ->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => $budgetRequests
-        ]);
     }
 
     /**

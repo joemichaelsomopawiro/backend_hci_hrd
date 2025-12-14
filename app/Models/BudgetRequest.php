@@ -9,7 +9,10 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class BudgetRequest extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory;
+    
+    // Tidak menggunakan SoftDeletes karena kolom deleted_at mungkin tidak ada
+    // Gunakan withoutGlobalScopes() di controller jika perlu
 
     protected $fillable = [
         'program_id',

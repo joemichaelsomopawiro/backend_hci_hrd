@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CreativeWork;
 use App\Models\Episode;
 use App\Models\Notification;
+use App\Helpers\ControllerSecurityHelper;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -73,7 +74,19 @@ class CreativeController extends Controller
      */
     public function show(int $id): JsonResponse
     {
-        $work = CreativeWork::with(['episode', 'createdBy', 'reviewedBy'])->findOrFail($id);
+        // Use cache for frequently accessed data
+        $work = \App\Helpers\QueryOptimizer::remember(
+            \App\Helpers\QueryOptimizer::getCacheKey('CreativeWork', $id),
+            300, // 5 minutes
+            function () use ($id) {
+                return CreativeWork::with([
+                    'episode.program.managerProgram',
+                    'episode.program.productionTeam.members.user',
+                    'createdBy',
+                    'reviewedBy'
+                ])->findOrFail($id);
+            }
+        );
         
         return response()->json([
             'success' => true,
@@ -118,6 +131,12 @@ class CreativeController extends Controller
                 'status' => 'draft',
                 'created_by' => $request->created_by
             ]);
+            
+            // Audit logging
+            ControllerSecurityHelper::logCreate($work, [
+                'episode_id' => $work->episode_id,
+                'status' => 'draft'
+            ], $request);
             
             return response()->json([
                 'success' => true,
@@ -397,9 +416,17 @@ class CreativeController extends Controller
             }
 
             // Change status to in_progress
+            $oldStatus = $work->status;
             $work->update([
                 'status' => 'in_progress'
             ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('creative_work_accepted', $work, [
+                'episode_id' => $work->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'in_progress'
+            ], $request);
 
             return response()->json([
                 'success' => true,
@@ -634,9 +661,17 @@ class CreativeController extends Controller
             }
 
             // Resubmit
+            $oldStatus = $work->status;
             $work->update([
                 'status' => 'submitted'
             ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logApproval('creative_work_resubmitted', $work, [
+                'episode_id' => $work->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'submitted'
+            ], $request);
 
             // Notify Producer
             $episode = $work->episode;

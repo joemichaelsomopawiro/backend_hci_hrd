@@ -7,6 +7,8 @@ use App\Models\QualityControl;
 use App\Models\QualityControlWork;
 use App\Models\Episode;
 use App\Models\Notification;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -29,7 +31,13 @@ class QualityControlController extends Controller
                 ], 403);
             }
 
-            $query = QualityControl::with(['episode', 'createdBy', 'qcBy']);
+            // Optimize query with eager loading
+            $query = QualityControl::with([
+                'episode.program.managerProgram',
+                'episode.program.productionTeam.members.user',
+                'createdBy',
+                'qcBy'
+            ]);
 
             // Filter by status
             if ($request->has('status')) {
@@ -104,7 +112,15 @@ class QualityControlController extends Controller
                 ], 400);
             }
 
+            $oldStatus = $control->status;
             $control->startQC($user->id);
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('quality_control_started', $control, [
+                'episode_id' => $control->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'in_progress'
+            ], $request);
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_started');
@@ -161,11 +177,20 @@ class QualityControlController extends Controller
                 ], 400);
             }
 
+            $oldStatus = $control->status;
             $control->completeQC(
                 $request->quality_score,
                 $request->improvement_areas ?? [],
                 $request->notes
             );
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('quality_control_completed', $control, [
+                'episode_id' => $control->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'completed',
+                'quality_score' => $request->quality_score
+            ], $request);
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_completed');
@@ -208,10 +233,19 @@ class QualityControlController extends Controller
                 ], 400);
             }
 
+            $oldStatus = $control->status;
             $control->update([
                 'status' => 'approved',
                 'qc_result_notes' => $request->get('notes', 'QC Approved')
             ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logApproval('quality_control_approved', $control, [
+                'episode_id' => $control->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'approved',
+                'notes' => $request->get('notes', 'QC Approved')
+            ], $request);
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_approved');
@@ -266,10 +300,19 @@ class QualityControlController extends Controller
                 ], 400);
             }
 
+            $oldStatus = $control->status;
             $control->update([
                 'status' => 'rejected',
                 'qc_result_notes' => $request->reason
             ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logApproval('quality_control_rejected', $control, [
+                'episode_id' => $control->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'rejected',
+                'reason' => $request->reason
+            ], $request);
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_rejected');

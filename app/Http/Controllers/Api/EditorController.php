@@ -8,6 +8,8 @@ use App\Models\Episode;
 use App\Models\SoundEngineerEditing;
 use App\Models\ShootingRunSheet;
 use App\Models\ProduksiWork;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -20,7 +22,13 @@ class EditorController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = EditorWork::with(['episode', 'createdBy', 'reviewedBy']);
+        // Optimize query with eager loading
+        $query = EditorWork::with([
+            'episode.program.managerProgram',
+            'episode.program.productionTeam.members.user',
+            'createdBy',
+            'reviewedBy'
+        ]);
         
         // Filter by episode
         if ($request->has('episode_id')) {
@@ -98,6 +106,13 @@ class EditorController extends Controller
                 'status' => 'draft',
                 'created_by' => $request->created_by
             ]);
+            
+            // Audit logging
+            ControllerSecurityHelper::logCreate($work, [
+                'episode_id' => $work->episode_id,
+                'work_type' => $work->work_type,
+                'status' => 'draft'
+            ], $request);
             
             return response()->json([
                 'success' => true,

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\ProductionTeam;
 use App\Services\ProductionTeamService;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -23,56 +24,88 @@ class ProductionTeamController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = ProductionTeam::with(['producer', 'members.user']);
-        
-        // Filter by producer
-        if ($request->has('producer_id')) {
-            $query->where('producer_id', $request->producer_id);
-        }
-        
-        // Filter by active status
-        if ($request->has('is_active')) {
-            $query->where('is_active', $request->boolean('is_active'));
-        }
-        
-        // Search
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%");
+        try {
+            // Build cache key based on request parameters
+            $cacheKey = 'production_teams_index_' . md5(json_encode([
+                'producer_id' => $request->get('producer_id'),
+                'is_active' => $request->get('is_active'),
+                'search' => $request->get('search'),
+                'page' => $request->get('page', 1)
+            ]));
+            
+            // Use cache with 5 minutes TTL
+            $teams = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request) {
+                // Optimize eager loading - hanya load active members
+                $query = ProductionTeam::with([
+                    'producer',
+                    'members' => function ($q) {
+                        $q->where('is_active', true);
+                    },
+                    'members.user'
+                ]);
+                
+                // Filter by producer
+                if ($request->has('producer_id')) {
+                    $query->where('producer_id', $request->producer_id);
+                }
+                
+                // Filter by active status
+                if ($request->has('is_active')) {
+                    $query->where('is_active', $request->boolean('is_active'));
+                }
+                
+                // Search
+                if ($request->has('search')) {
+                    $search = $request->search;
+                    $query->where(function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                          ->orWhere('description', 'like', "%{$search}%");
+                    });
+                }
+                
+                return $query->orderBy('created_at', 'desc')->paginate(15);
             });
-        }
-        
-        $teams = $query->orderBy('created_at', 'desc')->paginate(15);
-        
-        // Transform members to include user data explicitly
-        $teams->getCollection()->transform(function ($team) {
-            $team->members = $team->members->map(function ($member) {
-                return [
-                    'id' => $member->id,
-                    'user_id' => $member->user_id,
-                    'user' => $member->user ? [
-                        'id' => $member->user->id,
-                        'name' => $member->user->name,
-                        'email' => $member->user->email,
-                        'role' => $member->user->role
-                    ] : null,
-                    'role' => $member->role,
-                    'role_label' => $member->role_label,
-                    'is_active' => $member->is_active,
-                    'joined_at' => $member->joined_at,
-                    'notes' => $member->notes
-                ];
+            
+            // Transform members to include user data explicitly
+            $teams->getCollection()->transform(function ($team) {
+                $team->members = $team->members->map(function ($member) {
+                    return [
+                        'id' => $member->id,
+                        'user_id' => $member->user_id,
+                        'user' => $member->user ? [
+                            'id' => $member->user->id,
+                            'name' => $member->user->name,
+                            'email' => $member->user->email,
+                            'role' => $member->user->role
+                        ] : null,
+                        'role' => $member->role,
+                        'role_label' => $member->role_label,
+                        'is_active' => $member->is_active,
+                        'joined_at' => $member->joined_at,
+                        'notes' => $member->notes
+                    ];
+                });
+                // Add member count
+                $team->member_count = $team->members->count();
+                return $team;
             });
-            return $team;
-        });
-        
-        return response()->json([
-            'success' => true,
-            'data' => $teams,
-            'message' => 'Production teams retrieved successfully'
-        ]);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $teams,
+                'message' => 'Production teams retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error retrieving production teams', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving production teams: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -118,17 +151,30 @@ class ProductionTeamController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255|unique:production_teams',
+            'name' => 'required|string|max:255|unique:production_teams,name',
             'description' => 'nullable|string',
             'producer_id' => 'required|exists:users,id',
             'created_by' => 'nullable|exists:users,id'
         ]);
         
         if ($validator->fails()) {
+            \Log::warning('Production Team creation validation failed', [
+                'errors' => $validator->errors()->toArray(),
+                'request_data' => $request->except(['password', 'token']),
+                'all_request' => $request->all()
+            ]);
+            
+            // Format errors untuk lebih mudah dibaca
+            $formattedErrors = [];
+            foreach ($validator->errors()->toArray() as $field => $messages) {
+                $formattedErrors[$field] = $messages;
+            }
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $validator->errors()
+                'errors' => $formattedErrors,
+                'error_details' => $validator->errors()->toArray()
             ], 422);
         }
         
@@ -142,12 +188,71 @@ class ProductionTeamController extends Controller
             
             $team = $this->productionTeamService->createTeam($data);
             
+            // Load relationships untuk response yang lengkap
+            $team->load(['producer', 'members.user', 'programs']);
+            
+            // Transform members untuk konsistensi dengan index/show
+            $team->members = $team->members->map(function ($member) {
+                return [
+                    'id' => $member->id,
+                    'user_id' => $member->user_id,
+                    'user' => $member->user ? [
+                        'id' => $member->user->id,
+                        'name' => $member->user->name,
+                        'email' => $member->user->email,
+                        'role' => $member->user->role
+                    ] : null,
+                    'role' => $member->role ?? null,
+                    'role_label' => $member->role_label ?? null,
+                    'is_active' => $member->is_active ?? false,
+                    'joined_at' => $member->joined_at ? $member->joined_at->toDateTimeString() : null,
+                    'notes' => $member->notes ?? null
+                ];
+            });
+            
+            // Tambahkan data tambahan yang mungkin diperlukan frontend
+            $team->member_count = $team->members->count();
+            $team->is_ready_for_production = $team->isReadyForProduction();
+            
+            // Transform producer untuk konsistensi
+            $producerData = null;
+            if ($team->producer) {
+                $producerData = [
+                    'id' => $team->producer->id,
+                    'name' => $team->producer->name,
+                    'email' => $team->producer->email,
+                    'role' => $team->producer->role
+                ];
+            }
+            
+            // Prepare response data
+            $responseData = [
+                'id' => $team->id,
+                'name' => $team->name,
+                'description' => $team->description,
+                'producer_id' => $team->producer_id,
+                'is_active' => $team->is_active,
+                'created_by' => $team->created_by,
+                'member_count' => $team->member_count,
+                'is_ready_for_production' => $team->is_ready_for_production,
+                'producer' => $producerData,
+                'members' => $team->members,
+                'created_at' => $team->created_at,
+                'updated_at' => $team->updated_at
+            ];
+            
             return response()->json([
                 'success' => true,
-                'data' => $team,
+                'data' => $responseData,
                 'message' => 'Production team created successfully'
             ], 201);
         } catch (\Exception $e) {
+            \Log::error('Failed to create production team', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->except(['password', 'token'])
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create production team',

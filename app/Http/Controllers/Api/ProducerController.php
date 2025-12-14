@@ -181,6 +181,14 @@ class ProducerController extends Controller
                         'review_notes' => $request->notes
                     ]);
                     
+                    // Audit logging
+                    \App\Helpers\ControllerSecurityHelper::logApproval('song_proposal_approved', $item, [
+                        'episode_id' => $item->episode_id,
+                        'song_title' => $item->song_title,
+                        'singer_name' => $item->singer_name,
+                        'review_notes' => $request->notes
+                    ], $request);
+                    
                     // Notify Music Arranger
                     Notification::create([
                         'user_id' => $item->created_by,
@@ -221,12 +229,21 @@ class ProducerController extends Controller
                     }
                     
                     // Update status to arrangement_approved
+                    $oldStatus = $item->status;
                     $item->update([
                         'status' => 'arrangement_approved',
                         'reviewed_by' => auth()->id(),
                         'reviewed_at' => now(),
                         'review_notes' => $request->notes
                     ]);
+                    
+                    // Audit logging
+                    \App\Helpers\ControllerSecurityHelper::logApproval('music_arrangement_approved', $item, [
+                        'episode_id' => $item->episode_id,
+                        'song_title' => $item->song_title,
+                        'old_status' => $oldStatus,
+                        'review_notes' => $request->notes
+                    ], $request);
                     
                     // Reload to get updated values after approve
                     $item->refresh();
