@@ -8,6 +8,7 @@ use App\Models\SocialMediaPost;
 use App\Models\Episode;
 use App\Models\MediaFile;
 use App\Models\Notification;
+use App\Models\DesignGrafisWork;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -830,11 +831,11 @@ class PromosiController extends Controller
                 'status' => 'published'
             ]);
 
-            // Notify Producer
             $episode = $work->episode;
             $productionTeam = $episode->program->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
             
+            // Notify Producer
             if ($producer) {
                 Notification::create([
                     'user_id' => $producer->id,
@@ -848,10 +849,57 @@ class PromosiController extends Controller
                 ]);
             }
 
+            // Auto-create Design Grafis work setelah Promosi selesai
+            $designGrafisUsers = \App\Models\User::where('role', 'Design Grafis')->get();
+            if ($designGrafisUsers->isNotEmpty()) {
+                // Cek apakah sudah ada Design Grafis work untuk episode ini
+                $existingDesignWork = \App\Models\DesignGrafisWork::where('episode_id', $work->episode_id)
+                    ->whereIn('work_type', ['thumbnail_youtube', 'thumbnail_bts'])
+                    ->first();
+
+                if (!$existingDesignWork) {
+                    // Create Design Grafis work untuk thumbnail YouTube
+                    $designGrafisWorkYT = \App\Models\DesignGrafisWork::create([
+                        'episode_id' => $work->episode_id,
+                        'work_type' => 'thumbnail_youtube',
+                        'title' => "Thumbnail YouTube - Episode {$episode->episode_number}",
+                        'description' => "Buat thumbnail YouTube untuk Episode {$episode->episode_number}",
+                        'status' => 'draft',
+                        'created_by' => $designGrafisUsers->first()->id
+                    ]);
+
+                    // Create Design Grafis work untuk thumbnail BTS
+                    $designGrafisWorkBTS = \App\Models\DesignGrafisWork::create([
+                        'episode_id' => $work->episode_id,
+                        'work_type' => 'thumbnail_bts',
+                        'title' => "Thumbnail BTS - Episode {$episode->episode_number}",
+                        'description' => "Buat thumbnail BTS untuk Episode {$episode->episode_number}",
+                        'status' => 'draft',
+                        'created_by' => $designGrafisUsers->first()->id
+                    ]);
+
+                    // Notify Design Grafis users
+                    foreach ($designGrafisUsers as $designUser) {
+                        Notification::create([
+                            'user_id' => $designUser->id,
+                            'type' => 'design_grafis_work_created',
+                            'title' => 'Design Grafis Work Dibuat',
+                            'message' => "Pekerjaan Design Grafis telah dibuat untuk Episode {$episode->episode_number}. Silakan buat thumbnail YouTube dan BTS.",
+                            'data' => [
+                                'episode_id' => $work->episode_id,
+                                'design_grafis_work_yt_id' => $designGrafisWorkYT->id,
+                                'design_grafis_work_bts_id' => $designGrafisWorkBTS->id,
+                                'promotion_work_id' => $work->id
+                            ]
+                        ]);
+                    }
+                }
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Work completed successfully. Producer has been notified.'
+                'message' => 'Work completed successfully. Producer and Design Grafis have been notified.'
             ]);
 
         } catch (\Exception $e) {

@@ -29,7 +29,10 @@ class SecurityHeaders
         }
         
         // Content Security Policy
-        $response->headers->set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'");
+        // Allow media (audio/video) from same origin and localhost for development
+        $appUrl = config('app.url');
+        $csp = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; media-src 'self' {$appUrl} http://localhost:8000 https://localhost:8000;";
+        $response->headers->set('Content-Security-Policy', $csp);
         
         // Permissions Policy
         $response->headers->set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');

@@ -249,10 +249,10 @@ class NotificationService
     public function markAsRead(int $notificationId, int $userId): bool
     {
         try {
-            $notification = Notification::where('id', $notificationId)
-                ->where('user_id', $userId)
-                ->first();
-                
+        $notification = Notification::where('id', $notificationId)
+            ->where('user_id', $userId)
+            ->first();
+            
             if (!$notification) {
                 return false;
             }

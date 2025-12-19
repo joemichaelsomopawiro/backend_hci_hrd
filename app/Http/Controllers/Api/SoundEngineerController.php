@@ -15,6 +15,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 
 class SoundEngineerController extends Controller
 {
@@ -986,8 +988,24 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            $query = MusicArrangement::with(['episode.program.productionTeam', 'createdBy'])
-                ->where('status', 'rejected')
+            // Debug: Cek semua arrangement dengan status rejected
+            $allRejected = MusicArrangement::whereIn('status', ['arrangement_rejected', 'rejected'])->get();
+            Log::info('SoundEngineer getRejectedArrangements - All rejected arrangements', [
+                'user_id' => $user->id,
+                'total_rejected' => $allRejected->count(),
+                'arrangements' => $allRejected->map(function ($arr) {
+                    return [
+                        'id' => $arr->id,
+                        'status' => $arr->status,
+                        'episode_id' => $arr->episode_id,
+                        'needs_sound_engineer_help' => $arr->needs_sound_engineer_help,
+                        'sound_engineer_helper_id' => $arr->sound_engineer_helper_id
+                    ];
+                })->toArray()
+            ]);
+            
+            $query = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy', 'reviewedBy'])
+                ->whereIn('status', ['arrangement_rejected', 'rejected']) // Support both status values
                 ->where(function($q) {
                     $q->where('needs_sound_engineer_help', true)
                       ->orWhereNull('sound_engineer_helper_id');
@@ -997,15 +1015,56 @@ class SoundEngineerController extends Controller
             if ($request->has('episode_id')) {
                 $query->where('episode_id', $request->episode_id);
             }
+            
+            // Debug: Cek sebelum filter productionTeam
+            $beforeFilter = $query->get();
+            Log::info('SoundEngineer getRejectedArrangements - Before productionTeam filter', [
+                'user_id' => $user->id,
+                'total_before_filter' => $beforeFilter->count(),
+                'arrangements' => $beforeFilter->map(function ($arr) {
+                    $episode = $arr->episode;
+                    return [
+                        'id' => $arr->id,
+                        'status' => $arr->status,
+                        'episode_id' => $arr->episode_id,
+                        'episode_production_team_id' => $episode->production_team_id ?? null,
+                        'program_production_team_id' => ($episode->program && $episode->program->productionTeam) ? $episode->program->production_team_id : null
+                    ];
+                })->toArray()
+            ]);
 
             // Only show arrangements from user's production teams
-            $query->whereHas('episode.program.productionTeam.members', function($q) use ($user) {
-                $q->where('user_id', $user->id)
-                  ->where('role', 'sound_eng')
-                  ->where('is_active', true);
+            // Support episode.productionTeam langsung atau episode.program.productionTeam
+            $query->where(function ($q) use ($user) {
+                // Episode punya productionTeam langsung
+                $q->whereHas('episode.productionTeam.members', function ($subQ) use ($user) {
+                    $subQ->where('user_id', $user->id)
+                         ->where('role', 'sound_eng')
+                         ->where('is_active', true);
+                })
+                // Atau episode tidak punya productionTeam, ambil dari Program
+                ->orWhereHas('episode.program.productionTeam.members', function ($subQ) use ($user) {
+                    $subQ->where('user_id', $user->id)
+                         ->where('role', 'sound_eng')
+                         ->where('is_active', true);
+                });
             });
+            
+            // Debug: Cek setelah filter productionTeam
+            $afterFilter = $query->get();
+            Log::info('SoundEngineer getRejectedArrangements - After productionTeam filter', [
+                'user_id' => $user->id,
+                'total_after_filter' => $afterFilter->count(),
+                'arrangements' => $afterFilter->map(function ($arr) {
+                    return [
+                        'id' => $arr->id,
+                        'status' => $arr->status,
+                        'episode_id' => $arr->episode_id
+                    ];
+                })->toArray()
+            ]);
 
-            $arrangements = $query->orderBy('rejected_at', 'desc')->paginate(15);
+            $arrangements = $query->orderBy('reviewed_at', 'desc')->paginate(15);
 
             return response()->json([
                 'success' => true,
@@ -1216,7 +1275,7 @@ class SoundEngineerController extends Controller
             $validator = Validator::make($request->all(), [
                 'help_notes' => 'required|string|max:2000',
                 'suggested_fixes' => 'nullable|string|max:2000',
-                'file_path' => 'nullable|string', // Optional: upload fixed arrangement file
+                'file' => 'nullable|file|mimes:mp3,wav,midi|max:102400', // Optional: upload fixed arrangement file (100MB max)
             ]);
 
             if ($validator->fails()) {
@@ -1230,7 +1289,7 @@ class SoundEngineerController extends Controller
             $arrangement = MusicArrangement::with(['episode.program.productionTeam', 'createdBy'])->findOrFail($arrangementId);
 
             // Validate arrangement is rejected
-            if ($arrangement->status !== 'rejected') {
+            if (!in_array($arrangement->status, ['arrangement_rejected', 'rejected'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Can only help fix rejected arrangements'
@@ -1238,7 +1297,18 @@ class SoundEngineerController extends Controller
             }
 
             // Validate Sound Engineer is in the same production team
-            $isInTeam = $arrangement->episode->program->productionTeam->members()
+            // Support episode.productionTeam langsung atau episode.program.productionTeam
+            $episode = $arrangement->episode;
+            $productionTeam = $episode->productionTeam ?? $episode->program->productionTeam;
+            
+            if (!$productionTeam) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Episode does not have a production team assigned'
+                ], 400);
+            }
+            
+            $isInTeam = $productionTeam->members()
                 ->where('user_id', $user->id)
                 ->where('role', 'sound_eng')
                 ->where('is_active', true)
@@ -1254,55 +1324,124 @@ class SoundEngineerController extends Controller
             // Request help (mark arrangement as needing help and assign Sound Engineer)
             $arrangement->requestSoundEngineerHelp($user->id, $request->help_notes);
 
+            // Prepare update data
+            $updateData = [];
+
             // Update arrangement with suggested fixes if provided
             if ($request->has('suggested_fixes')) {
-                $arrangement->update([
-                    'arrangement_notes' => ($arrangement->arrangement_notes ?? '') . "\n\n[Sound Engineer Help] " . $request->suggested_fixes
-                ]);
+                $updateData['arrangement_notes'] = ($arrangement->arrangement_notes ?? '') . "\n\n[Sound Engineer Help] " . $request->suggested_fixes;
             }
 
-            // If file provided, update file path
-            if ($request->has('file_path')) {
-                $arrangement->update([
-                    'file_path' => $request->file_path
-                ]);
+            // Handle file upload if provided
+            if ($request->hasFile('file')) {
+                try {
+                    // Delete old file if exists
+                    if ($arrangement->file_path && Storage::disk('public')->exists($arrangement->file_path)) {
+                        Storage::disk('public')->delete($arrangement->file_path);
+                    }
+
+                    $file = $request->file('file');
+                    $filePath = $file->store('music-arrangements', 'public');
+                    
+                    $updateData['file_path'] = $filePath;
+                    $updateData['file_name'] = $file->getClientOriginalName();
+                    $updateData['file_size'] = $file->getSize();
+                    $updateData['mime_type'] = $file->getMimeType();
+                    
+                    // Jika Sound Engineer upload file, auto-submit ke Producer (sama seperti Music Arranger)
+                    // Status berubah ke arrangement_submitted agar Producer bisa review
+                    $updateData['status'] = 'arrangement_submitted';
+                    $updateData['submitted_at'] = now();
+
+                    // Log file upload
+                    \App\Helpers\AuditLogger::logFileUpload('audio', $file->getClientOriginalName(), $file->getSize(), null, $request);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'File upload failed: ' . $e->getMessage()
+                    ], 422);
+                }
             }
 
+            // Update arrangement if there's data to update
+            if (!empty($updateData)) {
+                $arrangement->update($updateData);
+            }
+
+            // Prepare notification message
+            $hasFile = $request->hasFile('file');
+            $fileMessage = $hasFile ? " dan telah mengupload file arrangement yang sudah diperbaiki" : "";
+            
             // Notify Music Arranger
             Notification::create([
                 'user_id' => $arrangement->created_by,
                 'type' => 'sound_engineer_helping_arrangement',
                 'title' => 'Sound Engineer Membantu Perbaikan Arrangement',
-                'message' => "Sound Engineer {$user->name} telah membantu perbaikan arrangement '{$arrangement->song_title}' yang ditolak. Catatan: {$request->help_notes}",
+                'message' => "Sound Engineer {$user->name} telah membantu perbaikan arrangement '{$arrangement->song_title}' yang ditolak{$fileMessage}. Catatan: {$request->help_notes}",
                 'data' => [
                     'arrangement_id' => $arrangement->id,
                     'episode_id' => $arrangement->episode_id,
                     'sound_engineer_id' => $user->id,
                     'help_notes' => $request->help_notes,
-                    'suggested_fixes' => $request->suggested_fixes
+                    'suggested_fixes' => $request->suggested_fixes,
+                    'file_uploaded' => $hasFile,
+                    'file_name' => $hasFile ? $arrangement->fresh()->file_name : null
                 ]
             ]);
 
             // Notify Producer
-            $producer = $arrangement->episode->program->productionTeam->producer;
+            // Support episode.productionTeam langsung atau episode.program.productionTeam
+            $episode = $arrangement->episode;
+            $productionTeam = $episode->productionTeam ?? $episode->program->productionTeam;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
             if ($producer) {
-                Notification::create([
-                    'user_id' => $producer->id,
-                    'type' => 'sound_engineer_helping_arrangement',
-                    'title' => 'Sound Engineer Membantu Perbaikan Arrangement',
-                    'message' => "Sound Engineer {$user->name} telah membantu perbaikan arrangement '{$arrangement->song_title}' yang ditolak.",
-                    'data' => [
-                        'arrangement_id' => $arrangement->id,
-                        'episode_id' => $arrangement->episode_id,
-                        'sound_engineer_id' => $user->id
-                    ]
-                ]);
+                // Jika Sound Engineer upload file, notifikasi bahwa arrangement sudah di-submit untuk review
+                if ($hasFile && $arrangement->status === 'arrangement_submitted') {
+                    Notification::create([
+                        'user_id' => $producer->id,
+                        'type' => 'music_arrangement_submitted',
+                        'title' => 'Arrangement Diperbaiki oleh Sound Engineer',
+                        'message' => "Sound Engineer {$user->name} telah memperbaiki dan mengupload file arrangement '{$arrangement->song_title}' yang ditolak. File sudah di-submit untuk review.",
+                        'data' => [
+                            'arrangement_id' => $arrangement->id,
+                            'episode_id' => $arrangement->episode_id,
+                            'sound_engineer_id' => $user->id,
+                            'file_uploaded' => true,
+                            'file_name' => $arrangement->file_name,
+                            'help_notes' => $request->help_notes
+                        ]
+                    ]);
+                } else {
+                    // Jika hanya memberikan help notes tanpa upload file
+                    Notification::create([
+                        'user_id' => $producer->id,
+                        'type' => 'sound_engineer_helping_arrangement',
+                        'title' => 'Sound Engineer Membantu Perbaikan Arrangement',
+                        'message' => "Sound Engineer {$user->name} telah membantu perbaikan arrangement '{$arrangement->song_title}' yang ditolak{$fileMessage}.",
+                        'data' => [
+                            'arrangement_id' => $arrangement->id,
+                            'episode_id' => $arrangement->episode_id,
+                            'sound_engineer_id' => $user->id,
+                            'file_uploaded' => $hasFile
+                        ]
+                    ]);
+                }
+            }
+
+            $responseMessage = 'Arrangement help provided successfully. Music Arranger and Producer have been notified.';
+            if ($hasFile) {
+                if ($arrangement->status === 'arrangement_submitted') {
+                    $responseMessage .= ' File arrangement yang sudah diperbaiki telah diupload dan di-submit ke Producer untuk review.';
+                } else {
+                    $responseMessage .= ' File arrangement yang sudah diperbaiki telah diupload.';
+                }
             }
 
             return response()->json([
                 'success' => true,
                 'data' => $arrangement->fresh(['soundEngineerHelper', 'createdBy']),
-                'message' => 'Arrangement help provided successfully. Music Arranger and Producer have been notified.'
+                'message' => $responseMessage
             ]);
 
         } catch (\Exception $e) {

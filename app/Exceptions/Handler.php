@@ -11,6 +11,7 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
 use Illuminate\Http\Exceptions\ThrottleRequestsException;
+use Illuminate\Routing\Exceptions\InvalidSignatureException;
 use Illuminate\Database\QueryException;
 use Exception;
 use Throwable;
@@ -102,6 +103,14 @@ class Handler extends ExceptionHandler
             return response()->json([
                 'success' => false,
                 'message' => 'Access denied',
+                'timestamp' => now()->toISOString()
+            ], 403);
+        }
+
+        if ($exception instanceof InvalidSignatureException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired file access link',
                 'timestamp' => now()->toISOString()
             ], 403);
         }

@@ -273,6 +273,10 @@ class ProgramController extends Controller
             // Use ProgramWorkflowService to create program (auto-generate episodes, notifications, workflow states)
             $program = $this->programWorkflowService->createProgram($programData);
             
+            // Clear cache setelah create
+            QueryOptimizer::clearIndexCache('programs');
+            QueryOptimizer::clearIndexCache('episodes'); // Episodes juga perlu di-clear karena terkait program
+            
             return response()->json([
                 'success' => true,
                 'data' => $program->load(['episodes', 'managerProgram', 'productionTeam']),
@@ -333,6 +337,10 @@ class ProgramController extends Controller
         try {
             $program->update($request->all());
             
+            // Clear cache setelah update
+            QueryOptimizer::clearIndexCache('programs');
+            QueryOptimizer::clearIndexCache('episodes'); // Episodes juga perlu di-clear karena terkait program
+            
             return response()->json([
                 'success' => true,
                 'data' => $program,
@@ -373,9 +381,12 @@ class ProgramController extends Controller
         try {
             $program = $this->programWorkflowService->submitProgram($program, $user->id);
             
+            // Clear cache setelah submit program (programs dan episodes cache perlu di-clear)
+            QueryOptimizer::clearAllIndexCaches();
+            
             return response()->json([
                 'success' => true,
-                'data' => $program,
+                'data' => $program->load(['episodes', 'managerProgram', 'productionTeam']),
                 'message' => 'Program submitted for approval successfully'
             ]);
         } catch (\Exception $e) {
@@ -403,10 +414,22 @@ class ProgramController extends Controller
             ], 403);
         }
         
+        // Validasi: Program harus dalam status pending_approval
+        if ($program->status === 'approved') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Program sudah di-approve sebelumnya. Tidak bisa approve ulang.',
+                'current_status' => $program->status,
+                'approved_by' => $program->approved_by,
+                'approved_at' => $program->approved_at
+            ], 400);
+        }
+        
         if ($program->status !== 'pending_approval') {
             return response()->json([
                 'success' => false,
-                'message' => 'Program can only be approved from pending_approval status'
+                'message' => 'Program can only be approved from pending_approval status',
+                'current_status' => $program->status
             ], 400);
         }
         
@@ -429,9 +452,12 @@ class ProgramController extends Controller
                 $request->approval_notes
             );
             
+            // Clear cache setelah approve program (programs dan episodes cache perlu di-clear)
+            QueryOptimizer::clearAllIndexCaches();
+            
             return response()->json([
                 'success' => true,
-                'data' => $program,
+                'data' => $program->load(['episodes', 'managerProgram', 'productionTeam']),
                 'message' => 'Program approved successfully'
             ]);
         } catch (\Exception $e) {
@@ -459,10 +485,22 @@ class ProgramController extends Controller
             ], 403);
         }
         
+        // Validasi: Program harus dalam status pending_approval
+        if ($program->status === 'approved') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Program sudah di-approve. Tidak bisa di-reject.',
+                'current_status' => $program->status,
+                'approved_by' => $program->approved_by,
+                'approved_at' => $program->approved_at
+            ], 400);
+        }
+        
         if ($program->status !== 'pending_approval') {
             return response()->json([
                 'success' => false,
-                'message' => 'Program can only be rejected from pending_approval status'
+                'message' => 'Program can only be rejected from pending_approval status',
+                'current_status' => $program->status
             ], 400);
         }
         
@@ -485,9 +523,12 @@ class ProgramController extends Controller
                 $request->rejection_notes
             );
             
+            // Clear cache setelah reject program (programs dan episodes cache perlu di-clear)
+            QueryOptimizer::clearAllIndexCaches();
+            
             return response()->json([
                 'success' => true,
-                'data' => $program,
+                'data' => $program->load(['episodes', 'managerProgram', 'productionTeam']),
                 'message' => 'Program rejected successfully'
             ]);
         } catch (\Exception $e) {
@@ -524,6 +565,10 @@ class ProgramController extends Controller
         
         try {
             $program->delete();
+            
+            // Clear cache setelah delete
+            QueryOptimizer::clearIndexCache('programs');
+            QueryOptimizer::clearIndexCache('episodes'); // Episodes juga perlu di-clear karena terkait program
             
             return response()->json([
                 'success' => true,

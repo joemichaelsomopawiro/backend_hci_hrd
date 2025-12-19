@@ -207,10 +207,31 @@ class ProductionTeamService
 
     /**
      * Get available users for role
+     * 
+     * Maps production team member role to user role:
+     * - kreatif -> Creative
+     * - musik_arr -> Music Arranger
+     * - sound_eng -> Sound Engineer
+     * - produksi -> Production
+     * - editor -> Editor
+     * - art_set_design -> Art & Set Properti
      */
     public function getAvailableUsersForRole(string $role): array
     {
-        $users = User::where('role', $role)
+        // Map production team role to user role
+        $roleMapping = [
+            'kreatif' => 'Creative',
+            'musik_arr' => 'Music Arranger',
+            'sound_eng' => 'Sound Engineer',
+            'produksi' => 'Production',
+            'editor' => 'Editor',
+            'art_set_design' => 'Art & Set Properti',
+        ];
+        
+        // Get user role from mapping, fallback to original role if not found
+        $userRole = $roleMapping[$role] ?? $role;
+        
+        $users = User::where('role', $userRole)
             ->where('is_active', true)
             ->get();
             

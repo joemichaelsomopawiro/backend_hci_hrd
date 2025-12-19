@@ -28,22 +28,29 @@ class EpisodeController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            // Build cache key based on request parameters
+            // Get per_page parameter (default: 100 untuk menampilkan semua episodes)
+            // Jika per_page = 0 atau 'all', return semua episodes tanpa pagination
+            $perPage = $request->get('per_page', 100);
+            $usePagination = !($perPage == 0 || $perPage === 'all');
+            
+            // Build cache key based on request parameters (include per_page)
             $cacheKey = 'episodes_index_' . md5(json_encode([
                 'program_id' => $request->get('program_id'),
                 'status' => $request->get('status'),
                 'workflow_state' => $request->get('workflow_state'),
                 'assigned_to_user' => $request->get('assigned_to_user'),
                 'search' => $request->get('search'),
-                'page' => $request->get('page', 1)
+                'page' => $request->get('page', 1),
+                'per_page' => $perPage
             ]));
             
             // Use cache with 5 minutes TTL
-            $episodes = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request) {
-                // Optimize eager loading dengan nested relations
+            $episodes = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request, $perPage, $usePagination) {
+                // Optimize eager loading dengan nested relations - Tambahkan Program
                 $query = Episode::with([
+                    'program', // Pastikan Program ter-load
                     'program.managerProgram',
-                    'program.productionTeam.members.user', // Fix N+1 problem
+                    'program.productionTeam.members.user',
                     'deadlines',
                     'workflowStates'
                 ]);
@@ -63,9 +70,16 @@ class EpisodeController extends Controller
                     $query->where('current_workflow_state', $request->workflow_state);
                 }
                 
-                // Filter by assigned user
-                if ($request->has('assigned_to_user')) {
+                // Filter by assigned user or role (Flexible & Case-insensitive)
+                if ($request->has('assigned_to_user') && $request->has('assigned_to_role')) {
+                    $query->where(function($q) use ($request) {
+                        $q->where('assigned_to_user', $request->assigned_to_user)
+                          ->orWhereRaw('LOWER(assigned_to_role) = ?', [strtolower($request->assigned_to_role)]);
+                    });
+                } elseif ($request->has('assigned_to_user')) {
                     $query->where('assigned_to_user', $request->assigned_to_user);
+                } elseif ($request->has('assigned_to_role')) {
+                    $query->whereRaw('LOWER(assigned_to_role) = ?', [strtolower($request->assigned_to_role)]);
                 }
                 
                 // Search
@@ -77,14 +91,40 @@ class EpisodeController extends Controller
                     });
                 }
                 
-                return $query->orderBy('episode_number')->paginate(15);
+                $query->orderBy('episode_number');
+                
+                if ($usePagination) {
+                    return $query->paginate((int)$perPage);
+                } else {
+                    // Return all episodes
+                    return $query->get();
+                }
             });
             
-            return response()->json([
-                'success' => true,
-                'data' => $episodes,
-                'message' => 'Episodes retrieved successfully'
-            ]);
+            // Handle response structure
+            if ($usePagination) {
+                // Pagination response (Laravel paginator)
+                return response()->json([
+                    'success' => true,
+                    'data' => $episodes,
+                    'message' => 'Episodes retrieved successfully'
+                ]);
+            } else {
+                // Non-pagination response (collection)
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'data' => $episodes,
+                        'total' => $episodes->count(),
+                        'per_page' => $episodes->count(),
+                        'current_page' => 1,
+                        'last_page' => 1,
+                        'from' => 1,
+                        'to' => $episodes->count()
+                    ],
+                    'message' => 'Episodes retrieved successfully'
+                ]);
+            }
         } catch (\Exception $e) {
             \Log::error('Error retrieving episodes', [
                 'error' => $e->getMessage(),
@@ -148,6 +188,10 @@ class EpisodeController extends Controller
             
             // Load relationships
             $episode->load(['program', 'deadlines']);
+            
+            // Clear cache setelah create
+            QueryOptimizer::clearIndexCache('episodes');
+            QueryOptimizer::clearIndexCache('programs'); // Programs juga perlu di-clear karena episodes terkait
             
             return response()->json([
                 'success' => true,
@@ -225,6 +269,9 @@ class EpisodeController extends Controller
         
         try {
             $episode->update($request->all());
+            
+            // Clear cache setelah update episode (episodes dan programs cache perlu di-clear)
+            QueryOptimizer::clearAllIndexCaches();
             
             return response()->json([
                 'success' => true,

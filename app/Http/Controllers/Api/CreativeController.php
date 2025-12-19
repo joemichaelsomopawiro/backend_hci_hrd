@@ -7,13 +7,22 @@ use App\Models\CreativeWork;
 use App\Models\Episode;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
+use App\Services\FileUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class CreativeController extends Controller
 {
+    protected $fileUploadService;
+
+    public function __construct(FileUploadService $fileUploadService)
+    {
+        $this->fileUploadService = $fileUploadService;
+    }
+
     /**
      * Get creative works
      */
@@ -29,7 +38,16 @@ class CreativeController extends Controller
                 ], 401);
             }
 
-            $query = CreativeWork::with(['episode', 'createdBy', 'reviewedBy']);
+            $query = CreativeWork::with([
+                'episode.program', 
+                'episode.musicArrangements' => function($q) {
+                    $q->whereIn('status', ['arrangement_approved', 'approved'])
+                      ->orderBy('reviewed_at', 'desc')
+                      ->limit(1);
+                },
+                'createdBy', 
+                'reviewedBy'
+            ]);
             
             // Filter by episode
             if ($request->has('episode_id')) {
@@ -82,6 +100,11 @@ class CreativeController extends Controller
                 return CreativeWork::with([
                     'episode.program.managerProgram',
                     'episode.program.productionTeam.members.user',
+                    'episode.musicArrangements' => function($q) {
+                        $q->whereIn('status', ['arrangement_approved', 'approved'])
+                          ->orderBy('reviewed_at', 'desc')
+                          ->limit(1);
+                    },
                     'createdBy',
                     'reviewedBy'
                 ])->findOrFail($id);
@@ -460,16 +483,21 @@ class CreativeController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'script_content' => 'required|string',
-                'storyboard_data' => 'required|array',
-                'recording_schedule' => 'required|date',
-                'shooting_schedule' => 'required|date',
-                'shooting_location' => 'required|string|max:255',
-                'budget_data' => 'required|array',
+                'script_content' => 'nullable|string',
+                'storyboard_data' => 'nullable|array',
+                'recording_schedule' => 'nullable|string', // Use string to be more flexible with ISO formats
+                'shooting_schedule' => 'nullable|string',
+                'shooting_location' => 'nullable|string|max:255',
+                'budget_data' => 'nullable|array',
                 'completion_notes' => 'nullable|string|max:1000'
             ]);
 
             if ($validator->fails()) {
+                Log::warning('Creative Complete Work Validation Failed:', [
+                    'errors' => $validator->errors()->toArray(),
+                    'request' => $request->all(),
+                    'user_id' => $user->id
+                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Validation failed',
@@ -477,9 +505,16 @@ class CreativeController extends Controller
                 ], 422);
             }
 
-            $work = CreativeWork::where('id', $id)
-                ->where('created_by', $user->id)
-                ->firstOrFail();
+            // Find the work, allow any Creative user to complete it if they are in the same team
+            // but for now, let's keep it simple: any user with role 'Creative' can update.
+            $work = CreativeWork::where('id', $id)->firstOrFail();
+            
+            if (strtolower($user->role) !== 'creative') {
+                 return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. Only Creative role can complete this work.'
+                ], 403);
+            }
 
             // Only allow complete if status is in_progress
             if ($work->status !== 'in_progress') {
@@ -701,6 +736,99 @@ class CreativeController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error resubmitting creative work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload Storyboard file
+     * POST /api/live-tv/roles/creative/works/{id}/upload-storyboard
+     */
+    public function uploadStoryboard(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Creative') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            // Cari file apa saja yang dikirim (tidak terpaku pada key 'file')
+            $file = null;
+            $allFiles = $request->allFiles();
+            if (!empty($allFiles)) {
+                $file = reset($allFiles); // Ambil file pertama yang ditemukan
+            }
+
+            if (!$file) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => ['file' => ['No file was uploaded.']]
+                ], 422);
+            }
+
+            // Validasi manual terhadap file yang ditemukan
+            $extension = strtolower($file->getClientOriginalExtension());
+            $allowedExtensions = ['jpg', 'jpeg', 'png', 'pdf'];
+            
+            if (!in_array($extension, $allowedExtensions)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => ['file' => ['File must be an image (jpg, jpeg, png) or PDF.']]
+                ], 422);
+            }
+
+            if ($file->getSize() > 10240 * 1024) { // 10MB
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => ['file' => ['File size exceeds 10MB limit.']]
+                ], 422);
+            }
+
+            $work = CreativeWork::findOrFail($id);
+            $episode = $work->episode;
+
+            $mediaFile = $this->fileUploadService->uploadFile(
+                $episode,
+                $file,
+                'image',
+                "Storyboard for Episode {$episode->episode_number}"
+            );
+
+            // Update storyboard_data with file info
+            $storyboardData = $work->storyboard_data ?? [];
+            if (!is_array($storyboardData)) {
+                $storyboardData = [];
+            }
+            
+            $storyboardData['file_path'] = $mediaFile->file_path;
+            $storyboardData['file_name'] = $mediaFile->file_name;
+            $storyboardData['file_url'] = $mediaFile->file_url;
+            $storyboardData['uploaded_at'] = now()->toDateTimeString();
+
+            $work->update([
+                'storyboard_data' => $storyboardData
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'work' => $work->fresh(['episode', 'createdBy']),
+                    'media_file' => $mediaFile
+                ],
+                'message' => 'Storyboard uploaded successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading storyboard: ' . $e->getMessage()
             ], 500);
         }
     }

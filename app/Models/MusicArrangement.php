@@ -52,6 +52,13 @@ class MusicArrangement extends Model
     ];
 
     /**
+     * The accessors to append to the model's array form.
+     *
+     * @var array
+     */
+    protected $appends = ['file_url'];
+
+    /**
      * Relationship dengan Episode
      */
     public function episode(): BelongsTo
@@ -157,11 +164,22 @@ class MusicArrangement extends Model
             $this->original_singer_name = $this->singer_name;
         }
 
+        // Determine new values (use provided or keep existing)
+        $finalSongTitle = $newSongTitle ?? $this->song_title;
+        $finalSingerName = $newSingerName ?? $this->singer_name;
+        $finalSongId = $songId ?? $this->song_id;
+        $finalSingerId = $singerId ?? $this->singer_id;
+
+        // Update both the main fields (for immediate display) and producer_modified fields (for tracking)
         $this->update([
-            'producer_modified_song_title' => $newSongTitle ?? $this->song_title,
-            'producer_modified_singer_name' => $newSingerName ?? $this->singer_name,
-            'song_id' => $songId ?? $this->song_id,
-            'singer_id' => $singerId ?? $this->singer_id,
+            // Update main fields immediately so Producer can see the change
+            'song_title' => $finalSongTitle,
+            'singer_name' => $finalSingerName,
+            'song_id' => $finalSongId,
+            'singer_id' => $finalSingerId,
+            // Also store in producer_modified fields for tracking and approval workflow
+            'producer_modified_song_title' => $finalSongTitle,
+            'producer_modified_singer_name' => $finalSingerName,
             'producer_modified' => true,
             'producer_modified_at' => now()
         ]);
@@ -196,11 +214,23 @@ class MusicArrangement extends Model
     }
 
     /**
-     * Get file URL
+     * Get file URL dengan signed URL
+     * Menggunakan temporary signed route agar bisa diakses tanpa Authorization header
+     * Bisa langsung dipakai di <audio> tag dan <a href> download
      */
     public function getFileUrlAttribute(): ?string
     {
-        return $this->file_path ? asset('storage/' . $this->file_path) : null;
+        if (!$this->file_path) {
+            return null;
+        }
+        
+        // Generate temporary signed URL (expire dalam 24 jam)
+        // Signed URL tidak perlu Authorization header, bisa langsung dipakai di browser
+        return \Illuminate\Support\Facades\URL::temporarySignedRoute(
+            'music-arrangement.file',
+            now()->addHours(24),
+            ['id' => $this->id]
+        );
     }
 
     /**

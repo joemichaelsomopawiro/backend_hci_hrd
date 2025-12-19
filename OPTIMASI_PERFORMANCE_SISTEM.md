@@ -236,8 +236,20 @@ php artisan migrate
 
 ## 📝 CATATAN PENTING
 
-### Cache Invalidation
-Cache akan otomatis expire setelah 5 menit. Untuk clear cache manual:
+### Cache Invalidation ✅ AUTO-IMPLEMENTED
+**Cache sekarang otomatis di-clear saat data berubah!**
+
+- ✅ Create/Update/Delete Program → Auto-clear cache
+- ✅ Create/Update Episode → Auto-clear cache
+- ✅ Create/Update/Delete Production Team → Auto-clear cache
+- ✅ Add/Remove Member → Auto-clear cache
+
+**Tidak perlu clear cache manual di production!**
+
+Lihat dokumentasi lengkap: `CACHE_AUTO_INVALIDATION.md`
+
+### Manual Clear Cache (Opsional)
+Jika masih perlu clear cache manual:
 
 ```bash
 php artisan cache:clear
@@ -245,7 +257,7 @@ php artisan cache:clear
 
 Atau di code:
 ```php
-Cache::forget('programs_index_' . $key);
+QueryOptimizer::clearAllIndexCaches();
 ```
 
 ### Monitoring

@@ -173,10 +173,13 @@ class Episode extends Model
     private function notifyDeadlineCreation()
     {
         // Map deadline role to user role
+        // Add mappings for music arranger and sound engineer so they receive notifications
         $roleMapping = [
             'editor' => 'Editor',
             'kreatif' => 'Creative',
-            'produksi' => 'Production'
+            'produksi' => 'Production',
+            'musik_arr' => 'Musik Arranger',
+            'sound_eng' => 'Sound Engineer'
         ];
         
         // Get deadlines for this episode

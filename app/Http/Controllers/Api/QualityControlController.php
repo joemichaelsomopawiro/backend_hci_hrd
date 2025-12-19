@@ -845,7 +845,7 @@ class QualityControlController extends Controller
                 }
 
             } else {
-                // Reject - kembali ke Editor Promosi
+                // Reject - kembali ke role yang sesuai berdasarkan source file
                 $work->markAsFailed();
                 $work->update([
                     'review_notes' => $request->notes ?? 'QC Rejected',
@@ -853,7 +853,51 @@ class QualityControlController extends Controller
                     'status' => 'revision_needed'
                 ]);
 
-                // Notify Editor Promosi (bukan Design Grafis)
+                // Deteksi source file untuk menentukan role yang perlu diberi notifikasi
+                $hasDesignGrafisFiles = !empty($work->design_grafis_file_locations);
+                $hasEditorPromosiFiles = !empty($work->editor_promosi_file_locations);
+                $hasEditorFiles = !empty($work->files_to_check); // File dari Editor (main editor)
+
+                // Jika ada file dari Editor (main editor), notifikasi ke Editor
+                if ($hasEditorFiles) {
+                    $editorUsers = \App\Models\User::where('role', 'Editor')->get();
+                    foreach ($editorUsers as $editorUser) {
+                        Notification::create([
+                            'user_id' => $editorUser->id,
+                            'type' => 'qc_rejected_revision_needed',
+                            'title' => 'QC Ditolak - Perlu Revisi',
+                            'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                            'data' => [
+                                'episode_id' => $work->episode_id,
+                                'qc_work_id' => $work->id,
+                                'revision_notes' => $request->notes,
+                                'source' => 'editor'
+                            ]
+                        ]);
+                    }
+                }
+
+                // Jika ada file dari Design Grafis, notifikasi ke Design Grafis
+                if ($hasDesignGrafisFiles) {
+                    $designGrafisUsers = \App\Models\User::where('role', 'Design Grafis')->get();
+                    foreach ($designGrafisUsers as $designUser) {
+                        Notification::create([
+                            'user_id' => $designUser->id,
+                            'type' => 'qc_rejected_revision_needed',
+                            'title' => 'QC Ditolak - Perlu Revisi',
+                            'message' => "QC telah menolak thumbnail untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                            'data' => [
+                                'episode_id' => $work->episode_id,
+                                'qc_work_id' => $work->id,
+                                'revision_notes' => $request->notes,
+                                'source' => 'design_grafis'
+                            ]
+                        ]);
+                    }
+                }
+
+                // Jika ada file dari Editor Promosi, notifikasi ke Editor Promosi
+                if ($hasEditorPromosiFiles) {
                 $editorPromosiUsers = \App\Models\User::where('role', 'Editor Promosi')->get();
                 foreach ($editorPromosiUsers as $editorUser) {
                     Notification::create([
@@ -864,7 +908,28 @@ class QualityControlController extends Controller
                         'data' => [
                             'episode_id' => $work->episode_id,
                             'qc_work_id' => $work->id,
-                            'revision_notes' => $request->notes
+                                'revision_notes' => $request->notes,
+                                'source' => 'editor_promosi'
+                            ]
+                        ]);
+                    }
+                }
+
+                // Notifikasi ke Producer dengan catatan QC
+                $episode = $work->episode;
+                $productionTeam = $episode->program->productionTeam;
+                if ($productionTeam && $productionTeam->producer) {
+                    Notification::create([
+                        'user_id' => $productionTeam->producer_id,
+                        'type' => 'qc_rejected_producer_notification',
+                        'title' => 'QC Ditolak - Perlu Revisi',
+                        'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                        'data' => [
+                            'episode_id' => $work->episode_id,
+                            'qc_work_id' => $work->id,
+                            'revision_notes' => $request->notes,
+                            'qc_notes' => $work->qc_notes ?? null,
+                            'quality_score' => $work->quality_score ?? null
                         ]
                     ]);
                 }
@@ -875,7 +940,7 @@ class QualityControlController extends Controller
                 'data' => $work->fresh(['episode', 'createdBy', 'reviewedBy']),
                 'message' => $request->action === 'approve' 
                     ? 'QC approved successfully. Broadcasting, Promosi, and Produksi have been notified.'
-                    : 'QC rejected. Editor Promosi has been notified for revision.'
+                    : 'QC rejected. Editor/Design Grafis/Editor Promosi and Producer have been notified for revision.'
             ]);
 
         } catch (\Exception $e) {

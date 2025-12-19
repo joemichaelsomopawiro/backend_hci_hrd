@@ -281,8 +281,42 @@ Route::prefix('workflow-states')->group(function () {
     Route::get('/analytics', [WorkflowStateController::class, 'getAnalytics']);
 });
 
+// Music Arranger Routes (Alias untuk kompatibilitas frontend - tanpa prefix 'roles')
+// Signed URL route untuk file download (tidak perlu auth, hanya perlu valid signature)
+Route::prefix('music-arranger')->group(function () {
+    Route::get('/arrangements/{id}/file', [MusicArrangerController::class, 'downloadFile'])
+        ->name('music-arrangement.file')
+        ->middleware(['signed', 'throttle:60,1']);
+});
+
+Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    Route::get('/arrangements', [MusicArrangerController::class, 'index'])->middleware('throttle:60,1');
+    Route::post('/arrangements', [MusicArrangerController::class, 'store'])->middleware('throttle:uploads');
+    Route::get('/arrangements/{id}', [MusicArrangerController::class, 'show'])->middleware('throttle:60,1');
+    Route::put('/arrangements/{id}', [MusicArrangerController::class, 'update'])->middleware('throttle:uploads');
+    Route::post('/arrangements/{id}/submit-song-proposal', [MusicArrangerController::class, 'submitSongProposal'])->middleware('throttle:sensitive');
+    Route::post('/arrangements/{id}/submit', [MusicArrangerController::class, 'submit'])->middleware('throttle:uploads');
+    Route::post('/arrangements/{id}/accept-work', [MusicArrangerController::class, 'acceptWork'])->middleware('throttle:sensitive');
+    Route::post('/arrangements/{id}/complete-work', [MusicArrangerController::class, 'completeWork'])->middleware('throttle:sensitive');
+    Route::get('/statistics', [MusicArrangerController::class, 'statistics'])->middleware('throttle:60,1');
+    Route::get('/approved-arrangements', [MusicArrangerController::class, 'getApprovedArrangementsHistory'])->middleware('throttle:60,1'); // History arrangement yang sudah disetujui
+    Route::get('/songs', [MusicArrangerController::class, 'getAvailableSongs'])->middleware('throttle:60,1');
+    Route::get('/singers', [MusicArrangerController::class, 'getAvailableSingers'])->middleware('throttle:60,1');
+    
+    // Fallback route dengan auth (untuk backward compatibility)
+    Route::get('/arrangements/{id}/file-auth', [MusicArrangerController::class, 'downloadFile'])
+        ->middleware(['auth:sanctum', 'throttle:60,1']);
+});
+
 // Role-Specific Routes
 Route::prefix('roles')->group(function () {
+    // Signed URL route untuk file download (tidak perlu auth, hanya perlu valid signature)
+    Route::prefix('music-arranger')->group(function () {
+        Route::get('/arrangements/{id}/file', [MusicArrangerController::class, 'downloadFile'])
+            ->name('music-arrangement.file')
+            ->middleware(['signed', 'throttle:60,1']);
+    });
+    
     // Music Arranger Routes
     Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
         Route::get('/arrangements', [MusicArrangerController::class, 'index'])->middleware('throttle:60,1'); // 60 requests per minute
@@ -291,12 +325,22 @@ Route::prefix('roles')->group(function () {
         Route::put('/arrangements/{id}', [MusicArrangerController::class, 'update'])->middleware('throttle:uploads'); // Rate limit untuk upload
         Route::post('/arrangements/{id}/submit-song-proposal', [MusicArrangerController::class, 'submitSongProposal'])->middleware('throttle:sensitive'); // Ajukan lagu & penyanyi
         Route::post('/arrangements/{id}/submit', [MusicArrangerController::class, 'submit'])->middleware('throttle:uploads'); // Submit arrangement file
+        // Upload arrangement file via POST (useful for clients that cannot send multipart PUT)
+        Route::post('/arrangements/{id}/upload-file', [MusicArrangerController::class, 'uploadFile'])->middleware('throttle:uploads');
+    
+        // Upload arrangement file via POST (compat alias)
+        Route::post('/arrangements/{id}/upload-file', [MusicArrangerController::class, 'uploadFile'])->middleware('throttle:uploads');
+    
         Route::post('/arrangements/{id}/accept-work', [MusicArrangerController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima pekerjaan
         Route::post('/arrangements/{id}/complete-work', [MusicArrangerController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
         Route::get('/statistics', [MusicArrangerController::class, 'statistics'])->middleware('throttle:60,1');
         // Optional: Pilih lagu dari database
         Route::get('/songs', [MusicArrangerController::class, 'getAvailableSongs'])->middleware('throttle:60,1');
         Route::get('/singers', [MusicArrangerController::class, 'getAvailableSingers'])->middleware('throttle:60,1');
+        
+        // Fallback route dengan auth (untuk backward compatibility)
+        Route::get('/arrangements/{id}/file-auth', [MusicArrangerController::class, 'downloadFile'])
+            ->middleware(['auth:sanctum', 'throttle:60,1']);
     });
 
     // Production Equipment Routes
@@ -317,6 +361,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/works/{id}/submit', [CreativeController::class, 'submit'])->middleware('throttle:sensitive');
         Route::post('/works/{id}/accept-work', [CreativeController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima pekerjaan
         Route::post('/works/{id}/complete-work', [CreativeController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
+        Route::post('/works/{id}/upload-storyboard', [CreativeController::class, 'uploadStoryboard'])->middleware('throttle:uploads'); // Upload storyboard
         Route::put('/works/{id}/revise', [CreativeController::class, 'reviseCreativeWork'])->middleware('throttle:sensitive'); // Revisi setelah budget ditolak
         Route::post('/works/{id}/resubmit', [CreativeController::class, 'resubmitCreativeWork'])->middleware('throttle:sensitive'); // Resubmit setelah revisi
     });
@@ -573,14 +618,18 @@ Route::prefix('schedules')->middleware(['auth:sanctum', 'throttle:api'])->group(
 
 // Producer Routes (MOVED OUTSIDE 'roles' prefix group)
 Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
-    Route::get('/approvals', [ProducerController::class, 'getApprovals'])->middleware('throttle:60,1');
-    Route::get('/pending-approvals', [ProducerController::class, 'getApprovals'])->middleware('throttle:60,1'); // Alias untuk frontend
+    Route::get('/approvals', [ProducerController::class, 'getApprovals'])->middleware('throttle:120,1'); // 120 requests per minute
+    Route::get('/pending-approvals', [ProducerController::class, 'getApprovals'])->middleware('throttle:120,1'); // Alias untuk frontend - 120 requests per minute
+    Route::get('/rejected-arrangements', [ProducerController::class, 'getRejectedArrangementsHistory'])->middleware('throttle:60,1'); // History arrangement yang di-reject
+    Route::get('/approved-arrangements', [ProducerController::class, 'getApprovedArrangementsHistory'])->middleware('throttle:60,1'); // History arrangement yang sudah disetujui
     Route::post('/approvals/{id}/approve', [ProducerController::class, 'approve'])->middleware('throttle:sensitive');
     Route::post('/approvals/{id}/reject', [ProducerController::class, 'reject'])->middleware('throttle:sensitive');
     Route::get('/programs', [ProducerController::class, 'getPrograms'])->middleware('throttle:60,1');
     Route::get('/episodes', [ProducerController::class, 'getEpisodes'])->middleware('throttle:60,1');
     Route::get('/production-overview', [ProducerController::class, 'getProductionOverview'])->middleware('throttle:60,1');
     Route::get('/team-performance', [ProducerController::class, 'getTeamPerformance']);
+    Route::get('/songs', [ProducerController::class, 'getAvailableSongs'])->middleware('throttle:60,1'); // Get available songs for editing song proposal
+    Route::get('/singers', [ProducerController::class, 'getAvailableSingers'])->middleware('throttle:60,1'); // Get available singers for editing song proposal
     Route::post('/creative-works/{creativeWorkId}/assign-teams', [ProducerController::class, 'assignProductionTeams']);
     Route::post('/schedules/{id}/cancel', [ProducerController::class, 'cancelSchedule']);
     Route::put('/schedules/{scheduleId}/emergency-reassign-team', [ProducerController::class, 'emergencyReassignTeam']);
@@ -598,6 +647,7 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     Route::get('/episodes/ready-this-week', [ProducerController::class, 'getReadyEpisodesThisWeek']);
     
     // Creative Work Management
+    Route::get('/crew-members', [ProducerController::class, 'getCrewMembers']); // Ambil daftar kru untuk dipilih
     Route::post('/creative-works/{id}/review', [ProducerController::class, 'reviewCreativeWork']); // Cek script, storyboard, budget
     Route::post('/creative-works/{id}/assign-team', [ProducerController::class, 'assignTeamToCreativeWork']); // Tambah tim syuting/setting/rekam vokal
     Route::put('/creative-works/{id}/edit', [ProducerController::class, 'editCreativeWork']); // Edit creative work langsung

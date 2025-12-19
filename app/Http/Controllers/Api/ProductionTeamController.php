@@ -241,6 +241,10 @@ class ProductionTeamController extends Controller
                 'updated_at' => $team->updated_at
             ];
             
+            // Clear cache setelah create
+            QueryOptimizer::clearIndexCache('production_teams');
+            QueryOptimizer::clearIndexCache('programs'); // Programs juga perlu di-clear karena terkait production team
+            
             return response()->json([
                 'success' => true,
                 'data' => $responseData,
@@ -286,6 +290,10 @@ class ProductionTeamController extends Controller
         try {
             $team->update($request->all());
             
+            // Clear cache setelah update
+            QueryOptimizer::clearIndexCache('production_teams');
+            QueryOptimizer::clearIndexCache('programs'); // Programs juga perlu di-clear karena terkait production team
+            
             return response()->json([
                 'success' => true,
                 'data' => $team,
@@ -316,6 +324,10 @@ class ProductionTeamController extends Controller
         
         try {
             $team->delete();
+            
+            // Clear cache setelah delete
+            QueryOptimizer::clearIndexCache('production_teams');
+            QueryOptimizer::clearIndexCache('programs'); // Programs juga perlu di-clear karena terkait production team
             
             return response()->json([
                 'success' => true,
@@ -377,6 +389,10 @@ class ProductionTeamController extends Controller
                 'notes' => $member->notes
             ];
             
+            // Clear cache setelah add member
+            QueryOptimizer::clearIndexCache('production_teams');
+            QueryOptimizer::clearIndexCache('programs'); // Programs juga perlu di-clear karena terkait production team
+            
             return response()->json([
                 'success' => true,
                 'data' => $memberData,
@@ -419,6 +435,10 @@ class ProductionTeamController extends Controller
                     'message' => 'Failed to remove member from team'
                 ], 400);
             }
+            
+            // Clear cache setelah remove member
+            QueryOptimizer::clearIndexCache('production_teams');
+            QueryOptimizer::clearIndexCache('programs'); // Programs juga perlu di-clear karena terkait production team
             
             return response()->json([
                 'success' => true,
