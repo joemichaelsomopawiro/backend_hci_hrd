@@ -657,6 +657,9 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     
     // Team Management
     Route::put('/team-assignments/{assignmentId}/replace-team', [ProducerController::class, 'replaceTeamMembers']); // Ganti tim syuting secara dadakan
+    Route::get('/episodes/{episodeId}/team-assignments', [ProducerController::class, 'getEpisodeTeamAssignments'])->middleware('throttle:60,1'); // Lihat team assignments per episode
+    Route::get('/programs/{programId}/team-assignments', [ProducerController::class, 'getProgramTeamAssignments'])->middleware('throttle:60,1'); // Lihat team assignments per program (untuk reuse)
+    Route::post('/episodes/{episodeId}/copy-team-assignment', [ProducerController::class, 'copyTeamAssignment'])->middleware('throttle:sensitive'); // Copy/reuse team assignment dari episode lain
 });
 
 // Production Routes (Alias untuk shooting schedules)

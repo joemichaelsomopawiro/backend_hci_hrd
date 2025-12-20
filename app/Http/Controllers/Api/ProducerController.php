@@ -3826,4 +3826,311 @@ class ProducerController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get Team Assignments untuk Episode tertentu
+     * GET /api/live-tv/producer/episodes/{episodeId}/team-assignments
+     * 
+     * Digunakan untuk melihat team assignments yang sudah ada untuk episode tertentu
+     * Berguna untuk reuse team setting setelah creative complete work
+     */
+    public function getEpisodeTeamAssignments(Request $request, int $episodeId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $episode = Episode::with(['program.productionTeam'])->findOrFail($episodeId);
+
+            // Validate Producer has access
+            if ($episode->program->productionTeam->producer_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this episode.'
+                ], 403);
+            }
+
+            // Get team assignments untuk episode ini
+            $teamAssignments = \App\Models\ProductionTeamAssignment::where('episode_id', $episodeId)
+                ->with(['members.user', 'assigner', 'schedule'])
+                ->orderBy('team_type')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            // Group by team_type untuk kemudahan
+            $grouped = $teamAssignments->groupBy('team_type');
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode_id' => $episodeId,
+                    'episode_number' => $episode->episode_number,
+                    'team_assignments' => $teamAssignments,
+                    'grouped_by_type' => [
+                        'shooting' => $grouped->get('shooting', collect()),
+                        'setting' => $grouped->get('setting', collect()),
+                        'recording' => $grouped->get('recording', collect()),
+                    ],
+                    'summary' => [
+                        'total_assignments' => $teamAssignments->count(),
+                        'shooting_count' => $grouped->get('shooting', collect())->count(),
+                        'setting_count' => $grouped->get('setting', collect())->count(),
+                        'recording_count' => $grouped->get('recording', collect())->count(),
+                    ]
+                ],
+                'message' => 'Team assignments retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get team assignments',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get Team Assignments untuk Program tertentu (untuk reuse dari episode lain)
+     * GET /api/live-tv/producer/programs/{programId}/team-assignments
+     * 
+     * Digunakan untuk melihat team assignments dari episode lain dalam program yang sama
+     * Berguna untuk copy/reuse team setting dari episode sebelumnya
+     */
+    public function getProgramTeamAssignments(Request $request, int $programId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $program = Program::with(['productionTeam', 'episodes'])->findOrFail($programId);
+
+            // Validate Producer has access
+            if ($program->productionTeam->producer_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this program.'
+                ], 403);
+            }
+
+            // Get episode IDs untuk program ini
+            $episodeIds = $program->episodes->pluck('id')->toArray();
+
+            // Get team assignments untuk semua episode dalam program ini
+            $teamAssignments = \App\Models\ProductionTeamAssignment::whereIn('episode_id', $episodeIds)
+                ->with(['members.user', 'assigner', 'schedule', 'episode'])
+                ->orderBy('episode_id')
+                ->orderBy('team_type')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            // Group by episode dan team_type
+            $groupedByEpisode = $teamAssignments->groupBy('episode_id');
+            $groupedByType = $teamAssignments->groupBy('team_type');
+
+            // Get latest assignment per team_type untuk kemudahan reuse
+            $latestByType = [
+                'shooting' => $teamAssignments->where('team_type', 'shooting')->sortByDesc('created_at')->first(),
+                'setting' => $teamAssignments->where('team_type', 'setting')->sortByDesc('created_at')->first(),
+                'recording' => $teamAssignments->where('team_type', 'recording')->sortByDesc('created_at')->first(),
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'program_id' => $programId,
+                    'program_name' => $program->name,
+                    'team_assignments' => $teamAssignments,
+                    'grouped_by_episode' => $groupedByEpisode->map(function ($assignments, $episodeId) {
+                        $episode = Episode::find($episodeId);
+                        return [
+                            'episode_id' => $episodeId,
+                            'episode_number' => $episode ? $episode->episode_number : null,
+                            'assignments' => $assignments,
+                            'summary' => [
+                                'shooting' => $assignments->where('team_type', 'shooting')->count(),
+                                'setting' => $assignments->where('team_type', 'setting')->count(),
+                                'recording' => $assignments->where('team_type', 'recording')->count(),
+                            ]
+                        ];
+                    }),
+                    'grouped_by_type' => [
+                        'shooting' => $groupedByType->get('shooting', collect()),
+                        'setting' => $groupedByType->get('setting', collect()),
+                        'recording' => $groupedByType->get('recording', collect()),
+                    ],
+                    'latest_by_type' => $latestByType,
+                    'summary' => [
+                        'total_assignments' => $teamAssignments->count(),
+                        'total_episodes' => count($episodeIds),
+                        'shooting_count' => $groupedByType->get('shooting', collect())->count(),
+                        'setting_count' => $groupedByType->get('setting', collect())->count(),
+                        'recording_count' => $groupedByType->get('recording', collect())->count(),
+                    ]
+                ],
+                'message' => 'Program team assignments retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get program team assignments',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Copy/Reuse Team Assignment dari Episode lain
+     * POST /api/live-tv/producer/episodes/{episodeId}/copy-team-assignment
+     * 
+     * Digunakan untuk copy team assignment dari episode lain ke episode baru
+     * Berguna untuk reuse team setting yang sudah pernah digunakan
+     */
+    public function copyTeamAssignment(Request $request, int $episodeId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'source_assignment_id' => 'required|exists:production_teams_assignment,id',
+                'team_type' => 'nullable|in:shooting,setting,recording', // Optional: filter by type
+                'schedule_id' => 'nullable|exists:music_schedules,id',
+                'team_notes' => 'nullable|string|max:1000',
+                'modify_members' => 'nullable|array', // Optional: modify team members
+                'modify_members.*' => 'exists:users,id',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Get target episode
+            $targetEpisode = Episode::with(['program.productionTeam'])->findOrFail($episodeId);
+
+            // Validate Producer has access to target episode
+            if ($targetEpisode->program->productionTeam->producer_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this episode.'
+                ], 403);
+            }
+
+            // Get source assignment
+            $sourceAssignment = \App\Models\ProductionTeamAssignment::with(['members.user', 'episode.program.productionTeam'])
+                ->findOrFail($request->source_assignment_id);
+
+            // Validate Producer has access to source assignment
+            if ($sourceAssignment->episode->program->productionTeam->producer_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to source assignment.'
+                ], 403);
+            }
+
+            // Filter by team_type if specified
+            if ($request->has('team_type') && $sourceAssignment->team_type !== $request->team_type) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Source assignment team type does not match requested type.'
+                ], 400);
+            }
+
+            // Get production team members untuk validasi
+            $productionTeam = $targetEpisode->program->productionTeam;
+            $availableMembers = $productionTeam->members()
+                ->where('is_active', true)
+                ->where('role', '!=', 'manager_program')
+                ->pluck('user_id')
+                ->toArray();
+
+            // Determine team members to use
+            $teamMemberIds = $request->has('modify_members') && count($request->modify_members) > 0
+                ? $request->modify_members
+                : $sourceAssignment->members->pluck('user_id')->toArray();
+
+            // Validate all team members are from production team
+            $invalidMembers = array_diff($teamMemberIds, $availableMembers);
+            if (!empty($invalidMembers)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Some team members are not part of the production team',
+                    'invalid_members' => $invalidMembers
+                ], 400);
+            }
+
+            // Create new assignment
+            $newAssignment = \App\Models\ProductionTeamAssignment::create([
+                'music_submission_id' => null,
+                'episode_id' => $episodeId,
+                'schedule_id' => $request->schedule_id ?? $sourceAssignment->schedule_id,
+                'assigned_by' => $user->id,
+                'team_type' => $sourceAssignment->team_type,
+                'team_name' => $sourceAssignment->team_name . ' (Copied)',
+                'team_notes' => $request->team_notes ?? $sourceAssignment->team_notes ?? 'Copied from Episode ' . $sourceAssignment->episode->episode_number,
+                'status' => 'assigned',
+                'assigned_at' => now()
+            ]);
+
+            // Add team members
+            foreach ($teamMemberIds as $index => $userId) {
+                \App\Models\ProductionTeamMember::create([
+                    'assignment_id' => $newAssignment->id,
+                    'user_id' => $userId,
+                    'role' => $index === 0 ? 'leader' : 'crew',
+                    'status' => 'assigned'
+                ]);
+
+                // Notify team member
+                Notification::create([
+                    'user_id' => $userId,
+                    'type' => 'team_assigned',
+                    'title' => 'Ditugaskan ke Tim ' . ucfirst($sourceAssignment->team_type),
+                    'message' => "Anda telah ditugaskan ke tim {$newAssignment->team_name} untuk Episode {$targetEpisode->episode_number} (dari Episode {$sourceAssignment->episode->episode_number}).",
+                    'data' => [
+                        'assignment_id' => $newAssignment->id,
+                        'team_type' => $sourceAssignment->team_type,
+                        'episode_id' => $episodeId,
+                        'source_assignment_id' => $sourceAssignment->id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $newAssignment->load(['members.user', 'episode']),
+                'message' => 'Team assignment copied successfully'
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to copy team assignment',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }
