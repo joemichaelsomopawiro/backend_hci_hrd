@@ -33,9 +33,17 @@ class ProgramController extends Controller
         try {
             $user = auth()->user();
             
+            // Log untuk debugging
+            \Log::info('ProgramController index - Start', [
+                'user_id' => $user?->id,
+                'user_role' => $user?->role,
+                'request_params' => $request->all()
+            ]);
+            
             // Build cache key based on request parameters
             $cacheKey = 'programs_index_' . md5(json_encode([
                 'user_role' => $user?->role,
+                'user_id' => $user?->id, // Tambahkan user_id untuk Producer agar cache berbeda per user
                 'status' => $request->get('status'),
                 'category' => $request->get('category'),
                 'manager_id' => $request->get('manager_id'),
@@ -65,6 +73,20 @@ class ProgramController extends Controller
                     });
                 }
                 
+                // Filter: Producer hanya bisa melihat program dari ProductionTeam mereka
+                if ($user && $user->role === 'Producer') {
+                    \Log::info('ProgramController index - Applying Producer filter', [
+                        'producer_id' => $user->id,
+                        'producer_name' => $user->name
+                    ]);
+                    
+                    $query->whereNotNull('production_team_id')
+                        ->whereHas('productionTeam', function ($q) use ($user) {
+                            $q->where('producer_id', $user->id)
+                              ->where('is_active', true);
+                        });
+                }
+                
                 // Filter by status
                 if ($request->has('status')) {
                     $query->where('status', $request->status);
@@ -89,7 +111,19 @@ class ProgramController extends Controller
                     });
                 }
                 
-                return $query->orderBy('created_at', 'desc')->paginate(15);
+                $result = $query->orderBy('created_at', 'desc')->paginate(15);
+                
+                // Log hasil query untuk Producer
+                if ($user && $user->role === 'Producer') {
+                    \Log::info('ProgramController index - Producer query result', [
+                        'producer_id' => $user->id,
+                        'total_programs' => $result->total(),
+                        'current_page' => $result->currentPage(),
+                        'program_ids' => $result->pluck('id')->toArray()
+                    ]);
+                }
+                
+                return $result;
             });
             
             // Add episode count to each program (tanpa load semua episodes)

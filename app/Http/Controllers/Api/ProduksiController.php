@@ -15,6 +15,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
 
 class ProduksiController extends Controller
 {
@@ -33,7 +34,8 @@ class ProduksiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN) untuk fleksibilitas data
+            if (!in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -72,7 +74,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN)
+            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -113,7 +116,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN)
+            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -162,9 +166,18 @@ class ProduksiController extends Controller
                 $quantity = $equipment['quantity'];
 
                 // Check if equipment is available (not in_use or assigned)
-                $availableCount = EquipmentInventory::where('equipment_name', $equipmentName)
-                    ->whereIn('status', ['available'])
-                    ->count();
+                // Use 'name' column (from old migration) - if table has 'equipment_name', it will also work
+                if (Schema::hasColumn('equipment_inventory', 'equipment_name')) {
+                    // New migration structure
+                    $availableCount = EquipmentInventory::where('equipment_name', $equipmentName)
+                        ->whereIn('status', ['available'])
+                        ->count();
+                } else {
+                    // Old migration structure - use 'name' column
+                    $availableCount = EquipmentInventory::where('name', $equipmentName)
+                        ->whereIn('status', ['available'])
+                        ->count();
+                }
 
                 // Also check ProductionEquipment for in_use status
                 $inUseCount = ProductionEquipment::where('equipment_list', 'like', '%' . $equipmentName . '%')
@@ -253,7 +266,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN)
+            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -344,7 +358,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN)
+            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -410,7 +425,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN)
+            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -498,7 +514,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN)
+            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -555,13 +572,17 @@ class ProduksiController extends Controller
                 $filePaths[] = $filePath;
 
                 // Create MediaFile record
+                // NOTE: file_type must match enum in media_files migration
+                // Using 'video' for production shooting results
                 MediaFile::create([
                     'episode_id' => $work->episode_id,
-                    'file_name' => $fileName,
+                    'file_type' => 'video', // enum: audio, video, image, document, thumbnail, bts, highlight, advertisement
                     'file_path' => $filePath,
+                    'file_name' => $fileName,
+                    'file_extension' => $file->getClientOriginalExtension(),
                     'file_size' => $file->getSize(),
                     'mime_type' => $file->getMimeType(),
-                    'file_type' => 'production_shooting',
+                    // storage_disk, status, uploaded_at will use defaults from migration
                     'uploaded_by' => $user->id,
                     'metadata' => [
                         'produksi_work_id' => $work->id,
@@ -627,7 +648,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN)
+            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -688,7 +710,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Produksi') {
+            // Terima role 'Produksi' (ID) dan 'Production' (EN)
+            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -704,7 +727,6 @@ class ProduksiController extends Controller
 
             // Also get EpisodeQC if exists
             $episodeQC = \App\Models\EpisodeQC::where('program_episode_id', $episodeId)
-                ->orWhere('episode_id', $episodeId)
                 ->with(['qcBy'])
                 ->orderBy('reviewed_at', 'desc')
                 ->first();

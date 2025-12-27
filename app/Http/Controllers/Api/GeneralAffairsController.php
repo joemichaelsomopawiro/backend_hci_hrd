@@ -10,6 +10,7 @@ use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Schema;
 
 class GeneralAffairsController extends Controller
 {
@@ -318,17 +319,30 @@ class GeneralAffairsController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
+        // Check if requested_amount column exists
+        $hasRequestedAmount = \Schema::hasColumn('budget_requests', 'requested_amount');
+        
         $stats = [
             'total_requests' => BudgetRequest::count(),
             'pending_requests' => BudgetRequest::where('status', 'pending')->count(),
             'approved_requests' => BudgetRequest::where('status', 'approved')->count(),
             'rejected_requests' => BudgetRequest::where('status', 'rejected')->count(),
             'paid_requests' => BudgetRequest::where('status', 'paid')->count(),
-            'total_requested_amount' => BudgetRequest::sum('requested_amount'),
-            'total_approved_amount' => BudgetRequest::where('status', 'approved')->sum('approved_amount'),
-            'total_paid_amount' => BudgetRequest::where('status', 'paid')->sum('approved_amount'),
-            'pending_amount' => BudgetRequest::where('status', 'pending')->sum('requested_amount')
         ];
+        
+        if ($hasRequestedAmount) {
+            $stats['total_requested_amount'] = BudgetRequest::sum('requested_amount');
+            $stats['total_approved_amount'] = BudgetRequest::where('status', 'approved')->sum('approved_amount');
+            $stats['total_paid_amount'] = BudgetRequest::where('status', 'paid')->sum('approved_amount');
+            $stats['pending_amount'] = BudgetRequest::where('status', 'pending')->sum('requested_amount');
+        } else {
+            // Fallback if column doesn't exist
+            $stats['total_requested_amount'] = 0;
+            $stats['total_approved_amount'] = 0;
+            $stats['total_paid_amount'] = 0;
+            $stats['pending_amount'] = 0;
+            \Log::warning('GeneralAffairsController::statistics - requested_amount column not found in budget_requests table');
+        }
 
         return response()->json([
             'success' => true,

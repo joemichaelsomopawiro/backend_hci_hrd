@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class AuthController extends Controller
@@ -618,16 +619,76 @@ class AuthController extends Controller
                 ], 401);
             }
             
+            // Log untuk debugging
+            Log::info('Checking employee status', [
+                'user_id' => $user->id,
+                'user_email' => $user->email,
+                'user_role' => $user->role,
+                'employee_id' => $user->employee_id
+            ]);
+            
+            // Cek apakah employee_id null
+            if (is_null($user->employee_id)) {
+                Log::warning('User has no employee_id', [
+                    'user_id' => $user->id,
+                    'user_email' => $user->email,
+                    'user_role' => $user->role
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Akun Anda belum terhubung dengan data karyawan. Silakan hubungi HR untuk menghubungkan akun Anda.',
+                    'code' => 'EMPLOYEE_ID_NULL',
+                    'debug' => [
+                        'user_id' => $user->id,
+                        'user_email' => $user->email,
+                        'user_role' => $user->role
+                    ]
+                ], 403);
+            }
+            
             // Cek apakah user masih ada di tabel employee
             $employee = Employee::where('id', $user->employee_id)->first();
             
             if (!$employee) {
+                Log::warning('Employee not found', [
+                    'user_id' => $user->id,
+                    'user_email' => $user->email,
+                    'user_role' => $user->role,
+                    'employee_id' => $user->employee_id,
+                    'attempted_employee_id' => $user->employee_id
+                ]);
+                
+                // Coba cari employee dengan nama yang sama (untuk debugging)
+                $employeeByName = Employee::where('nama_lengkap', $user->name)->first();
+                
+                $debugInfo = [
+                    'user_id' => $user->id,
+                    'user_email' => $user->email,
+                    'user_name' => $user->name,
+                    'user_role' => $user->role,
+                    'employee_id_in_user' => $user->employee_id,
+                    'employee_found_by_name' => $employeeByName ? [
+                        'id' => $employeeByName->id,
+                        'nama_lengkap' => $employeeByName->nama_lengkap,
+                        'jabatan' => $employeeByName->jabatan_saat_ini
+                    ] : null
+                ];
+                
                 return response()->json([
                     'success' => false,
-                    'message' => 'Maaf, Anda sudah tidak terdaftar sebagai karyawan Hope Channel Indonesia',
-                    'code' => 'EMPLOYEE_NOT_FOUND'
+                    'message' => 'Maaf, Anda sudah tidak terdaftar sebagai karyawan Hope Channel Indonesia. Akun Anda telah dinonaktifkan. Silakan hubungi HR untuk informasi lebih lanjut.',
+                    'code' => 'EMPLOYEE_NOT_FOUND',
+                    'debug' => $debugInfo
                 ], 403);
             }
+            
+            Log::info('Employee found', [
+                'user_id' => $user->id,
+                'employee_id' => $employee->id,
+                'employee_name' => $employee->nama_lengkap,
+                'jabatan' => $employee->jabatan_saat_ini
+            ]);
             
             return response()->json([
                 'success' => true,
@@ -644,6 +705,12 @@ class AuthController extends Controller
             ]);
             
         } catch (\Exception $e) {
+            Log::error('Error checking employee status', [
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengecek status employee',

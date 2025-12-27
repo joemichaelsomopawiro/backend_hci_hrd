@@ -41,7 +41,8 @@ class MusicArrangerController extends Controller
                 ], 403);
             }
 
-            $query = MusicArrangement::with(['episode', 'createdBy', 'reviewedBy']);
+            // Include soundEngineerHelper relationship untuk menampilkan info Sound Engineer jika ada
+            $query = MusicArrangement::with(['episode', 'createdBy', 'reviewedBy', 'soundEngineerHelper']);
 
             // Music Arranger hanya bisa melihat miliknya sendiri
             // Creative dan Producer bisa melihat semua aransemen yang relevan
@@ -50,6 +51,8 @@ class MusicArrangerController extends Controller
             }
 
             // MAPPING STATUS: Frontend 'approved' -> Backend 'arrangement_approved'
+            // Pastikan semua arrangement yang di-approve muncul, baik yang langsung dari Music Arranger
+            // maupun yang sudah dibantu Sound Engineer
             if ($request->has('status')) {
                 $statuses = explode(',', $request->status);
                 $mappedStatuses = [];
@@ -57,9 +60,16 @@ class MusicArrangerController extends Controller
                 foreach ($statuses as $status) {
                     $s = trim($status);
                     $mappedStatuses[] = $s;
-                    if ($s === 'approved') $mappedStatuses[] = 'arrangement_approved';
-                    if ($s === 'rejected') $mappedStatuses[] = 'arrangement_rejected';
-                    if ($s === 'submitted') $mappedStatuses[] = 'arrangement_submitted';
+                    if ($s === 'approved') {
+                        // Include both 'approved' and 'arrangement_approved' status
+                        $mappedStatuses[] = 'arrangement_approved';
+                    }
+                    if ($s === 'rejected') {
+                        $mappedStatuses[] = 'arrangement_rejected';
+                    }
+                    if ($s === 'submitted') {
+                        $mappedStatuses[] = 'arrangement_submitted';
+                    }
                 }
                 
                 $query->whereIn('status', array_unique($mappedStatuses));
@@ -173,11 +183,25 @@ class MusicArrangerController extends Controller
             $mimeType = null;
 
             if ($request->hasFile('file')) {
-                $fileData = \App\Helpers\FileUploadHelper::validateAudioFile($request->file('file'), 100);
-                $filePath = $fileData['file_path'];
-                $fileName = $fileData['file_name'];
-                $fileSize = $fileData['file_size'];
-                $mimeType = $fileData['mime_type'];
+                // Validate file
+                $file = $request->file('file');
+                $validator = Validator::make(['file' => $file], [
+                    'file' => 'required|file|mimes:mp3,wav,midi|max:102400', // 100MB max
+                ]);
+                
+                if ($validator->fails()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Validation failed',
+                        'errors' => $validator->errors()
+                    ], 422);
+                }
+                
+                // Store file to public disk (consistent with update method)
+                $filePath = $file->store('music-arrangements', 'public');
+                $fileName = $file->getClientOriginalName();
+                $fileSize = $file->getSize();
+                $mimeType = $file->getMimeType();
             }
 
             $status = $filePath ? 'draft' : 'song_proposal';
@@ -249,21 +273,46 @@ class MusicArrangerController extends Controller
             $user = Auth::user();
             $arrangement = MusicArrangement::findOrFail($id);
 
+            // Validate Music Arranger is the creator
+            if ($arrangement->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You can only upload files for your own arrangements.'
+                ], 403);
+            }
+
             if ($request->hasFile('file')) {
                 if ($arrangement->file_path) Storage::disk('public')->delete($arrangement->file_path);
                 $file = $request->file('file');
                 $filePath = $file->store('music-arrangements', 'public');
+                
+                // Determine new status based on current status
+                $newStatus = $arrangement->status;
+                if ($arrangement->status === 'song_approved') {
+                    // Jika song sudah approved, langsung submit arrangement
+                    $newStatus = 'arrangement_submitted';
+                } elseif (in_array($arrangement->status, ['arrangement_rejected', 'rejected'])) {
+                    // Jika arrangement ditolak, setelah upload file status tetap rejected
+                    // Music Arranger perlu submit ulang secara manual
+                    $newStatus = 'arrangement_rejected'; // Tetap rejected sampai di-submit ulang
+                }
                 
                 $arrangement->update([
                     'file_path' => $filePath,
                     'file_name' => $file->getClientOriginalName(),
                     'file_size' => $file->getSize(),
                     'mime_type' => $file->getMimeType(),
-                    'status' => $arrangement->status === 'song_approved' ? 'arrangement_submitted' : $arrangement->status
+                    'status' => $newStatus
                 ]);
             }
 
-            return response()->json(['success' => true, 'data' => $arrangement->fresh()]);
+            return response()->json([
+                'success' => true,
+                'message' => in_array($arrangement->status, ['arrangement_rejected', 'rejected']) 
+                    ? 'File uploaded successfully. Please submit the arrangement again for Producer review.'
+                    : 'File uploaded successfully.',
+                'data' => $arrangement->fresh()
+            ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
@@ -283,9 +332,78 @@ class MusicArrangerController extends Controller
     public function submit(Request $request, $id): JsonResponse
     {
         try {
+            $user = Auth::user();
             $arrangement = MusicArrangement::findOrFail($id);
-            $arrangement->update(['status' => 'arrangement_submitted', 'submitted_at' => now()]);
-            return response()->json(['success' => true, 'data' => $arrangement]);
+
+            // Validate Music Arranger is the creator
+            if ($arrangement->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You can only submit your own arrangements.'
+                ], 403);
+            }
+
+            // Allow submit if:
+            // 1. Status is song_approved (first time submit)
+            // 2. Status is arrangement_in_progress (with or without file)
+            // 3. Status is arrangement_rejected or rejected (resubmit after rejection)
+            // 4. Status is arrangement_submitted (re-submit)
+            $allowedStatuses = [
+                'song_approved',
+                'arrangement_in_progress',
+                'arrangement_rejected',
+                'rejected',
+                'arrangement_submitted'
+            ];
+
+            if (!in_array($arrangement->status, $allowedStatuses)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Cannot submit arrangement with status '{$arrangement->status}'. Only arrangements with status: " . implode(', ', $allowedStatuses) . " can be submitted."
+                ], 400);
+            }
+
+            // If status is rejected and no file uploaded, require file first
+            if (in_array($arrangement->status, ['arrangement_rejected', 'rejected']) && !$arrangement->file_path) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please upload the arrangement file first before resubmitting.'
+                ], 400);
+            }
+
+            // Update status to arrangement_submitted
+            $arrangement->update([
+                'status' => 'arrangement_submitted',
+                'submitted_at' => now()
+            ]);
+
+            // Notify Producer
+            $episode = $arrangement->episode;
+            $productionTeam = $episode->program->productionTeam ?? $episode->productionTeam;
+            if ($productionTeam && $productionTeam->producer) {
+                $isResubmit = in_array($arrangement->getOriginal('status'), ['arrangement_rejected', 'rejected']);
+                Notification::create([
+                    'user_id' => $productionTeam->producer->id,
+                    'type' => 'music_arrangement_submitted',
+                    'title' => $isResubmit ? 'Arrangement Diresubmit' : 'Arrangement Baru',
+                    'message' => $isResubmit 
+                        ? "Music Arranger {$user->name} telah meresubmit arrangement '{$arrangement->song_title}' untuk Episode {$episode->episode_number} setelah ditolak sebelumnya."
+                        : "Music Arranger {$user->name} telah mengirim arrangement '{$arrangement->song_title}' untuk Episode {$episode->episode_number}.",
+                    'data' => [
+                        'arrangement_id' => $arrangement->id,
+                        'episode_id' => $episode->id,
+                        'is_resubmit' => $isResubmit
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => in_array($arrangement->getOriginal('status'), ['arrangement_rejected', 'rejected'])
+                    ? 'Arrangement resubmitted successfully. Producer has been notified.'
+                    : 'Arrangement submitted successfully. Producer has been notified.',
+                'data' => $arrangement->fresh()
+            ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
@@ -303,11 +421,69 @@ class MusicArrangerController extends Controller
 
     public function getApprovedArrangementsHistory(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $arrangements = MusicArrangement::whereIn('status', ['arrangement_approved', 'approved'])
-            ->where('created_by', $user->id)
-            ->paginate(15);
-        return response()->json(['success' => true, 'data' => $arrangements]);
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not authenticated.'
+                ], 401);
+            }
+
+            // Get all approved arrangements created by this Music Arranger
+            // Include both 'arrangement_approved' and 'approved' status
+            // Include arrangements that were approved directly AND those that were helped by Sound Engineer
+            $query = MusicArrangement::whereIn('status', ['arrangement_approved', 'approved'])
+                ->where('created_by', $user->id)
+                ->with(['episode', 'createdBy', 'reviewedBy', 'soundEngineerHelper'])
+                ->orderBy('reviewed_at', 'desc')
+                ->orderBy('created_at', 'desc');
+
+            // Filter by episode if provided
+            if ($request->has('episode_id')) {
+                $query->where('episode_id', $request->episode_id);
+            }
+
+            // Filter by date range if provided
+            if ($request->has('date_from')) {
+                $query->whereDate('reviewed_at', '>=', $request->date_from);
+            }
+            if ($request->has('date_to')) {
+                $query->whereDate('reviewed_at', '<=', $request->date_to);
+            }
+
+            $arrangements = $query->paginate(15);
+
+            Log::info('MusicArranger getApprovedArrangementsHistory', [
+                'user_id' => $user->id,
+                'total' => $arrangements->total(),
+                'arrangements' => $arrangements->map(function ($arr) {
+                    return [
+                        'id' => $arr->id,
+                        'status' => $arr->status,
+                        'sound_engineer_helper_id' => $arr->sound_engineer_helper_id,
+                        'reviewed_at' => $arr->reviewed_at
+                    ];
+                })->toArray()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $arrangements,
+                'message' => 'Approved arrangements retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('MusicArranger getApprovedArrangementsHistory error', [
+                'user_id' => $user->id ?? null,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving approved arrangements: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function getAvailableSongs(Request $request): JsonResponse

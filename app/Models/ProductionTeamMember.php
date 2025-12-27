@@ -12,12 +12,15 @@ class ProductionTeamMember extends Model
 
     protected $fillable = [
         'production_team_id',
+        'assignment_id',
         'user_id',
         'role',
         'is_active',
         'joined_at',
         'left_at',
-        'notes'
+        'notes',
+        'role_notes',
+        'status'
     ];
 
     protected $casts = [
@@ -32,6 +35,14 @@ class ProductionTeamMember extends Model
     public function productionTeam(): BelongsTo
     {
         return $this->belongsTo(ProductionTeam::class);
+    }
+
+    /**
+     * Relationship dengan Production Team Assignment
+     */
+    public function assignment(): BelongsTo
+    {
+        return $this->belongsTo(ProductionTeamAssignment::class, 'assignment_id');
     }
 
     /**

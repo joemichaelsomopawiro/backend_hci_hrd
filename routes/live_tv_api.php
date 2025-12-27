@@ -214,6 +214,15 @@ Route::prefix('notifications')->middleware(['auth:sanctum', 'throttle:api'])->gr
     Route::post('/cleanup', [NotificationController::class, 'cleanup'])->middleware('throttle:sensitive');
 });
 
+// Unified Notification Routes - Semua notifikasi dalam satu tempat
+Route::prefix('unified-notifications')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\UnifiedNotificationController::class, 'index'])->middleware('throttle:60,1');
+    Route::get('/unread-count', [\App\Http\Controllers\Api\UnifiedNotificationController::class, 'unreadCount'])->middleware('throttle:60,1');
+    Route::get('/by-type/{type}', [\App\Http\Controllers\Api\UnifiedNotificationController::class, 'getByType'])->middleware('throttle:60,1');
+    Route::post('/{id}/read', [\App\Http\Controllers\Api\UnifiedNotificationController::class, 'markAsRead'])->middleware('throttle:sensitive');
+    Route::post('/mark-all-read', [\App\Http\Controllers\Api\UnifiedNotificationController::class, 'markAllAsRead'])->middleware('throttle:sensitive');
+});
+
 // Music Notification Routes (Compatibility for frontend)
 Route::prefix('music/notifications')->middleware('auth:sanctum')->group(function () {
     Route::get('/read-status/{id}', [NotificationController::class, 'getReadStatus']);
@@ -558,12 +567,13 @@ Route::prefix('roles')->group(function () {
     // General Affairs Routes
     Route::prefix('general-affairs')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
         Route::get('/budget-requests', [GeneralAffairsController::class, 'index'])->middleware('throttle:60,1');
+        // IMPORTANT: Specific routes must come BEFORE parameterized routes to avoid route conflicts
+        Route::get('/budget-requests/from-creative-work', [GeneralAffairsController::class, 'getCreativeWorkBudgetRequests'])->middleware('throttle:60,1'); // Permohonan dana dari Creative Work
+        Route::get('/budget-requests/program/{programId}', [GeneralAffairsController::class, 'getByProgram'])->middleware('throttle:60,1');
         Route::get('/budget-requests/{id}', [GeneralAffairsController::class, 'show'])->middleware('throttle:60,1');
         Route::post('/budget-requests/{id}/approve', [GeneralAffairsController::class, 'approve'])->middleware('throttle:sensitive');
         Route::post('/budget-requests/{id}/reject', [GeneralAffairsController::class, 'reject'])->middleware('throttle:sensitive');
         Route::post('/budget-requests/{id}/process-payment', [GeneralAffairsController::class, 'processPayment'])->middleware('throttle:sensitive');
-        Route::get('/budget-requests/program/{programId}', [GeneralAffairsController::class, 'getByProgram'])->middleware('throttle:60,1');
-        Route::get('/budget-requests/from-creative-work', [GeneralAffairsController::class, 'getCreativeWorkBudgetRequests'])->middleware('throttle:60,1'); // Permohonan dana dari Creative Work
         Route::get('/statistics', [GeneralAffairsController::class, 'statistics'])->middleware('throttle:60,1');
     });
 
@@ -656,6 +666,7 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     Route::post('/creative-works/{id}/final-approval', [ProducerController::class, 'finalApproveCreativeWork']); // Approve/reject dengan review detail
     
     // Team Management
+    Route::put('/team-assignments/{assignmentId}', [ProducerController::class, 'updateTeamAssignment']); // Edit team assignment (team_name, team_notes, schedule_id, members)
     Route::put('/team-assignments/{assignmentId}/replace-team', [ProducerController::class, 'replaceTeamMembers']); // Ganti tim syuting secara dadakan
     Route::get('/episodes/{episodeId}/team-assignments', [ProducerController::class, 'getEpisodeTeamAssignments'])->middleware('throttle:60,1'); // Lihat team assignments per episode
     Route::get('/programs/{programId}/team-assignments', [ProducerController::class, 'getProgramTeamAssignments'])->middleware('throttle:60,1'); // Lihat team assignments per program (untuk reuse)

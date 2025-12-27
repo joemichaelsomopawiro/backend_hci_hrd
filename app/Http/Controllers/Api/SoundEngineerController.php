@@ -181,6 +181,22 @@ class SoundEngineerController extends Controller
 
             // Check if user has access to this episode's production team
             $episode = Episode::with(['program.productionTeam.members'])->findOrFail($request->episode_id);
+            
+            // Check if episode has program and production team
+            if (!$episode->program) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Episode does not have a program assigned.'
+                ], 400);
+            }
+            
+            if (!$episode->program->productionTeam) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Episode\'s program does not have a production team assigned.'
+                ], 400);
+            }
+            
             $hasAccess = $episode->program->productionTeam
                 ->members()
                 ->where('user_id', $user->id)
@@ -710,8 +726,9 @@ class SoundEngineerController extends Controller
             }
 
             // Get approved arrangements from episodes of programs in user's production teams
-            $query = MusicArrangement::where('status', 'approved')
-                ->with(['episode.program.productionTeam', 'createdBy', 'episode'])
+            // Include both 'approved' and 'arrangement_approved' status
+            $query = MusicArrangement::whereIn('status', ['approved', 'arrangement_approved'])
+                ->with(['episode.program.productionTeam', 'createdBy', 'episode', 'soundEngineerHelper'])
                 ->whereHas('episode.program', function ($q) use ($productionTeamIds) {
                     $q->whereIn('production_team_id', $productionTeamIds);
                 });
