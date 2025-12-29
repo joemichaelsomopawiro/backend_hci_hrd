@@ -7,6 +7,7 @@ use App\Models\Episode;
 use App\Models\Schedule;
 use App\Models\ProgramNotification;
 use App\Services\ProgramWorkflowService;
+use App\Constants\Role;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -521,7 +522,7 @@ class ApprovalWorkflowController extends Controller
             $pendingApprovals = [];
 
             // Get pending programs (for managers)
-            if (in_array($user->role, ['Manager', 'Program Manager'])) {
+            if (Role::canApproveProgram($user->role)) {
                 $pendingPrograms = Program::where('status', 'pending_approval')
                     ->with(['managerProgram', 'productionTeam'])
                     ->get();
@@ -540,7 +541,7 @@ class ApprovalWorkflowController extends Controller
             }
 
             // Get pending rundowns (for producers)
-            if (in_array($user->role, ['Producer', 'Manager', 'Program Manager'])) {
+            if (Role::canApproveRundown($user->role)) {
                 $pendingRundowns = Episode::where('status', 'rundown_pending_approval')
                     ->with(['program', 'submittedBy'])
                     ->get();
@@ -559,7 +560,7 @@ class ApprovalWorkflowController extends Controller
             }
 
             // Get pending schedules (for managers)
-            if (in_array($user->role, ['Manager', 'Program Manager'])) {
+            if (Role::canApproveSchedule($user->role)) {
                 $pendingSchedules = Schedule::where('status', 'pending_approval')
                     ->with(['program', 'episode', 'submittedBy'])
                     ->get();
@@ -685,13 +686,13 @@ class ApprovalWorkflowController extends Controller
         
         switch ($type) {
             case 'program':
-                $notifyUsers = ['Manager', 'Program Manager'];
+                $notifyUsers = Role::getManagerRoles();
                 break;
             case 'rundown':
-                $notifyUsers = ['Producer', 'Manager', 'Program Manager'];
+                $notifyUsers = Role::getRundownApproverRoles();
                 break;
             case 'schedule':
-                $notifyUsers = ['Manager', 'Program Manager'];
+                $notifyUsers = Role::getScheduleApproverRoles();
                 break;
         }
         

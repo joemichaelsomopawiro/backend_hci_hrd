@@ -32,7 +32,7 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -83,7 +83,7 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -160,7 +160,7 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -256,7 +256,7 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -322,7 +322,7 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -373,7 +373,7 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -486,7 +486,7 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -528,7 +528,7 @@ class PromosiController extends Controller
         ];
 
         // Notify Design Grafis
-        $designGrafisUsers = \App\Models\User::where('role', 'Design Grafis')->get();
+        $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
         foreach ($designGrafisUsers as $user) {
             Notification::create([
                 'title' => 'New Promotion Work ' . ucfirst($action),
@@ -549,7 +549,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promosi') {
+            if (!$user || $user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -602,7 +602,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promosi') {
+            if (!$user || $user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -646,7 +646,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promosi') {
+            if (!$user || $user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -720,7 +720,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promosi') {
+            if (!$user || $user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -792,7 +792,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promosi') {
+            if (!$user || $user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -850,7 +850,7 @@ class PromosiController extends Controller
             }
 
             // Auto-create Design Grafis work setelah Promosi selesai
-            $designGrafisUsers = \App\Models\User::where('role', 'Design Grafis')->get();
+            $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
             if ($designGrafisUsers->isNotEmpty()) {
                 // Cek apakah sudah ada Design Grafis work untuk episode ini
                 $existingDesignWork = \App\Models\DesignGrafisWork::where('episode_id', $work->episode_id)
@@ -919,7 +919,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -970,7 +970,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1014,7 +1014,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1087,7 +1087,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1164,7 +1164,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1241,7 +1241,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1314,7 +1314,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1379,7 +1379,7 @@ class PromosiController extends Controller
      */
     private function notifyDesignGrafis($work, $files): void
     {
-        $designGrafisUsers = \App\Models\User::where('role', 'Design Grafis')->get();
+        $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
         
         foreach ($designGrafisUsers as $user) {
             Notification::create([

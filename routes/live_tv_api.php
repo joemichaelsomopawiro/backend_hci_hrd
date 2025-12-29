@@ -424,6 +424,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/works', [DesignGrafisController::class, 'store'])->middleware('throttle:sensitive');
         Route::get('/works/{id}', [DesignGrafisController::class, 'show'])->middleware('throttle:60,1');
         Route::put('/works/{id}', [DesignGrafisController::class, 'update'])->middleware('throttle:sensitive');
+        Route::post('/works/{id}/accept-work', [DesignGrafisController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima Pekerjaan
         Route::post('/works/{id}/upload', [DesignGrafisController::class, 'uploadFiles'])->middleware('throttle:uploads');
         Route::get('/shared-files', [DesignGrafisController::class, 'getSharedFiles'])->middleware('throttle:60,1');
         Route::get('/statistics', [DesignGrafisController::class, 'statistics'])->middleware('throttle:60,1');
@@ -436,6 +437,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/works', [EditorPromosiController::class, 'store'])->middleware('throttle:sensitive');
         Route::get('/works/{id}', [EditorPromosiController::class, 'show'])->middleware('throttle:60,1');
         Route::put('/works/{id}', [EditorPromosiController::class, 'update'])->middleware('throttle:sensitive');
+        Route::post('/works/{id}/accept-work', [EditorPromosiController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima Pekerjaan
         Route::post('/works/{id}/upload', [EditorPromosiController::class, 'uploadFiles'])->middleware('throttle:uploads');
         Route::get('/source-files', [EditorPromosiController::class, 'getSourceFiles'])->middleware('throttle:60,1');
         Route::get('/statistics', [EditorPromosiController::class, 'statistics'])->middleware('throttle:60,1');
@@ -488,6 +490,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/works/{id}/upload-youtube', [BroadcastingController::class, 'uploadYouTube'])->middleware('throttle:uploads'); // Upload ke YouTube dengan SEO
         Route::post('/works/{id}/upload-website', [BroadcastingController::class, 'uploadWebsite'])->middleware('throttle:uploads'); // Upload ke website
         Route::post('/works/{id}/input-youtube-link', [BroadcastingController::class, 'inputYouTubeLink'])->middleware('throttle:sensitive'); // Input link YT ke sistem
+        Route::post('/works/{id}/schedule-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive'); // Schedule playlist untuk work
         Route::post('/works/{id}/complete-work', [BroadcastingController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
     });
 

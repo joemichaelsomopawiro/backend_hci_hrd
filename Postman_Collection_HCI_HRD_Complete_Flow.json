@@ -1733,6 +1733,32 @@
 							"type": "text/javascript"
 						}
 					}]
+				},
+				{
+					"name": "Get Arrangement Detail",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get detail arrangement by ID",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/music-arranger/arrangements/{{arrangement_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "music-arranger", "arrangements", "{{arrangement_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Statistics",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get Music Arranger statistics",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/music-arranger/statistics",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "music-arranger", "statistics"]
+						}
+					}
 				}
 			]
 		},
@@ -2307,6 +2333,172 @@
 					}
 				},
 				{
+					"name": "Get Recording Detail",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get recording detail by ID",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "recordings", "{{recording_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Update Recording",
+					"request": {
+						"method": "PUT",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"recording_schedule\": \"2025-01-20 10:00:00\",\n  \"recording_notes\": \"Updated notes\"\n}"
+						},
+						"description": "Update recording information",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "recordings", "{{recording_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Start Recording",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"start_time\": \"2025-01-20 10:00:00\"\n}"
+						},
+						"description": "Start recording session",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/start",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "recordings", "{{recording_id}}", "start"]
+						}
+					}
+				},
+				{
+					"name": "Accept Schedule",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Accept recording schedule",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/accept-schedule",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "recordings", "{{recording_id}}", "accept-schedule"]
+						}
+					}
+				},
+				{
+					"name": "Complete Work",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"completion_notes\": \"Work selesai setelah request equipment\"\n}"
+						},
+						"description": "Complete work setelah request equipment",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/complete-work",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "recordings", "{{recording_id}}", "complete-work"]
+						}
+					}
+				},
+				{
+					"name": "Get Arrangement by Episode",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get arrangement for specific episode",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/episodes/{{episode_id}}/arrangement",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "episodes", "{{episode_id}}", "arrangement"]
+						}
+					}
+				},
+				{
+					"name": "Create Recording from Arrangement",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"recording_schedule\": \"2025-01-20 10:00:00\",\n  \"recording_notes\": \"Recording notes\"\n}"
+						},
+						"description": "Create recording from approved arrangement",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/arrangements/{{arrangement_id}}/create-recording",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "arrangements", "{{arrangement_id}}", "create-recording"]
+						}
+					}
+				},
+				{
+					"name": "Get Rejected Arrangements",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get rejected arrangements that need help",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/rejected-arrangements",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "rejected-arrangements"]
+						}
+					}
+				},
+				{
+					"name": "Get Rejected Song Proposals",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get rejected song proposals that need help",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/rejected-song-proposals",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "rejected-song-proposals"]
+						}
+					}
+				},
+				{
+					"name": "Help Fix Song Proposal",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{"key": "help_notes", "value": "Perbaikan song proposal", "type": "text"},
+								{"key": "file", "type": "file", "src": []}
+							]
+						},
+						"description": "Help fix rejected song proposal",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/song-proposals/{{arrangement_id}}/help-fix",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "song-proposals", "{{arrangement_id}}", "help-fix"]
+						}
+					}
+				},
+				{
+					"name": "Get Statistics",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get Sound Engineer statistics",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/statistics",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "sound-engineer", "statistics"]
+						}
+					}
+				},
+				{
 					"name": "Help Fix Arrangement",
 					"request": {
 						"method": "POST",
@@ -2858,6 +3050,32 @@
 					}
 				},
 				{
+					"name": "Submit Creative Work",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Submit creative work ke Producer untuk approval",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/creative/works/{{creative_work_id}}/submit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "creative", "works", "{{creative_work_id}}", "submit"]
+						}
+					}
+				},
+				{
+					"name": "Resubmit Creative Work",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Resubmit creative work setelah revisi",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/creative/works/{{creative_work_id}}/resubmit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "creative", "works", "{{creative_work_id}}", "resubmit"]
+						}
+					}
+				},
+				{
 					"name": "Revise Work",
 					"request": {
 						"method": "PUT",
@@ -3316,6 +3534,86 @@
 							"path": ["api", "live-tv", "roles", "promosi", "episodes", "{{episode_id}}", "share-wa-group"]
 						}
 					}
+				},
+				{
+					"name": "Receive Links",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"youtube_link\": \"https://youtube.com/watch?v=xxx\",\n  \"website_link\": \"https://example.com/episode/1\"\n}"
+						},
+						"description": "Terima link YouTube dan website dari Broadcasting",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/episodes/{{episode_id}}/receive-links",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "promosi", "episodes", "{{episode_id}}", "receive-links"]
+						}
+					}
+				},
+				{
+					"name": "Accept Promotion Work",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Terima pekerjaan promosi setelah QC/Broadcasting",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/accept-promotion-work",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "promosi", "works", "{{promosi_work_id}}", "accept-promotion-work"]
+						}
+					}
+				},
+				{
+					"name": "Create FB Reels Highlight",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{"key": "highlight_video", "type": "file", "src": []},
+								{"key": "proof_screenshot", "type": "file", "src": []}
+							]
+						},
+						"description": "Buat video highlight untuk reels Facebook dengan bukti",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/episodes/{{episode_id}}/create-fb-reels-highlight",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "promosi", "episodes", "{{episode_id}}", "create-fb-reels-highlight"]
+						}
+					}
+				},
+				{
+					"name": "Complete Promotion Work",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"completion_notes\": \"Promotion work selesai\"\n}"
+						},
+						"description": "Selesaikan pekerjaan promosi setelah QC/Broadcasting",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/complete-promotion-work",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "promosi", "works", "{{promosi_work_id}}", "complete-promotion-work"]
+						}
+					}
+				},
+				{
+					"name": "Get Statistics",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get Promosi statistics",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/statistics",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "promosi", "statistics"]
+						}
+					}
 				}
 			]
 		},
@@ -3587,6 +3885,19 @@
 							"raw": "{{base_url}}/api/live-tv/roles/produksi/works/{{produksi_work_id}}/complete-work",
 							"host": ["{{base_url}}"],
 							"path": ["api", "live-tv", "roles", "produksi", "works", "{{produksi_work_id}}", "complete-work"]
+						}
+					}
+				},
+				{
+					"name": "Get Produksi Work Detail",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get produksi work detail by ID",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/produksi/works/{{produksi_work_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "produksi", "works", "{{produksi_work_id}}"]
 						}
 					}
 				},
@@ -3895,6 +4206,32 @@
 					}
 				},
 				{
+					"name": "Get Editor Work Detail",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get editor work detail by ID",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/editor/works/{{editor_work_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "editor", "works", "{{editor_work_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Accept Work",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Accept editor work",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/editor/works/{{editor_work_id}}/accept-work",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "editor", "works", "{{editor_work_id}}", "accept-work"]
+						}
+					}
+				},
+				{
 					"name": "Submit Editor Work",
 					"request": {
 						"method": "POST",
@@ -4040,6 +4377,32 @@
 					}
 				},
 				{
+					"name": "Get Design Grafis Work Detail",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get design grafis work detail by ID",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "design-grafis", "works", "{{design_grafis_work_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Statistics",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get Design Grafis statistics",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/statistics",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "design-grafis", "statistics"]
+						}
+					}
+				},
+				{
 					"name": "Submit to QC",
 					"request": {
 						"method": "POST",
@@ -4180,6 +4543,32 @@
 							"raw": "{{base_url}}/api/live-tv/roles/editor-promosi/works/{{editor_promosi_work_id}}/upload",
 							"host": ["{{base_url}}"],
 							"path": ["api", "live-tv", "roles", "editor-promosi", "works", "{{editor_promosi_work_id}}", "upload"]
+						}
+					}
+				},
+				{
+					"name": "Get Editor Promosi Work Detail",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get editor promosi work detail by ID",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/editor-promosi/works/{{editor_promosi_work_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "editor-promosi", "works", "{{editor_promosi_work_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Statistics",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get Editor Promosi statistics",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/editor-promosi/statistics",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "editor-promosi", "statistics"]
 						}
 					}
 				},
@@ -4444,6 +4833,32 @@
 							"raw": "{{base_url}}/api/live-tv/roles/quality-control/works/{{qc_work_id}}/finalize",
 							"host": ["{{base_url}}"],
 							"path": ["api", "live-tv", "roles", "quality-control", "works", "{{qc_work_id}}", "finalize"]
+						}
+					}
+				},
+				{
+					"name": "Get QC Control Detail",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get QC control detail by ID",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/controls/{{qc_control_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "quality-control", "controls", "{{qc_control_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Statistics",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get Quality Control statistics",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/statistics",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "quality-control", "statistics"]
 						}
 					}
 				}

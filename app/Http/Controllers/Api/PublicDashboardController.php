@@ -550,7 +550,7 @@ class PublicDashboardController extends Controller
      */
     private function getWorkCompletion()
     {
-        $roles = ['kreatif', 'musik_arr', 'sound_eng', 'produksi', 'editor'];
+        $roles = ['creative', 'musik_arr', 'sound_eng', 'production', 'editor'];
         
         $completion = [];
         foreach ($roles as $role) {

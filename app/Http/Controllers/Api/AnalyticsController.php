@@ -286,11 +286,11 @@ class AnalyticsController extends Controller
     {
         $teams = [
             'Music Team' => ['Music Arranger', 'Sound Engineer'],
-            'Creative Team' => ['Creative', 'Design Grafis'],
+            'Creative Team' => ['Creative', 'Graphic Design'],
             'Production Team' => ['Production', 'Art & Set Properti'],
-            'Post Production' => ['Editor', 'Editor Promosi'],
+            'Post Production' => ['Editor', 'Editor Promotion'],
             'Quality Team' => ['Quality Control'],
-            'Distribution Team' => ['Broadcasting', 'Promosi']
+            'Distribution Team' => ['Broadcasting', 'Promotion']
         ];
 
         $teamAnalytics = [];

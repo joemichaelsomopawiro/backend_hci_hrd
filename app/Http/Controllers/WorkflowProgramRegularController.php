@@ -299,7 +299,7 @@ class WorkflowProgramRegularController extends Controller
                         'completed_at' => $episode->rundown_approved_at,
                         'approved_by' => $episode->rundownApprovedBy
                     ],
-                    'produksi' => [
+                    'production' => [
                         'status' => $episode->shooting_completed_at ? 'completed' : 'pending',
                         'completed_at' => $episode->shooting_completed_at,
                         'completed_by' => $episode->shootingCompletedBy
@@ -316,11 +316,11 @@ class WorkflowProgramRegularController extends Controller
                         'status' => $episode->status === 'aired' ? 'completed' : 'pending',
                         'completed_at' => $episode->broadcast_completed_at
                     ],
-                    'promosi' => [
+                    'promotion' => [
                         'status' => $episode->promosi_completed_at ? 'completed' : 'pending',
                         'completed_at' => $episode->promosi_completed_at
                     ],
-                    'design_grafis' => [
+                    'graphic_design' => [
                         'status' => $episode->designGrafisWork && $episode->designGrafisWork->status === 'completed' ? 'completed' : 'pending',
                         'completed_at' => $episode->designGrafisWork->completed_at ?? null
                     ]

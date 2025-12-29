@@ -125,13 +125,13 @@ class Deadline extends Model
     public function getRoleLabelAttribute(): string
     {
         $labels = [
-            'kreatif' => 'Kreatif',
-            'musik_arr' => 'Musik Arranger',
+            'creative' => 'Creative',
+            'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
-            'produksi' => 'Produksi',
+            'production' => 'Production',
             'editor' => 'Editor',
-            'art_set_design' => 'Art & Set Design',
-            'design_grafis' => 'Design Grafis',
+            'art_set_design' => 'Art & Set Properti',
+            'graphic_design' => 'Graphic Design',
             'promotion' => 'Promotion',
             'broadcasting' => 'Broadcasting',
             'quality_control' => 'Quality Control'

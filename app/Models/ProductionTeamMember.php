@@ -59,12 +59,12 @@ class ProductionTeamMember extends Model
     public function getRoleLabelAttribute(): string
     {
         $labels = [
-            'kreatif' => 'Kreatif',
-            'musik_arr' => 'Musik Arranger',
+            'creative' => 'Creative',
+            'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
-            'produksi' => 'Produksi',
+            'production' => 'Production',
             'editor' => 'Editor',
-            'art_set_design' => 'Art & Set Design'
+            'art_set_design' => 'Art & Set Properti'
         ];
 
         return $labels[$this->role] ?? $this->role;

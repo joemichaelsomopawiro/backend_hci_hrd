@@ -813,7 +813,7 @@ class QualityControlController extends Controller
                 }
 
                 // Notify Promosi (dari QC yang diterima)
-                $promosiUsers = \App\Models\User::where('role', 'Promosi')->get();
+                $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
                 foreach ($promosiUsers as $promosiUser) {
                     Notification::create([
                         'user_id' => $promosiUser->id,
@@ -828,7 +828,7 @@ class QualityControlController extends Controller
                 }
 
                 // Notify Produksi - Baca Hasil QC
-                $produksiUsers = \App\Models\User::where('role', 'Produksi')->get();
+                $produksiUsers = \App\Models\User::where('role', 'Production')->get();
                 foreach ($produksiUsers as $produksiUser) {
                     Notification::create([
                         'user_id' => $produksiUser->id,
@@ -879,7 +879,7 @@ class QualityControlController extends Controller
 
                 // Jika ada file dari Design Grafis, notifikasi ke Design Grafis
                 if ($hasDesignGrafisFiles) {
-                    $designGrafisUsers = \App\Models\User::where('role', 'Design Grafis')->get();
+                    $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
                     foreach ($designGrafisUsers as $designUser) {
                         Notification::create([
                             'user_id' => $designUser->id,
@@ -898,7 +898,7 @@ class QualityControlController extends Controller
 
                 // Jika ada file dari Editor Promosi, notifikasi ke Editor Promosi
                 if ($hasEditorPromosiFiles) {
-                $editorPromosiUsers = \App\Models\User::where('role', 'Editor Promosi')->get();
+                $editorPromosiUsers = \App\Models\User::where('role', 'Editor Promotion')->get();
                 foreach ($editorPromosiUsers as $editorUser) {
                     Notification::create([
                         'user_id' => $editorUser->id,

@@ -16,7 +16,7 @@ return new class extends Migration
      * - sound_eng (Sound Engineer)
      * - produksi
      * - editor
-     * - art_set_design (Art & Set Design)
+     * - art_set_design (Art & Set Properti)
      */
     public function up(): void
     {

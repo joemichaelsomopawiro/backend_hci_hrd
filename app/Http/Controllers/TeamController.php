@@ -57,7 +57,7 @@ class TeamController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
-                'role' => 'required|in:kreatif,promosi,design_grafis,produksi,editor,art_set_properti',
+                'role' => 'required|in:creative,promotion,graphic_design,production,editor,art_set_properti',
                 'program_id' => 'required|exists:programs,id',
                 'team_lead_id' => 'nullable|exists:users,id',
                 'is_active' => 'boolean'
@@ -119,7 +119,7 @@ class TeamController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'sometimes|required|string|max:255',
                 'description' => 'nullable|string',
-                'role' => 'sometimes|required|in:kreatif,promosi,design_grafis,produksi,editor,art_set_properti',
+                'role' => 'sometimes|required|in:creative,promotion,graphic_design,production,editor,art_set_properti',
                 'team_lead_id' => 'nullable|exists:users,id',
                 'is_active' => 'sometimes|boolean'
             ]);

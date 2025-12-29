@@ -680,7 +680,7 @@ class BroadcastingController extends Controller
             }
 
             // Notify Promosi (setelah Broadcasting selesai)
-            $promosiUsers = \App\Models\User::where('role', 'Promosi')->get();
+            $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
             foreach ($promosiUsers as $promosiUser) {
                 Notification::create([
                     'user_id' => $promosiUser->id,
@@ -707,6 +707,116 @@ class BroadcastingController extends Controller
                 'success' => false,
                 'message' => 'Error saving YouTube link: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Schedule playlist for broadcasting work
+     * POST /api/live-tv/roles/broadcasting/works/{id}/schedule-playlist
+     */
+    public function scheduleWorkPlaylist(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'playlist_date' => 'required|date',
+                'playlist_time' => 'required|date_format:H:i:s'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = BroadcastingWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            // Combine date and time into datetime
+            $scheduledDateTime = $request->playlist_date . ' ' . $request->playlist_time;
+
+            // Update playlist_data if exists
+            $playlistData = $work->playlist_data ?? [];
+            $playlistData['scheduled_date'] = $request->playlist_date;
+            $playlistData['scheduled_time'] = $request->playlist_time;
+            $playlistData['scheduled_datetime'] = $scheduledDateTime;
+            $playlistData['updated_at'] = now()->toDateTimeString();
+
+            // Update work with scheduled time
+            $work->update([
+                'scheduled_time' => $scheduledDateTime,
+                'status' => 'scheduled',
+                'playlist_data' => $playlistData
+            ]);
+
+            // Notify related roles
+            $this->notifyWorkPlaylistScheduled($work);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Playlist scheduled successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error scheduling playlist: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Notify related roles about playlist scheduled
+     */
+    private function notifyWorkPlaylistScheduled(BroadcastingWork $work): void
+    {
+        // Notify Producer
+        $producers = \App\Models\User::where('role', 'Producer')->get();
+        foreach ($producers as $producer) {
+            Notification::create([
+                'user_id' => $producer->id,
+                'type' => 'broadcasting_playlist_scheduled',
+                'title' => 'Playlist Dijadwalkan',
+                'message' => "Playlist untuk Episode {$work->episode->episode_number} telah dijadwalkan pada {$work->scheduled_time->format('d M Y H:i')}.",
+                'data' => [
+                    'broadcasting_work_id' => $work->id,
+                    'episode_id' => $work->episode_id,
+                    'scheduled_time' => $work->scheduled_time->toDateTimeString()
+                ]
+            ]);
+        }
+
+        // Notify Manager Program
+        $managers = \App\Models\User::where('role', 'Manager Program')->get();
+        foreach ($managers as $manager) {
+            Notification::create([
+                'user_id' => $manager->id,
+                'type' => 'broadcasting_playlist_scheduled',
+                'title' => 'Playlist Dijadwalkan',
+                'message' => "Playlist untuk Episode {$work->episode->episode_number} telah dijadwalkan pada {$work->scheduled_time->format('d M Y H:i')}.",
+                'data' => [
+                    'broadcasting_work_id' => $work->id,
+                    'episode_id' => $work->episode_id,
+                    'scheduled_time' => $work->scheduled_time->toDateTimeString()
+                ]
+            ]);
         }
     }
 
@@ -749,7 +859,7 @@ class BroadcastingController extends Controller
             ]);
 
             // Notify Promosi
-            $promosiUsers = \App\Models\User::where('role', 'Promosi')->get();
+            $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
             foreach ($promosiUsers as $promosiUser) {
                 Notification::create([
                     'user_id' => $promosiUser->id,

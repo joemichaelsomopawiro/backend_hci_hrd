@@ -178,7 +178,7 @@ class KPIController extends Controller
      */
     private function getRolePerformance()
     {
-        $roles = ['Music Arranger', 'Producer', 'Creative', 'Production', 'Editor', 'Design Grafis', 'Editor Promosi', 'Quality Control', 'Broadcasting', 'Promosi'];
+        $roles = ['Music Arranger', 'Producer', 'Creative', 'Production', 'Editor', 'Graphic Design', 'Editor Promotion', 'Quality Control', 'Broadcasting', 'Promotion'];
         $performance = [];
 
         foreach ($roles as $role) {
@@ -225,7 +225,7 @@ class KPIController extends Controller
     private function getWorkCompletion()
     {
         // Use Deadlines grouped by role
-        $roles = ['kreatif', 'produksi', 'editor'];
+        $roles = ['creative', 'production', 'editor'];
         
         $completion = [];
         foreach ($roles as $role) {
@@ -254,11 +254,11 @@ class KPIController extends Controller
     {
         $teams = [
             'Music Team' => ['Music Arranger', 'Sound Engineer'],
-            'Creative Team' => ['Creative', 'Design Grafis'],
+            'Creative Team' => ['Creative', 'Graphic Design'],
             'Production Team' => ['Production', 'Art & Set Properti'],
-            'Post Production' => ['Editor', 'Editor Promosi'],
+            'Post Production' => ['Editor', 'Editor Promotion'],
             'Quality Team' => ['Quality Control'],
-            'Distribution Team' => ['Broadcasting', 'Promosi']
+            'Distribution Team' => ['Broadcasting', 'Promotion']
         ];
 
         $teamPerformance = [];
@@ -499,15 +499,15 @@ class KPIController extends Controller
         // Map role names to deadline role enum
         $roleMap = [
             'Music Arranger' => 'musik_arr',
-            'Producer' => 'produksi', // Producer manages production
-            'Creative' => 'kreatif',
-            'Production' => 'produksi',
+            'Producer' => 'production', // Producer manages production
+            'Creative' => 'creative',
+            'Production' => 'production',
             'Editor' => 'editor',
-            'Design Grafis' => 'design_grafis',
-            'Editor Promosi' => 'promotion',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRole = $roleMap[$role] ?? strtolower($role);
@@ -522,15 +522,15 @@ class KPIController extends Controller
     {
         $roleMap = [
             'Music Arranger' => 'musik_arr',
-            'Producer' => 'produksi',
-            'Creative' => 'kreatif',
-            'Production' => 'produksi',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
             'Editor' => 'editor',
-            'Design Grafis' => 'design_grafis',
-            'Editor Promosi' => 'promotion',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRole = $roleMap[$role] ?? strtolower($role);
@@ -547,15 +547,15 @@ class KPIController extends Controller
     {
         $roleMap = [
             'Music Arranger' => 'musik_arr',
-            'Producer' => 'produksi',
-            'Creative' => 'kreatif',
-            'Production' => 'produksi',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
             'Editor' => 'editor',
-            'Design Grafis' => 'design_grafis',
-            'Editor Promosi' => 'promotion',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRole = $roleMap[$role] ?? strtolower($role);
@@ -576,15 +576,15 @@ class KPIController extends Controller
         $roleMap = [
             'Music Arranger' => 'musik_arr',
             'Sound Engineer' => 'sound_eng',
-            'Creative' => 'kreatif',
-            'Design Grafis' => 'design_grafis',
-            'Production' => 'produksi',
+            'Creative' => 'creative',
+            'Graphic Design' => 'graphic_design',
+            'Production' => 'production',
             'Art & Set Properti' => 'art_set_design',
             'Editor' => 'editor',
-            'Editor Promosi' => 'promotion',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRoles = [];
@@ -604,15 +604,15 @@ class KPIController extends Controller
         $roleMap = [
             'Music Arranger' => 'musik_arr',
             'Sound Engineer' => 'sound_eng',
-            'Creative' => 'kreatif',
-            'Design Grafis' => 'design_grafis',
-            'Production' => 'produksi',
+            'Creative' => 'creative',
+            'Graphic Design' => 'graphic_design',
+            'Production' => 'production',
             'Art & Set Properti' => 'art_set_design',
             'Editor' => 'editor',
-            'Editor Promosi' => 'promotion',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRoles = [];
@@ -648,15 +648,15 @@ class KPIController extends Controller
         // Get user's production team and find deadlines for their role
         $roleMap = [
             'Music Arranger' => 'musik_arr',
-            'Producer' => 'produksi',
-            'Creative' => 'kreatif',
-            'Production' => 'produksi',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
             'Editor' => 'editor',
-            'Design Grafis' => 'design_grafis',
-            'Editor Promosi' => 'promotion',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRole = $roleMap[$role] ?? strtolower($role);
@@ -676,15 +676,15 @@ class KPIController extends Controller
     {
         $roleMap = [
             'Music Arranger' => 'musik_arr',
-            'Producer' => 'produksi',
-            'Creative' => 'kreatif',
-            'Production' => 'produksi',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
             'Editor' => 'editor',
-            'Design Grafis' => 'design_grafis',
-            'Editor Promosi' => 'promotion',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRole = $roleMap[$role] ?? strtolower($role);
@@ -702,15 +702,15 @@ class KPIController extends Controller
     {
         $roleMap = [
             'Music Arranger' => 'musik_arr',
-            'Producer' => 'produksi',
-            'Creative' => 'kreatif',
-            'Production' => 'produksi',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
             'Editor' => 'editor',
-            'Design Grafis' => 'design_grafis',
-            'Editor Promosi' => 'promotion',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRole = $roleMap[$role] ?? strtolower($role);
@@ -731,15 +731,15 @@ class KPIController extends Controller
     {
         $roleMap = [
             'Music Arranger' => 'musik_arr',
-            'Producer' => 'produksi',
-            'Creative' => 'kreatif',
-            'Production' => 'produksi',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
             'Editor' => 'editor',
-            'Design Grafis' => 'design_grafis',
-            'Editor Promosi' => 'promotion',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
             'Quality Control' => 'quality_control',
             'Broadcasting' => 'broadcasting',
-            'Promosi' => 'promotion'
+            'Promotion' => 'promotion'
         ];
 
         $deadlineRole = $roleMap[$role] ?? strtolower($role);

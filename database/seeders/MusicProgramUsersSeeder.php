@@ -32,7 +32,7 @@ class MusicProgramUsersSeeder extends Seeder
                 'name' => 'Social Media',
                 'email' => 'socialmedia@example.com',
                 'phone' => '081234567892',
-                'role' => 'Promosi',
+                'role' => 'Promotion',
                 'password' => Hash::make('password'),
             ],
         ];

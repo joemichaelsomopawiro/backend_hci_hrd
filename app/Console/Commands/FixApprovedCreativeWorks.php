@@ -74,7 +74,7 @@ class FixApprovedCreativeWorks extends Command
                     $this->info("  ✓ Created PromotionWork ID: {$promosiWork->id}");
                     
                     // Notify Promosi users
-                    $promosiUsers = User::where('role', 'Promosi')->get();
+                    $promosiUsers = User::where('role', 'Promotion')->get();
                     foreach ($promosiUsers as $promosiUser) {
                         Notification::create([
                             'user_id' => $promosiUser->id,
@@ -106,7 +106,7 @@ class FixApprovedCreativeWorks extends Command
                     $this->info("  ✓ Created ProduksiWork ID: {$produksiWork->id}");
                     
                     // Notify Produksi users
-                    $produksiUsers = User::where('role', 'Produksi')->get();
+                    $produksiUsers = User::where('role', 'Production')->get();
                     foreach ($produksiUsers as $produksiUser) {
                         Notification::create([
                             'user_id' => $produksiUser->id,

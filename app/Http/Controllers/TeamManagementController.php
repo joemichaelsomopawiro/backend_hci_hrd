@@ -94,7 +94,7 @@ class TeamManagementController extends Controller
                 'description' => 'nullable|string',
                 'program_id' => 'nullable|exists:programs,id',
                 'team_lead_id' => 'nullable|exists:users,id',
-                'role' => 'required|in:kreatif,promosi,design_grafis,produksi,editor,art_set_properti',
+                'role' => 'required|in:creative,promotion,graphic_design,production,editor,art_set_properti',
                 'members' => 'nullable|array',
                 'members.*' => 'exists:users,id'
             ]);

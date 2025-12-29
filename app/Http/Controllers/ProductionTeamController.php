@@ -103,7 +103,7 @@ class ProductionTeamController extends Controller
                 'created_by' => 'required|exists:users,id',
                 'members' => 'required|array|min:6', // Minimal 6 members (1 untuk setiap role)
                 'members.*.user_id' => 'required|exists:users,id',
-                'members.*.role' => 'required|in:kreatif,musik_arr,sound_eng,produksi,editor,art_set_design',
+                'members.*.role' => 'required|in:creative,musik_arr,sound_eng,production,editor,art_set_design',
                 'members.*.notes' => 'nullable|string'
             ]);
 
@@ -304,7 +304,7 @@ class ProductionTeamController extends Controller
             $validator = Validator::make($request->all(), [
                 'members' => 'required|array|min:1',
                 'members.*.user_id' => 'required|exists:users,id',
-                'members.*.role' => 'required|in:kreatif,musik_arr,sound_eng,produksi,editor,art_set_design',
+                'members.*.role' => 'required|in:creative,musik_arr,sound_eng,production,editor,art_set_design',
                 'members.*.notes' => 'nullable|string'
             ]);
 
@@ -370,7 +370,7 @@ class ProductionTeamController extends Controller
             $validator = Validator::make($request->all(), [
                 'members' => 'required|array|min:1',
                 'members.*.user_id' => 'required|exists:users,id',
-                'members.*.role' => 'required|in:kreatif,musik_arr,sound_eng,produksi,editor,art_set_design'
+                'members.*.role' => 'required|in:creative,musik_arr,sound_eng,production,editor,art_set_design'
             ]);
 
             if ($validator->fails()) {

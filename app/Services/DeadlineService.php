@@ -223,14 +223,14 @@ class DeadlineService
         
         // Map deadline role to user role
         $roleMapping = [
-            'kreatif' => 'Creative',
+            'creative' => 'Creative',
             'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
-            'produksi' => 'Production',
+            'production' => 'Production',
             'editor' => 'Editor',
             'art_set_design' => 'Art & Set Properti',
-            'design_grafis' => 'Design Grafis',
-            'promotion' => ['Editor Promosi', 'Promosi'],
+            'graphic_design' => 'Graphic Design',
+            'promotion' => ['Editor Promotion', 'Promotion'],
             'broadcasting' => 'Broadcasting',
             'quality_control' => 'Quality Control'
         ];
@@ -319,14 +319,14 @@ class DeadlineService
         
         // Map deadline role to user role
         $roleMapping = [
-            'kreatif' => 'Creative',
+            'creative' => 'Creative',
             'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
-            'produksi' => 'Production',
+            'production' => 'Production',
             'editor' => 'Editor',
             'art_set_design' => 'Art & Set Properti',
-            'design_grafis' => 'Design Grafis',
-            'promotion' => ['Editor Promosi', 'Promosi'],
+            'graphic_design' => 'Graphic Design',
+            'promotion' => ['Editor Promotion', 'Promotion'],
             'broadcasting' => 'Broadcasting',
             'quality_control' => 'Quality Control'
         ];

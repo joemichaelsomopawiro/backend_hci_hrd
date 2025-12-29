@@ -729,7 +729,7 @@ class ProducerController extends Controller
                     }
 
                     // Auto-create PromosiWork task
-                    $promosiUsers = \App\Models\User::where('role', 'Promosi')->get();
+                    $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
                     if ($promosiUsers->isNotEmpty()) {
                         $promosiWork = \App\Models\PromotionWork::create([
                             'episode_id' => $item->episode_id,
@@ -758,7 +758,7 @@ class ProducerController extends Controller
                     }
 
                     // Auto-create ProduksiWork task
-                    $produksiUsers = \App\Models\User::where('role', 'Produksi')->get();
+                    $produksiUsers = \App\Models\User::where('role', 'Production')->get();
                     if ($produksiUsers->isNotEmpty()) {
                         $produksiWork = \App\Models\ProduksiWork::create([
                             'episode_id' => $item->episode_id,
@@ -847,7 +847,7 @@ class ProducerController extends Controller
                         $workflowService->updateWorkflowState(
                             $item->episode,
                             'production_planning',
-                            'produksi',
+                            'production',
                             null,
                             'Creative work approved, proceeding to production planning'
                         );
@@ -2834,7 +2834,7 @@ class ProducerController extends Controller
                 'episode_id' => 'required|exists:episodes,id',
                 'crew_member_ids' => 'nullable|array',
                 'crew_member_ids.*' => 'exists:users,id',
-                'role' => 'nullable|string|in:kreatif,musik_arr,sound_eng,produksi,editor,art_set_design,design_grafis,promotion,broadcasting,quality_control',
+                'role' => 'nullable|string|in:creative,musik_arr,sound_eng,production,editor,art_set_design,graphic_design,promotion,broadcasting,quality_control',
                 'message' => 'required|string|max:1000',
                 'priority' => 'nullable|in:low,normal,high,urgent'
             ]);
@@ -4506,7 +4506,7 @@ class ProducerController extends Controller
                 ]);
 
                 // Auto-create PromosiWork task
-                $promosiUsers = \App\Models\User::where('role', 'Promosi')->get();
+                $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
                 if ($promosiUsers->isNotEmpty()) {
                     $promosiWork = \App\Models\PromotionWork::create([
                         'episode_id' => $creativeWork->episode_id,
@@ -4534,7 +4534,7 @@ class ProducerController extends Controller
                 }
 
                 // Auto-create ProduksiWork task
-                $produksiUsers = \App\Models\User::where('role', 'Produksi')->get();
+                $produksiUsers = \App\Models\User::where('role', 'Production')->get();
                 if ($produksiUsers->isNotEmpty()) {
                     $produksiWork = \App\Models\ProduksiWork::create([
                         'episode_id' => $creativeWork->episode_id,

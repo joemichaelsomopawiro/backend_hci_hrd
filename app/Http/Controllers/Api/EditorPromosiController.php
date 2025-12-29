@@ -30,15 +30,21 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Editor Promosi') {
+            if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
+            // Get all works that are either:
+            // 1. Created by current user, OR
+            // 2. In draft/planning status (available for acceptance) for any Editor Promosi user
             $query = PromotionWork::with(['episode', 'createdBy'])
-                ->where('created_by', $user->id);
+                ->where(function($q) use ($user) {
+                    $q->where('created_by', $user->id)
+                      ->orWhereIn('status', ['draft', 'planning']); // Draft/planning works are available for any Editor Promosi to accept
+                });
 
             // Filter by status
             if ($request->has('status')) {
@@ -81,7 +87,7 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Editor Promosi') {
+            if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -333,7 +339,7 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Editor Promosi') {
+            if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -341,7 +347,7 @@ class EditorPromosiController extends Controller
             }
 
             $episodeId = $request->get('episode_id');
-            $sourceRole = $request->get('source_role'); // 'editor' or 'promosi'
+            $sourceRole = $request->get('source_role'); // 'editor' or 'promotion'
 
             $query = MediaFile::with(['episode', 'uploadedBy'])
                 ->where('episode_id', $episodeId);
@@ -381,18 +387,18 @@ class EditorPromosiController extends Controller
 
                 $allFiles = $files->merge($editorWorkFiles);
 
-            } elseif ($sourceRole === 'promosi' || !$sourceRole) {
-                // Default: Ambil file dari Promosi (BTS)
+            } elseif ($sourceRole === 'promotion' || $sourceRole === 'promosi' || !$sourceRole) { // Support both for backward compatibility
+                // Default: Ambil file dari Promotion (BTS)
                 $query->where('file_type', 'promotion')
                       ->whereHas('uploadedBy', function($q) {
-                          $q->where('role', 'Promosi');
+                          $q->where('role', 'Promotion');
                       });
 
                 $allFiles = $query->orderBy('created_at', 'desc')->get();
             } else {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Invalid source_role. Use "editor" or "promosi".'
+                    'message' => 'Invalid source_role. Use "editor" or "promotion".'
                 ], 400);
             }
 
@@ -425,7 +431,7 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Editor Promosi') {
+            if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -502,22 +508,68 @@ class EditorPromosiController extends Controller
     }
 
     /**
-     * Ajukan ke QC - Editor Promosi submit file locations ke QC
-     * POST /api/live-tv/editor-promosi/works/{id}/submit-to-qc
+     * Terima Pekerjaan - Editor Promosi accept work
+     * POST /api/live-tv/roles/editor-promosi/works/{id}/accept-work
      */
-    public function submitToQC(Request $request, int $id): JsonResponse
+    public function acceptWork(Request $request, string $id): JsonResponse
     {
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Editor Promosi') {
+            if (!$user || $user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            $work = \App\Models\EditorPromosiWork::findOrFail($id);
+            $work = PromotionWork::findOrFail((int) $id);
+
+            // Check if work is in draft/planning status (baru dibuat oleh Editor atau sistem)
+            if (!in_array($work->status, ['draft', 'planning'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is draft or planning'
+                ], 400);
+            }
+
+            // Update work status to in_progress/editing and assign to current user
+            $work->update([
+                'status' => 'editing', // atau 'in_progress' tergantung workflow
+                'created_by' => $user->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work accepted successfully. You can now start editing.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Ajukan ke QC - Editor Promosi submit file locations ke QC
+     * POST /api/live-tv/roles/editor-promosi/works/{id}/submit-to-qc
+     */
+    public function submitToQC(Request $request, string $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Editor Promotion') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = PromotionWork::findOrFail((int) $id);
 
             if ($work->created_by !== $user->id) {
                 return response()->json([

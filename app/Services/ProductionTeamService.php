@@ -154,7 +154,7 @@ class ProductionTeamService
     public function getTeamStatistics(ProductionTeam $team): array
     {
         $totalMembers = $team->members()->where('is_active', true)->count();
-        $requiredRoles = ['kreatif', 'musik_arr', 'sound_eng', 'produksi', 'editor', 'art_set_design'];
+        $requiredRoles = ['creative', 'musik_arr', 'sound_eng', 'production', 'editor', 'art_set_design'];
         $existingRoles = $team->members()->where('is_active', true)->pluck('role')->toArray();
         $missingRoles = array_diff($requiredRoles, $existingRoles);
         $hasAllRoles = count($missingRoles) === 0;
@@ -220,10 +220,10 @@ class ProductionTeamService
     {
         // Map production team role to user role
         $roleMapping = [
-            'kreatif' => 'Creative',
+            'creative' => 'Creative',
             'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
-            'produksi' => 'Production',
+            'production' => 'Production',
             'editor' => 'Editor',
             'art_set_design' => 'Art & Set Properti',
         ];

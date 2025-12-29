@@ -172,7 +172,7 @@ class WorkflowTransitionService
                 break;
 
             case 'production':
-                $produksiUsers = User::where('role', 'Produksi')->get();
+                $produksiUsers = User::where('role', 'Production')->get();
                 foreach ($produksiUsers as $user) {
                     $notifications[] = [
                         'title' => 'Production Work Assigned',

@@ -62,7 +62,7 @@ class EditorController extends Controller
     /**
      * Get editor work by ID
      */
-    public function show(int $id): JsonResponse
+    public function show(string $id): JsonResponse
     {
         $work = EditorWork::with(['episode', 'createdBy', 'reviewedBy'])->findOrFail($id);
         
@@ -170,9 +170,9 @@ class EditorController extends Controller
     /**
      * Submit editor work for review
      */
-    public function submit(int $id): JsonResponse
+    public function submit(string $id): JsonResponse
     {
-        $work = EditorWork::findOrFail($id);
+        $work = EditorWork::findOrFail((int) $id);
         
         if ($work->status !== 'draft') {
             return response()->json([
@@ -378,7 +378,7 @@ class EditorController extends Controller
      * Report missing files to Producer
      * User: "dapat ajukan file tidak lengkap kepada Producer"
      */
-    public function reportMissingFiles(Request $request, int $id): JsonResponse
+    public function reportMissingFiles(Request $request, string $id): JsonResponse
     {
         try {
             $user = auth()->user();
@@ -405,7 +405,7 @@ class EditorController extends Controller
                 ], 422);
             }
 
-            $work = EditorWork::findOrFail($id);
+            $work = EditorWork::findOrFail((int) $id);
 
             if ($work->created_by !== $user->id) {
                 return response()->json([

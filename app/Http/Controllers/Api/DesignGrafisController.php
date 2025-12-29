@@ -31,15 +31,21 @@ class DesignGrafisController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
+            // Get all works that are either:
+            // 1. Created by current user, OR
+            // 2. In draft status (available for acceptance) for any Design Grafis user
             $query = DesignGrafisWork::with(['episode', 'createdBy'])
-                ->where('created_by', $user->id);
+                ->where(function($q) use ($user) {
+                    $q->where('created_by', $user->id)
+                      ->orWhere('status', 'draft'); // Draft works are available for any Design Grafis to accept
+                });
 
             // Filter by status
             if ($request->has('status')) {
@@ -75,7 +81,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -309,14 +315,14 @@ class DesignGrafisController extends Controller
     }
 
     /**
-     * Get files from other roles (Promosi, Produksi)
+     * Get files from other roles (Promotion, Production)
      */
     public function getSharedFiles(Request $request): JsonResponse
     {
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -324,20 +330,20 @@ class DesignGrafisController extends Controller
             }
 
             $episodeId = $request->get('episode_id');
-            $sourceRole = $request->get('source_role'); // 'promosi' or 'produksi'
+            $sourceRole = $request->get('source_role'); // 'promotion' or 'production'
 
             $query = MediaFile::with(['episode', 'uploadedBy'])
                 ->where('episode_id', $episodeId);
 
-            if ($sourceRole === 'promosi') {
+            if ($sourceRole === 'promotion' || $sourceRole === 'promosi') { // Support both for backward compatibility
                 $query->where('file_type', 'promotion')
                       ->whereHas('uploadedBy', function($q) {
-                          $q->where('role', 'Promosi');
+                          $q->where('role', 'Promotion');
                       });
-            } elseif ($sourceRole === 'produksi') {
+            } elseif ($sourceRole === 'production' || $sourceRole === 'produksi') { // Support both for backward compatibility
                 $query->where('file_type', 'production')
                       ->whereHas('uploadedBy', function($q) {
-                          $q->where('role', 'Produksi');
+                          $q->where('role', 'Production');
                       });
             }
 
@@ -365,7 +371,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -442,6 +448,52 @@ class DesignGrafisController extends Controller
     }
 
     /**
+     * Terima Pekerjaan - Design Grafis accept work
+     * POST /api/live-tv/roles/design-grafis/works/{id}/accept-work
+     */
+    public function acceptWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Graphic Design') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = DesignGrafisWork::findOrFail($id);
+
+            // Check if work is in draft status (baru dibuat oleh Promosi atau sistem)
+            if ($work->status !== 'draft') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is draft'
+                ], 400);
+            }
+
+            // Update work status to in_progress and assign to current user
+            $work->update([
+                'status' => 'in_progress',
+                'created_by' => $user->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work accepted successfully. You can now start designing.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Ajukan ke QC - Design Grafis submit file locations ke QC
      * POST /api/live-tv/design-grafis/works/{id}/submit-to-qc
      */
@@ -450,7 +502,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

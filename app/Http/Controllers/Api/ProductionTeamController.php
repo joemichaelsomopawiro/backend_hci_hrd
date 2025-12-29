@@ -351,7 +351,7 @@ class ProductionTeamController extends Controller
         
         $validator = Validator::make($request->all(), [
             'user_id' => 'required|exists:users,id',
-            'role' => 'required|in:kreatif,musik_arr,sound_eng,produksi,editor,art_set_design',
+            'role' => 'required|in:creative,musik_arr,sound_eng,production,editor,art_set_design',
             'notes' => 'nullable|string'
         ]);
         

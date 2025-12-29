@@ -48,7 +48,7 @@ class WorkflowNotificationService
         try {
             // Notify all production team members
             $productionMembers = $episode->programRegular->productionTeam->members()
-                ->where('role', 'produksi')
+                ->where('role', 'production')
                 ->where('is_active', true)
                 ->get();
 
@@ -79,7 +79,7 @@ class WorkflowNotificationService
     {
         try {
             $creativeMembers = $episode->programRegular->productionTeam->members()
-                ->where('role', 'kreatif')
+                ->where('role', 'creative')
                 ->where('is_active', true)
                 ->get();
 

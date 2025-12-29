@@ -34,8 +34,8 @@ class ProduksiController extends Controller
                 ], 401);
             }
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN) untuk fleksibilitas data
-            if (!in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if ($user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -74,8 +74,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN)
-            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -116,8 +116,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN)
-            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -266,8 +266,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN)
-            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -358,8 +358,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN)
-            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -425,8 +425,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN)
-            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -514,8 +514,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN)
-            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -617,6 +617,21 @@ class ProduksiController extends Controller
                     'data' => [
                         'produksi_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
+                    ]
+                ]);
+            }
+
+            // Notify Design Grafis - File dari Produksi sudah tersedia
+            $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
+            foreach ($designGrafisUsers as $designUser) {
+                Notification::create([
+                    'user_id' => $designUser->id,
+                    'type' => 'produksi_files_available',
+                    'title' => 'File Produksi Tersedia',
+                    'message' => "Produksi telah mengupload file hasil syuting untuk Episode {$work->episode->episode_number}. File dapat diakses untuk referensi design.",
+                    'data' => [
+                        'produksi_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
                         'file_count' => count($uploadedFiles)
                     ]
                 ]);
@@ -648,8 +663,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN)
-            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -710,8 +725,8 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Terima role 'Produksi' (ID) dan 'Production' (EN)
-            if (!$user || !in_array($user->role, ['Produksi', 'Production'])) {
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

@@ -240,7 +240,7 @@ class CompleteRoleTestDataSeeder extends Seeder
                 'jenis_kelamin' => 'Laki-laki',
                 'alamat' => 'Jl. Art Design No. 12',
                 'status_pernikahan' => 'Belum Menikah',
-                'jabatan_saat_ini' => 'Art & Set Design',
+                'jabatan_saat_ini' => 'Art & Set Properti',
                 'tanggal_mulai_kerja' => '2024-04-01',
                 'tingkat_pendidikan' => 'D3',
                 'gaji_pokok' => 6500000,
@@ -556,7 +556,7 @@ class CompleteRoleTestDataSeeder extends Seeder
                 'name' => 'Art Set Design Test',
                 'email' => 'artsetdesign@example.com',
                 'password' => Hash::make('password'),
-                'role' => 'Art & Set Design',
+                'role' => 'Art & Set Properti',
                 'phone' => '08123456012',
                 'email_verified_at' => now(),
                 'employee_id' => Employee::where('nama_lengkap', 'Art Set Design Test')->first()->id
