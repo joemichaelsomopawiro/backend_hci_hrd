@@ -258,10 +258,10 @@ class ProgramEpisode extends Model
         // Deadline roles mapping
         $deadlineRoles = [
             'editor' => 7,              // 7 hari sebelum tayang
-            'creative' => 9,             // 9 hari sebelum tayang
+            'kreatif' => 9,             // 9 hari sebelum tayang
             'musik_arr' => 9,           // 9 hari sebelum tayang
             'sound_eng' => 9,           // 9 hari sebelum tayang
-            'production' => 9,            // 9 hari sebelum tayang
+            'produksi' => 9,            // 9 hari sebelum tayang
             'art_set_design' => 9       // 9 hari sebelum tayang
         ];
 

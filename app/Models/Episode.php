@@ -130,7 +130,7 @@ class Episode extends Model
         
         // Deadline Creative & Production: 9 hari sebelum tayang
         $this->deadlines()->create([
-            'role' => 'creative',
+            'role' => 'kreatif',
             'deadline_date' => $airDate->copy()->subDays(9),
             'description' => 'Deadline creative work episode',
             'auto_generated' => true,
@@ -138,7 +138,7 @@ class Episode extends Model
         ]);
         
         $this->deadlines()->create([
-            'role' => 'production',
+            'role' => 'produksi',
             'deadline_date' => $airDate->copy()->subDays(9),
             'description' => 'Deadline production episode',
             'auto_generated' => true,
@@ -176,8 +176,8 @@ class Episode extends Model
         // Add mappings for music arranger and sound engineer so they receive notifications
         $roleMapping = [
             'editor' => 'Editor',
-            'creative' => 'Creative',
-            'production' => 'Production',
+            'kreatif' => 'Creative',
+            'produksi' => 'Production',
             'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer'
         ];
