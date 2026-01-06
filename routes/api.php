@@ -260,7 +260,8 @@ Route::prefix('auth')->group(function () {
     Route::post('/send-forgot-password-otp', [AuthController::class, 'sendForgotPasswordOtp'])->middleware('throttle:auth');
     Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:auth');
     
-    Route::middleware('auth:sanctum')->group(function () {
+    // Route yang perlu auth (pakai check.token.expiration)
+    Route::middleware(['auth:sanctum', 'check.token.expiration'])->group(function () {
         Route::get('/check-token', [AuthController::class, 'checkTokenStatus'])->middleware('throttle:60,1'); // Check token status dengan rate limit
         Route::post('/refresh', [AuthController::class, 'refresh'])->middleware('throttle:sensitive'); // Refresh token
         Route::post('/logout', [AuthController::class, 'logout']);

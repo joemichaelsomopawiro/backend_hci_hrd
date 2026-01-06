@@ -17,45 +17,43 @@ class CheckTokenExpiration
      */
     public function handle(Request $request, Closure $next): Response
     {
-        // Skip untuk route yang tidak perlu auth
-        if ($request->is('api/auth/login') || 
-            $request->is('api/auth/register') || 
-            $request->is('api/auth/forgot-password*') ||
-            $request->is('api/auth/reset-password') ||
-            $request->is('api/public/*')) {
+        // Skip untuk route yang tidak perlu auth (lebih spesifik)
+        $skipRoutes = [
+            'api/auth/login',
+            'api/auth/register',
+            'api/auth/send-register-otp',
+            'api/auth/verify-otp',
+            'api/auth/resend-otp',
+            'api/auth/send-forgot-password-otp',
+            'api/auth/reset-password',
+        ];
+        
+        if (in_array($request->path(), $skipRoutes)) {
             return $next($request);
         }
 
+        // Get user dari request (sudah di-authenticate oleh Sanctum)
         $user = $request->user();
         
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => config('app.debug') ? 'Unauthenticated' : 'Unauthorized',
-                'code' => 'UNAUTHENTICATED'
-            ], 401);
+            // Jika tidak ada user, biarkan Sanctum middleware handle
+            return $next($request);
         }
 
         // Get token dari request
         $token = $request->bearerToken();
         
         if (!$token) {
-            return response()->json([
-                'success' => false,
-                'message' => config('app.debug') ? 'Unauthenticated' : 'Unauthorized',
-                'code' => 'TOKEN_MISSING'
-            ], 401);
+            // Jika tidak ada token, biarkan Sanctum middleware handle
+            return $next($request);
         }
 
         // Find token di database
         $accessToken = PersonalAccessToken::findToken($token);
         
         if (!$accessToken) {
-            return response()->json([
-                'success' => false,
-                'message' => config('app.debug') ? 'Unauthenticated' : 'Unauthorized',
-                'code' => 'TOKEN_NOT_FOUND'
-            ], 401);
+            // Token tidak ditemukan, biarkan Sanctum middleware handle
+            return $next($request);
         }
 
         // Check if token is expired

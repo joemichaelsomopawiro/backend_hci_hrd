@@ -44,7 +44,6 @@ class Kernel extends HttpKernel
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
             \Illuminate\Routing\Middleware\ThrottleRequests::class.':api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
-            \App\Http\Middleware\CheckTokenExpiration::class,
         ],
     ];
 
@@ -71,5 +70,6 @@ class Kernel extends HttpKernel
         'readonly.role' => \App\Http\Middleware\ReadOnlyRoleMiddleware::class,
         'attendance.rate.limit' => \App\Http\Middleware\AttendanceRateLimit::class,
         'validate.ga.role' => \App\Http\Middleware\ValidateGARole::class,
+        'check.token.expiration' => \App\Http\Middleware\CheckTokenExpiration::class,
     ];
 }
