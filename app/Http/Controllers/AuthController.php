@@ -220,8 +220,19 @@ class AuthController extends Controller
             ], 401);
         }
 
-        // Create access token dengan expiration (1 hour)
-        $token = $user->createToken('auth_token', ['*'], now()->addHour())->plainTextToken;
+        // Revoke all existing tokens (optional, untuk security)
+        $user->tokens()->delete();
+
+        // Create token dengan expiration dari config (clamp ke max)
+        $expirationSeconds = config('sanctum.expiration', 1800); // Default 30 menit
+        $maxExpiration = config('sanctum.max_expiration', 86400); // Default 24 jam
+        $expirationSeconds = max(60, min($expirationSeconds, $maxExpiration)); // minimal 60 detik
+        $expiresAt = now()->addSeconds($expirationSeconds);
+        
+        $token = $user->createToken('auth_token', ['*'], $expiresAt)->plainTextToken;
+        
+        // Get token model untuk response
+        $tokenModel = $user->tokens()->latest()->first();
 
         return response()->json([
             'success' => true,
@@ -237,7 +248,10 @@ class AuthController extends Controller
                 ],
                 'token' => $token,
                 'token_type' => 'Bearer',
-                'expires_in' => 3600 // 1 hour in seconds
+                'expires_in' => $expirationSeconds, // seconds
+                'expires_at' => $expiresAt->toIso8601String(),
+                'expires_at_timestamp' => $expiresAt->timestamp,
+                'remaining_seconds' => $expiresAt->diffInSeconds(now()),
             ]
         ]);
     }
@@ -419,11 +433,19 @@ class AuthController extends Controller
                 ], 401);
             }
 
-            // Delete current token
-            $request->user()->currentAccessToken()->delete();
+            // Get current token
+            $currentToken = $request->user()->currentAccessToken();
+            
+            // Revoke current token
+            $currentToken->delete();
 
-            // Create new token dengan expiration (1 hour)
-            $token = $user->createToken('auth_token', ['*'], now()->addHour())->plainTextToken;
+            // Create new token dengan expiration dari config (clamp ke max)
+            $expirationSeconds = config('sanctum.expiration', 1800); // Default 30 menit
+            $maxExpiration = config('sanctum.max_expiration', 86400); // Default 24 jam
+            $expirationSeconds = max(60, min($expirationSeconds, $maxExpiration)); // minimal 60 detik
+            $expiresAt = now()->addSeconds($expirationSeconds);
+            
+            $token = $user->createToken('auth_token', ['*'], $expiresAt)->plainTextToken;
 
             // Log audit
             \Illuminate\Support\Facades\Log::channel('audit')->info('Token refreshed', [
@@ -439,7 +461,10 @@ class AuthController extends Controller
                 'data' => [
                     'token' => $token,
                     'token_type' => 'Bearer',
-                    'expires_in' => 3600, // 1 hour in seconds
+                    'expires_in' => $expirationSeconds,
+                    'expires_at' => $expiresAt->toIso8601String(),
+                    'expires_at_timestamp' => $expiresAt->timestamp,
+                    'remaining_seconds' => $expiresAt->diffInSeconds(now()),
                     'user' => [
                         'id' => $user->id,
                         'name' => $user->name,
@@ -461,6 +486,62 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Gagal refresh token'
                 // Jangan expose error details ke frontend
+            ], 500);
+        }
+    }
+
+    /**
+     * Check token status
+     * GET /api/auth/check-token
+     */
+    public function checkTokenStatus(Request $request)
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengguna tidak terautentikasi'
+                ], 401);
+            }
+
+            $currentToken = $request->user()->currentAccessToken();
+
+            if (!$currentToken) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Token tidak ditemukan'
+                ], 401);
+            }
+
+            $expiresAt = $currentToken->expires_at;
+            $remainingSeconds = $expiresAt ? max(0, now()->diffInSeconds($expiresAt, false)) : null;
+            $refreshThreshold = config('sanctum.refresh_threshold', 300);
+            $isExpiringSoon = $remainingSeconds !== null && $remainingSeconds <= $refreshThreshold;
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'is_valid' => true,
+                    'expires_at' => $expiresAt ? $expiresAt->toIso8601String() : null,
+                    'expires_at_timestamp' => $expiresAt ? $expiresAt->timestamp : null,
+                    'remaining_seconds' => $remainingSeconds,
+                    'remaining_minutes' => $remainingSeconds ? round($remainingSeconds / 60, 2) : null,
+                    'is_expiring_soon' => $isExpiringSoon,
+                    'refresh_threshold' => $refreshThreshold,
+                    'last_used_at' => $currentToken->last_used_at ? $currentToken->last_used_at->toIso8601String() : null,
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Check token status failed', [
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal check token status'
             ], 500);
         }
     }

@@ -261,6 +261,7 @@ Route::prefix('auth')->group(function () {
     Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:auth');
     
     Route::middleware('auth:sanctum')->group(function () {
+        Route::get('/check-token', [AuthController::class, 'checkTokenStatus'])->middleware('throttle:60,1'); // Check token status dengan rate limit
         Route::post('/refresh', [AuthController::class, 'refresh'])->middleware('throttle:sensitive'); // Refresh token
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
