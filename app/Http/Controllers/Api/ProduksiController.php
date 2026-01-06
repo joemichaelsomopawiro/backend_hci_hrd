@@ -10,6 +10,8 @@ use App\Models\ShootingRunSheet;
 use App\Models\MediaFile;
 use App\Models\Notification;
 use App\Models\QualityControlWork;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -42,14 +44,24 @@ class ProduksiController extends Controller
                 ], 403);
             }
 
-            $query = ProduksiWork::with(['episode', 'creativeWork', 'createdBy']);
+            // Build cache key based on request parameters
+            $cacheKey = 'produksi_index_' . md5(json_encode([
+                'user_id' => $user->id,
+                'status' => $request->get('status'),
+                'page' => $request->get('page', 1)
+            ]));
 
-            // Filter by status
-            if ($request->has('status')) {
-                $query->where('status', $request->status);
-            }
+            // Use cache with 5 minutes TTL
+            $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request) {
+                $query = ProduksiWork::with(['episode', 'creativeWork', 'createdBy']);
 
-            $works = $query->orderBy('created_at', 'desc')->paginate(15);
+                // Filter by status
+                if ($request->has('status')) {
+                    $query->where('status', $request->status);
+                }
+
+                return $query->orderBy('created_at', 'desc')->paginate(15);
+            });
 
             return response()->json([
                 'success' => true,
@@ -91,7 +103,18 @@ class ProduksiController extends Controller
                 ], 400);
             }
 
+            $oldData = $work->toArray();
             $work->acceptWork($user->id);
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('produksi_work_accepted', $work, [
+                'old_status' => $oldData['status'],
+                'new_status' => 'in_progress',
+                'assigned_to' => $user->id
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             return response()->json([
                 'success' => true,
@@ -240,6 +263,15 @@ class ProduksiController extends Controller
                 ]);
             }
 
+            // Audit logging
+            ControllerSecurityHelper::logCrud('produksi_equipment_requested', $work, [
+                'equipment_count' => count($request->equipment_list),
+                'equipment_request_ids' => $equipmentRequests
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -382,7 +414,19 @@ class ProduksiController extends Controller
                 ], 400);
             }
 
+            $oldData = $work->toArray();
             $work->completeWork($user->id, $request->notes);
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('produksi_work_completed', $work, [
+                'old_status' => $oldData['status'],
+                'new_status' => 'completed',
+                'completed_by' => $user->id,
+                'notes' => $request->notes
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Notify Producer
             $episode = $work->episode;
@@ -487,6 +531,16 @@ class ProduksiController extends Controller
             $work->update([
                 'run_sheet_id' => $runSheet->id
             ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logCreate($runSheet, [
+                'produksi_work_id' => $work->id,
+                'episode_id' => $work->episode_id,
+                'shooting_date' => $request->shooting_date
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             return response()->json([
                 'success' => true,
@@ -596,6 +650,21 @@ class ProduksiController extends Controller
                 'shooting_files' => $uploadedFiles,
                 'shooting_file_links' => implode(',', $filePaths)
             ]);
+
+            // Audit logging for file uploads
+            foreach ($request->file('files') as $file) {
+                ControllerSecurityHelper::logFileOperation(
+                    'upload',
+                    $file->getMimeType(),
+                    $file->getClientOriginalName(),
+                    $file->getSize(),
+                    $work,
+                    $request
+                );
+            }
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Update run sheet if exists
             if ($work->runSheet) {

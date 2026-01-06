@@ -7,6 +7,8 @@ use App\Models\BroadcastingSchedule;
 use App\Models\BroadcastingWork;
 use App\Models\Episode;
 use App\Models\Notification;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -30,6 +32,16 @@ class BroadcastingController extends Controller
                 ], 403);
             }
 
+            // Build cache key based on request parameters
+            $cacheKey = 'broadcasting_index_' . md5(json_encode([
+                'user_id' => $user->id,
+                'status' => $request->get('status'),
+                'platform' => $request->get('platform'),
+                'page' => $request->get('page', 1)
+            ]));
+
+            // Use cache with 5 minutes TTL
+            $schedules = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request) {
             $query = BroadcastingSchedule::with(['episode', 'createdBy']);
 
             // Filter by status
@@ -42,7 +54,8 @@ class BroadcastingController extends Controller
                 $query->where('platform', $request->platform);
             }
 
-            $schedules = $query->orderBy('created_at', 'desc')->paginate(15);
+                return $query->orderBy('created_at', 'desc')->paginate(15);
+            });
 
             return response()->json([
                 'success' => true,
@@ -103,6 +116,15 @@ class BroadcastingController extends Controller
                 'created_by' => $user->id
             ]);
 
+            // Audit logging
+            ControllerSecurityHelper::logCreate($schedule, [
+                'platform' => $request->platform,
+                'schedule_date' => $request->schedule_date
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             // Notify related roles
             $this->notifyRelatedRoles($schedule, 'created');
 
@@ -126,8 +148,15 @@ class BroadcastingController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $schedule = BroadcastingSchedule::with(['episode', 'createdBy'])
+            // Use cache for frequently accessed data
+            $schedule = QueryOptimizer::remember(
+                QueryOptimizer::getCacheKey('BroadcastingSchedule', $id),
+                300, // 5 minutes
+                function () use ($id) {
+                    return BroadcastingSchedule::with(['episode', 'createdBy'])
                 ->findOrFail($id);
+                }
+            );
 
             return response()->json([
                 'success' => true,
@@ -175,9 +204,18 @@ class BroadcastingController extends Controller
                 ], 422);
             }
 
+            $oldData = $schedule->toArray();
             $schedule->update($request->only([
                 'title', 'description', 'tags', 'thumbnail_path', 'status'
             ]));
+
+            // Audit logging
+            ControllerSecurityHelper::logUpdate($schedule, $oldData, $request->only([
+                'title', 'description', 'tags', 'thumbnail_path', 'status'
+            ]), $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Notify on status change
             if ($request->has('status')) {
@@ -238,6 +276,12 @@ class BroadcastingController extends Controller
                 'status' => 'uploaded'
             ]);
 
+            // Audit logging for file upload
+            ControllerSecurityHelper::logFileOperation('upload', $file->getMimeType(), $fileName, $file->getSize(), $schedule, $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             // Notify related roles
             $this->notifyRelatedRoles($schedule, 'content_uploaded');
 
@@ -284,11 +328,21 @@ class BroadcastingController extends Controller
                 ], 422);
             }
 
+            $oldData = $schedule->toArray();
             $schedule->update([
                 'url' => $request->url,
                 'status' => 'published',
                 'published_at' => $request->published_at ?? now()
             ]);
+
+            // Audit logging for publish
+            ControllerSecurityHelper::logApproval('published', $schedule, [
+                'url' => $request->url,
+                'published_at' => $request->published_at ?? now()
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Notify related roles
             $this->notifyRelatedRoles($schedule, 'published');
@@ -414,7 +468,10 @@ class BroadcastingController extends Controller
                 ], 403);
             }
 
-            $stats = [
+            // Use cache for statistics (cache for 5 minutes)
+            $cacheKey = 'broadcasting_statistics_user_' . $user->id;
+            $stats = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () {
+                return [
                 'total_schedules' => BroadcastingSchedule::count(),
                 'pending_schedules' => BroadcastingSchedule::where('status', 'pending')->count(),
                 'scheduled_schedules' => BroadcastingSchedule::where('status', 'scheduled')->count(),
@@ -429,6 +486,7 @@ class BroadcastingController extends Controller
                     ->limit(5)
                     ->get()
             ];
+            });
 
             return response()->json([
                 'success' => true,

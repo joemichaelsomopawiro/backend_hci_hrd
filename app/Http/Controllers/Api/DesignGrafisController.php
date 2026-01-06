@@ -8,6 +8,8 @@ use App\Models\PromotionWork;
 use App\Models\Episode;
 use App\Models\MediaFile;
 use App\Models\Notification;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -38,6 +40,16 @@ class DesignGrafisController extends Controller
                 ], 403);
             }
 
+            // Build cache key based on request parameters
+            $cacheKey = 'design_grafis_index_' . md5(json_encode([
+                'user_id' => $user->id,
+                'status' => $request->get('status'),
+                'work_type' => $request->get('work_type'),
+                'page' => $request->get('page', 1)
+            ]));
+
+            // Use cache with 5 minutes TTL
+            $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request, $user) {
             // Get all works that are either:
             // 1. Created by current user, OR
             // 2. In draft status (available for acceptance) for any Design Grafis user
@@ -57,7 +69,8 @@ class DesignGrafisController extends Controller
                 $query->where('work_type', $request->work_type);
             }
 
-            $works = $query->orderBy('created_at', 'desc')->paginate(15);
+                return $query->orderBy('created_at', 'desc')->paginate(15);
+            });
 
             return response()->json([
                 'success' => true,
@@ -124,6 +137,15 @@ class DesignGrafisController extends Controller
                 'status' => 'draft'
             ]);
 
+            // Audit logging
+            ControllerSecurityHelper::logCreate($work, [
+                'work_type' => $request->work_type,
+                'episode_id' => $request->episode_id
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             // Notify related roles
             $this->notifyRelatedRoles($work, 'created');
 
@@ -147,8 +169,15 @@ class DesignGrafisController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $work = DesignGrafisWork::with(['episode', 'createdBy'])
+            // Use cache for frequently accessed data
+            $work = QueryOptimizer::remember(
+                QueryOptimizer::getCacheKey('DesignGrafisWork', $id),
+                300, // 5 minutes
+                function () use ($id) {
+                    return DesignGrafisWork::with(['episode', 'createdBy'])
                 ->findOrFail($id);
+                }
+            );
 
             return response()->json([
                 'success' => true,
@@ -200,10 +229,20 @@ class DesignGrafisController extends Controller
                 ], 422);
             }
 
+            $oldData = $work->toArray();
             $work->update($request->only([
                 'title', 'description', 'design_brief', 'brand_guidelines',
                 'color_scheme', 'dimensions', 'file_format', 'deadline', 'status'
             ]));
+
+            // Audit logging
+            ControllerSecurityHelper::logUpdate($work, $oldData, $request->only([
+                'title', 'description', 'design_brief', 'brand_guidelines',
+                'color_scheme', 'dimensions', 'file_format', 'deadline', 'status'
+            ]), $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Notify on status change
             if ($request->has('status')) {
@@ -294,6 +333,21 @@ class DesignGrafisController extends Controller
                 'status' => 'completed'
             ]);
 
+            // Audit logging for file uploads
+            foreach ($request->file('files') as $file) {
+                ControllerSecurityHelper::logFileOperation(
+                    'upload',
+                    $file->getMimeType(),
+                    $file->getClientOriginalName(),
+                    $file->getSize(),
+                    $work,
+                    $request
+                );
+            }
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             // Notify related roles
             $this->notifyRelatedRoles($work, 'files_uploaded');
 
@@ -378,7 +432,10 @@ class DesignGrafisController extends Controller
                 ], 403);
             }
 
-            $stats = [
+            // Use cache for statistics (cache for 5 minutes)
+            $cacheKey = 'design_grafis_statistics_user_' . $user->id;
+            $stats = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($user) {
+                return [
                 'total_works' => DesignGrafisWork::where('created_by', $user->id)->count(),
                 'completed_works' => DesignGrafisWork::where('created_by', $user->id)
                     ->where('status', 'completed')->count(),
@@ -396,6 +453,7 @@ class DesignGrafisController extends Controller
                     ->limit(5)
                     ->get()
             ];
+            });
 
             return response()->json([
                 'success' => true,
@@ -474,10 +532,21 @@ class DesignGrafisController extends Controller
             }
 
             // Update work status to in_progress and assign to current user
+            $oldData = $work->toArray();
             $work->update([
                 'status' => 'in_progress',
                 'created_by' => $user->id
             ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('design_grafis_work_accepted', $work, [
+                'old_status' => $oldData['status'],
+                'new_status' => 'in_progress',
+                'assigned_to' => $user->id
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             return response()->json([
                 'success' => true,
@@ -545,6 +614,15 @@ class DesignGrafisController extends Controller
                     'created_by' => $user->id
                 ]
             );
+
+            // Audit logging
+            ControllerSecurityHelper::logApproval('submitted_to_qc', $work, [
+                'qc_work_id' => $qcWork->id,
+                'file_count' => count($work->file_paths)
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Notify Quality Control
             $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
