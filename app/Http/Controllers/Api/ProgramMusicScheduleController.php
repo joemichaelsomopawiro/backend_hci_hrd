@@ -21,7 +21,7 @@ class ProgramMusicScheduleController extends Controller
         try {
             // Get production deadlines as shooting schedule reference
             $query = Deadline::with(['episode.program'])
-                ->where('role', 'produksi')
+                ->where('role', 'production')
                 ->whereHas('episode.program');
 
             // Filter by date range
@@ -163,7 +163,7 @@ class ProgramMusicScheduleController extends Controller
 
             // Get shooting schedules (production deadlines)
             $shootingQuery = Deadline::with(['episode.program'])
-                ->where('role', 'produksi')
+                ->where('role', 'production')
                 ->whereHas('episode.program');
 
             if ($request->has('start_date') && $request->has('end_date')) {
@@ -252,7 +252,7 @@ class ProgramMusicScheduleController extends Controller
 
             // Shooting schedules today
             $shootingToday = Deadline::with(['episode.program'])
-                ->where('role', 'produksi')
+                ->where('role', 'production')
                 ->whereDate('deadline_date', $today)
                 ->whereHas('episode.program')
                 ->get()
@@ -322,7 +322,7 @@ class ProgramMusicScheduleController extends Controller
 
             // Shooting schedules this week
             $shootingWeek = Deadline::with(['episode.program'])
-                ->where('role', 'produksi')
+                ->where('role', 'production')
                 ->whereBetween('deadline_date', [$startOfWeek, $endOfWeek])
                 ->whereHas('episode.program')
                 ->orderBy('deadline_date')

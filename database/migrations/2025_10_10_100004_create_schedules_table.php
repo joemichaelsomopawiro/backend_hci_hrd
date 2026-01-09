@@ -14,7 +14,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('music_schedules', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('music_schedules')) {
+            Schema::create('music_schedules', function (Blueprint $table) {
             $table->id();
             $table->foreignId('music_submission_id')->constrained('music_submissions')->onDelete('cascade');
             $table->foreignId('created_by')->constrained('users')->onDelete('cascade');
@@ -60,7 +62,8 @@ return new class extends Migration
             $table->index(['music_submission_id', 'schedule_type', 'status']);
             $table->index(['scheduled_datetime', 'status']);
             $table->index(['schedule_type', 'status']);
-        });
+            });
+        }
     }
 
     /**

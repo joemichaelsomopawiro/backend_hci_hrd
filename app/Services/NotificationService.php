@@ -248,13 +248,21 @@ class NotificationService
      */
     public function markAsRead(int $notificationId, int $userId): bool
     {
+        try {
         $notification = Notification::where('id', $notificationId)
             ->where('user_id', $userId)
             ->first();
             
-        if (!$notification) return false;
-        
-        return $notification->markAsRead();
+            if (!$notification) {
+                return false;
+            }
+            
+            $notification->markAsRead();
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Error marking notification as read: ' . $e->getMessage());
+            return false;
+        }
     }
 
     /**

@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('teams', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('teams')) {
+            Schema::create('teams', function (Blueprint $table) {
             $table->id();
             $table->string('name');
             $table->text('description')->nullable();
@@ -20,7 +22,8 @@ return new class extends Migration
             $table->foreignId('team_lead_id')->nullable()->constrained('users')->onDelete('set null');
             $table->boolean('is_active')->default(true);
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

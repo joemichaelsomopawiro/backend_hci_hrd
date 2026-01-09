@@ -11,9 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('users', function (Blueprint $table) {
-            $table->enum('access_level', ['employee', 'manager', 'hr_readonly', 'hr_full', 'director'])->default('employee')->after('role');
-        });
+        // Check if table exists
+        if (!Schema::hasTable('users')) {
+            return;
+        }
+        
+        // Only add column if it doesn't exist
+        if (!Schema::hasColumn('users', 'access_level')) {
+            Schema::table('users', function (Blueprint $table) {
+                $table->enum('access_level', ['employee', 'manager', 'hr_readonly', 'hr_full', 'director'])->default('employee')->after('role');
+            });
+        }
     }
 
     /**

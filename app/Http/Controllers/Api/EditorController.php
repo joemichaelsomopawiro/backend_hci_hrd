@@ -5,6 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\EditorWork;
 use App\Models\Episode;
+use App\Models\SoundEngineerEditing;
+use App\Models\ShootingRunSheet;
+use App\Models\ProduksiWork;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -17,7 +22,13 @@ class EditorController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = EditorWork::with(['episode', 'createdBy', 'reviewedBy']);
+        // Optimize query with eager loading
+        $query = EditorWork::with([
+            'episode.program.managerProgram',
+            'episode.program.productionTeam.members.user',
+            'createdBy',
+            'reviewedBy'
+        ]);
         
         // Filter by episode
         if ($request->has('episode_id')) {
@@ -51,7 +62,7 @@ class EditorController extends Controller
     /**
      * Get editor work by ID
      */
-    public function show(int $id): JsonResponse
+    public function show(string $id): JsonResponse
     {
         $work = EditorWork::with(['episode', 'createdBy', 'reviewedBy'])->findOrFail($id);
         
@@ -95,6 +106,13 @@ class EditorController extends Controller
                 'status' => 'draft',
                 'created_by' => $request->created_by
             ]);
+            
+            // Audit logging
+            ControllerSecurityHelper::logCreate($work, [
+                'episode_id' => $work->episode_id,
+                'work_type' => $work->work_type,
+                'status' => 'draft'
+            ], $request);
             
             return response()->json([
                 'success' => true,
@@ -152,9 +170,9 @@ class EditorController extends Controller
     /**
      * Submit editor work for review
      */
-    public function submit(int $id): JsonResponse
+    public function submit(string $id): JsonResponse
     {
-        $work = EditorWork::findOrFail($id);
+        $work = EditorWork::findOrFail((int) $id);
         
         if ($work->status !== 'draft') {
             return response()->json([
@@ -360,7 +378,7 @@ class EditorController extends Controller
      * Report missing files to Producer
      * User: "dapat ajukan file tidak lengkap kepada Producer"
      */
-    public function reportMissingFiles(Request $request, int $id): JsonResponse
+    public function reportMissingFiles(Request $request, string $id): JsonResponse
     {
         try {
             $user = auth()->user();
@@ -387,7 +405,7 @@ class EditorController extends Controller
                 ], 422);
             }
 
-            $work = EditorWork::findOrFail($id);
+            $work = EditorWork::findOrFail((int) $id);
 
             if ($work->created_by !== $user->id) {
                 return response()->json([
@@ -488,6 +506,136 @@ class EditorController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to get editor work statistics',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Lihat Catatan Syuting (Run Sheet)
+     * GET /api/live-tv/editor/episodes/{id}/run-sheet
+     */
+    public function getRunSheet(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Editor') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $episode = Episode::findOrFail($id);
+
+            // Get run sheet from ProduksiWork
+            $produksiWork = ProduksiWork::where('episode_id', $episode->id)
+                ->whereNotNull('run_sheet_id')
+                ->with(['runSheet', 'createdBy'])
+                ->first();
+
+            if (!$produksiWork || !$produksiWork->runSheet) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Run sheet not found for this episode'
+                ], 404);
+            }
+
+            $runSheet = $produksiWork->runSheet;
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'run_sheet' => $runSheet,
+                    'produksi_work' => [
+                        'id' => $produksiWork->id,
+                        'status' => $produksiWork->status,
+                        'shooting_files' => $produksiWork->shooting_files,
+                        'shooting_file_links' => $produksiWork->shooting_file_links
+                    ],
+                    'episode' => [
+                        'id' => $episode->id,
+                        'episode_number' => $episode->episode_number,
+                        'title' => $episode->title
+                    ]
+                ],
+                'message' => 'Run sheet retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving run sheet: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get approved audio files for episode (from Sound Engineer Editing)
+     * Editor dapat melihat audio files yang sudah approved untuk digunakan dalam video editing
+     */
+    public function getApprovedAudioFiles(int $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Editor') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $episode = Episode::findOrFail($episodeId);
+
+            // Get approved sound engineer editing works for this episode
+            $approvedAudio = SoundEngineerEditing::where('episode_id', $episodeId)
+                ->where('status', 'approved')
+                ->with(['recording.musicArrangement', 'soundEngineer', 'approvedBy'])
+                ->orderBy('approved_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode_id' => $episodeId,
+                    'episode_title' => $episode->title,
+                    'approved_audio_files' => $approvedAudio->map(function ($editing) {
+                        return [
+                            'id' => $editing->id,
+                            'final_file_path' => $editing->final_file_path,
+                            'vocal_file_path' => $editing->vocal_file_path,
+                            'editing_notes' => $editing->editing_notes,
+                            'submission_notes' => $editing->submission_notes,
+                            'approved_at' => $editing->approved_at,
+                            'approved_by' => $editing->approvedBy ? [
+                                'id' => $editing->approvedBy->id,
+                                'name' => $editing->approvedBy->name
+                            ] : null,
+                            'sound_engineer' => $editing->soundEngineer ? [
+                                'id' => $editing->soundEngineer->id,
+                                'name' => $editing->soundEngineer->name
+                            ] : null,
+                            'recording' => $editing->recording ? [
+                                'id' => $editing->recording->id,
+                                'recording_notes' => $editing->recording->recording_notes,
+                                'music_arrangement' => $editing->recording->musicArrangement ? [
+                                    'id' => $editing->recording->musicArrangement->id,
+                                    'song_title' => $editing->recording->musicArrangement->song_title,
+                                    'singer_name' => $editing->recording->musicArrangement->singer_name
+                                ] : null
+                            ] : null
+                        ];
+                    })
+                ],
+                'message' => 'Approved audio files retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get approved audio files',
                 'error' => $e->getMessage()
             ], 500);
         }

@@ -15,6 +15,24 @@ use Illuminate\Support\Facades\Validator;
 class SoundEngineerEditingController extends Controller
 {
     /**
+     * Check if user is Sound Engineer Editing (supports multiple role formats)
+     */
+    private function isSoundEngineerEditing($user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+        
+        $role = strtolower($user->role ?? '');
+        return in_array($role, [
+            'sound engineer editing',
+            'sound_engineer_editing',
+            'sound engineer',
+            'sound_engineer'
+        ]);
+    }
+
+    /**
      * Get all sound engineer editing works
      */
     public function index(Request $request): JsonResponse
@@ -24,11 +42,14 @@ class SoundEngineerEditingController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if ($user->role !== 'Sound Engineer Editing') {
-            return response()->json(['message' => 'Access denied'], 403);
+        if (!$this->isSoundEngineerEditing($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Access denied. Your role (' . ($user->role ?? 'unknown') . ') does not have access to Sound Engineer Editing endpoints.'
+            ], 403);
         }
 
-        $query = SoundEngineerEditing::with(['episode', 'soundEngineer']);
+        $query = SoundEngineerEditing::with(['episode', 'soundEngineer', 'recording']);
 
         // Filter by status
         if ($request->has('status')) {
@@ -58,8 +79,11 @@ class SoundEngineerEditingController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if ($user->role !== 'Sound Engineer Editing') {
-            return response()->json(['message' => 'Access denied'], 403);
+        if (!$this->isSoundEngineerEditing($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Access denied. Your role (' . ($user->role ?? 'unknown') . ') does not have access to Sound Engineer Editing endpoints.'
+            ], 403);
         }
 
         $validator = Validator::make($request->all(), [
@@ -107,7 +131,7 @@ class SoundEngineerEditingController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        $work = SoundEngineerEditing::with(['episode', 'soundEngineer'])
+        $work = SoundEngineerEditing::with(['episode', 'soundEngineer', 'recording'])
             ->findOrFail($id);
 
         return response()->json([
@@ -128,8 +152,11 @@ class SoundEngineerEditingController extends Controller
 
         $work = SoundEngineerEditing::findOrFail($id);
 
-        if ($user->role !== 'Sound Engineer Editing' && $work->sound_engineer_id !== $user->id) {
-            return response()->json(['message' => 'Access denied'], 403);
+        if (!$this->isSoundEngineerEditing($user) && $work->sound_engineer_id !== $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Access denied. You can only update your own editing work.'
+            ], 403);
         }
 
         $validator = Validator::make($request->all(), [
@@ -173,8 +200,11 @@ class SoundEngineerEditingController extends Controller
 
         $work = SoundEngineerEditing::findOrFail($id);
 
-        if ($user->role !== 'Sound Engineer Editing' && $work->sound_engineer_id !== $user->id) {
-            return response()->json(['message' => 'Access denied'], 403);
+        if (!$this->isSoundEngineerEditing($user) && $work->sound_engineer_id !== $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Access denied. You can only submit your own editing work.'
+            ], 403);
         }
 
         $validator = Validator::make($request->all(), [

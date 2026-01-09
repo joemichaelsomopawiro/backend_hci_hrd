@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('social_media_posts', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('social_media_posts')) {
+            Schema::create('social_media_posts', function (Blueprint $table) {
             $table->id();
             $table->foreignId('episode_id')->constrained('episodes')->onDelete('cascade');
             $table->enum('platform', ['facebook', 'instagram', 'tiktok', 'website']);
@@ -27,7 +29,8 @@ return new class extends Migration
             $table->foreignId('created_by')->constrained('users')->onDelete('cascade');
             $table->softDeletes();
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

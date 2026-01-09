@@ -32,6 +32,21 @@ class RouteServiceProvider extends ServiceProvider
             return \Illuminate\Cache\RateLimiting\Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
         });
 
+        // Rate limiting untuk file upload
+        RateLimiter::for('uploads', function (Request $request) {
+            return Limit::perMinute(10)->by($request->user()?->id ?: $request->ip());
+        });
+
+        // Rate limiting untuk sensitive operations
+        RateLimiter::for('sensitive', function (Request $request) {
+            return Limit::perMinute(20)->by($request->user()?->id ?: $request->ip());
+        });
+
+        // Rate limiting untuk authentication
+        RateLimiter::for('auth', function (Request $request) {
+            return Limit::perMinute(5)->by($request->ip());
+        });
+
         $this->routes(function () {
             Route::middleware('api')
                 ->prefix('api')

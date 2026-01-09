@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('schedules', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('schedules')) {
+            Schema::create('schedules', function (Blueprint $table) {
             $table->id();
             $table->string('title');
             $table->text('description')->nullable();
@@ -29,7 +31,8 @@ return new class extends Migration
             $table->boolean('is_recurring')->default(false);
             $table->json('recurring_pattern')->nullable(); // Pattern untuk recurring schedule
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

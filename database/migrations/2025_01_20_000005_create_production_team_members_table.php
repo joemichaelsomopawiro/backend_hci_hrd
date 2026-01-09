@@ -23,7 +23,7 @@ return new class extends Migration
                 'sound_eng',         // Sound Engineer
                 'produksi',          // Produksi
                 'editor',            // Editor
-                'art_set_design'     // Art & Set Design
+                'art_set_design'     // Art & Set Properti
             ]);
             $table->boolean('is_active')->default(true);
             $table->timestamp('joined_at')->useCurrent();

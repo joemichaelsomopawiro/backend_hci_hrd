@@ -21,7 +21,13 @@ class Deadline extends Model
         'notes',
         'status',
         'reminder_sent',
-        'reminder_sent_at'
+        'reminder_sent_at',
+        'description',
+        'change_reason',
+        'changed_by',
+        'changed_at',
+        'auto_generated',
+        'created_by'
     ];
 
     protected $casts = [
@@ -46,6 +52,22 @@ class Deadline extends Model
     public function completedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'completed_by');
+    }
+
+    /**
+     * Relationship dengan User yang mengubah deadline
+     */
+    public function changedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'changed_by');
+    }
+
+    /**
+     * Relationship dengan User yang membuat deadline
+     */
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 
     /**
@@ -103,13 +125,13 @@ class Deadline extends Model
     public function getRoleLabelAttribute(): string
     {
         $labels = [
-            'kreatif' => 'Kreatif',
-            'musik_arr' => 'Musik Arranger',
+            'kreatif' => 'Creative',
+            'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
-            'produksi' => 'Produksi',
+            'produksi' => 'Production',
             'editor' => 'Editor',
-            'art_set_design' => 'Art & Set Design',
-            'design_grafis' => 'Design Grafis',
+            'art_set_design' => 'Art & Set Properti',
+            'design_grafis' => 'Graphic Design',
             'promotion' => 'Promotion',
             'broadcasting' => 'Broadcasting',
             'quality_control' => 'Quality Control'

@@ -12,6 +12,8 @@ class ShootingRunSheet extends Model
 
     protected $fillable = [
         'submission_id',
+        'episode_id',
+        'produksi_work_id',
         'shooting_date',
         'location',
         'crew_list',
@@ -36,6 +38,22 @@ class ShootingRunSheet extends Model
     public function submission(): BelongsTo
     {
         return $this->belongsTo(MusicSubmission::class);
+    }
+
+    /**
+     * Relasi dengan Episode
+     */
+    public function episode(): BelongsTo
+    {
+        return $this->belongsTo(Episode::class);
+    }
+
+    /**
+     * Relasi dengan Produksi Work
+     */
+    public function produksiWork(): BelongsTo
+    {
+        return $this->belongsTo(ProduksiWork::class);
     }
 
     /**

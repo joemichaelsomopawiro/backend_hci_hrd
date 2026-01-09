@@ -46,7 +46,40 @@ return [
     |
     */
 
-    'expiration' => null,
+    'expiration' => env('SANCTUM_TOKEN_EXPIRATION', 1800), // 30 menit dalam detik (default: 1800 = 30 menit)
+
+    /*
+    |--------------------------------------------------------------------------
+    | Maximum Token Expiration (seconds)
+    |--------------------------------------------------------------------------
+    |
+    | Batas maksimum expiration token untuk mencegah token hidup terlalu lama.
+    | Default: 86400 (24 jam).
+    |
+    */
+    'max_expiration' => env('SANCTUM_MAX_EXPIRATION', 86400),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Token Refresh Threshold
+    |--------------------------------------------------------------------------
+    |
+    | Waktu dalam detik sebelum token expired untuk trigger refresh warning.
+    | Default: 5 menit (300 detik)
+    |
+    */
+    'refresh_threshold' => env('SANCTUM_REFRESH_THRESHOLD', 300), // 5 menit
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inactivity Timeout
+    |--------------------------------------------------------------------------
+    |
+    | Waktu dalam detik untuk inactivity timeout.
+    | null = tidak ada inactivity timeout
+    |
+    */
+    'inactivity_timeout' => env('SANCTUM_INACTIVITY_TIMEOUT', 1800), // 30 menit
 
     /*
     |--------------------------------------------------------------------------

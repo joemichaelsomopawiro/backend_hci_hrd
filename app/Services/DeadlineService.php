@@ -221,21 +221,57 @@ class DeadlineService
         $episode = $deadline->episode;
         $program = $episode->program;
         
-        // Find user responsible for this deadline
-        $user = $program->productionTeam->members()
-            ->where('role', $deadline->role)
+        // Map deadline role to user role
+        $roleMapping = [
+            'creative' => 'Creative',
+            'musik_arr' => 'Music Arranger',
+            'sound_eng' => 'Sound Engineer',
+            'production' => 'Production',
+            'editor' => 'Editor',
+            'art_set_design' => 'Art & Set Properti',
+            'graphic_design' => 'Graphic Design',
+            'promotion' => ['Editor Promotion', 'Promotion'],
+            'broadcasting' => 'Broadcasting',
+            'quality_control' => 'Quality Control'
+        ];
+
+        $userRoles = $roleMapping[$deadline->role] ?? [];
+        if (!is_array($userRoles)) {
+            $userRoles = [$userRoles];
+        }
+
+        // Find all users with matching roles
+        $users = \App\Models\User::whereIn('role', $userRoles)->get();
+
+        // Also check production team members
+        if ($program->productionTeam) {
+            $teamMembers = $program->productionTeam->members()
             ->where('is_active', true)
-            ->first()?->user;
+                ->whereIn('role', [$deadline->role])
+                ->get();
             
-        if ($user) {
+            foreach ($teamMembers as $member) {
+                if ($member->user && !$users->contains('id', $member->user_id)) {
+                    $users->push($member->user);
+                }
+            }
+        }
+
+        // Send overdue notification to all relevant users
+        foreach ($users as $user) {
             Notification::create([
                 'user_id' => $user->id,
                 'type' => 'deadline_overdue',
                 'title' => 'Deadline Overdue',
-                'message' => "Your deadline for Episode {$episode->episode_number}: {$episode->title} is overdue!",
+                'message' => "Your deadline for Episode {$episode->episode_number}: {$episode->title} ({$deadline->role_label}) is overdue!",
                 'episode_id' => $episode->id,
                 'program_id' => $program->id,
-                'priority' => 'urgent'
+                'priority' => 'urgent',
+                'data' => [
+                    'deadline_id' => $deadline->id,
+                    'role' => $deadline->role,
+                    'deadline_date' => $deadline->deadline_date->toDateTimeString()
+                ]
             ]);
         }
         
@@ -247,33 +283,110 @@ class DeadlineService
             'message' => "Deadline overdue for Episode {$episode->episode_number}: {$episode->title} - {$deadline->role_label}",
             'episode_id' => $episode->id,
             'program_id' => $program->id,
-            'priority' => 'high'
+            'priority' => 'high',
+            'data' => [
+                'deadline_id' => $deadline->id,
+                'role' => $deadline->role
+            ]
         ]);
+
+        // Notify Producer
+        if ($program->productionTeam && $program->productionTeam->producer) {
+            Notification::create([
+                'user_id' => $program->productionTeam->producer_id,
+                'type' => 'deadline_overdue_team',
+                'title' => 'Team Deadline Overdue',
+                'message' => "Team deadline overdue for Episode {$episode->episode_number}: {$episode->title} - {$deadline->role_label}",
+                'episode_id' => $episode->id,
+                'program_id' => $program->id,
+                'priority' => 'high',
+                'data' => [
+                    'deadline_id' => $deadline->id,
+                    'role' => $deadline->role
+                ]
+            ]);
+        }
     }
 
     /**
-     * Send reminder notification
+     * Send reminder notification to all users with the role
+     * Covers all roles in music program workflow
      */
     private function sendReminderNotification(Deadline $deadline): void
     {
         $episode = $deadline->episode;
         $program = $episode->program;
         
-        // Find user responsible for this deadline
-        $user = $program->productionTeam->members()
-            ->where('role', $deadline->role)
+        // Map deadline role to user role
+        $roleMapping = [
+            'creative' => 'Creative',
+            'musik_arr' => 'Music Arranger',
+            'sound_eng' => 'Sound Engineer',
+            'production' => 'Production',
+            'editor' => 'Editor',
+            'art_set_design' => 'Art & Set Properti',
+            'graphic_design' => 'Graphic Design',
+            'promotion' => ['Editor Promotion', 'Promotion'],
+            'broadcasting' => 'Broadcasting',
+            'quality_control' => 'Quality Control'
+        ];
+
+        $userRoles = $roleMapping[$deadline->role] ?? [];
+        
+        // Handle array of roles (e.g., promotion)
+        if (!is_array($userRoles)) {
+            $userRoles = [$userRoles];
+        }
+
+        // Find all users with matching roles
+        $users = \App\Models\User::whereIn('role', $userRoles)->get();
+
+        // Also check production team members if program has production team
+        if ($program->productionTeam) {
+            $teamMembers = $program->productionTeam->members()
             ->where('is_active', true)
-            ->first()?->user;
+                ->whereIn('role', [$deadline->role])
+                ->get();
             
-        if ($user) {
+            foreach ($teamMembers as $member) {
+                if ($member->user && !$users->contains('id', $member->user_id)) {
+                    $users->push($member->user);
+                }
+            }
+        }
+
+        // Send notification to all relevant users
+        foreach ($users as $user) {
             Notification::create([
                 'user_id' => $user->id,
                 'type' => 'deadline_reminder',
                 'title' => 'Deadline Reminder',
-                'message' => "You have a deadline for Episode {$episode->episode_number}: {$episode->title} on {$deadline->deadline_date->format('Y-m-d H:i')}",
+                'message' => "You have a deadline for Episode {$episode->episode_number}: {$episode->title} ({$deadline->role_label}) on {$deadline->deadline_date->format('Y-m-d H:i')}",
                 'episode_id' => $episode->id,
                 'program_id' => $program->id,
-                'priority' => 'high'
+                'priority' => 'high',
+                'data' => [
+                    'deadline_id' => $deadline->id,
+                    'role' => $deadline->role,
+                    'deadline_date' => $deadline->deadline_date->toDateTimeString()
+                ]
+            ]);
+        }
+
+        // Also notify Producer for visibility
+        if ($program->productionTeam && $program->productionTeam->producer) {
+            Notification::create([
+                'user_id' => $program->productionTeam->producer_id,
+                'type' => 'deadline_reminder_team',
+                'title' => 'Team Deadline Reminder',
+                'message' => "Team member has deadline for Episode {$episode->episode_number}: {$episode->title} ({$deadline->role_label}) on {$deadline->deadline_date->format('Y-m-d H:i')}",
+                'episode_id' => $episode->id,
+                'program_id' => $program->id,
+                'priority' => 'normal',
+                'data' => [
+                    'deadline_id' => $deadline->id,
+                    'role' => $deadline->role
+                ]
             ]);
         }
     }

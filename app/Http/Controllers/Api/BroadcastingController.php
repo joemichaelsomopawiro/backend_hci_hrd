@@ -7,6 +7,8 @@ use App\Models\BroadcastingSchedule;
 use App\Models\BroadcastingWork;
 use App\Models\Episode;
 use App\Models\Notification;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -30,6 +32,16 @@ class BroadcastingController extends Controller
                 ], 403);
             }
 
+            // Build cache key based on request parameters
+            $cacheKey = 'broadcasting_index_' . md5(json_encode([
+                'user_id' => $user->id,
+                'status' => $request->get('status'),
+                'platform' => $request->get('platform'),
+                'page' => $request->get('page', 1)
+            ]));
+
+            // Use cache with 5 minutes TTL
+            $schedules = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request) {
             $query = BroadcastingSchedule::with(['episode', 'createdBy']);
 
             // Filter by status
@@ -42,7 +54,8 @@ class BroadcastingController extends Controller
                 $query->where('platform', $request->platform);
             }
 
-            $schedules = $query->orderBy('created_at', 'desc')->paginate(15);
+                return $query->orderBy('created_at', 'desc')->paginate(15);
+            });
 
             return response()->json([
                 'success' => true,
@@ -103,6 +116,15 @@ class BroadcastingController extends Controller
                 'created_by' => $user->id
             ]);
 
+            // Audit logging
+            ControllerSecurityHelper::logCreate($schedule, [
+                'platform' => $request->platform,
+                'schedule_date' => $request->schedule_date
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             // Notify related roles
             $this->notifyRelatedRoles($schedule, 'created');
 
@@ -126,8 +148,15 @@ class BroadcastingController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $schedule = BroadcastingSchedule::with(['episode', 'createdBy'])
+            // Use cache for frequently accessed data
+            $schedule = QueryOptimizer::remember(
+                QueryOptimizer::getCacheKey('BroadcastingSchedule', $id),
+                300, // 5 minutes
+                function () use ($id) {
+                    return BroadcastingSchedule::with(['episode', 'createdBy'])
                 ->findOrFail($id);
+                }
+            );
 
             return response()->json([
                 'success' => true,
@@ -175,9 +204,18 @@ class BroadcastingController extends Controller
                 ], 422);
             }
 
+            $oldData = $schedule->toArray();
             $schedule->update($request->only([
                 'title', 'description', 'tags', 'thumbnail_path', 'status'
             ]));
+
+            // Audit logging
+            ControllerSecurityHelper::logUpdate($schedule, $oldData, $request->only([
+                'title', 'description', 'tags', 'thumbnail_path', 'status'
+            ]), $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Notify on status change
             if ($request->has('status')) {
@@ -238,6 +276,12 @@ class BroadcastingController extends Controller
                 'status' => 'uploaded'
             ]);
 
+            // Audit logging for file upload
+            ControllerSecurityHelper::logFileOperation('upload', $file->getMimeType(), $fileName, $file->getSize(), $schedule, $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             // Notify related roles
             $this->notifyRelatedRoles($schedule, 'content_uploaded');
 
@@ -284,11 +328,21 @@ class BroadcastingController extends Controller
                 ], 422);
             }
 
+            $oldData = $schedule->toArray();
             $schedule->update([
                 'url' => $request->url,
                 'status' => 'published',
                 'published_at' => $request->published_at ?? now()
             ]);
+
+            // Audit logging for publish
+            ControllerSecurityHelper::logApproval('published', $schedule, [
+                'url' => $request->url,
+                'published_at' => $request->published_at ?? now()
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Notify related roles
             $this->notifyRelatedRoles($schedule, 'published');
@@ -414,7 +468,10 @@ class BroadcastingController extends Controller
                 ], 403);
             }
 
-            $stats = [
+            // Use cache for statistics (cache for 5 minutes)
+            $cacheKey = 'broadcasting_statistics_user_' . $user->id;
+            $stats = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () {
+                return [
                 'total_schedules' => BroadcastingSchedule::count(),
                 'pending_schedules' => BroadcastingSchedule::where('status', 'pending')->count(),
                 'scheduled_schedules' => BroadcastingSchedule::where('status', 'scheduled')->count(),
@@ -429,6 +486,7 @@ class BroadcastingController extends Controller
                     ->limit(5)
                     ->get()
             ];
+            });
 
             return response()->json([
                 'success' => true,
@@ -440,6 +498,451 @@ class BroadcastingController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error retrieving Broadcasting statistics: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Terima Pekerjaan - Broadcasting terima pekerjaan
+     * POST /api/live-tv/broadcasting/works/{id}/accept-work
+     */
+    public function acceptWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = BroadcastingWork::findOrFail($id);
+
+            if ($work->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is pending'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'preparing',
+                'created_by' => $user->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work accepted successfully. You can now process the work.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload ke YouTube dengan SEO metadata
+     * POST /api/live-tv/broadcasting/works/{id}/upload-youtube
+     */
+    public function uploadYouTube(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'title' => 'required|string|max:100',
+                'description' => 'required|string|max:5000',
+                'tags' => 'required|array|min:1',
+                'tags.*' => 'string|max:50',
+                'thumbnail_path' => 'required|string',
+                'youtube_video_id' => 'nullable|string',
+                'youtube_url' => 'nullable|url'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = BroadcastingWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            // Update work with YouTube metadata
+            $work->update([
+                'title' => $request->title,
+                'description' => $request->description,
+                'metadata' => array_merge($work->metadata ?? [], [
+                    'youtube' => [
+                        'title' => $request->title,
+                        'description' => $request->description,
+                        'tags' => $request->tags,
+                        'thumbnail_path' => $request->thumbnail_path,
+                        'uploaded_at' => now()
+                    ]
+                ]),
+                'thumbnail_path' => $request->thumbnail_path,
+                'youtube_video_id' => $request->youtube_video_id,
+                'youtube_url' => $request->youtube_url,
+                'status' => $request->youtube_url ? 'uploading' : 'preparing'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'YouTube upload metadata saved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading to YouTube: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload ke Website
+     * POST /api/live-tv/broadcasting/works/{id}/upload-website
+     */
+    public function uploadWebsite(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'website_url' => 'required|url'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = BroadcastingWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            $work->update([
+                'website_url' => $request->website_url,
+                'metadata' => array_merge($work->metadata ?? [], [
+                    'website' => [
+                        'url' => $request->website_url,
+                        'uploaded_at' => now()
+                    ]
+                ])
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Website URL saved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading to website: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Input Link YouTube ke Sistem
+     * POST /api/live-tv/broadcasting/works/{id}/input-youtube-link
+     */
+    public function inputYouTubeLink(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'youtube_url' => 'required|url',
+                'youtube_video_id' => 'required|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = BroadcastingWork::with(['episode'])->findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            $work->update([
+                'youtube_url' => $request->youtube_url,
+                'youtube_video_id' => $request->youtube_video_id,
+                'published_time' => now(),
+                'status' => 'published'
+            ]);
+
+            // Update episode with YouTube link
+            $episode = $work->episode;
+            if ($episode) {
+                $episode->update([
+                    'youtube_url' => $request->youtube_url,
+                    'youtube_video_id' => $request->youtube_video_id
+                ]);
+            }
+
+            // Notify Promosi (setelah Broadcasting selesai)
+            $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
+            foreach ($promosiUsers as $promosiUser) {
+                Notification::create([
+                    'user_id' => $promosiUser->id,
+                    'type' => 'broadcasting_completed_promosi_notification',
+                    'title' => 'Broadcasting Selesai - Siap untuk Promosi',
+                    'message' => "Broadcasting telah menyelesaikan upload untuk Episode {$episode->episode_number}. YouTube: {$request->youtube_url}, Website: {$work->website_url}",
+                    'data' => [
+                        'episode_id' => $work->episode_id,
+                        'broadcasting_work_id' => $work->id,
+                        'youtube_url' => $request->youtube_url,
+                        'website_url' => $work->website_url
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'YouTube link saved successfully. Promosi has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error saving YouTube link: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Schedule playlist for broadcasting work
+     * POST /api/live-tv/roles/broadcasting/works/{id}/schedule-playlist
+     */
+    public function scheduleWorkPlaylist(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'playlist_date' => 'required|date',
+                'playlist_time' => 'required|date_format:H:i:s'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = BroadcastingWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            // Combine date and time into datetime
+            $scheduledDateTime = $request->playlist_date . ' ' . $request->playlist_time;
+
+            // Update playlist_data if exists
+            $playlistData = $work->playlist_data ?? [];
+            $playlistData['scheduled_date'] = $request->playlist_date;
+            $playlistData['scheduled_time'] = $request->playlist_time;
+            $playlistData['scheduled_datetime'] = $scheduledDateTime;
+            $playlistData['updated_at'] = now()->toDateTimeString();
+
+            // Update work with scheduled time
+            $work->update([
+                'scheduled_time' => $scheduledDateTime,
+                'status' => 'scheduled',
+                'playlist_data' => $playlistData
+            ]);
+
+            // Notify related roles
+            $this->notifyWorkPlaylistScheduled($work);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Playlist scheduled successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error scheduling playlist: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Notify related roles about playlist scheduled
+     */
+    private function notifyWorkPlaylistScheduled(BroadcastingWork $work): void
+    {
+        // Notify Producer
+        $producers = \App\Models\User::where('role', 'Producer')->get();
+        foreach ($producers as $producer) {
+            Notification::create([
+                'user_id' => $producer->id,
+                'type' => 'broadcasting_playlist_scheduled',
+                'title' => 'Playlist Dijadwalkan',
+                'message' => "Playlist untuk Episode {$work->episode->episode_number} telah dijadwalkan pada {$work->scheduled_time->format('d M Y H:i')}.",
+                'data' => [
+                    'broadcasting_work_id' => $work->id,
+                    'episode_id' => $work->episode_id,
+                    'scheduled_time' => $work->scheduled_time->toDateTimeString()
+                ]
+            ]);
+        }
+
+        // Notify Manager Program
+        $managers = \App\Models\User::where('role', 'Manager Program')->get();
+        foreach ($managers as $manager) {
+            Notification::create([
+                'user_id' => $manager->id,
+                'type' => 'broadcasting_playlist_scheduled',
+                'title' => 'Playlist Dijadwalkan',
+                'message' => "Playlist untuk Episode {$work->episode->episode_number} telah dijadwalkan pada {$work->scheduled_time->format('d M Y H:i')}.",
+                'data' => [
+                    'broadcasting_work_id' => $work->id,
+                    'episode_id' => $work->episode_id,
+                    'scheduled_time' => $work->scheduled_time->toDateTimeString()
+                ]
+            ]);
+        }
+    }
+
+    /**
+     * Selesaikan Pekerjaan - Broadcasting selesaikan pekerjaan
+     * POST /api/live-tv/broadcasting/works/{id}/complete-work
+     */
+    public function completeWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = BroadcastingWork::with(['episode'])->findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            // Validate required fields
+            if (!$work->youtube_url || !$work->website_url) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'YouTube URL and Website URL must be provided before completing work'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'completed',
+                'published_time' => now()
+            ]);
+
+            // Notify Promosi
+            $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
+            foreach ($promosiUsers as $promosiUser) {
+                Notification::create([
+                    'user_id' => $promosiUser->id,
+                    'type' => 'broadcasting_work_completed',
+                    'title' => 'Broadcasting Work Selesai',
+                    'message' => "Broadcasting telah menyelesaikan pekerjaan untuk Episode {$work->episode->episode_number}.",
+                    'data' => [
+                        'broadcasting_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
+                        'youtube_url' => $work->youtube_url,
+                        'website_url' => $work->website_url
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work completed successfully. Promosi has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error completing work: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -61,7 +61,7 @@ class ProductionTeam extends Model
      */
     public function hasAllRequiredRoles(): bool
     {
-        $requiredRoles = ['kreatif', 'musik_arr', 'sound_eng', 'produksi', 'editor', 'art_set_design'];
+        $requiredRoles = ['creative', 'musik_arr', 'sound_eng', 'production', 'editor', 'art_set_design'];
         $existingRoles = $this->members()->where('is_active', true)->pluck('role')->toArray();
         
         return count(array_intersect($requiredRoles, $existingRoles)) === count($requiredRoles);
@@ -72,7 +72,7 @@ class ProductionTeam extends Model
      */
     public function getMissingRoles(): array
     {
-        $requiredRoles = ['kreatif', 'musik_arr', 'sound_eng', 'produksi', 'editor', 'art_set_design'];
+        $requiredRoles = ['creative', 'musik_arr', 'sound_eng', 'production', 'editor', 'art_set_design'];
         $existingRoles = $this->members()->where('is_active', true)->pluck('role')->toArray();
         
         return array_diff($requiredRoles, $existingRoles);

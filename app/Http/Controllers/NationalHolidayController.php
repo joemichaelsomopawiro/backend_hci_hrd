@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\NationalHoliday;
+use App\Services\GoogleCalendarService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
@@ -465,5 +466,166 @@ class NationalHolidayController extends Controller
             'success' => true,
             'data' => $types
         ]);
+    }
+
+    /**
+     * Get national holidays from Google Calendar API
+     * Endpoint: GET /api/calendar/national-holidays?year=2025
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getNationalHolidays(Request $request)
+    {
+        try {
+            $year = $request->input('year', date('Y'));
+            
+            // Validasi year
+            if (!is_numeric($year) || $year < 2020 || $year > 2100) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid year parameter. Year must be between 2020 and 2100'
+                ], 400);
+            }
+            
+            // Cek apakah API key sudah di-setup
+            $apiKey = config('services.google.calendar_api_key');
+            if (empty($apiKey)) {
+                Log::warning('Google Calendar API key not configured');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Google Calendar API key not configured. Please add GOOGLE_CALENDAR_API_KEY to .env file',
+                    'data' => []
+                ], 500);
+            }
+            
+            $googleCalendarService = new GoogleCalendarService();
+            $holidays = $googleCalendarService->fetchNationalHolidays($year);
+            
+            // Pastikan holidays adalah array
+            if (!is_array($holidays)) {
+                $holidays = [];
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $holidays,
+                'year' => (int)$year,
+                'count' => count($holidays)
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Calendar Controller Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch national holidays from Google Calendar API',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+                'data' => []
+            ], 500);
+        }
+    }
+
+    /**
+     * Test koneksi ke Google Calendar API
+     * Endpoint: GET /api/calendar/test-google-connection
+     */
+    public function testGoogleCalendarConnection()
+    {
+        try {
+            $googleCalendarService = new GoogleCalendarService();
+            $result = $googleCalendarService->testConnection();
+            
+            return response()->json($result, $result['success'] ? 200 : 500);
+            
+        } catch (\Exception $e) {
+            Log::error('Test Google Calendar Connection Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error testing Google Calendar connection',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
+     * Sync hari libur dari Google Calendar
+     * Endpoint: POST /api/calendar/sync-google?year=2025
+     */
+    public function syncFromGoogleCalendar(Request $request)
+    {
+        try {
+            // Cek apakah user adalah HR atau Program Manager
+            if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Anda tidak memiliki akses untuk sync hari libur'
+                ], 403);
+            }
+
+            $year = $request->get('year', date('Y'));
+            
+            $googleCalendarService = new GoogleCalendarService();
+            $result = $googleCalendarService->syncNationalHolidays($year);
+            
+            return response()->json($result);
+            
+        } catch (\Exception $e) {
+            Log::error('Sync Google Calendar Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to sync from Google Calendar',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
+     * Clear cache Google Calendar
+     * Endpoint: POST /api/calendar/clear-google-cache?year=2025
+     */
+    public function clearGoogleCalendarCache(Request $request)
+    {
+        try {
+            // Cek apakah user adalah HR atau Program Manager
+            if (!in_array(Auth::user()->role, ['HR', 'Program Manager'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Anda tidak memiliki akses untuk clear cache'
+                ], 403);
+            }
+
+            $year = $request->get('year');
+            
+            $googleCalendarService = new GoogleCalendarService();
+            $result = $googleCalendarService->clearCache($year);
+            
+            return response()->json($result);
+            
+        } catch (\Exception $e) {
+            Log::error('Clear Google Calendar Cache Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to clear cache',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
     }
 }

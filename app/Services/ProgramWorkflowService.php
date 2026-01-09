@@ -14,7 +14,8 @@ use Illuminate\Support\Facades\DB;
 class ProgramWorkflowService
 {
     /**
-     * Create new program dan generate episodes
+     * Create new program dan auto-generate 53 episodes
+     * Episode otomatis ter-generate saat create program
      */
     public function createProgram(array $data): Program
     {
@@ -22,10 +23,12 @@ class ProgramWorkflowService
             // Create program
             $program = Program::create($data);
             
-            // Generate 53 episodes
-            $program->generateEpisodes();
+            // Auto-generate 53 episodes saat create program
+            // Menggunakan method generateEpisodes() dengan regenerate=false
+            // Jika episode sudah ada (tidak mungkin untuk program baru), tidak akan generate lagi
+            $program->generateEpisodes(false);
             
-            // Create initial workflow state
+            // Create initial workflow state untuk 10 episode pertama
             $this->createInitialWorkflowState($program);
             
             // Send notifications
@@ -67,8 +70,28 @@ class ProgramWorkflowService
                 'approval_notes' => $notes
             ]);
             
-            // Update all episodes to ready_to_produce
-            $program->episodes()->update(['status' => 'ready_to_produce']);
+            // Update all episodes to approved_for_production and set initial workflow state
+            $program->episodes()->update([
+                'status' => 'approved_for_production',
+                'current_workflow_state' => 'episode_generated',
+                'assigned_to_role' => 'manager_program',
+                'assigned_to_user' => $program->manager_program_id
+            ]);
+            
+            // Create workflow state for all episodes that don't have one yet
+            $episodesWithoutState = $program->episodes()
+                ->whereDoesntHave('workflowStates')
+                ->get();
+                
+            foreach ($episodesWithoutState as $episode) {
+                WorkflowState::create([
+                    'episode_id' => $episode->id,
+                    'current_state' => 'episode_generated',
+                    'assigned_to_role' => 'manager_program',
+                    'assigned_to_user_id' => $program->manager_program_id,
+                    'notes' => 'Episode generated, ready for production workflow'
+                ]);
+            }
             
             // Send notifications
             $this->sendProgramApprovedNotifications($program);
@@ -196,7 +219,7 @@ class ProgramWorkflowService
         $episodes = $program->episodes;
         $totalEpisodes = $episodes->count();
         $completedEpisodes = $episodes->where('status', 'aired')->count();
-        $inProgressEpisodes = $episodes->whereIn('status', ['planning', 'ready_to_produce', 'in_production', 'post_production'])->count();
+        $inProgressEpisodes = $episodes->whereIn('status', ['draft', 'approved_for_production', 'in_production', 'ready_for_review'])->count();
         
         $deadlines = $program->episodes()->with('deadlines')->get()->pluck('deadlines')->flatten();
         $totalDeadlines = $deadlines->count();
@@ -231,20 +254,24 @@ class ProgramWorkflowService
     }
 
     /**
-     * Create initial workflow state
+     * Create initial workflow state for all episodes
      */
     private function createInitialWorkflowState(Program $program): void
     {
-        $firstEpisode = $program->episodes()->first();
-        if ($firstEpisode) {
+        // Create workflow state for all episodes (or at least first few episodes)
+        $episodes = $program->episodes()->orderBy('episode_number')->limit(10)->get(); // Limit to first 10 episodes to avoid too many records
+        
+        foreach ($episodes as $episode) {
             WorkflowState::create([
-                'episode_id' => $firstEpisode->id,
+                'episode_id' => $episode->id,
                 'current_state' => 'program_created',
                 'assigned_to_role' => 'manager_program',
                 'assigned_to_user_id' => $program->manager_program_id,
                 'notes' => 'Program created, ready for production'
             ]);
         }
+        
+        // For remaining episodes, create workflow state on-demand when needed
     }
 
     /**
@@ -283,20 +310,25 @@ class ProgramWorkflowService
      */
     private function sendProgramSubmittedNotification(Program $program): void
     {
-        // Find Manager Broadcasting users
-        $managerBroadcastingUsers = User::where('role', 'manager_broadcasting')->get();
+        // Find Manager Broadcasting users (Distribution Manager)
+        $managerBroadcastingUsers = User::where('role', 'Distribution Manager')->get();
+        
+        if ($managerBroadcastingUsers->isEmpty()) {
+            // Fallback: try alternative role names
+            $managerBroadcastingUsers = User::whereIn('role', ['Manager Broadcasting', 'manager_broadcasting', 'Distribution Manager'])->get();
+        }
         
         foreach ($managerBroadcastingUsers as $user) {
             Notification::create([
-                    'user_id' => $user->id,
+                'user_id' => $user->id,
                 'type' => 'program_submitted',
                 'title' => 'Program Submitted for Approval',
-                'message' => "Program '{$program->name}' has been submitted for approval.",
-                    'program_id' => $program->id,
+                'message' => "Program '{$program->name}' has been submitted for approval by Manager Program.",
+                'program_id' => $program->id,
                 'priority' => 'high'
-                ]);
-            }
+            ]);
         }
+    }
         
     /**
      * Send program approved notifications

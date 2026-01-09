@@ -7,6 +7,8 @@ use App\Models\QualityControl;
 use App\Models\QualityControlWork;
 use App\Models\Episode;
 use App\Models\Notification;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -29,7 +31,13 @@ class QualityControlController extends Controller
                 ], 403);
             }
 
-            $query = QualityControl::with(['episode', 'createdBy', 'qcBy']);
+            // Optimize query with eager loading
+            $query = QualityControl::with([
+                'episode.program.managerProgram',
+                'episode.program.productionTeam.members.user',
+                'createdBy',
+                'qcBy'
+            ]);
 
             // Filter by status
             if ($request->has('status')) {
@@ -104,7 +112,15 @@ class QualityControlController extends Controller
                 ], 400);
             }
 
+            $oldStatus = $control->status;
             $control->startQC($user->id);
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('quality_control_started', $control, [
+                'episode_id' => $control->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'in_progress'
+            ], $request);
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_started');
@@ -161,11 +177,20 @@ class QualityControlController extends Controller
                 ], 400);
             }
 
+            $oldStatus = $control->status;
             $control->completeQC(
                 $request->quality_score,
                 $request->improvement_areas ?? [],
                 $request->notes
             );
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('quality_control_completed', $control, [
+                'episode_id' => $control->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'completed',
+                'quality_score' => $request->quality_score
+            ], $request);
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_completed');
@@ -208,10 +233,19 @@ class QualityControlController extends Controller
                 ], 400);
             }
 
+            $oldStatus = $control->status;
             $control->update([
                 'status' => 'approved',
                 'qc_result_notes' => $request->get('notes', 'QC Approved')
             ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logApproval('quality_control_approved', $control, [
+                'episode_id' => $control->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'approved',
+                'notes' => $request->get('notes', 'QC Approved')
+            ], $request);
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_approved');
@@ -266,10 +300,19 @@ class QualityControlController extends Controller
                 ], 400);
             }
 
+            $oldStatus = $control->status;
             $control->update([
                 'status' => 'rejected',
                 'qc_result_notes' => $request->reason
             ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logApproval('quality_control_rejected', $control, [
+                'episode_id' => $control->episode_id,
+                'old_status' => $oldStatus,
+                'new_status' => 'rejected',
+                'reason' => $request->reason
+            ], $request);
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_rejected');
@@ -466,6 +509,444 @@ class QualityControlController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error submitting QC form: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Terima Lokasi File dari Editor Promosi
+     * POST /api/live-tv/quality-control/works/{id}/receive-editor-promosi-files
+     */
+    public function receiveEditorPromosiFiles(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Quality Control') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'file_locations' => 'required|array|min:1',
+                'file_locations.*.file_path' => 'required|string',
+                'file_locations.*.file_name' => 'required|string',
+                'file_locations.*.file_type' => 'nullable|string',
+                'file_locations.*.notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = QualityControlWork::findOrFail($id);
+            
+            $work->update([
+                'editor_promosi_file_locations' => $request->file_locations
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Editor Promosi file locations received successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error receiving files: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Terima Lokasi File dari Design Grafis
+     * POST /api/live-tv/quality-control/works/{id}/receive-design-grafis-files
+     */
+    public function receiveDesignGrafisFiles(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Quality Control') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'file_locations' => 'required|array|min:1',
+                'file_locations.*.file_path' => 'required|string',
+                'file_locations.*.file_name' => 'required|string',
+                'file_locations.*.file_type' => 'nullable|string',
+                'file_locations.*.notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = QualityControlWork::findOrFail($id);
+            
+            $work->update([
+                'design_grafis_file_locations' => $request->file_locations
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Design Grafis file locations received successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error receiving files: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Terima Pekerjaan - QC terima pekerjaan
+     * POST /api/live-tv/quality-control/works/{id}/accept-work
+     */
+    public function acceptWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Quality Control') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = QualityControlWork::findOrFail($id);
+
+            if ($work->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is pending'
+                ], 400);
+            }
+
+            $work->markAsInProgress();
+            $work->update(['reviewed_by' => $user->id]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy', 'reviewedBy']),
+                'message' => 'Work accepted successfully. You can now proceed with QC.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * QC Berbagai Konten - QC video BTS, iklan episode TV, dll
+     * POST /api/live-tv/quality-control/works/{id}/qc-content
+     */
+    public function qcContent(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Quality Control') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'qc_results' => 'required|array',
+                'qc_results.bts_video' => 'nullable|array',
+                'qc_results.bts_video.status' => 'nullable|in:approved,rejected',
+                'qc_results.bts_video.notes' => 'nullable|string',
+                'qc_results.bts_video.score' => 'nullable|integer|min:0|max:100',
+                'qc_results.iklan_episode_tv' => 'nullable|array',
+                'qc_results.iklan_highlight_episode_ig' => 'nullable|array',
+                'qc_results.highlight_episode_tv' => 'nullable|array',
+                'qc_results.highlight_episode_face' => 'nullable|array',
+                'qc_results.thumbnail_yt' => 'nullable|array',
+                'qc_results.thumbnail_bts' => 'nullable|array',
+                'overall_notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = QualityControlWork::findOrFail($id);
+
+            if ($work->status !== 'in_progress') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work must be in progress to perform QC'
+                ], 400);
+            }
+
+            // Calculate overall quality score
+            $scores = [];
+            foreach ($request->qc_results as $type => $result) {
+                if (isset($result['score'])) {
+                    $scores[] = $result['score'];
+                }
+            }
+            $overallScore = !empty($scores) ? round(array_sum($scores) / count($scores)) : null;
+
+            $work->update([
+                'qc_results' => $request->qc_results,
+                'quality_score' => $overallScore ?? $work->quality_score,
+                'qc_notes' => $request->overall_notes ?? $work->qc_notes,
+                'status' => 'completed'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy', 'reviewedBy']),
+                'message' => 'QC content completed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error performing QC: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Selesaikan Pekerjaan - Approve atau Reject QC
+     * POST /api/live-tv/quality-control/works/{id}/finalize
+     */
+    public function finalize(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Quality Control') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'action' => 'required|in:approve,reject',
+                'notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = QualityControlWork::with(['episode'])->findOrFail($id);
+
+            if ($work->status !== 'completed') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work must be completed before finalizing'
+                ], 400);
+            }
+
+            if ($request->action === 'approve') {
+                $work->markAsApproved();
+                $work->update([
+                    'review_notes' => $request->notes ?? 'QC Approved',
+                    'reviewed_at' => now()
+                ]);
+
+                // Auto-create BroadcastingWork
+                $broadcastingUsers = \App\Models\User::where('role', 'Broadcasting')->get();
+                if ($broadcastingUsers->isNotEmpty()) {
+                    $broadcastingWork = \App\Models\BroadcastingWork::create([
+                        'episode_id' => $work->episode_id,
+                        'work_type' => 'main_episode',
+                        'title' => "Broadcasting Work - Episode {$work->episode->episode_number}",
+                        'description' => "File materi dari QC yang telah disetujui",
+                        'video_file_path' => $work->files_to_check[0]['file_path'] ?? null,
+                        'thumbnail_path' => $work->design_grafis_file_locations[0]['file_path'] ?? null,
+                        'status' => 'pending',
+                        'created_by' => $broadcastingUsers->first()->id
+                    ]);
+
+                    // Notify Broadcasting
+                    foreach ($broadcastingUsers as $broadcastingUser) {
+                        Notification::create([
+                            'user_id' => $broadcastingUser->id,
+                            'type' => 'broadcasting_work_assigned',
+                            'title' => 'Tugas Broadcasting Baru',
+                            'message' => "QC telah menyetujui materi untuk Episode {$work->episode->episode_number}. Silakan proses upload ke YouTube dan website.",
+                            'data' => [
+                                'broadcasting_work_id' => $broadcastingWork->id,
+                                'episode_id' => $work->episode_id,
+                                'qc_work_id' => $work->id
+                            ]
+                        ]);
+                    }
+                }
+
+                // Notify Promosi (dari QC yang diterima)
+                $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
+                foreach ($promosiUsers as $promosiUser) {
+                    Notification::create([
+                        'user_id' => $promosiUser->id,
+                        'type' => 'qc_approved_promosi_notification',
+                        'title' => 'QC Disetujui - Siap untuk Promosi',
+                        'message' => "QC telah menyetujui materi untuk Episode {$work->episode->episode_number}. Siap untuk promosi.",
+                        'data' => [
+                            'episode_id' => $work->episode_id,
+                            'qc_work_id' => $work->id
+                        ]
+                    ]);
+                }
+
+                // Notify Produksi - Baca Hasil QC
+                $produksiUsers = \App\Models\User::where('role', 'Production')->get();
+                foreach ($produksiUsers as $produksiUser) {
+                    Notification::create([
+                        'user_id' => $produksiUser->id,
+                        'type' => 'qc_approved_produksi_notification',
+                        'title' => 'QC Disetujui - Hasil QC Tersedia',
+                        'message' => "QC telah menyetujui materi untuk Episode {$work->episode->episode_number}. Silakan baca hasil QC.",
+                        'data' => [
+                            'episode_id' => $work->episode_id,
+                            'qc_work_id' => $work->id,
+                            'quality_score' => $work->quality_score ?? null,
+                            'qc_notes' => $work->qc_notes ?? null
+                        ]
+                    ]);
+                }
+
+            } else {
+                // Reject - kembali ke role yang sesuai berdasarkan source file
+                $work->markAsFailed();
+                $work->update([
+                    'review_notes' => $request->notes ?? 'QC Rejected',
+                    'reviewed_at' => now(),
+                    'status' => 'revision_needed'
+                ]);
+
+                // Deteksi source file untuk menentukan role yang perlu diberi notifikasi
+                $hasDesignGrafisFiles = !empty($work->design_grafis_file_locations);
+                $hasEditorPromosiFiles = !empty($work->editor_promosi_file_locations);
+                $hasEditorFiles = !empty($work->files_to_check); // File dari Editor (main editor)
+
+                // Jika ada file dari Editor (main editor), notifikasi ke Editor
+                if ($hasEditorFiles) {
+                    $editorUsers = \App\Models\User::where('role', 'Editor')->get();
+                    foreach ($editorUsers as $editorUser) {
+                        Notification::create([
+                            'user_id' => $editorUser->id,
+                            'type' => 'qc_rejected_revision_needed',
+                            'title' => 'QC Ditolak - Perlu Revisi',
+                            'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                            'data' => [
+                                'episode_id' => $work->episode_id,
+                                'qc_work_id' => $work->id,
+                                'revision_notes' => $request->notes,
+                                'source' => 'editor'
+                            ]
+                        ]);
+                    }
+                }
+
+                // Jika ada file dari Design Grafis, notifikasi ke Design Grafis
+                if ($hasDesignGrafisFiles) {
+                    $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
+                    foreach ($designGrafisUsers as $designUser) {
+                        Notification::create([
+                            'user_id' => $designUser->id,
+                            'type' => 'qc_rejected_revision_needed',
+                            'title' => 'QC Ditolak - Perlu Revisi',
+                            'message' => "QC telah menolak thumbnail untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                            'data' => [
+                                'episode_id' => $work->episode_id,
+                                'qc_work_id' => $work->id,
+                                'revision_notes' => $request->notes,
+                                'source' => 'design_grafis'
+                            ]
+                        ]);
+                    }
+                }
+
+                // Jika ada file dari Editor Promosi, notifikasi ke Editor Promosi
+                if ($hasEditorPromosiFiles) {
+                $editorPromosiUsers = \App\Models\User::where('role', 'Editor Promotion')->get();
+                foreach ($editorPromosiUsers as $editorUser) {
+                    Notification::create([
+                        'user_id' => $editorUser->id,
+                        'type' => 'qc_rejected_revision_needed',
+                        'title' => 'QC Ditolak - Perlu Revisi',
+                        'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                        'data' => [
+                            'episode_id' => $work->episode_id,
+                            'qc_work_id' => $work->id,
+                                'revision_notes' => $request->notes,
+                                'source' => 'editor_promosi'
+                            ]
+                        ]);
+                    }
+                }
+
+                // Notifikasi ke Producer dengan catatan QC
+                $episode = $work->episode;
+                $productionTeam = $episode->program->productionTeam;
+                if ($productionTeam && $productionTeam->producer) {
+                    Notification::create([
+                        'user_id' => $productionTeam->producer_id,
+                        'type' => 'qc_rejected_producer_notification',
+                        'title' => 'QC Ditolak - Perlu Revisi',
+                        'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                        'data' => [
+                            'episode_id' => $work->episode_id,
+                            'qc_work_id' => $work->id,
+                            'revision_notes' => $request->notes,
+                            'qc_notes' => $work->qc_notes ?? null,
+                            'quality_score' => $work->quality_score ?? null
+                        ]
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy', 'reviewedBy']),
+                'message' => $request->action === 'approve' 
+                    ? 'QC approved successfully. Broadcasting, Promosi, and Produksi have been notified.'
+                    : 'QC rejected. Editor/Design Grafis/Editor Promosi and Producer have been notified for revision.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error finalizing QC: ' . $e->getMessage()
             ], 500);
         }
     }

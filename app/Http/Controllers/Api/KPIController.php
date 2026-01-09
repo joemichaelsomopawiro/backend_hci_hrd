@@ -19,24 +19,41 @@ class KPIController extends Controller
      */
     public function dashboard(): JsonResponse
     {
-        $user = auth()->user();
-        if (!$user) {
-            return response()->json(['message' => 'Unauthorized'], 401);
+        try {
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 401);
+            }
+
+            $kpiData = [
+                'overview' => $this->getOverviewKPIs(),
+                'role_performance' => $this->getRolePerformance(),
+                'deadline_compliance' => $this->getDeadlineCompliance(),
+                'work_completion' => $this->getWorkCompletion(),
+                'team_performance' => $this->getTeamPerformance(),
+                'monthly_trends' => $this->getMonthlyTrends()
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $kpiData
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error in KPIController::dashboard', [
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data KPI',
+                'error' => app()->environment('local') ? $e->getMessage() : null
+            ], 500);
         }
-
-        $kpiData = [
-            'overview' => $this->getOverviewKPIs(),
-            'role_performance' => $this->getRolePerformance(),
-            'deadline_compliance' => $this->getDeadlineCompliance(),
-            'work_completion' => $this->getWorkCompletion(),
-            'team_performance' => $this->getTeamPerformance(),
-            'monthly_trends' => $this->getMonthlyTrends()
-        ];
-
-        return response()->json([
-            'success' => true,
-            'data' => $kpiData
-        ]);
     }
 
     /**
@@ -161,7 +178,7 @@ class KPIController extends Controller
      */
     private function getRolePerformance()
     {
-        $roles = ['Music Arranger', 'Producer', 'Creative', 'Production', 'Editor', 'Design Grafis', 'Editor Promosi', 'Quality Control', 'Broadcasting', 'Promosi'];
+        $roles = ['Music Arranger', 'Producer', 'Creative', 'Production', 'Editor', 'Graphic Design', 'Editor Promotion', 'Quality Control', 'Broadcasting', 'Promotion'];
         $performance = [];
 
         foreach ($roles as $role) {
@@ -208,7 +225,7 @@ class KPIController extends Controller
     private function getWorkCompletion()
     {
         // Use Deadlines grouped by role
-        $roles = ['kreatif', 'produksi', 'editor'];
+        $roles = ['creative', 'production', 'editor'];
         
         $completion = [];
         foreach ($roles as $role) {
@@ -237,11 +254,11 @@ class KPIController extends Controller
     {
         $teams = [
             'Music Team' => ['Music Arranger', 'Sound Engineer'],
-            'Creative Team' => ['Creative', 'Design Grafis'],
+            'Creative Team' => ['Creative', 'Graphic Design'],
             'Production Team' => ['Production', 'Art & Set Properti'],
-            'Post Production' => ['Editor', 'Editor Promosi'],
+            'Post Production' => ['Editor', 'Editor Promotion'],
             'Quality Team' => ['Quality Control'],
-            'Distribution Team' => ['Broadcasting', 'Promosi']
+            'Distribution Team' => ['Broadcasting', 'Promotion']
         ];
 
         $teamPerformance = [];
@@ -308,43 +325,103 @@ class KPIController extends Controller
     }
 
     /**
-     * Get user deadline performance
+     * Get user deadline performance based on real data
      */
     private function getUserDeadlinePerformance($userId)
     {
-        // For now, return mock data since we don't have assigned_to field in deadlines
+        $totalDeadlines = Deadline::where('completed_by', $userId)
+            ->orWhereHas('episode.program.productionTeam.members', function($q) use ($userId) {
+                $q->where('user_id', $userId)->where('is_active', true);
+            })
+            ->count();
+
+        $metDeadlines = Deadline::where('completed_by', $userId)
+            ->where('is_completed', true)
+            ->whereNotNull('completed_at')
+            ->whereNotNull('deadline_date')
+            ->whereRaw('completed_at <= deadline_date')
+            ->count();
+
+        $complianceRate = $totalDeadlines > 0 
+            ? round(($metDeadlines / $totalDeadlines) * 100, 2) 
+            : 0;
+
         return [
-            'total_deadlines' => rand(10, 50),
-            'met_deadlines' => rand(5, 40),
-            'compliance_rate' => rand(70, 95)
+            'total_deadlines' => $totalDeadlines,
+            'met_deadlines' => $metDeadlines,
+            'missed_deadlines' => $totalDeadlines - $metDeadlines,
+            'compliance_rate' => $complianceRate
         ];
     }
 
     /**
-     * Get user work quality
+     * Get user work quality based on QC results
      */
     private function getUserWorkQuality($userId)
     {
-        // This would be based on QC results, feedback, etc.
-        // For now, return mock data
+        // Get QC works reviewed for user's work
+        $qcWorks = \App\Models\QualityControlWork::whereHas('qualityControl', function($q) use ($userId) {
+            $q->where('qc_by', $userId)
+              ->orWhereHas('episode.program.productionTeam.members', function($q2) use ($userId) {
+                  $q2->where('user_id', $userId)->where('is_active', true);
+              });
+        })->get();
+
+        if ($qcWorks->isEmpty()) {
+            return [
+                'average_quality_score' => 0,
+                'qc_pass_rate' => 0,
+                'revision_rate' => 0
+            ];
+        }
+
+        $totalScore = $qcWorks->whereNotNull('quality_score')->sum('quality_score');
+        $scoredCount = $qcWorks->whereNotNull('quality_score')->count();
+        $averageScore = $scoredCount > 0 ? round($totalScore / $scoredCount, 2) : 0;
+
+        $passedCount = $qcWorks->where('status', 'approved')->count();
+        $passRate = $qcWorks->count() > 0 ? round(($passedCount / $qcWorks->count()) * 100, 2) : 0;
+
+        $revisionCount = $qcWorks->where('status', 'rejected')->count();
+        $revisionRate = $qcWorks->count() > 0 ? round(($revisionCount / $qcWorks->count()) * 100, 2) : 0;
+
         return [
-            'average_quality_score' => rand(70, 95),
-            'qc_pass_rate' => rand(80, 100),
-            'revision_rate' => rand(5, 20)
+            'average_quality_score' => $averageScore,
+            'qc_pass_rate' => $passRate,
+            'revision_rate' => $revisionRate
         ];
     }
 
     /**
-     * Get user collaboration score
+     * Get user collaboration score based on team participation
      */
     private function getUserCollaborationScore($userId)
     {
-        // This would be based on team interactions, feedback, etc.
-        // For now, return mock data
+        // Count team assignments
+        $teamAssignments = \App\Models\ProductionTeamAssignment::whereHas('members', function($q) use ($userId) {
+            $q->where('user_id', $userId);
+        })->count();
+
+        // Count notifications sent/received (as proxy for communication)
+        $notificationsReceived = \App\Models\Notification::where('user_id', $userId)->count();
+        
+        // Count completed collaborative tasks
+        $collaborativeTasks = Deadline::where('completed_by', $userId)
+            ->where('is_completed', true)
+            ->whereHas('episode.program.productionTeam')
+            ->count();
+
+        // Simple scoring based on participation
+        $participationScore = min(100, ($teamAssignments * 10) + ($collaborativeTasks * 5));
+        $communicationScore = min(100, ($notificationsReceived / 10));
+
+        $collaborationScore = round(($participationScore + $communicationScore) / 2, 2);
+
         return [
-            'collaboration_score' => rand(70, 95),
-            'team_feedback_rating' => rand(3, 5),
-            'communication_score' => rand(70, 95)
+            'collaboration_score' => $collaborationScore,
+            'team_assignments' => $teamAssignments,
+            'collaborative_tasks_completed' => $collaborativeTasks,
+            'communication_score' => $communicationScore
         ];
     }
 
@@ -378,72 +455,325 @@ class KPIController extends Controller
         return \App\Models\Deadline::where('status', 'completed')->count();
     }
 
+    /**
+     * Calculate on-time completion rate based on deadline vs completion time
+     */
     private function getOnTimeCompletionRate()
     {
-        // Mock data for now
-        return rand(70, 95);
+        $completedDeadlines = Deadline::where('is_completed', true)
+            ->whereNotNull('completed_at')
+            ->whereNotNull('deadline_date')
+            ->get();
+
+        if ($completedDeadlines->isEmpty()) {
+            return 0;
+        }
+
+        $onTimeCount = $completedDeadlines->filter(function ($deadline) {
+            return $deadline->completed_at <= $deadline->deadline_date;
+        })->count();
+
+        return round(($onTimeCount / $completedDeadlines->count()) * 100, 2);
     }
 
+    /**
+     * Calculate average quality score based on QC results
+     */
     private function getAverageQualityScore()
     {
-        // Mock data for now
-        return rand(75, 95);
+        $qcWorks = \App\Models\QualityControlWork::whereNotNull('quality_score')->get();
+        
+        if ($qcWorks->isEmpty()) {
+            return 0;
+        }
+
+        $totalScore = $qcWorks->sum('quality_score');
+        return round($totalScore / $qcWorks->count(), 2);
     }
 
+    /**
+     * Get work count by role based on deadlines
+     */
     private function getWorkCountByRole($role)
     {
-        // This would need to be implemented based on the specific work types for each role
-        return rand(10, 50);
+        // Map role names to deadline role enum
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Producer' => 'production', // Producer manages production
+            'Creative' => 'creative',
+            'Production' => 'production',
+            'Editor' => 'editor',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRole = $roleMap[$role] ?? strtolower($role);
+        
+        return Deadline::where('role', $deadlineRole)->count();
     }
 
+    /**
+     * Get completed work count by role
+     */
     private function getCompletedWorkCountByRole($role)
     {
-        return rand(5, 40);
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
+            'Editor' => 'editor',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRole = $roleMap[$role] ?? strtolower($role);
+        
+        return Deadline::where('role', $deadlineRole)
+            ->where('is_completed', true)
+            ->count();
     }
 
+    /**
+     * Get on-time work count by role (completed before or on deadline)
+     */
     private function getOnTimeWorkCountByRole($role)
     {
-        return rand(3, 35);
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
+            'Editor' => 'editor',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRole = $roleMap[$role] ?? strtolower($role);
+        
+        return Deadline::where('role', $deadlineRole)
+            ->where('is_completed', true)
+            ->whereNotNull('completed_at')
+            ->whereNotNull('deadline_date')
+            ->whereRaw('completed_at <= deadline_date')
+            ->count();
     }
 
+    /**
+     * Get team work count based on roles
+     */
     private function getTeamWorkCount($roles)
     {
-        return rand(20, 100);
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Sound Engineer' => 'sound_eng',
+            'Creative' => 'creative',
+            'Graphic Design' => 'graphic_design',
+            'Production' => 'production',
+            'Art & Set Properti' => 'art_set_design',
+            'Editor' => 'editor',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRoles = [];
+        foreach ($roles as $role) {
+            $deadlineRole = $roleMap[$role] ?? strtolower($role);
+            $deadlineRoles[] = $deadlineRole;
+        }
+
+        return Deadline::whereIn('role', $deadlineRoles)->count();
     }
 
+    /**
+     * Get team completed count
+     */
     private function getTeamCompletedCount($roles)
     {
-        return rand(15, 80);
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Sound Engineer' => 'sound_eng',
+            'Creative' => 'creative',
+            'Graphic Design' => 'graphic_design',
+            'Production' => 'production',
+            'Art & Set Properti' => 'art_set_design',
+            'Editor' => 'editor',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRoles = [];
+        foreach ($roles as $role) {
+            $deadlineRole = $roleMap[$role] ?? strtolower($role);
+            $deadlineRoles[] = $deadlineRole;
+        }
+
+        return Deadline::whereIn('role', $deadlineRoles)
+            ->where('is_completed', true)
+            ->count();
     }
 
+    /**
+     * Get work completed in specific month
+     */
     private function getWorkCompletedInMonth($year, $month)
     {
-        return rand(5, 25);
+        return Deadline::where('is_completed', true)
+            ->whereYear('completed_at', $year)
+            ->whereMonth('completed_at', $month)
+            ->count();
     }
 
+    /**
+     * Get user work count based on deadlines assigned to user's role
+     */
     private function getUserWorkCount($userId, $role)
     {
-        return rand(5, 30);
+        $user = User::find($userId);
+        if (!$user) return 0;
+
+        // Get user's production team and find deadlines for their role
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
+            'Editor' => 'editor',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRole = $roleMap[$role] ?? strtolower($role);
+
+        // Count deadlines for episodes in user's production teams
+        return Deadline::where('role', $deadlineRole)
+            ->whereHas('episode.program.productionTeam.members', function($q) use ($userId) {
+                $q->where('user_id', $userId)->where('is_active', true);
+            })
+            ->count();
     }
 
+    /**
+     * Get user completed work count
+     */
     private function getUserCompletedWorkCount($userId, $role)
     {
-        return rand(3, 25);
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
+            'Editor' => 'editor',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRole = $roleMap[$role] ?? strtolower($role);
+
+        return Deadline::where('role', $deadlineRole)
+            ->where('is_completed', true)
+            ->where('completed_by', $userId)
+            ->count();
     }
 
+    /**
+     * Get user on-time work count (completed before deadline)
+     */
     private function getUserOnTimeWorkCount($userId, $role)
     {
-        return rand(2, 20);
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
+            'Editor' => 'editor',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRole = $roleMap[$role] ?? strtolower($role);
+
+        return Deadline::where('role', $deadlineRole)
+            ->where('is_completed', true)
+            ->where('completed_by', $userId)
+            ->whereNotNull('completed_at')
+            ->whereNotNull('deadline_date')
+            ->whereRaw('completed_at <= deadline_date')
+            ->count();
     }
 
+    /**
+     * Calculate average completion time for user
+     */
     private function getUserAverageCompletionTime($userId, $role)
     {
-        return rand(1, 7) . ' days';
+        $roleMap = [
+            'Music Arranger' => 'musik_arr',
+            'Producer' => 'production',
+            'Creative' => 'creative',
+            'Production' => 'production',
+            'Editor' => 'editor',
+            'Graphic Design' => 'graphic_design',
+            'Editor Promotion' => 'promotion',
+            'Quality Control' => 'quality_control',
+            'Broadcasting' => 'broadcasting',
+            'Promotion' => 'promotion'
+        ];
+
+        $deadlineRole = $roleMap[$role] ?? strtolower($role);
+
+        $deadlines = Deadline::where('role', $deadlineRole)
+            ->where('is_completed', true)
+            ->where('completed_by', $userId)
+            ->whereNotNull('completed_at')
+            ->whereNotNull('deadline_date')
+            ->get();
+
+        if ($deadlines->isEmpty()) {
+            return '0 days';
+        }
+
+        $totalDays = $deadlines->sum(function($deadline) {
+            return $deadline->deadline_date->diffInDays($deadline->completed_at, false);
+        });
+
+        $averageDays = round($totalDays / $deadlines->count(), 1);
+        
+        return abs($averageDays) . ' days ' . ($averageDays < 0 ? 'early' : 'late');
     }
 
+    /**
+     * Get user work completed in specific month
+     */
     private function getUserWorkCompletedInMonth($userId, $year, $month)
     {
-        return rand(1, 10);
+        return Deadline::where('is_completed', true)
+            ->where('completed_by', $userId)
+            ->whereYear('completed_at', $year)
+            ->whereMonth('completed_at', $month)
+            ->count();
     }
 
     // Additional helper methods for program-specific KPIs

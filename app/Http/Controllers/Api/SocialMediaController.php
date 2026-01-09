@@ -25,7 +25,7 @@ class SocialMediaController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if (!in_array($user->role, ['Broadcasting', 'Promosi'])) {
+        if (!in_array($user->role, ['Broadcasting', 'Promotion'])) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
@@ -109,7 +109,7 @@ class SocialMediaController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if (!in_array($user->role, ['Broadcasting', 'Promosi'])) {
+        if (!in_array($user->role, ['Broadcasting', 'Promotion'])) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
@@ -188,7 +188,7 @@ class SocialMediaController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if (!in_array($user->role, ['Broadcasting', 'Promosi'])) {
+        if (!in_array($user->role, ['Broadcasting', 'Promotion'])) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
@@ -261,7 +261,7 @@ class SocialMediaController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if (!in_array($user->role, ['Broadcasting', 'Promosi'])) {
+        if (!in_array($user->role, ['Broadcasting', 'Promotion'])) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 

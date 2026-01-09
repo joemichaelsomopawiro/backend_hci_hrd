@@ -11,14 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('program_team', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('program_team')) {
+            Schema::create('program_team', function (Blueprint $table) {
             $table->id();
             $table->foreignId('program_id')->constrained('programs')->onDelete('cascade');
             $table->foreignId('team_id')->constrained('teams')->onDelete('cascade');
             $table->timestamps();
             
             $table->unique(['program_id', 'team_id']); // Satu team hanya bisa dalam satu program
-        });
+            });
+        }
     }
 
     /**

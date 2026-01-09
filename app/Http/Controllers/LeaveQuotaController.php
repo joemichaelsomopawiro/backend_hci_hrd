@@ -275,8 +275,8 @@ class LeaveQuotaController extends Controller
             ], 401); // 401 Unauthorized lebih tepat
         }
         
-        // 3. Tentukan tahun, paksa ke 2025 agar sesuai dengan data yang ada
-        $year = 2025;
+        // 3. Tentukan tahun, gunakan tahun berjalan
+        $year = date('Y');
         
         // 4. Jalankan query ke database
         $quota = LeaveQuota::where('employee_id', $user->employee_id)

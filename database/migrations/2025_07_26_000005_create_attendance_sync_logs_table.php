@@ -8,7 +8,9 @@ return new class extends Migration
 {
     public function up()
     {
-        Schema::create('attendance_sync_logs', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('attendance_sync_logs')) {
+            Schema::create('attendance_sync_logs', function (Blueprint $table) {
             $table->id();
             $table->foreignId('attendance_machine_id')->constrained('attendance_machines')->onDelete('cascade');
             $table->enum('operation', [
@@ -33,7 +35,8 @@ return new class extends Migration
             $table->index(['attendance_machine_id', 'operation']);
             $table->index(['status', 'started_at']);
             $table->index('started_at');
-        });
+            });
+        }
     }
 
     public function down()

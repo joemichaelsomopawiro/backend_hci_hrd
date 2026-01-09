@@ -8,6 +8,8 @@ use App\Models\PromotionWork;
 use App\Models\Episode;
 use App\Models\MediaFile;
 use App\Models\Notification;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -31,15 +33,31 @@ class DesignGrafisController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
+            // Build cache key based on request parameters
+            $cacheKey = 'design_grafis_index_' . md5(json_encode([
+                'user_id' => $user->id,
+                'status' => $request->get('status'),
+                'work_type' => $request->get('work_type'),
+                'page' => $request->get('page', 1)
+            ]));
+
+            // Use cache with 5 minutes TTL
+            $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request, $user) {
+            // Get all works that are either:
+            // 1. Created by current user, OR
+            // 2. In draft status (available for acceptance) for any Design Grafis user
             $query = DesignGrafisWork::with(['episode', 'createdBy'])
-                ->where('created_by', $user->id);
+                ->where(function($q) use ($user) {
+                    $q->where('created_by', $user->id)
+                      ->orWhere('status', 'draft'); // Draft works are available for any Design Grafis to accept
+                });
 
             // Filter by status
             if ($request->has('status')) {
@@ -51,7 +69,8 @@ class DesignGrafisController extends Controller
                 $query->where('work_type', $request->work_type);
             }
 
-            $works = $query->orderBy('created_at', 'desc')->paginate(15);
+                return $query->orderBy('created_at', 'desc')->paginate(15);
+            });
 
             return response()->json([
                 'success' => true,
@@ -75,7 +94,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -118,6 +137,15 @@ class DesignGrafisController extends Controller
                 'status' => 'draft'
             ]);
 
+            // Audit logging
+            ControllerSecurityHelper::logCreate($work, [
+                'work_type' => $request->work_type,
+                'episode_id' => $request->episode_id
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             // Notify related roles
             $this->notifyRelatedRoles($work, 'created');
 
@@ -141,8 +169,15 @@ class DesignGrafisController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $work = DesignGrafisWork::with(['episode', 'createdBy'])
+            // Use cache for frequently accessed data
+            $work = QueryOptimizer::remember(
+                QueryOptimizer::getCacheKey('DesignGrafisWork', $id),
+                300, // 5 minutes
+                function () use ($id) {
+                    return DesignGrafisWork::with(['episode', 'createdBy'])
                 ->findOrFail($id);
+                }
+            );
 
             return response()->json([
                 'success' => true,
@@ -194,10 +229,20 @@ class DesignGrafisController extends Controller
                 ], 422);
             }
 
+            $oldData = $work->toArray();
             $work->update($request->only([
                 'title', 'description', 'design_brief', 'brand_guidelines',
                 'color_scheme', 'dimensions', 'file_format', 'deadline', 'status'
             ]));
+
+            // Audit logging
+            ControllerSecurityHelper::logUpdate($work, $oldData, $request->only([
+                'title', 'description', 'design_brief', 'brand_guidelines',
+                'color_scheme', 'dimensions', 'file_format', 'deadline', 'status'
+            ]), $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
 
             // Notify on status change
             if ($request->has('status')) {
@@ -288,6 +333,21 @@ class DesignGrafisController extends Controller
                 'status' => 'completed'
             ]);
 
+            // Audit logging for file uploads
+            foreach ($request->file('files') as $file) {
+                ControllerSecurityHelper::logFileOperation(
+                    'upload',
+                    $file->getMimeType(),
+                    $file->getClientOriginalName(),
+                    $file->getSize(),
+                    $work,
+                    $request
+                );
+            }
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             // Notify related roles
             $this->notifyRelatedRoles($work, 'files_uploaded');
 
@@ -309,14 +369,14 @@ class DesignGrafisController extends Controller
     }
 
     /**
-     * Get files from other roles (Promosi, Produksi)
+     * Get files from other roles (Promotion, Production)
      */
     public function getSharedFiles(Request $request): JsonResponse
     {
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -324,20 +384,20 @@ class DesignGrafisController extends Controller
             }
 
             $episodeId = $request->get('episode_id');
-            $sourceRole = $request->get('source_role'); // 'promosi' or 'produksi'
+            $sourceRole = $request->get('source_role'); // 'promotion' or 'production'
 
             $query = MediaFile::with(['episode', 'uploadedBy'])
                 ->where('episode_id', $episodeId);
 
-            if ($sourceRole === 'promosi') {
+            if ($sourceRole === 'promotion' || $sourceRole === 'promosi') { // Support both for backward compatibility
                 $query->where('file_type', 'promotion')
                       ->whereHas('uploadedBy', function($q) {
-                          $q->where('role', 'Promosi');
+                          $q->where('role', 'Promotion');
                       });
-            } elseif ($sourceRole === 'produksi') {
+            } elseif ($sourceRole === 'production' || $sourceRole === 'produksi') { // Support both for backward compatibility
                 $query->where('file_type', 'production')
                       ->whereHas('uploadedBy', function($q) {
-                          $q->where('role', 'Produksi');
+                          $q->where('role', 'Production');
                       });
             }
 
@@ -365,14 +425,17 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Design Grafis') {
+            if ($user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            $stats = [
+            // Use cache for statistics (cache for 5 minutes)
+            $cacheKey = 'design_grafis_statistics_user_' . $user->id;
+            $stats = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($user) {
+                return [
                 'total_works' => DesignGrafisWork::where('created_by', $user->id)->count(),
                 'completed_works' => DesignGrafisWork::where('created_by', $user->id)
                     ->where('status', 'completed')->count(),
@@ -390,6 +453,7 @@ class DesignGrafisController extends Controller
                     ->limit(5)
                     ->get()
             ];
+            });
 
             return response()->json([
                 'success' => true,
@@ -438,6 +502,158 @@ class DesignGrafisController extends Controller
                 'user_id' => $qcUser->id,
                 'episode_id' => $work->episode_id
             ]);
+        }
+    }
+
+    /**
+     * Terima Pekerjaan - Design Grafis accept work
+     * POST /api/live-tv/roles/design-grafis/works/{id}/accept-work
+     */
+    public function acceptWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Graphic Design') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = DesignGrafisWork::findOrFail($id);
+
+            // Check if work is in draft status (baru dibuat oleh Promosi atau sistem)
+            if ($work->status !== 'draft') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is draft'
+                ], 400);
+            }
+
+            // Update work status to in_progress and assign to current user
+            $oldData = $work->toArray();
+            $work->update([
+                'status' => 'in_progress',
+                'created_by' => $user->id
+            ]);
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('design_grafis_work_accepted', $work, [
+                'old_status' => $oldData['status'],
+                'new_status' => 'in_progress',
+                'assigned_to' => $user->id
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Work accepted successfully. You can now start designing.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Ajukan ke QC - Design Grafis submit file locations ke QC
+     * POST /api/live-tv/design-grafis/works/{id}/submit-to-qc
+     */
+    public function submitToQC(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Graphic Design') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = \App\Models\DesignGrafisWork::findOrFail($id);
+
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to this work'
+                ], 403);
+            }
+
+            if (!$work->file_paths || empty($work->file_paths)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please upload files before submitting to QC'
+                ], 400);
+            }
+
+            // Create or update QualityControlWork
+            $qcWork = \App\Models\QualityControlWork::updateOrCreate(
+                [
+                    'episode_id' => $work->episode_id,
+                    'qc_type' => 'thumbnail_yt' // Default, bisa disesuaikan
+                ],
+                [
+                    'title' => "QC Work - Episode {$work->episode->episode_number}",
+                    'description' => "File dari Design Grafis untuk QC",
+                    'design_grafis_file_locations' => array_map(function($path) {
+                        return [
+                            'file_path' => $path,
+                            'file_name' => basename($path),
+                            'source' => 'design_grafis'
+                        ];
+                    }, $work->file_paths),
+                    'status' => 'pending',
+                    'created_by' => $user->id
+                ]
+            );
+
+            // Audit logging
+            ControllerSecurityHelper::logApproval('submitted_to_qc', $work, [
+                'qc_work_id' => $qcWork->id,
+                'file_count' => count($work->file_paths)
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
+            // Notify Quality Control
+            $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+            foreach ($qcUsers as $qcUser) {
+                Notification::create([
+                    'user_id' => $qcUser->id,
+                    'type' => 'qc_work_assigned',
+                    'title' => 'Tugas QC Baru',
+                    'message' => "Design Grafis telah mengajukan file untuk QC Episode {$work->episode->episode_number}.",
+                    'data' => [
+                        'qc_work_id' => $qcWork->id,
+                        'episode_id' => $work->episode_id,
+                        'design_grafis_work_id' => $work->id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'qc_work' => $qcWork->fresh(['episode', 'createdBy']),
+                    'design_grafis_work' => $work->fresh(['episode', 'createdBy'])
+                ],
+                'message' => 'Files submitted to QC successfully. Quality Control has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error submitting to QC: ' . $e->getMessage()
+            ], 500);
         }
     }
 }

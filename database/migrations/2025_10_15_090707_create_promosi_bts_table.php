@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('promosi_bts', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('promosi_bts')) {
+            Schema::create('promosi_bts', function (Blueprint $table) {
             $table->id();
             $table->foreignId('submission_id')->constrained('music_submissions')->onDelete('cascade');
             $table->string('bts_video_path', 500)->nullable();
@@ -22,7 +24,8 @@ return new class extends Migration
             $table->text('notes')->nullable();
             $table->foreignId('created_by')->constrained('users')->onDelete('cascade');
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

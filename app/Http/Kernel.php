@@ -22,6 +22,7 @@ class Kernel extends HttpKernel
         \Illuminate\Foundation\Http\Middleware\ValidatePostSize::class,
         \App\Http\Middleware\TrimStrings::class,
         \Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class,
+        \App\Http\Middleware\SecurityHeaders::class, // Security headers untuk semua response
     ];
 
     /**
@@ -69,5 +70,6 @@ class Kernel extends HttpKernel
         'readonly.role' => \App\Http\Middleware\ReadOnlyRoleMiddleware::class,
         'attendance.rate.limit' => \App\Http\Middleware\AttendanceRateLimit::class,
         'validate.ga.role' => \App\Http\Middleware\ValidateGARole::class,
+        'check.token.expiration' => \App\Http\Middleware\CheckTokenExpiration::class,
     ];
 }

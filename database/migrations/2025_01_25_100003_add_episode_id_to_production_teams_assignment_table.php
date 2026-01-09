@@ -13,17 +13,27 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('production_teams_assignment', function (Blueprint $table) {
-            // Make music_submission_id nullable
-            $table->foreignId('music_submission_id')->nullable()->change();
-            
-            // Add episode_id for episode-based workflow
-            $table->foreignId('episode_id')->nullable()->after('music_submission_id')
-                ->constrained('episodes')->onDelete('cascade');
-            
-            // Update index
-            $table->index(['episode_id', 'team_type', 'status']);
-        });
+        if (Schema::hasTable('production_teams_assignment')) {
+            Schema::table('production_teams_assignment', function (Blueprint $table) {
+                // Make music_submission_id nullable if column exists
+                if (Schema::hasColumn('production_teams_assignment', 'music_submission_id')) {
+                    $table->foreignId('music_submission_id')->nullable()->change();
+                }
+                
+                // Add episode_id for episode-based workflow if not exists
+                if (!Schema::hasColumn('production_teams_assignment', 'episode_id')) {
+                    $table->foreignId('episode_id')->nullable()->after('music_submission_id')
+                        ->constrained('episodes')->onDelete('cascade');
+                }
+                
+                // Update index if columns exist
+                if (Schema::hasColumn('production_teams_assignment', 'episode_id') && 
+                    Schema::hasColumn('production_teams_assignment', 'team_type') &&
+                    Schema::hasColumn('production_teams_assignment', 'status')) {
+                    $table->index(['episode_id', 'team_type', 'status']);
+                }
+            });
+        }
     }
 
     /**
@@ -31,14 +41,25 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('production_teams_assignment', function (Blueprint $table) {
-            $table->dropForeign(['episode_id']);
-            $table->dropColumn('episode_id');
-            $table->dropIndex(['episode_id', 'team_type', 'status']);
-            
-            // Make music_submission_id not nullable again
-            $table->foreignId('music_submission_id')->nullable(false)->change();
-        });
+        if (Schema::hasTable('production_teams_assignment')) {
+            Schema::table('production_teams_assignment', function (Blueprint $table) {
+                if (Schema::hasColumn('production_teams_assignment', 'episode_id')) {
+                    $table->dropForeign(['episode_id']);
+                    $table->dropColumn('episode_id');
+                }
+                
+                if (Schema::hasColumn('production_teams_assignment', 'episode_id') && 
+                    Schema::hasColumn('production_teams_assignment', 'team_type') &&
+                    Schema::hasColumn('production_teams_assignment', 'status')) {
+                    $table->dropIndex(['episode_id', 'team_type', 'status']);
+                }
+                
+                // Make music_submission_id not nullable again if column exists
+                if (Schema::hasColumn('production_teams_assignment', 'music_submission_id')) {
+                    $table->foreignId('music_submission_id')->nullable(false)->change();
+                }
+            });
+        }
     }
 };
 

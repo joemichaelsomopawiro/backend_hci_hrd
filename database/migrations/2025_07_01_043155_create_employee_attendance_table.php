@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('employee_attendance', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('employee_attendance')) {
+            Schema::create('employee_attendance', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('attendance_machine_id');
             
@@ -41,7 +43,8 @@ return new class extends Migration
             
             // Unique constraint
             $table->unique(['attendance_machine_id', 'machine_user_id'], 'unique_machine_user');
-        });
+            });
+        }
     }
 
     /**

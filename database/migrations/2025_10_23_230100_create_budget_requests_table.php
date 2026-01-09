@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('budget_requests', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('budget_requests')) {
+            Schema::create('budget_requests', function (Blueprint $table) {
             $table->id();
             $table->foreignId('program_id')->constrained('programs')->onDelete('cascade');
             $table->foreignId('requested_by')->constrained('users')->onDelete('cascade');
@@ -36,7 +38,8 @@ return new class extends Migration
             $table->timestamp('rejected_at')->nullable();
             $table->timestamps();
             $table->softDeletes();
-        });
+            });
+        }
     }
 
     /**

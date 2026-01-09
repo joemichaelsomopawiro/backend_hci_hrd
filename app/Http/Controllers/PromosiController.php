@@ -22,7 +22,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -55,7 +55,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -106,7 +106,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -165,7 +165,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -235,7 +235,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -282,7 +282,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Promosi') {
+            if ($user->role !== 'Promotion') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

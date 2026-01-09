@@ -25,7 +25,7 @@ class FileSharingController extends Controller
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
                 'target_roles' => 'required|array|min:1',
-                'target_roles.*' => 'required|string|in:Design Grafis,Editor Promosi,Quality Control,Broadcasting',
+                'target_roles.*' => 'required|string|in:Graphic Design,Editor Promotion,Quality Control,Broadcasting',
                 'file_ids' => 'nullable|array',
                 'file_ids.*' => 'required|exists:media_files,id',
                 'message' => 'nullable|string|max:500',
@@ -147,7 +147,7 @@ class FileSharingController extends Controller
             
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
-                'source_role' => 'required|string|in:Promosi,Produksi,Design Grafis,Editor Promosi',
+                'source_role' => 'required|string|in:Promotion,Production,Graphic Design,Editor Promotion',
                 'file_type' => 'nullable|string'
             ]);
 

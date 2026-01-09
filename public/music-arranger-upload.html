@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Music Arranger — Upload Test</title>
+  <style>body{font-family:Arial,Helvetica,sans-serif;padding:20px}label{display:block;margin-top:8px}</style>
+</head>
+<body>
+  <h2>Music Arranger — Upload Test</h2>
+
+  <label>Arrangement ID
+    <input id="arrangementId" type="number" value="32">
+  </label>
+
+  <label>File (MP3 / WAV / MIDI, max 100MB)
+    <input id="fileInput" type="file" accept="audio/*">
+  </label>
+
+  <label>Bearer Token
+    <input id="token" type="text" style="width:100%" placeholder="Paste Bearer token here">
+  </label>
+
+  <button id="uploadBtn">Upload to /upload-file</button>
+  <button id="putBtn">Upload via POST+_method=PUT</button>
+
+  <h3>Result</h3>
+  <pre id="result">-</pre>
+
+  <script>
+    const uploadBtn = document.getElementById('uploadBtn');
+    const putBtn = document.getElementById('putBtn');
+    const fileInput = document.getElementById('fileInput');
+    const arrangementIdInput = document.getElementById('arrangementId');
+    const tokenInput = document.getElementById('token');
+    const resultPre = document.getElementById('result');
+
+    function show(obj){ resultPre.textContent = JSON.stringify(obj, null, 2); }
+
+    async function postUpload(){
+      const id = arrangementIdInput.value.trim();
+      const file = fileInput.files[0];
+      if(!file){ alert('Choose a file'); return; }
+      const token = tokenInput.value.trim();
+
+      const fd = new FormData();
+      fd.append('file', file);
+
+      try{
+        const res = await fetch(`/api/live-tv/music-arranger/arrangements/${id}/upload-file`, {
+          method: 'POST',
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+          body: fd
+        });
+        const data = await res.json();
+        show({ status: res.status, ok: res.ok, body: data });
+        if(data && data.file_url){
+          const a = document.createElement('a');
+          a.href = data.file_url;
+          a.textContent = 'Open uploaded file';
+          a.target = '_blank';
+          resultPre.appendChild(document.createTextNode('\n'));
+          resultPre.appendChild(a);
+        }
+      }catch(err){ show({ error: err.message }); }
+    }
+
+    async function postMethodPut(){
+      const id = arrangementIdInput.value.trim();
+      const file = fileInput.files[0];
+      if(!file){ alert('Choose a file'); return; }
+      const token = tokenInput.value.trim();
+
+      const fd = new FormData();
+      fd.append('_method', 'PUT');
+      fd.append('file', file);
+
+      try{
+        const res = await fetch(`/api/live-tv/music-arranger/arrangements/${id}`, {
+          method: 'POST',
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+          body: fd
+        });
+        const data = await res.json();
+        show({ status: res.status, ok: res.ok, body: data });
+      }catch(err){ show({ error: err.message }); }
+    }
+
+    uploadBtn.addEventListener('click', postUpload);
+    putBtn.addEventListener('click', postMethodPut);
+  </script>
+</body>
+</html>

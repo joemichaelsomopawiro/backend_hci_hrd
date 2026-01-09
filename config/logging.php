@@ -94,6 +94,14 @@ return [
             'processors' => [PsrLogMessageProcessor::class],
         ],
 
+        'audit' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/audit.log'),
+            'level' => env('LOG_LEVEL', 'info'),
+            'days' => 90, // Keep audit logs for 90 days
+            'replace_placeholders' => true,
+        ],
+
         'stderr' => [
             'driver' => 'monolog',
             'level' => env('LOG_LEVEL', 'debug'),

@@ -23,76 +23,123 @@ class LeaveRequestController extends Controller
      */ 
     public function index(Request $request): JsonResponse 
     { 
-        $user = auth()->user(); 
-        $query = LeaveRequest::with(['employee.user', 'approvedBy.user']); 
-
-        // ========== BAGIAN 1: OTORISASI (Siapa boleh lihat apa) ========== 
-        if (RoleHierarchyService::isHrManager($user->role)) { 
-            // HR hanya dapat melihat permohonan dari bawahannya langsung (Finance, General Affairs, Office Assistant)
-            // Tidak bisa melihat permohonan dari Program Manager atau Distribution Manager
-            $hrSubordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role); 
-            if (!empty($hrSubordinateRoles)) { 
-                $query->whereHas('employee.user', function ($q) use ($hrSubordinateRoles) { 
-                    $q->whereIn('role', $hrSubordinateRoles); 
-                }); 
-            } else { 
-                // Jika HR tidak punya bawahan, kembalikan data kosong. 
-                return response()->json(['success' => true, 'data' => []]); 
-            } 
-        } elseif (RoleHierarchyService::isOtherManager($user->role)) { 
-            // DIPERBARUI: Manager lain (Program/Distribution) hanya bisa melihat bawahannya
-            // Termasuk role kustom dengan department yang sama
-            $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role); 
+        try {
+            $user = auth()->user(); 
             
-            if (!empty($subordinateRoles)) { 
-                $query->whereHas('employee.user', function ($q) use ($subordinateRoles) { 
-                    $q->whereIn('role', $subordinateRoles); 
-                }); 
-            } else { 
-                // Jika manager tidak punya bawahan, kembalikan data kosong. 
-                return response()->json(['success' => true, 'data' => []]); 
-            } 
-        } else { 
-            // Karyawan biasa hanya bisa melihat permohonannya sendiri. 
-            $query->where('employee_id', $user->employee_id); 
-        } 
-
-        // ========== BAGIAN 2: FILTERING (Berdasarkan input dari frontend) ========== 
-        $statusFilter = $request->input('status'); 
-
-        // Ini untuk mengatasi komponen yang mungkin masih mengirim `for_approval=true` 
-        if ($request->input('for_approval') === 'true' && !$request->filled('status')) { 
-            $statusFilter = 'pending'; 
-        } 
-         
-        if ($statusFilter) { 
-            $query->where('overall_status', $statusFilter); 
-        } 
-
-        if ($request->filled('leave_type')) { 
-            $query->where('leave_type', $request->leave_type); 
-        } 
-
-        // ========== BAGIAN 3: EKSEKUSI QUERY ========== 
-        $requests = $query->orderBy('created_at', 'desc')->get(); 
-
-        // Tambahkan leave_dates pada setiap data cuti
-        $transformed = $requests->map(function($leave) {
-            $start = \Carbon\Carbon::parse($leave->start_date);
-            $end = \Carbon\Carbon::parse($leave->end_date);
-            $dates = [];
-            for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
-                $dates[] = $date->toDateString();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User tidak terautentikasi'
+                ], 401);
             }
-            $data = $leave->toArray();
-            $data['leave_dates'] = $dates;
-            return $data;
-        });
+            
+            // Gunakan join untuk menghindari error relasi null
+            $query = LeaveRequest::query()
+                ->select('leave_requests.*')
+                ->leftJoin('employees', 'leave_requests.employee_id', '=', 'employees.id')
+                ->leftJoin('users', 'employees.id', '=', 'users.employee_id')
+                ->whereNotNull('leave_requests.employee_id'); // Pastikan employee_id tidak null
 
-        return response()->json([
-            'success' => true,
-            'data' => $transformed
-        ]); 
+            // ========== BAGIAN 1: OTORISASI (Siapa boleh lihat apa) ========== 
+            if (RoleHierarchyService::isHrManager($user->role)) { 
+                // HR hanya dapat melihat permohonan dari bawahannya langsung (Finance, General Affairs, Office Assistant)
+                // Tidak bisa melihat permohonan dari Program Manager atau Distribution Manager
+                $hrSubordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role); 
+                if (!empty($hrSubordinateRoles)) { 
+                    // Filter berdasarkan role user yang ada di join
+                    $query->whereIn('users.role', $hrSubordinateRoles)
+                          ->whereNotNull('users.role'); // Pastikan user ada
+                } else { 
+                    // Jika HR tidak punya bawahan, kembalikan data kosong. 
+                    return response()->json(['success' => true, 'data' => []]); 
+                } 
+            } elseif (RoleHierarchyService::isOtherManager($user->role)) { 
+                // DIPERBARUI: Manager lain (Program/Distribution) hanya bisa melihat bawahannya
+                // Termasuk role kustom dengan department yang sama
+                $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role); 
+                
+                if (!empty($subordinateRoles)) { 
+                    // Filter berdasarkan role user yang ada di join
+                    $query->whereIn('users.role', $subordinateRoles)
+                          ->whereNotNull('users.role'); // Pastikan user ada
+                } else { 
+                    // Jika manager tidak punya bawahan, kembalikan data kosong. 
+                    return response()->json(['success' => true, 'data' => []]); 
+                } 
+            } else { 
+                // Karyawan biasa hanya bisa melihat permohonannya sendiri. 
+                if (!$user->employee_id) {
+                    return response()->json([
+                        'success' => true,
+                        'data' => []
+                    ]);
+                }
+                $query->where('leave_requests.employee_id', $user->employee_id); 
+            } 
+
+            // ========== BAGIAN 2: FILTERING (Berdasarkan input dari frontend) ========== 
+            $statusFilter = $request->input('status'); 
+
+            // Ini untuk mengatasi komponen yang mungkin masih mengirim `for_approval=true` 
+            if ($request->input('for_approval') === 'true' && !$request->filled('status')) { 
+                $statusFilter = 'pending'; 
+            } 
+             
+            if ($statusFilter) { 
+                $query->where('overall_status', $statusFilter); 
+            } 
+
+            if ($request->filled('leave_type')) { 
+                $query->where('leave_type', $request->leave_type); 
+            } 
+
+            // ========== BAGIAN 3: EKSEKUSI QUERY ========== 
+            $requests = $query->orderBy('leave_requests.created_at', 'desc')->get(); 
+
+            // Load relasi setelah query untuk menghindari masalah dengan join
+            $requests->load(['employee.user', 'approvedBy.user']);
+
+            // Tambahkan leave_dates pada setiap data cuti dengan error handling
+            $transformed = $requests->map(function($leave) {
+                try {
+                    $start = \Carbon\Carbon::parse($leave->start_date);
+                    $end = \Carbon\Carbon::parse($leave->end_date);
+                    $dates = [];
+                    for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                        $dates[] = $date->toDateString();
+                    }
+                    $data = $leave->toArray();
+                    $data['leave_dates'] = $dates;
+                    return $data;
+                } catch (\Exception $e) {
+                    Log::error('Error transforming leave request', [
+                        'leave_id' => $leave->id ?? null,
+                        'error' => $e->getMessage()
+                    ]);
+                    $data = $leave->toArray();
+                    $data['leave_dates'] = [];
+                    return $data;
+                }
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformed
+            ]); 
+        } catch (\Exception $e) {
+            Log::error('Error in LeaveRequestController::index', [
+                'user_id' => auth()->id(),
+                'user_role' => auth()->user()?->role,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data leave requests',
+                'error' => app()->environment('local') ? $e->getMessage() : null
+            ], 500);
+        }
     }
 
     /** * Store a newly created resource in storage. 

@@ -53,7 +53,19 @@ return new class extends Migration
             });
             
             // Update enum status jika perlu (ini perlu dilakukan terpisah)
-            DB::statement("ALTER TABLE attendances MODIFY COLUMN status ENUM('present_ontime','present_late','absent','on_leave','sick_leave','permission') DEFAULT 'absent'");
+            try {
+                // Check current enum values
+                $result = DB::select("SHOW COLUMNS FROM attendances WHERE Field = 'status'");
+                if (!empty($result)) {
+                    $currentType = $result[0]->Type;
+                    // Only update if enum values are different
+                    if (strpos($currentType, 'present_ontime') === false || strpos($currentType, 'present_late') === false) {
+                        DB::statement("ALTER TABLE attendances MODIFY COLUMN status ENUM('present_ontime','present_late','absent','on_leave','sick_leave','permission') DEFAULT 'absent'");
+                    }
+                }
+            } catch (\Exception $e) {
+                // Enum change failed, skip
+            }
         }
     }
 

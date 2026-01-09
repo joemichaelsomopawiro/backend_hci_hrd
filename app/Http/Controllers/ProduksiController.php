@@ -20,7 +20,7 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Produksi') {
+            if ($user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -53,7 +53,7 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Produksi') {
+            if ($user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -107,7 +107,7 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Produksi') {
+            if ($user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -169,7 +169,7 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Produksi') {
+            if ($user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -233,7 +233,7 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Produksi') {
+            if ($user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -294,7 +294,7 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Produksi') {
+            if ($user->role !== 'Production') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

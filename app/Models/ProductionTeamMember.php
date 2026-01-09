@@ -12,12 +12,15 @@ class ProductionTeamMember extends Model
 
     protected $fillable = [
         'production_team_id',
+        'assignment_id',
         'user_id',
         'role',
         'is_active',
         'joined_at',
         'left_at',
-        'notes'
+        'notes',
+        'role_notes',
+        'status'
     ];
 
     protected $casts = [
@@ -35,6 +38,14 @@ class ProductionTeamMember extends Model
     }
 
     /**
+     * Relationship dengan Production Team Assignment
+     */
+    public function assignment(): BelongsTo
+    {
+        return $this->belongsTo(ProductionTeamAssignment::class, 'assignment_id');
+    }
+
+    /**
      * Relationship dengan User
      */
     public function user(): BelongsTo
@@ -48,12 +59,12 @@ class ProductionTeamMember extends Model
     public function getRoleLabelAttribute(): string
     {
         $labels = [
-            'kreatif' => 'Kreatif',
-            'musik_arr' => 'Musik Arranger',
+            'creative' => 'Creative',
+            'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
-            'produksi' => 'Produksi',
+            'production' => 'Production',
             'editor' => 'Editor',
-            'art_set_design' => 'Art & Set Design'
+            'art_set_design' => 'Art & Set Properti'
         ];
 
         return $labels[$this->role] ?? $this->role;

@@ -8,7 +8,9 @@ return new class extends Migration
 {
     public function up()
     {
-        Schema::create('custom_roles', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('custom_roles')) {
+            Schema::create('custom_roles', function (Blueprint $table) {
             $table->id();
             $table->string('role_name')->unique();
             $table->text('description')->nullable();
@@ -19,7 +21,8 @@ return new class extends Migration
             
             $table->foreign('created_by')->references('id')->on('users')->onDelete('cascade');
             $table->index(['is_active', 'access_level']);
-        });
+            });
+        }
     }
 
     public function down()

@@ -16,11 +16,13 @@ return new class extends Migration
      * - sound_eng (Sound Engineer)
      * - produksi
      * - editor
-     * - art_set_design (Art & Set Design)
+     * - art_set_design (Art & Set Properti)
      */
     public function up(): void
     {
-        Schema::create('production_team_members', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('production_team_members')) {
+            Schema::create('production_team_members', function (Blueprint $table) {
             $table->id();
             $table->foreignId('production_team_id')->constrained('production_teams')->onDelete('cascade');
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
@@ -42,7 +44,8 @@ return new class extends Migration
             $table->unique(['production_team_id', 'user_id', 'role'], 'unique_team_user_role');
             
             $table->index(['production_team_id', 'role', 'is_active']);
-        });
+            });
+        }
     }
 
     /**

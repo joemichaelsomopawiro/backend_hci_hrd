@@ -11,6 +11,7 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
 use Illuminate\Http\Exceptions\ThrottleRequestsException;
+use Illuminate\Routing\Exceptions\InvalidSignatureException;
 use Illuminate\Database\QueryException;
 use Exception;
 use Throwable;
@@ -106,6 +107,14 @@ class Handler extends ExceptionHandler
             ], 403);
         }
 
+        if ($exception instanceof InvalidSignatureException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired file access link',
+                'timestamp' => now()->toISOString()
+            ], 403);
+        }
+
         if ($exception instanceof NotFoundHttpException) {
             return response()->json([
                 'success' => false,
@@ -139,10 +148,19 @@ class Handler extends ExceptionHandler
         }
 
         // Generic server error
+        // Jangan expose error details atau kode PHP ke frontend
+        $message = 'Internal server error';
+        
+        // Hanya tampilkan error details jika APP_DEBUG=true (development only)
+        if (config('app.debug')) {
+            $message = $exception->getMessage();
+        }
+        
         return response()->json([
             'success' => false,
-            'message' => 'Internal server error',
+            'message' => $message,
             'timestamp' => now()->toISOString()
+            // Jangan include stack trace, file path, atau kode PHP
         ], 500);
     }
 }

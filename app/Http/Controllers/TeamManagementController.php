@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\Program;
+use App\Models\Episode;
 use App\Models\ProgramNotification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -21,9 +22,17 @@ class TeamManagementController extends Controller
         try {
             $query = Team::with(['program', 'teamLead', 'members']);
 
-            // Filter by program
+            // Filter by program (exclude soft deleted programs)
             if ($request->has('program_id')) {
-                $query->where('program_id', $request->program_id);
+                $query->where('program_id', $request->program_id)
+                      ->whereHas('program', function($q) {
+                          $q->whereNull('deleted_at');
+                      });
+            } else {
+                // Always exclude teams from soft deleted programs
+                $query->whereHas('program', function($q) {
+                    $q->whereNull('deleted_at');
+                });
             }
 
             // Filter by role
@@ -37,6 +46,29 @@ class TeamManagementController extends Controller
             }
 
             $teams = $query->paginate(15);
+            
+            // Add statistics for each team
+            $teams->getCollection()->transform(function ($team) {
+                // Count active episodes (exclude soft deleted episodes and episodes from soft deleted programs)
+                $activeTasks = Episode::whereHas('program', function($q) {
+                        $q->whereNull('deleted_at');
+                    })
+                    ->whereNull('episodes.deleted_at')
+                    ->where('status', '!=', 'aired')
+                    ->where('status', '!=', 'cancelled')
+                    ->where(function($q) use ($team) {
+                        // Count episodes assigned to this team based on role
+                        if ($team->program_id) {
+                            $q->where('program_id', $team->program_id);
+                        }
+                    })
+                    ->count();
+                
+                $team->active_tasks = $activeTasks;
+                $team->members_count = $team->members->count();
+                
+                return $team;
+            });
 
             return response()->json([
                 'success' => true,
@@ -62,7 +94,7 @@ class TeamManagementController extends Controller
                 'description' => 'nullable|string',
                 'program_id' => 'nullable|exists:programs,id',
                 'team_lead_id' => 'nullable|exists:users,id',
-                'role' => 'required|in:kreatif,promosi,design_grafis,produksi,editor,art_set_properti',
+                'role' => 'required|in:creative,promotion,graphic_design,production,editor,art_set_properti',
                 'members' => 'nullable|array',
                 'members.*' => 'exists:users,id'
             ]);

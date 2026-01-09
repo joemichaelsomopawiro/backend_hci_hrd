@@ -237,15 +237,19 @@ class ProductionEquipmentController extends Controller
 
         // Notifikasi ke Art & Set Properti
         $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
+        $equipmentListStr = is_array($equipment->equipment_list) 
+            ? implode(', ', $equipment->equipment_list) 
+            : ($equipment->equipment_list ?? 'N/A');
+        
         foreach ($artSetUsers as $artSetUser) {
             Notification::create([
                 'user_id' => $artSetUser->id,
                 'type' => 'equipment_returned',
                 'title' => 'Alat Dikembalikan',
-                'message' => "Production telah mengembalikan alat: {$equipment->equipment_name}",
+                'message' => "Production telah mengembalikan alat: {$equipmentListStr}",
                 'data' => [
                     'equipment_id' => $equipment->id,
-                    'equipment_name' => $equipment->equipment_name,
+                    'equipment_list' => $equipment->equipment_list,
                     'return_condition' => $request->return_condition
                 ]
             ]);

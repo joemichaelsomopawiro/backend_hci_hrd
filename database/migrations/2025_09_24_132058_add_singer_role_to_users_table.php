@@ -12,8 +12,30 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Update the enum to include all existing roles plus new ones
-        DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('HR', 'Manager', 'Employee', 'GA', 'Singer', 'Creative', 'Producer', 'Social Media', 'Music Arranger', 'Program Manager', 'Hopeline Care', 'Distribution Manager', 'Sound Engineer', 'General Affairs') DEFAULT 'Employee'");
+        // Check if table exists
+        if (!Schema::hasTable('users')) {
+            return;
+        }
+        
+        // Check if role column exists
+        if (!Schema::hasColumn('users', 'role')) {
+            return;
+        }
+        
+        try {
+            // Get current enum values
+            $result = DB::select("SHOW COLUMNS FROM users WHERE Field = 'role'");
+            if (!empty($result)) {
+                $currentType = $result[0]->Type;
+                // Check if 'Singer' is already in the enum
+                if (strpos($currentType, 'Singer') === false) {
+                    // Update the enum to include all existing roles plus new ones
+                    DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('HR', 'Manager', 'Employee', 'GA', 'Singer', 'Creative', 'Producer', 'Social Media', 'Music Arranger', 'Program Manager', 'Hopeline Care', 'Distribution Manager', 'Sound Engineer', 'General Affairs') DEFAULT 'Employee'");
+                }
+            }
+        } catch (\Exception $e) {
+            // Enum change failed, skip
+        }
     }
 
     /**

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class SoundEngineerRecording extends Model
 {
@@ -12,6 +13,7 @@ class SoundEngineerRecording extends Model
 
     protected $fillable = [
         'episode_id',
+        'music_arrangement_id',
         'recording_notes',
         'file_path',
         'file_name',
@@ -46,6 +48,14 @@ class SoundEngineerRecording extends Model
     }
 
     /**
+     * Relationship dengan Music Arrangement
+     */
+    public function musicArrangement(): BelongsTo
+    {
+        return $this->belongsTo(MusicArrangement::class);
+    }
+
+    /**
      * Relationship dengan User yang create
      */
     public function createdBy(): BelongsTo
@@ -60,6 +70,39 @@ class SoundEngineerRecording extends Model
     {
         return $this->belongsTo(User::class, 'reviewed_by');
     }
+
+    /**
+     * Relationship dengan Sound Engineer Editing
+     */
+    public function editing(): HasOne
+    {
+        return $this->hasOne(SoundEngineerEditing::class, 'sound_engineer_recording_id');
+    }
+
+    /**
+     * Scope untuk recording yang sudah direview
+     */
+    public function scopeReviewed($query)
+    {
+        return $query->where('status', 'reviewed');
+    }
+
+    /**
+     * Scope untuk recording yang belum direview
+     */
+    public function scopeNotReviewed($query)
+    {
+        return $query->where('status', 'completed')->whereNull('reviewed_by');
+    }
+
+    /**
+     * Check if recording has been reviewed
+     */
+    public function hasBeenReviewed(): bool
+    {
+        return $this->status === 'reviewed' && $this->reviewed_by !== null;
+    }
+
 
     /**
      * Start recording
@@ -161,13 +204,5 @@ class SoundEngineerRecording extends Model
     public function scopeCompleted($query)
     {
         return $query->where('status', 'completed');
-    }
-
-    /**
-     * Scope untuk recording yang reviewed
-     */
-    public function scopeReviewed($query)
-    {
-        return $query->where('status', 'reviewed');
     }
 }

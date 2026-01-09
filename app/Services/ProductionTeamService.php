@@ -154,7 +154,7 @@ class ProductionTeamService
     public function getTeamStatistics(ProductionTeam $team): array
     {
         $totalMembers = $team->members()->where('is_active', true)->count();
-        $requiredRoles = ['kreatif', 'musik_arr', 'sound_eng', 'produksi', 'editor', 'art_set_design'];
+        $requiredRoles = ['creative', 'musik_arr', 'sound_eng', 'production', 'editor', 'art_set_design'];
         $existingRoles = $team->members()->where('is_active', true)->pluck('role')->toArray();
         $missingRoles = array_diff($requiredRoles, $existingRoles);
         $hasAllRoles = count($missingRoles) === 0;
@@ -207,10 +207,31 @@ class ProductionTeamService
 
     /**
      * Get available users for role
+     * 
+     * Maps production team member role to user role:
+     * - kreatif -> Creative
+     * - musik_arr -> Music Arranger
+     * - sound_eng -> Sound Engineer
+     * - produksi -> Production
+     * - editor -> Editor
+     * - art_set_design -> Art & Set Properti
      */
     public function getAvailableUsersForRole(string $role): array
     {
-        $users = User::where('role', $role)
+        // Map production team role to user role
+        $roleMapping = [
+            'creative' => 'Creative',
+            'musik_arr' => 'Music Arranger',
+            'sound_eng' => 'Sound Engineer',
+            'production' => 'Production',
+            'editor' => 'Editor',
+            'art_set_design' => 'Art & Set Properti',
+        ];
+        
+        // Get user role from mapping, fallback to original role if not found
+        $userRole = $roleMapping[$role] ?? $role;
+        
+        $users = User::where('role', $userRole)
             ->where('is_active', true)
             ->get();
             

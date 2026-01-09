@@ -170,6 +170,12 @@ class Employee extends Model
         return $this->leaveQuotas()->where('year', date('Y'))->first();
     }
 
+    // Get leave quota for specific year
+    public function getLeaveQuotaForYear($year)
+    {
+        return $this->leaveQuotas()->where('year', $year)->first();
+    }
+
     // Check if employee can take leave
     public function canTakeLeave($leaveType, $days)
     {

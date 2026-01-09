@@ -14,6 +14,7 @@ class SoundEngineerEditing extends Model
 
     protected $fillable = [
         'episode_id',
+        'sound_engineer_recording_id',
         'sound_engineer_id',
         'vocal_file_path',
         'final_file_path',
@@ -43,6 +44,14 @@ class SoundEngineerEditing extends Model
     public function episode(): BelongsTo
     {
         return $this->belongsTo(Episode::class);
+    }
+
+    /**
+     * Relationship: Sound Engineer Recording
+     */
+    public function recording(): BelongsTo
+    {
+        return $this->belongsTo(SoundEngineerRecording::class, 'sound_engineer_recording_id');
     }
 
     /**

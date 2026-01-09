@@ -10,6 +10,7 @@ use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Schema;
 
 class GeneralAffairsController extends Controller
 {
@@ -232,14 +233,80 @@ class GeneralAffairsController extends Controller
             'processed_by' => $user->id
         ]);
 
-        // Notify requester
+        // Notify requester (Producer)
         $this->notifyRequester($budgetRequest, 'paid');
+
+        // Notify Producer bahwa dana telah diberikan
+        if ($budgetRequest->requestedBy) {
+            Notification::create([
+                'user_id' => $budgetRequest->requested_by,
+                'type' => 'fund_released',
+                'title' => 'Dana Telah Diberikan',
+                'message' => "Dana sebesar Rp " . number_format($budgetRequest->approved_amount ?? $budgetRequest->requested_amount, 0, ',', '.') . " untuk {$budgetRequest->title} telah diberikan oleh General Affairs.",
+                'data' => [
+                    'budget_request_id' => $budgetRequest->id,
+                    'program_id' => $budgetRequest->program_id,
+                    'amount' => $budgetRequest->approved_amount ?? $budgetRequest->requested_amount,
+                    'payment_receipt' => $request->payment_receipt,
+                    'payment_date' => $request->payment_date ?? now()
+                ]
+            ]);
+        }
 
         return response()->json([
             'success' => true,
-            'message' => 'Payment processed successfully',
+            'message' => 'Payment processed successfully. Producer has been notified.',
             'data' => $budgetRequest->load(['program', 'requestedBy', 'approvedBy'])
         ]);
+    }
+
+    /**
+     * Get budget requests from Creative Work (permohonan dana setelah Producer approve)
+     * GET /api/live-tv/general-affairs/budget-requests/from-creative-work
+     */
+    public function getCreativeWorkBudgetRequests(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'General Affairs') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $query = BudgetRequest::where('request_type', 'creative_work')
+                ->with(['program', 'requestedBy', 'approvedBy', 'processedBy']);
+
+            // Filter by status
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            } else {
+                // Default: show pending requests
+                $query->where('status', 'pending');
+            }
+
+            // Filter by program
+            if ($request->has('program_id')) {
+                $query->where('program_id', $request->program_id);
+            }
+
+            $requests = $query->orderBy('created_at', 'desc')->paginate(15);
+
+            return response()->json([
+                'success' => true,
+                'data' => $requests,
+                'message' => 'Creative work budget requests retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve budget requests',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -252,17 +319,30 @@ class GeneralAffairsController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
+        // Check if requested_amount column exists
+        $hasRequestedAmount = \Schema::hasColumn('budget_requests', 'requested_amount');
+        
         $stats = [
             'total_requests' => BudgetRequest::count(),
             'pending_requests' => BudgetRequest::where('status', 'pending')->count(),
             'approved_requests' => BudgetRequest::where('status', 'approved')->count(),
             'rejected_requests' => BudgetRequest::where('status', 'rejected')->count(),
             'paid_requests' => BudgetRequest::where('status', 'paid')->count(),
-            'total_requested_amount' => BudgetRequest::sum('requested_amount'),
-            'total_approved_amount' => BudgetRequest::where('status', 'approved')->sum('approved_amount'),
-            'total_paid_amount' => BudgetRequest::where('status', 'paid')->sum('approved_amount'),
-            'pending_amount' => BudgetRequest::where('status', 'pending')->sum('requested_amount')
         ];
+        
+        if ($hasRequestedAmount) {
+            $stats['total_requested_amount'] = BudgetRequest::sum('requested_amount');
+            $stats['total_approved_amount'] = BudgetRequest::where('status', 'approved')->sum('approved_amount');
+            $stats['total_paid_amount'] = BudgetRequest::where('status', 'paid')->sum('approved_amount');
+            $stats['pending_amount'] = BudgetRequest::where('status', 'pending')->sum('requested_amount');
+        } else {
+            // Fallback if column doesn't exist
+            $stats['total_requested_amount'] = 0;
+            $stats['total_approved_amount'] = 0;
+            $stats['total_paid_amount'] = 0;
+            $stats['pending_amount'] = 0;
+            \Log::warning('GeneralAffairsController::statistics - requested_amount column not found in budget_requests table');
+        }
 
         return response()->json([
             'success' => true,

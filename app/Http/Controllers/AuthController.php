@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class AuthController extends Controller
@@ -219,15 +220,38 @@ class AuthController extends Controller
             ], 401);
         }
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        // Revoke all existing tokens (optional, untuk security)
+        $user->tokens()->delete();
+
+        // Create token dengan expiration dari config (clamp ke max)
+        $expirationSeconds = config('sanctum.expiration', 1800); // Default 30 menit
+        $maxExpiration = config('sanctum.max_expiration', 86400); // Default 24 jam
+        $expirationSeconds = max(60, min($expirationSeconds, $maxExpiration)); // minimal 60 detik
+        $expiresAt = now()->addSeconds($expirationSeconds);
+        
+        $token = $user->createToken('auth_token', ['*'], $expiresAt)->plainTextToken;
+        
+        // Get token model untuk response
+        $tokenModel = $user->tokens()->latest()->first();
 
         return response()->json([
             'success' => true,
             'message' => 'Login berhasil',
             'data' => [
-                'user' => $user,
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'role' => $user->role,
+                    // Jangan expose password, token, dll
+                ],
                 'token' => $token,
-                'token_type' => 'Bearer'
+                'token_type' => 'Bearer',
+                'expires_in' => $expirationSeconds, // seconds
+                'expires_at' => $expiresAt->toIso8601String(),
+                'expires_at_timestamp' => $expiresAt->timestamp,
+                'remaining_seconds' => $expiresAt->diffInSeconds(now()),
             ]
         ]);
     }
@@ -393,6 +417,135 @@ class AuthController extends Controller
         }
     }
     
+    /**
+     * Refresh Token - Generate new token untuk user yang sudah authenticated
+     * POST /api/auth/refresh
+     */
+    public function refresh(Request $request)
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengguna tidak terautentikasi'
+                ], 401);
+            }
+
+            // Get current token
+            $currentToken = $request->user()->currentAccessToken();
+            
+            // Revoke current token
+            $currentToken->delete();
+
+            // Create new token dengan expiration dari config (clamp ke max)
+            $expirationSeconds = config('sanctum.expiration', 1800); // Default 30 menit
+            $maxExpiration = config('sanctum.max_expiration', 86400); // Default 24 jam
+            $expirationSeconds = max(60, min($expirationSeconds, $maxExpiration)); // minimal 60 detik
+            $expiresAt = now()->addSeconds($expirationSeconds);
+            
+            $token = $user->createToken('auth_token', ['*'], $expiresAt)->plainTextToken;
+
+            // Log audit
+            \Illuminate\Support\Facades\Log::channel('audit')->info('Token refreshed', [
+                'user_id' => $user->id,
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'timestamp' => now()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Token berhasil di-refresh',
+                'data' => [
+                    'token' => $token,
+                    'token_type' => 'Bearer',
+                    'expires_in' => $expirationSeconds,
+                    'expires_at' => $expiresAt->toIso8601String(),
+                    'expires_at_timestamp' => $expiresAt->timestamp,
+                    'remaining_seconds' => $expiresAt->diffInSeconds(now()),
+                    'user' => [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'phone' => $user->phone,
+                        'role' => $user->role,
+                        // Jangan expose password, token, dll
+                    ]
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Token refresh failed', [
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+                'ip_address' => $request->ip()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal refresh token'
+                // Jangan expose error details ke frontend
+            ], 500);
+        }
+    }
+
+    /**
+     * Check token status
+     * GET /api/auth/check-token
+     */
+    public function checkTokenStatus(Request $request)
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengguna tidak terautentikasi'
+                ], 401);
+            }
+
+            $currentToken = $request->user()->currentAccessToken();
+
+            if (!$currentToken) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Token tidak ditemukan'
+                ], 401);
+            }
+
+            $expiresAt = $currentToken->expires_at;
+            $remainingSeconds = $expiresAt ? max(0, now()->diffInSeconds($expiresAt, false)) : null;
+            $refreshThreshold = config('sanctum.refresh_threshold', 300);
+            $isExpiringSoon = $remainingSeconds !== null && $remainingSeconds <= $refreshThreshold;
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'is_valid' => true,
+                    'expires_at' => $expiresAt ? $expiresAt->toIso8601String() : null,
+                    'expires_at_timestamp' => $expiresAt ? $expiresAt->timestamp : null,
+                    'remaining_seconds' => $remainingSeconds,
+                    'remaining_minutes' => $remainingSeconds ? round($remainingSeconds / 60, 2) : null,
+                    'is_expiring_soon' => $isExpiringSoon,
+                    'refresh_threshold' => $refreshThreshold,
+                    'last_used_at' => $currentToken->last_used_at ? $currentToken->last_used_at->toIso8601String() : null,
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Check token status failed', [
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal check token status'
+            ], 500);
+        }
+    }
+
     public function deleteProfilePicture(Request $request)
     {
         try {
@@ -547,16 +700,76 @@ class AuthController extends Controller
                 ], 401);
             }
             
+            // Log untuk debugging
+            Log::info('Checking employee status', [
+                'user_id' => $user->id,
+                'user_email' => $user->email,
+                'user_role' => $user->role,
+                'employee_id' => $user->employee_id
+            ]);
+            
+            // Cek apakah employee_id null
+            if (is_null($user->employee_id)) {
+                Log::warning('User has no employee_id', [
+                    'user_id' => $user->id,
+                    'user_email' => $user->email,
+                    'user_role' => $user->role
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Akun Anda belum terhubung dengan data karyawan. Silakan hubungi HR untuk menghubungkan akun Anda.',
+                    'code' => 'EMPLOYEE_ID_NULL',
+                    'debug' => [
+                        'user_id' => $user->id,
+                        'user_email' => $user->email,
+                        'user_role' => $user->role
+                    ]
+                ], 403);
+            }
+            
             // Cek apakah user masih ada di tabel employee
             $employee = Employee::where('id', $user->employee_id)->first();
             
             if (!$employee) {
+                Log::warning('Employee not found', [
+                    'user_id' => $user->id,
+                    'user_email' => $user->email,
+                    'user_role' => $user->role,
+                    'employee_id' => $user->employee_id,
+                    'attempted_employee_id' => $user->employee_id
+                ]);
+                
+                // Coba cari employee dengan nama yang sama (untuk debugging)
+                $employeeByName = Employee::where('nama_lengkap', $user->name)->first();
+                
+                $debugInfo = [
+                    'user_id' => $user->id,
+                    'user_email' => $user->email,
+                    'user_name' => $user->name,
+                    'user_role' => $user->role,
+                    'employee_id_in_user' => $user->employee_id,
+                    'employee_found_by_name' => $employeeByName ? [
+                        'id' => $employeeByName->id,
+                        'nama_lengkap' => $employeeByName->nama_lengkap,
+                        'jabatan' => $employeeByName->jabatan_saat_ini
+                    ] : null
+                ];
+                
                 return response()->json([
                     'success' => false,
-                    'message' => 'Maaf, Anda sudah tidak terdaftar sebagai karyawan Hope Channel Indonesia',
-                    'code' => 'EMPLOYEE_NOT_FOUND'
+                    'message' => 'Maaf, Anda sudah tidak terdaftar sebagai karyawan Hope Channel Indonesia. Akun Anda telah dinonaktifkan. Silakan hubungi HR untuk informasi lebih lanjut.',
+                    'code' => 'EMPLOYEE_NOT_FOUND',
+                    'debug' => $debugInfo
                 ], 403);
             }
+            
+            Log::info('Employee found', [
+                'user_id' => $user->id,
+                'employee_id' => $employee->id,
+                'employee_name' => $employee->nama_lengkap,
+                'jabatan' => $employee->jabatan_saat_ini
+            ]);
             
             return response()->json([
                 'success' => true,
@@ -573,6 +786,12 @@ class AuthController extends Controller
             ]);
             
         } catch (\Exception $e) {
+            Log::error('Error checking employee status', [
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengecek status employee',

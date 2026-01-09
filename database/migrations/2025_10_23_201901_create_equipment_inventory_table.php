@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('equipment_inventory', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('equipment_inventory')) {
+            Schema::create('equipment_inventory', function (Blueprint $table) {
             $table->id();
             $table->foreignId('episode_id')->constrained('episodes')->onDelete('cascade');
             $table->string('equipment_type');
@@ -29,7 +31,8 @@ return new class extends Migration
             $table->foreignId('created_by')->constrained('users')->onDelete('cascade');
             $table->softDeletes();
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

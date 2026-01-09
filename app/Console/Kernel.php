@@ -75,6 +75,14 @@ class Kernel extends ConsoleKernel
                  ->name('annual-leave-reset')
                  ->description('Reset jatah cuti tahunan untuk semua karyawan dengan standar default baru')
                  ->appendOutputTo(storage_path('logs/annual-leave-reset.log'));
+
+        // Cleanup expired tokens setiap jam
+        $schedule->command('tokens:cleanup-expired')
+                 ->hourly()
+                 ->withoutOverlapping()
+                 ->name('cleanup-expired-tokens')
+                 ->description('Cleanup expired dan inactive personal access tokens')
+                 ->appendOutputTo(storage_path('logs/token-cleanup.log'));
     }
 
     /**

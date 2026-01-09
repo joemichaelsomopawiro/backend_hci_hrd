@@ -26,9 +26,8 @@ class DatabaseEnumService
         'Sound Engineer', 'Sound Engineer Recording', 'Sound Engineer Editing',
         'Quality Control', 
         'Art & Set Properti',
-        'Editor Promosi', 'Editor Promotion',
+        'Editor Promotion',
         'Broadcasting',
-        'Design Grafis',
         // Default
         'Employee'
     ];

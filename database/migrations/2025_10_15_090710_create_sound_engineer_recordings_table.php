@@ -11,7 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('sound_engineer_recordings', function (Blueprint $table) {
+        // Check if table already exists
+        if (!Schema::hasTable('sound_engineer_recordings')) {
+            Schema::create('sound_engineer_recordings', function (Blueprint $table) {
             $table->id();
             $table->foreignId('submission_id')->constrained('music_submissions')->onDelete('cascade');
             $table->date('recording_date');
@@ -23,7 +25,8 @@ return new class extends Migration
             $table->text('completion_notes')->nullable();
             $table->foreignId('created_by')->constrained('users')->onDelete('cascade');
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**
