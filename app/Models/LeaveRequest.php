@@ -60,7 +60,9 @@ class LeaveRequest extends Model
     public function updateLeaveQuota() 
     { 
         if ($this->overall_status === 'approved') {
-            $quota = $this->employee->getCurrentLeaveQuota(); 
+            // Gunakan tahun dari tanggal mulai cuti, bukan tahun berjalan
+            $year = Carbon::parse($this->start_date)->year;
+            $quota = $this->employee->getLeaveQuotaForYear($year); 
             if ($quota) { 
                 switch ($this->leave_type) { 
                     case 'annual': 
