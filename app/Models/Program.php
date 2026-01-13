@@ -242,6 +242,197 @@ class Program extends Model
     }
 
     /**
+     * Generate 52 episodes untuk tahun tertentu
+     * Episode number RESET ke 1 setiap tahun baru (seperti jatah cuti)
+     * @param int $year Tahun yang akan di-generate
+     * @return array Info tentang episode yang di-generate
+     */
+    public function generateEpisodesForYear(int $year): array
+    {
+        // Cek apakah episode untuk tahun ini sudah ada
+        $yearStart = Carbon::createFromDate($year, 1, 1, 'UTC')->setTime(0, 0, 0);
+        $yearEnd = Carbon::createFromDate($year, 12, 31, 'UTC')->setTime(23, 59, 59);
+        
+        $existingEpisodes = $this->episodes()
+            ->whereBetween('air_date', [$yearStart, $yearEnd])
+            ->whereNull('deleted_at')
+            ->count();
+        
+        if ($existingEpisodes > 0) {
+            return [
+                'success' => false,
+                'message' => "Episodes untuk tahun {$year} sudah ada ({$existingEpisodes} episode)",
+                'year' => $year,
+                'existing_count' => $existingEpisodes
+            ];
+        }
+        
+        // Cari Sabtu pertama di bulan Januari tahun tersebut
+        $firstSaturday = Carbon::createFromDate($year, 1, 1, 'UTC');
+        $firstSaturday->setTime(0, 0, 0);
+        
+        // Jika tanggal 1 bukan Sabtu, hitung hari ke depan untuk sampai Sabtu pertama
+        if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
+            $dayOfWeek = $firstSaturday->dayOfWeek;
+            $daysToAdd = (6 - $dayOfWeek + 7) % 7;
+            if ($daysToAdd === 0) $daysToAdd = 7;
+            $firstSaturday->addDays($daysToAdd);
+        }
+        
+        // Pastikan timezone UTC dan time 00:00:00
+        $firstSaturday->setTime(0, 0, 0)->utc();
+        
+        // Episode number RESET ke 1 setiap tahun (seperti jatah cuti)
+        // Setiap tahun baru, episode dimulai dari Episode 1 lagi
+        $startEpisodeNumber = 1;
+        
+        $generatedEpisodes = [];
+        
+        // Generate 52 episode untuk tahun tersebut (Episode 1-52)
+        for ($i = 0; $i < 52; $i++) {
+            $episodeNumber = $startEpisodeNumber + $i; // Episode 1, 2, 3, ..., 52
+            
+            // Hitung air_date: Episode pertama = Sabtu pertama, berikutnya setiap 7 hari
+            $airDate = $firstSaturday->copy();
+            if ($i > 0) {
+                $airDate->addWeeks($i);
+            }
+            $airDate->utc()->setTime(0, 0, 0);
+            
+            // Production date = 7 hari sebelum tayang
+            $productionDate = $airDate->copy()->subDays(7);
+            $productionDate->utc()->setTime(0, 0, 0);
+            
+            // Format untuk insert
+            $airDateStr = $airDate->format('Y-m-d H:i:s');
+            $productionDateStr = $productionDate->format('Y-m-d H:i:s');
+            
+            // Insert episode
+            $episodeId = \DB::table('episodes')->insertGetId([
+                'program_id' => $this->id,
+                'episode_number' => $episodeNumber,
+                'title' => "Episode {$episodeNumber}",
+                'description' => "Episode {$episodeNumber} dari program {$this->name} (Tahun {$year})",
+                'air_date' => \DB::raw("'{$airDateStr}'"),
+                'production_date' => \DB::raw("'{$productionDateStr}'"),
+                'status' => 'draft',
+                'current_workflow_state' => 'program_created',
+                'format_type' => 'weekly',
+                'created_at' => now(),
+                'updated_at' => now()
+            ]);
+            
+            // Load episode untuk generate deadlines
+            $episode = \App\Models\Episode::find($episodeId);
+            $episode->generateDeadlines();
+            
+            $generatedEpisodes[] = [
+                'episode_number' => $episodeNumber,
+                'air_date' => $airDateStr,
+                'production_date' => $productionDateStr
+            ];
+        }
+        
+        return [
+            'success' => true,
+            'message' => "Berhasil generate 52 episode untuk tahun {$year} (Episode 1-52)",
+            'year' => $year,
+            'start_episode_number' => 1,
+            'end_episode_number' => 52,
+            'first_saturday' => $firstSaturday->format('Y-m-d'),
+            'generated_count' => count($generatedEpisodes),
+            'episodes' => $generatedEpisodes
+        ];
+    }
+    
+    /**
+     * Generate episode untuk tahun berikutnya (auto-detect)
+     * Sistem akan otomatis detect tahun berikutnya berdasarkan episode terakhir
+     * Episode number akan RESET ke 1 (seperti jatah cuti)
+     * @return array Info tentang episode yang di-generate
+     */
+    public function generateNextYearEpisodes(): array
+    {
+        // Cari episode terakhir untuk detect tahun berikutnya
+        $lastEpisode = $this->episodes()
+            ->whereNull('deleted_at')
+            ->orderBy('air_date', 'desc')
+            ->first();
+        
+        if (!$lastEpisode) {
+            // Jika belum ada episode, generate untuk tahun start_date
+            $startDate = Carbon::parse($this->start_date);
+            $year = $startDate->year;
+            return $this->generateEpisodesForYear($year);
+        }
+        
+        // Ambil tahun dari episode terakhir dan tambah 1
+        $lastAirDate = Carbon::parse($lastEpisode->air_date);
+        $nextYear = $lastAirDate->year + 1;
+        
+        // Generate episode untuk tahun berikutnya (Episode number akan reset ke 1)
+        return $this->generateEpisodesForYear($nextYear);
+    }
+    
+    /**
+     * Check apakah perlu generate episode untuk tahun berikutnya
+     * @return array Info tentang status dan tahun berikutnya
+     */
+    public function checkNextYearEpisodes(): array
+    {
+        $lastEpisode = $this->episodes()
+            ->whereNull('deleted_at')
+            ->orderBy('air_date', 'desc')
+            ->first();
+        
+        if (!$lastEpisode) {
+            return [
+                'needs_generation' => false,
+                'message' => 'Belum ada episode untuk program ini',
+                'next_year' => null
+            ];
+        }
+        
+        $lastAirDate = Carbon::parse($lastEpisode->air_date);
+        $nextYear = $lastAirDate->year + 1;
+        $currentYear = Carbon::now()->year;
+        
+        // Cek apakah tahun berikutnya sudah ada episode
+        $yearStart = Carbon::createFromDate($nextYear, 1, 1, 'UTC')->setTime(0, 0, 0);
+        $yearEnd = Carbon::createFromDate($nextYear, 12, 31, 'UTC')->setTime(23, 59, 59);
+        
+        $existingEpisodes = $this->episodes()
+            ->whereBetween('air_date', [$yearStart, $yearEnd])
+            ->whereNull('deleted_at')
+            ->count();
+        
+        // Cari Sabtu pertama di tahun berikutnya
+        $firstSaturday = Carbon::createFromDate($nextYear, 1, 1, 'UTC');
+        $firstSaturday->setTime(0, 0, 0);
+        
+        if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
+            $dayOfWeek = $firstSaturday->dayOfWeek;
+            $daysToAdd = (6 - $dayOfWeek + 7) % 7;
+            if ($daysToAdd === 0) $daysToAdd = 7;
+            $firstSaturday->addDays($daysToAdd);
+        }
+        
+        return [
+            'needs_generation' => $existingEpisodes === 0 && $nextYear <= $currentYear + 1,
+            'next_year' => $nextYear,
+            'first_saturday' => $firstSaturday->format('Y-m-d'),
+            'last_episode_date' => $lastAirDate->format('Y-m-d'),
+            'last_episode_number' => $lastEpisode->episode_number,
+            'existing_episodes_next_year' => $existingEpisodes,
+            'message' => $existingEpisodes > 0 
+                ? "Episode untuk tahun {$nextYear} sudah ada ({$existingEpisodes} episode)"
+                : ($nextYear > $currentYear + 1 
+                    ? "Tahun {$nextYear} masih terlalu jauh, generate saat mendekati tahun tersebut"
+                    : "Perlu generate episode untuk tahun {$nextYear} (Episode akan reset ke 1-52)")
+        ];
+    }
+
+    /**
      * Get progress percentage
      */
     public function getProgressPercentageAttribute(): float

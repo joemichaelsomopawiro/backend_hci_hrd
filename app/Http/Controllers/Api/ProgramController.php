@@ -765,20 +765,55 @@ class ProgramController extends Controller
     /**
      * Get program episodes
      */
-    public function episodes(int $id): JsonResponse
+    public function episodes(int $id, Request $request): JsonResponse
     {
         $program = Program::findOrFail($id);
         
-        // Query episodes langsung untuk memastikan tidak ada masalah dengan relasi
-        $episodes = Episode::where('program_id', $id)
+        // Query episodes dengan filter tahun (jika ada)
+        $query = Episode::where('program_id', $id)
             ->whereNull('deleted_at')
-            ->with(['deadlines', 'workflowStates'])
-            ->orderBy('episode_number')
+            ->with(['deadlines', 'workflowStates']);
+        
+        // Filter by year (jika ada)
+        if ($request->has('year')) {
+            $year = $request->get('year');
+            $yearStart = \Carbon\Carbon::createFromDate($year, 1, 1, 'UTC')->setTime(0, 0, 0);
+            $yearEnd = \Carbon\Carbon::createFromDate($year, 12, 31, 'UTC')->setTime(23, 59, 59);
+            $query->whereBetween('air_date', [$yearStart, $yearEnd]);
+        }
+        
+        // Filter by status (jika ada)
+        if ($request->has('status')) {
+            $query->where('status', $request->get('status'));
+        }
+        
+        $episodes = $query->orderBy('air_date', 'asc')
+            ->orderBy('episode_number', 'asc')
             ->get();
+        
+        // Group by year untuk response yang lebih terstruktur
+        $groupedByYear = $episodes->groupBy(function ($episode) {
+            return \Carbon\Carbon::parse($episode->air_date)->year;
+        })->map(function ($yearEpisodes, $year) {
+            return [
+                'year' => (int)$year,
+                'episodes' => $yearEpisodes,
+                'count' => $yearEpisodes->count(),
+                'first_episode_number' => $yearEpisodes->min('episode_number'),
+                'last_episode_number' => $yearEpisodes->max('episode_number')
+            ];
+        });
         
         return response()->json([
             'success' => true,
-            'data' => $episodes,
+            'data' => [
+                'program_id' => $id,
+                'program_name' => $program->name,
+                'episodes' => $episodes,
+                'grouped_by_year' => $groupedByYear,
+                'total_episodes' => $episodes->count(),
+                'years_available' => $groupedByYear->keys()->sort()->values()
+            ],
             'message' => 'Program episodes retrieved successfully'
         ]);
     }

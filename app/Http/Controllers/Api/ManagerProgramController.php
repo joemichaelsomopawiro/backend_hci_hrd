@@ -345,6 +345,357 @@ class ManagerProgramController extends Controller
     }
     
     /**
+     * Generate episodes untuk tahun berikutnya (auto-detect tahun)
+     * Sistem akan otomatis detect tahun berikutnya dan generate 52 episode
+     * Episode number akan continue dari episode terakhir
+     */
+    public function generateNextYearEpisodes(Request $request, int $programId): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can generate next year episodes'
+            ], 403);
+        }
+        
+        try {
+            $program = Program::findOrFail($programId);
+            
+            // Check status program
+            if (!in_array($program->status, ['active', 'approved', 'in_production'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Program harus dalam status active, approved, atau in_production untuk generate episode tahun berikutnya'
+                ], 400);
+            }
+            
+            // Check apakah perlu generate
+            $checkResult = $program->checkNextYearEpisodes();
+            
+            if (!$checkResult['needs_generation']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $checkResult['message'],
+                    'data' => $checkResult
+                ], 400);
+            }
+            
+            // Generate episode untuk tahun berikutnya
+            $result = $program->generateNextYearEpisodes();
+            
+            if (!$result['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $result['message'],
+                    'data' => $result
+                ], 400);
+            }
+            
+            // Notifikasi ke production team
+            if ($program->productionTeam) {
+                $teamMembers = $program->productionTeam->members()->where('is_active', true)->get();
+                foreach ($teamMembers as $member) {
+                    Notification::create([
+                        'user_id' => $member->user_id,
+                        'type' => 'episodes_generated',
+                        'title' => 'Episode Tahun Berikutnya Dibuat',
+                        'message' => "52 episode untuk tahun {$result['year']} dari program '{$program->name}' telah dibuat otomatis",
+                        'data' => [
+                            'program_id' => $program->id,
+                            'year' => $result['year'],
+                            'total_episodes' => $result['generated_count'],
+                            'start_episode_number' => $result['start_episode_number'],
+                            'end_episode_number' => $result['end_episode_number']
+                        ],
+                        'program_id' => $program->id
+                    ]);
+                }
+            }
+            
+            return response()->json([
+                'success' => true,
+                'message' => "Berhasil generate 52 episode untuk tahun {$result['year']}",
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to generate next year episodes: ' . $e->getMessage(), [
+                'program_id' => $programId,
+                'error' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to generate next year episodes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Generate episodes untuk tahun tertentu
+     * @param int $year Tahun yang akan di-generate (opsional, default: tahun berikutnya)
+     */
+    public function generateEpisodesForYear(Request $request, int $programId): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can generate episodes for specific year'
+            ], 403);
+        }
+        
+        $validator = Validator::make($request->all(), [
+            'year' => 'required|integer|min:2020|max:2100'
+        ]);
+        
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+        
+        try {
+            $program = Program::findOrFail($programId);
+            $year = $request->input('year');
+            
+            // Check status program
+            if (!in_array($program->status, ['active', 'approved', 'in_production'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Program harus dalam status active, approved, atau in_production'
+                ], 400);
+            }
+            
+            // Generate episode untuk tahun tertentu
+            $result = $program->generateEpisodesForYear($year);
+            
+            if (!$result['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $result['message'],
+                    'data' => $result
+                ], 400);
+            }
+            
+            // Notifikasi ke production team
+            if ($program->productionTeam) {
+                $teamMembers = $program->productionTeam->members()->where('is_active', true)->get();
+                foreach ($teamMembers as $member) {
+                    Notification::create([
+                        'user_id' => $member->user_id,
+                        'type' => 'episodes_generated',
+                        'title' => 'Episode Tahun Dibuat',
+                        'message' => "52 episode untuk tahun {$year} dari program '{$program->name}' telah dibuat",
+                        'data' => [
+                            'program_id' => $program->id,
+                            'year' => $year,
+                            'total_episodes' => $result['generated_count'],
+                            'start_episode_number' => $result['start_episode_number'],
+                            'end_episode_number' => $result['end_episode_number']
+                        ],
+                        'program_id' => $program->id
+                    ]);
+                }
+            }
+            
+            return response()->json([
+                'success' => true,
+                'message' => "Berhasil generate 52 episode untuk tahun {$year}",
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to generate episodes for year: ' . $e->getMessage(), [
+                'program_id' => $programId,
+                'year' => $request->input('year'),
+                'error' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to generate episodes for year',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Check status episode untuk tahun berikutnya
+     * Endpoint untuk cek apakah perlu generate episode tahun berikutnya
+     */
+    public function checkNextYearEpisodes(int $programId): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can check next year episodes status'
+            ], 403);
+        }
+        
+        try {
+            $program = Program::findOrFail($programId);
+            $result = $program->checkNextYearEpisodes();
+            
+            return response()->json([
+                'success' => true,
+                'data' => $result,
+                'message' => $result['needs_generation'] 
+                    ? 'Perlu generate episode untuk tahun berikutnya' 
+                    : 'Tidak perlu generate episode untuk tahun berikutnya'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to check next year episodes status',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Get list tahun yang tersedia untuk program (untuk dropdown filter)
+     * Data episode tahun sebelumnya tetap tersimpan, tidak dihapus
+     */
+    public function getProgramYears(int $programId): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can view program years'
+            ], 403);
+        }
+        
+        try {
+            $program = Program::findOrFail($programId);
+            
+            // Get semua tahun yang memiliki episode (dari air_date)
+            $years = Episode::where('program_id', $programId)
+                ->whereNull('deleted_at')
+                ->whereNotNull('air_date')
+                ->selectRaw('YEAR(air_date) as year')
+                ->distinct()
+                ->orderBy('year', 'desc')
+                ->pluck('year')
+                ->map(function ($year) use ($programId) {
+                    // Hitung jumlah episode per tahun
+                    $yearStart = \Carbon\Carbon::createFromDate($year, 1, 1, 'UTC')->setTime(0, 0, 0);
+                    $yearEnd = \Carbon\Carbon::createFromDate($year, 12, 31, 'UTC')->setTime(23, 59, 59);
+                    
+                    $episodes = Episode::where('program_id', $programId)
+                        ->whereNull('deleted_at')
+                        ->whereBetween('air_date', [$yearStart, $yearEnd])
+                        ->get();
+                    
+                    return [
+                        'year' => (int)$year,
+                        'episode_count' => $episodes->count(),
+                        'first_episode_number' => $episodes->min('episode_number'),
+                        'last_episode_number' => $episodes->max('episode_number'),
+                        'first_air_date' => $episodes->min('air_date') ? \Carbon\Carbon::parse($episodes->min('air_date'))->format('Y-m-d') : null,
+                        'last_air_date' => $episodes->max('air_date') ? \Carbon\Carbon::parse($episodes->max('air_date'))->format('Y-m-d') : null
+                    ];
+                })
+                ->values();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'program_id' => $programId,
+                    'program_name' => $program->name,
+                    'years' => $years,
+                    'total_years' => $years->count(),
+                    'current_year' => \Carbon\Carbon::now()->year
+                ],
+                'message' => 'Program years retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get program years',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Get episodes grouped by year untuk program tertentu
+     * Berguna untuk dropdown filter per tahun
+     */
+    public function getEpisodesByYear(int $programId, Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can view episodes by year'
+            ], 403);
+        }
+        
+        try {
+            $program = Program::findOrFail($programId);
+            
+            // Get semua episode untuk program ini
+            $episodes = Episode::where('program_id', $programId)
+                ->whereNull('deleted_at')
+                ->with(['deadlines', 'workflowStates'])
+                ->orderBy('air_date', 'asc')
+                ->orderBy('episode_number', 'asc')
+                ->get();
+            
+            // Group by year
+            $groupedByYear = $episodes->groupBy(function ($episode) {
+                return \Carbon\Carbon::parse($episode->air_date)->year;
+            })->map(function ($yearEpisodes, $year) {
+                return [
+                    'year' => (int)$year,
+                    'episodes' => $yearEpisodes->values(),
+                    'count' => $yearEpisodes->count(),
+                    'first_episode_number' => $yearEpisodes->min('episode_number'),
+                    'last_episode_number' => $yearEpisodes->max('episode_number'),
+                    'first_air_date' => $yearEpisodes->min('air_date') ? \Carbon\Carbon::parse($yearEpisodes->min('air_date'))->format('Y-m-d') : null,
+                    'last_air_date' => $yearEpisodes->max('air_date') ? \Carbon\Carbon::parse($yearEpisodes->max('air_date'))->format('Y-m-d') : null
+                ];
+            })->sortByDesc('year')->values();
+            
+            // Filter by year jika ada parameter
+            if ($request->has('year')) {
+                $selectedYear = $request->get('year');
+                $groupedByYear = $groupedByYear->filter(function ($yearData) use ($selectedYear) {
+                    return $yearData['year'] == $selectedYear;
+                })->values();
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'program_id' => $programId,
+                    'program_name' => $program->name,
+                    'episodes_by_year' => $groupedByYear,
+                    'total_episodes' => $episodes->count(),
+                    'total_years' => $groupedByYear->count()
+                ],
+                'message' => 'Episodes grouped by year retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get episodes by year',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
      * Manager Program Dashboard
      */
     public function dashboard(Request $request): JsonResponse

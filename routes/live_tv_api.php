@@ -73,7 +73,7 @@ Route::prefix('programs')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     
     // Program Analytics Routes
     Route::get('/{id}/analytics', [ProgramController::class, 'analytics'])->middleware('throttle:60,1');
-    Route::get('/{id}/episodes', [ProgramController::class, 'episodes'])->middleware('throttle:60,1');
+    Route::get('/{id}/episodes', [ProgramController::class, 'episodes'])->middleware('throttle:60,1'); // Support filter ?year=2026
 });
 
 // Program Proposal Routes
@@ -102,6 +102,9 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     
     // Program Management
     Route::post('/programs/{programId}/generate-episodes', [ManagerProgramController::class, 'generateEpisodes'])->middleware('throttle:sensitive');
+    Route::post('/programs/{programId}/generate-next-year-episodes', [ManagerProgramController::class, 'generateNextYearEpisodes'])->middleware('throttle:sensitive');
+    Route::post('/programs/{programId}/generate-episodes-for-year', [ManagerProgramController::class, 'generateEpisodesForYear'])->middleware('throttle:sensitive');
+    Route::get('/programs/{programId}/check-next-year-episodes', [ManagerProgramController::class, 'checkNextYearEpisodes'])->middleware('throttle:60,1');
     Route::post('/programs/{programId}/close', [ManagerProgramController::class, 'closeProgram'])->middleware('throttle:sensitive');
     
     // Performance & Views Tracking (NEW)
@@ -114,6 +117,10 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     
     // Monitoring & Tracking
     Route::get('/episodes/{episodeId}/monitor-workflow', [ManagerProgramController::class, 'monitorEpisodeWorkflow'])->middleware('throttle:60,1');
+    
+    // Episode Filter by Year (Data tahun sebelumnya tetap tersimpan)
+    Route::get('/programs/{programId}/years', [ManagerProgramController::class, 'getProgramYears'])->middleware('throttle:60,1');
+    Route::get('/programs/{programId}/episodes-by-year', [ManagerProgramController::class, 'getEpisodesByYear'])->middleware('throttle:60,1'); // Support filter ?year=2026
     
     // Schedule Options (NEW)
     Route::post('/programs/{programId}/submit-schedule-options', [ManagerProgramController::class, 'submitScheduleOptions'])->middleware('throttle:sensitive');

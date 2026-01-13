@@ -234,15 +234,549 @@ createProgram({
 ```
 
 #### Important Notes
-- **Auto-generate episodes**: 52 episode otomatis dibuat saat program dibuat
+- **Auto-generate episodes**: 52 episode otomatis dibuat saat program dibuat (Episode 1-52)
 - **Sabtu pertama**: Sistem otomatis detect Sabtu pertama di tahun program
 - **Deadline auto-generate**: Setiap episode otomatis punya deadline untuk semua role
 - **File upload**: Proposal file optional, max 10MB
 - **Status default**: Program dibuat dengan status `draft`
+- **Program per tahun**: Setiap tahun program baru, episode dimulai dari Episode 1-52 lagi (reset seperti jatah cuti)
+- **Generate tahun berikutnya**: Gunakan endpoint `generate-next-year-episodes` untuk generate episode tahun berikutnya
 
 ---
 
-### 2. **SET/UPDATE TARGET VIEWS PER PROGRAM**
+### 2. **GENERATE EPISODE UNTUK TAHUN BERIKUTNYA (Auto-Detect)**
+
+#### Endpoint
+```
+POST /api/live-tv/manager-program/programs/{programId}/generate-next-year-episodes
+```
+
+#### HTTP Method
+`POST`
+
+#### Description
+Generate 52 episode untuk tahun berikutnya secara otomatis. Sistem akan:
+- **Auto-detect tahun berikutnya** berdasarkan episode terakhir
+- **Detect Sabtu pertama** di tahun berikutnya
+- **RESET episode number ke 1** setiap tahun baru (seperti jatah cuti)
+- Generate deadline otomatis untuk semua episode
+
+**Important**: Episode number akan **reset ke 1** setiap tahun baru. Setiap tahun program baru, episode dimulai dari Episode 1-52 lagi.
+
+#### Request Body
+Tidak ada (sistem auto-detect tahun berikutnya)
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "message": "Berhasil generate 52 episode untuk tahun 2027",
+  "data": {
+    "success": true,
+    "message": "Berhasil generate 52 episode untuk tahun 2027",
+    "year": 2027,
+    "start_episode_number": 1,
+    "end_episode_number": 52,
+    "first_saturday": "2027-01-02",
+    "generated_count": 52,
+    "episodes": [
+      {
+        "episode_number": 1,
+        "air_date": "2027-01-02 00:00:00",
+        "production_date": "2026-12-26 00:00:00"
+      },
+      {
+        "episode_number": 2,
+        "air_date": "2027-01-09 00:00:00",
+        "production_date": "2027-01-02 00:00:00"
+      }
+    ]
+  }
+}
+```
+
+#### Error Response (400 Bad Request)
+```json
+{
+  "success": false,
+  "message": "Episode untuk tahun 2027 sudah ada (52 episode)",
+  "data": {
+    "needs_generation": false,
+    "next_year": 2027,
+    "first_saturday": "2027-01-02",
+    "existing_episodes_next_year": 52
+  }
+}
+```
+
+#### Frontend Integration Example
+```javascript
+// Generate episode untuk tahun berikutnya
+const generateNextYearEpisodes = async (programId) => {
+  try {
+    const response = await axios.post(
+      `/api/live-tv/manager-program/programs/${programId}/generate-next-year-episodes`,
+      {},
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      }
+    );
+    
+    console.log('Next year episodes generated:', response.data);
+    console.log('Year:', response.data.data.year);
+    console.log('Episode range:', response.data.data.start_episode_number, '-', response.data.data.end_episode_number); // Always 1-52
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error generating next year episodes:', error.response.data);
+    throw error;
+  }
+};
+```
+
+---
+
+### 3. **GENERATE EPISODE UNTUK TAHUN TERTENTU**
+
+#### Endpoint
+```
+POST /api/live-tv/manager-program/programs/{programId}/generate-episodes-for-year
+```
+
+#### HTTP Method
+`POST`
+
+#### Description
+Generate 52 episode untuk tahun tertentu. Sistem akan:
+- Generate episode untuk tahun yang di-specify
+- **Detect Sabtu pertama** di tahun tersebut
+- **RESET episode number ke 1** (Episode 1-52 untuk tahun tersebut)
+- Generate deadline otomatis
+
+**Important**: Episode number akan **reset ke 1** setiap tahun baru. Setiap tahun program baru, episode dimulai dari Episode 1-52 lagi.
+
+#### Request Body
+```json
+{
+  "year": 2027
+}
+```
+
+#### Request Validation
+- `year` (required, integer, min: 2020, max: 2100)
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "message": "Berhasil generate 52 episode untuk tahun 2027",
+  "data": {
+    "success": true,
+    "message": "Berhasil generate 52 episode untuk tahun 2027",
+    "year": 2027,
+    "start_episode_number": 1,
+    "end_episode_number": 52,
+    "first_saturday": "2027-01-02",
+    "generated_count": 52
+  }
+}
+```
+
+#### Error Response (422 Validation Error)
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "errors": {
+    "year": [
+      "The year must be an integer.",
+      "The year must be at least 2020."
+    ]
+  }
+}
+```
+
+#### Frontend Integration Example
+```javascript
+// Generate episode untuk tahun tertentu
+const generateEpisodesForYear = async (programId, year) => {
+  try {
+    const response = await axios.post(
+      `/api/live-tv/manager-program/programs/${programId}/generate-episodes-for-year`,
+      { year },
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      }
+    );
+    
+    console.log('Episodes generated for year:', response.data.data.year);
+    return response.data;
+  } catch (error) {
+    console.error('Error generating episodes:', error.response.data);
+    throw error;
+  }
+};
+```
+
+---
+
+### 4. **CHECK STATUS EPISODE TAHUN BERIKUTNYA**
+
+#### Endpoint
+```
+GET /api/live-tv/manager-program/programs/{programId}/check-next-year-episodes
+```
+
+#### HTTP Method
+`GET`
+
+#### Description
+Cek apakah perlu generate episode untuk tahun berikutnya. Endpoint ini berguna untuk:
+- Menampilkan status di dashboard
+- Memberikan warning jika perlu generate episode
+- Menampilkan info tentang tahun berikutnya dan Sabtu pertama
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "message": "Perlu generate episode untuk tahun berikutnya",
+  "data": {
+    "needs_generation": true,
+    "next_year": 2027,
+    "first_saturday": "2027-01-02",
+    "last_episode_date": "2026-12-26",
+    "last_episode_number": 52,
+    "existing_episodes_next_year": 0,
+    "message": "Perlu generate episode untuk tahun 2027 (Episode akan reset ke 1-52)"
+  }
+}
+```
+
+#### Response jika sudah ada episode
+```json
+{
+  "success": true,
+  "message": "Tidak perlu generate episode untuk tahun berikutnya",
+  "data": {
+    "needs_generation": false,
+    "next_year": 2027,
+    "first_saturday": "2027-01-02",
+    "last_episode_date": "2026-12-26",
+    "last_episode_number": 52,
+    "existing_episodes_next_year": 52,
+    "message": "Episode untuk tahun 2027 sudah ada (52 episode)"
+  }
+}
+```
+
+#### Frontend Integration Example
+```javascript
+// Check status episode tahun berikutnya
+const checkNextYearEpisodes = async (programId) => {
+  try {
+    const response = await axios.get(
+      `/api/live-tv/manager-program/programs/${programId}/check-next-year-episodes`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      }
+    );
+    
+    const { needs_generation, next_year, first_saturday, message } = response.data.data;
+    
+    if (needs_generation) {
+      console.log(`⚠️ Perlu generate episode untuk tahun ${next_year}`);
+      console.log(`📅 Sabtu pertama: ${first_saturday}`);
+      // Tampilkan warning di UI
+    } else {
+      console.log(`✅ ${message}`);
+    }
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error checking next year episodes:', error.response.data);
+    throw error;
+  }
+};
+```
+
+#### Important Notes
+- **Auto-detect tahun**: Sistem otomatis detect tahun berikutnya dari episode terakhir
+- **Sabtu pertama**: Sistem otomatis detect Sabtu pertama di tahun tersebut
+- **RESET numbering**: Episode number akan **reset ke 1** setiap tahun baru (seperti jatah cuti)
+- **Program per tahun**: Setiap tahun program baru, episode dimulai dari Episode 1-52 lagi
+- **Validation**: Sistem akan cek apakah episode untuk tahun tersebut sudah ada
+- **Status program**: Program harus dalam status `active`, `approved`, atau `in_production`
+
+#### Contoh Timeline
+- **Tahun 2026**: Episode 1-52 (Sabtu pertama: 3 Januari 2026)
+- **Tahun 2027**: Episode 1-52 lagi (Sabtu pertama: 2 Januari 2027) - **RESET ke 1**
+- **Tahun 2028**: Episode 1-52 lagi (Sabtu pertama: 7 Januari 2028) - **RESET ke 1**
+
+---
+
+### 5. **GET LIST TAHUN YANG TERSEDIA (Untuk Dropdown Filter)**
+
+#### Endpoint
+```
+GET /api/live-tv/manager-program/programs/{programId}/years
+```
+
+#### HTTP Method
+`GET`
+
+#### Description
+Mendapatkan list tahun yang tersedia untuk program tertentu. Berguna untuk dropdown filter per tahun. **Data episode tahun sebelumnya tetap tersimpan**, tidak dihapus.
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "data": {
+    "program_id": 1,
+    "program_name": "Hope Musik",
+    "years": [
+      {
+        "year": 2027,
+        "episode_count": 52,
+        "first_episode_number": 1,
+        "last_episode_number": 52,
+        "first_air_date": "2027-01-02",
+        "last_air_date": "2027-12-25"
+      },
+      {
+        "year": 2026,
+        "episode_count": 52,
+        "first_episode_number": 1,
+        "last_episode_number": 52,
+        "first_air_date": "2026-01-03",
+        "last_air_date": "2026-12-26"
+      }
+    ],
+    "total_years": 2,
+    "current_year": 2027
+  },
+  "message": "Program years retrieved successfully"
+}
+```
+
+#### Frontend Integration Example
+```javascript
+// Get list tahun untuk dropdown filter
+const getProgramYears = async (programId) => {
+  try {
+    const response = await axios.get(
+      `/api/live-tv/manager-program/programs/${programId}/years`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      }
+    );
+    
+    const years = response.data.data.years;
+    console.log('Available years:', years.map(y => y.year)); // [2027, 2026]
+    
+    // Populate dropdown
+    // <select>
+    //   {years.map(year => <option value={year.year}>{year.year} ({year.episode_count} episodes)</option>)}
+    // </select>
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error getting program years:', error.response.data);
+    throw error;
+  }
+};
+```
+
+---
+
+### 6. **GET EPISODES GROUPED BY YEAR**
+
+#### Endpoint
+```
+GET /api/live-tv/manager-program/programs/{programId}/episodes-by-year
+```
+
+#### HTTP Method
+`GET`
+
+#### Description
+Mendapatkan episode yang dikelompokkan per tahun. Berguna untuk menampilkan episode per tahun dengan dropdown filter. **Data episode tahun sebelumnya tetap tersimpan**, tidak dihapus.
+
+#### Query Parameters
+- `year` (optional): Filter untuk tahun tertentu (contoh: `?year=2026`)
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "data": {
+    "program_id": 1,
+    "program_name": "Hope Musik",
+    "episodes_by_year": [
+      {
+        "year": 2027,
+        "episodes": [
+          {
+            "id": 105,
+            "episode_number": 1,
+            "title": "Episode 1",
+            "air_date": "2027-01-02T00:00:00.000Z",
+            "status": "draft"
+          },
+          {
+            "id": 106,
+            "episode_number": 2,
+            "title": "Episode 2",
+            "air_date": "2027-01-09T00:00:00.000Z",
+            "status": "draft"
+          }
+        ],
+        "count": 52,
+        "first_episode_number": 1,
+        "last_episode_number": 52,
+        "first_air_date": "2027-01-02",
+        "last_air_date": "2027-12-25"
+      },
+      {
+        "year": 2026,
+        "episodes": [
+          {
+            "id": 1,
+            "episode_number": 1,
+            "title": "Episode 1",
+            "air_date": "2026-01-03T00:00:00.000Z",
+            "status": "aired"
+          },
+          {
+            "id": 2,
+            "episode_number": 2,
+            "title": "Episode 2",
+            "air_date": "2026-01-10T00:00:00.000Z",
+            "status": "aired"
+          }
+        ],
+        "count": 52,
+        "first_episode_number": 1,
+        "last_episode_number": 52,
+        "first_air_date": "2026-01-03",
+        "last_air_date": "2026-12-26"
+      }
+    ],
+    "total_episodes": 104,
+    "total_years": 2
+  },
+  "message": "Episodes grouped by year retrieved successfully"
+}
+```
+
+#### Example Request dengan Filter Tahun
+```
+GET /api/live-tv/manager-program/programs/1/episodes-by-year?year=2026
+```
+
+#### Frontend Integration Example
+```javascript
+// Get episodes grouped by year
+const getEpisodesByYear = async (programId, year = null) => {
+  try {
+    const url = `/api/live-tv/manager-program/programs/${programId}/episodes-by-year${year ? `?year=${year}` : ''}`;
+    const response = await axios.get(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    const episodesByYear = response.data.data.episodes_by_year;
+    
+    // Tampilkan per tahun
+    episodesByYear.forEach(yearData => {
+      console.log(`Tahun ${yearData.year}: ${yearData.count} episode`);
+      console.log(`Episode ${yearData.first_episode_number}-${yearData.last_episode_number}`);
+    });
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error getting episodes by year:', error.response.data);
+    throw error;
+  }
+};
+```
+
+#### Important Notes
+- **Data tersimpan**: Episode tahun sebelumnya **tetap tersimpan** di database, tidak dihapus
+- **Episode reset**: Episode number reset ke 1 setiap tahun baru, tapi data tahun sebelumnya tetap ada
+- **Filter per tahun**: Bisa filter episode untuk tahun tertentu dengan parameter `?year=2026`
+- **Grouped data**: Response sudah dikelompokkan per tahun untuk kemudahan display
+
+---
+
+### 7. **GET PROGRAM EPISODES (Dengan Filter Tahun)**
+
+#### Endpoint
+```
+GET /api/live-tv/programs/{programId}/episodes
+```
+
+#### HTTP Method
+`GET`
+
+#### Description
+Mendapatkan semua episode untuk program tertentu. Support filter per tahun. **Data episode tahun sebelumnya tetap tersimpan**.
+
+#### Query Parameters
+- `year` (optional): Filter untuk tahun tertentu (contoh: `?year=2026`)
+- `status` (optional): Filter untuk status tertentu (contoh: `?status=aired`)
+
+#### Example Request
+```
+GET /api/live-tv/programs/1/episodes?year=2026
+GET /api/live-tv/programs/1/episodes?year=2026&status=aired
+```
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "data": {
+    "program_id": 1,
+    "program_name": "Hope Musik",
+    "episodes": [
+      {
+        "id": 1,
+        "episode_number": 1,
+        "title": "Episode 1",
+        "air_date": "2026-01-03T00:00:00.000Z",
+        "status": "aired"
+      }
+    ],
+    "grouped_by_year": {
+      "2026": {
+        "year": 2026,
+        "episodes": [...],
+        "count": 52,
+        "first_episode_number": 1,
+        "last_episode_number": 52
+      }
+    },
+    "total_episodes": 52,
+    "years_available": [2026]
+  },
+  "message": "Program episodes retrieved successfully"
+}
+```
+
+---
+
+### 8. **SET/UPDATE TARGET VIEWS PER PROGRAM**
 
 #### Endpoint
 ```
@@ -787,15 +1321,21 @@ Override approval/rejection di semua bidang dengan override authority.
 | No | Endpoint | Method | Description | Key Fields |
 |---|---|---|---|---|
 | 1 | `/programs` | POST | Create program (auto-generate 52 episode setiap Sabtu) | `name`, `start_date`, `manager_program_id`, `proposal_file` |
-| 2 | `/programs/{id}/target-views` | PUT | Set/Update target views | `target_views_per_episode` |
-| 3 | `/programs/{id}/weekly-performance` | GET | Get weekly performance | - |
-| 4 | `/deadlines/{id}` | PUT | Edit deadline | `deadline_date`, `reason` |
-| 5 | `/episodes/{id}/monitor-workflow` | GET | Monitor workflow | - |
-| 6 | `/programs/underperforming` | GET | Get underperforming programs | `performance_status`, `min_episodes`, `page`, `per_page` |
-| 7 | `/programs/{id}/close` | POST | Close program | `reason` |
-| 8 | `/schedules/{id}/cancel` | POST | Cancel schedule | `reason`, `notify_team` |
-| 9 | `/schedules/{id}/reschedule` | POST | Reschedule schedule | `new_datetime`, `reason`, `location` |
-| 10 | `/approvals/{id}/override` | POST | Override approval | `action`, `reason`, `notes` |
+| 2 | `/programs/{id}/generate-next-year-episodes` | POST | Generate 52 episode untuk tahun berikutnya (auto-detect) | - |
+| 3 | `/programs/{id}/generate-episodes-for-year` | POST | Generate 52 episode untuk tahun tertentu | `year` |
+| 4 | `/programs/{id}/check-next-year-episodes` | GET | Check status episode tahun berikutnya | - |
+| 5 | `/programs/{id}/years` | GET | Get list tahun yang tersedia (untuk dropdown) | - |
+| 6 | `/programs/{id}/episodes-by-year` | GET | Get episodes grouped by year | `year` (optional) |
+| 7 | `/programs/{id}/episodes` | GET | Get episodes dengan filter tahun | `year`, `status` (optional) |
+| 8 | `/programs/{id}/target-views` | PUT | Set/Update target views | `target_views_per_episode` |
+| 9 | `/programs/{id}/weekly-performance` | GET | Get weekly performance | - |
+| 10 | `/deadlines/{id}` | PUT | Edit deadline | `deadline_date`, `reason` |
+| 11 | `/episodes/{id}/monitor-workflow` | GET | Monitor workflow | - |
+| 12 | `/programs/underperforming` | GET | Get underperforming programs | `performance_status`, `min_episodes`, `page`, `per_page` |
+| 13 | `/programs/{id}/close` | POST | Close program | `reason` |
+| 14 | `/schedules/{id}/cancel` | POST | Cancel schedule | `reason`, `notify_team` |
+| 15 | `/schedules/{id}/reschedule` | POST | Reschedule schedule | `new_datetime`, `reason`, `location` |
+| 16 | `/approvals/{id}/override` | POST | Override approval | `action`, `reason`, `notes` |
 
 ---
 
@@ -888,6 +1428,9 @@ Override approval/rejection di semua bidang dengan override authority.
 3. **Content-Type**: `application/json`
 4. **Date Format**: ISO 8601 (YYYY-MM-DDTHH:mm:ss.sssZ)
 5. **Timezone**: UTC (backend convert ke timezone user jika diperlukan)
+6. **Data Tersimpan**: Episode tahun sebelumnya **tetap tersimpan** di database, tidak dihapus. Bisa diakses dengan filter tahun
+7. **Episode Reset**: Episode number reset ke 1 setiap tahun baru, tapi data tahun sebelumnya tetap ada dan bisa diakses
+8. **Filter Per Tahun**: Gunakan parameter `?year=2026` untuk filter episode per tahun
 
 ---
 
