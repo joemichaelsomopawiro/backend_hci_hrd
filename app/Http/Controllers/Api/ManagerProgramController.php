@@ -14,6 +14,11 @@ use App\Models\QualityControl;
 use App\Models\QualityControlWork;
 use App\Models\ProductionTeamAssignment;
 use App\Models\Notification;
+use App\Models\MusicArrangement;
+use App\Models\CreativeWork;
+use App\Models\SoundEngineerRecording;
+use App\Models\ProduksiWork;
+use App\Models\EditorWork;
 use Carbon\Carbon;
 use App\Services\ProgramPerformanceService;
 use Illuminate\Http\Request;
@@ -646,6 +651,241 @@ class ManagerProgramController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update target views',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Monitoring semua pekerjaan episode hingga penayangan
+     * Menampilkan status semua tahap workflow dari awal sampai tayang
+     */
+    public function monitorEpisodeWorkflow(int $episodeId): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can monitor workflow'
+            ], 403);
+        }
+        
+        try {
+            $episode = Episode::with([
+                'program',
+                'deadlines',
+                'workflowStates.assignedToUser',
+                'musicArrangements',
+                'creativeWorks',
+                'soundEngineerRecordings',
+                'editorWorks',
+                'qualityControls',
+                'broadcastingSchedules',
+                'productionTeam.members.user'
+            ])->findOrFail($episodeId);
+            
+            // Data Episode
+            $episodeData = [
+                'id' => $episode->id,
+                'episode_number' => $episode->episode_number,
+                'title' => $episode->title,
+                'air_date' => $episode->air_date,
+                'status' => $episode->status,
+                'current_workflow_state' => $episode->current_workflow_state,
+                'days_until_air' => now()->diffInDays($episode->air_date, false),
+                'is_overdue' => now() > $episode->air_date && $episode->status !== 'aired'
+            ];
+            
+            // Workflow Timeline - Tahap demi tahap
+            $workflowSteps = [];
+            
+            // 1. Music Arrangement
+            $musicArrangement = $episode->musicArrangements()->latest()->first();
+            $workflowSteps['music_arrangement'] = [
+                'step_name' => 'Music Arrangement',
+                'status' => $musicArrangement ? ($musicArrangement->status === 'approved' ? 'completed' : $musicArrangement->status) : 'pending',
+                'data' => $musicArrangement ? [
+                    'id' => $musicArrangement->id,
+                    'status' => $musicArrangement->status,
+                    'song_title' => $musicArrangement->song_title,
+                    'arranger_name' => $musicArrangement->arranger_name,
+                    'created_at' => $musicArrangement->created_at,
+                    'updated_at' => $musicArrangement->updated_at,
+                    'approved_at' => $musicArrangement->approved_at
+                ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'musik_arr')->first()
+            ];
+            
+            // 2. Creative Work
+            $creativeWork = $episode->creativeWorks()->latest()->first();
+            $workflowSteps['creative_work'] = [
+                'step_name' => 'Creative Work',
+                'status' => $creativeWork ? ($creativeWork->script_approved && $creativeWork->storyboard_approved ? 'completed' : 'in_progress') : 'pending',
+                'data' => $creativeWork ? [
+                    'id' => $creativeWork->id,
+                    'script_approved' => $creativeWork->script_approved,
+                    'storyboard_approved' => $creativeWork->storyboard_approved,
+                    'status' => $creativeWork->status,
+                    'created_at' => $creativeWork->created_at,
+                    'updated_at' => $creativeWork->updated_at
+                ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'kreatif')->first()
+            ];
+            
+            // 3. Sound Engineer Recording
+            $soundRecording = $episode->soundEngineerRecordings()->latest()->first();
+            $workflowSteps['sound_recording'] = [
+                'step_name' => 'Sound Recording',
+                'status' => $soundRecording ? ($soundRecording->status === 'completed' ? 'completed' : $soundRecording->status) : 'pending',
+                'data' => $soundRecording ? [
+                    'id' => $soundRecording->id,
+                    'status' => $soundRecording->status,
+                    'created_at' => $soundRecording->created_at,
+                    'updated_at' => $soundRecording->updated_at,
+                    'completed_at' => $soundRecording->completed_at
+                ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'sound_eng')->first()
+            ];
+            
+            // 4. Production
+            $produksiWork = ProduksiWork::where('episode_id', $episode->id)->latest()->first();
+            $workflowSteps['production'] = [
+                'step_name' => 'Production',
+                'status' => $produksiWork ? ($produksiWork->status === 'completed' ? 'completed' : $produksiWork->status) : 'pending',
+                'data' => $produksiWork ? [
+                    'id' => $produksiWork->id,
+                    'status' => $produksiWork->status,
+                    'created_at' => $produksiWork->created_at,
+                    'updated_at' => $produksiWork->updated_at,
+                    'completed_at' => $produksiWork->completed_at
+                ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'produksi')->first()
+            ];
+            
+            // 5. Editor
+            $editorWork = $episode->editorWorks()->latest()->first();
+            $workflowSteps['editing'] = [
+                'step_name' => 'Editing',
+                'status' => $editorWork ? ($editorWork->status === 'completed' ? 'completed' : $editorWork->status) : 'pending',
+                'data' => $editorWork ? [
+                    'id' => $editorWork->id,
+                    'status' => $editorWork->status,
+                    'created_at' => $editorWork->created_at,
+                    'updated_at' => $editorWork->updated_at,
+                    'completed_at' => $editorWork->completed_at
+                ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'editor')->first()
+            ];
+            
+            // 6. Quality Control
+            $qcWork = $episode->qualityControls()->latest()->first();
+            $workflowSteps['quality_control'] = [
+                'step_name' => 'Quality Control',
+                'status' => $qcWork ? ($qcWork->status === 'approved' ? 'completed' : ($qcWork->status === 'rejected' ? 'revision_needed' : $qcWork->status)) : 'pending',
+                'data' => $qcWork ? [
+                    'id' => $qcWork->id,
+                    'status' => $qcWork->status,
+                    'quality_score' => $qcWork->quality_score,
+                    'qc_notes' => $qcWork->qc_notes,
+                    'created_at' => $qcWork->created_at,
+                    'updated_at' => $qcWork->updated_at,
+                    'qc_completed_at' => $qcWork->qc_completed_at
+                ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'quality_control')->first()
+            ];
+            
+            // 7. Broadcasting
+            $broadcastingSchedule = $episode->broadcastingSchedules()->latest()->first();
+            $workflowSteps['broadcasting'] = [
+                'step_name' => 'Broadcasting',
+                'status' => $broadcastingSchedule ? ($episode->status === 'aired' ? 'completed' : ($broadcastingSchedule->status === 'approved' ? 'ready' : $broadcastingSchedule->status)) : 'pending',
+                'data' => $broadcastingSchedule ? [
+                    'id' => $broadcastingSchedule->id,
+                    'status' => $broadcastingSchedule->status,
+                    'air_date' => $broadcastingSchedule->air_date,
+                    'platform' => $broadcastingSchedule->platform,
+                    'created_at' => $broadcastingSchedule->created_at,
+                    'updated_at' => $broadcastingSchedule->updated_at
+                ] : null,
+                'deadline' => null
+            ];
+            
+            // Calculate Progress
+            $completedSteps = collect($workflowSteps)->filter(function($step) {
+                return $step['status'] === 'completed';
+            })->count();
+            
+            $totalSteps = count($workflowSteps);
+            $progressPercentage = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100, 2) : 0;
+            
+            // Workflow Timeline (History)
+            $timeline = $episode->workflowStates()
+                ->with('assignedToUser')
+                ->orderBy('created_at')
+                ->get()
+                ->map(function($state) {
+                    return [
+                        'id' => $state->id,
+                        'state' => $state->current_state,
+                        'state_label' => $state->state_label,
+                        'assigned_to_role' => $state->assigned_to_role,
+                        'assigned_to_user' => $state->assignedToUser ? $state->assignedToUser->name : null,
+                        'notes' => $state->notes,
+                        'created_at' => $state->created_at,
+                        'updated_at' => $state->updated_at
+                    ];
+                });
+            
+            // All Deadlines Summary
+            $deadlinesSummary = $episode->deadlines->map(function($deadline) {
+                return [
+                    'id' => $deadline->id,
+                    'role' => $deadline->role,
+                    'role_label' => $deadline->role_label,
+                    'deadline_date' => $deadline->deadline_date,
+                    'status' => $deadline->status,
+                    'is_completed' => $deadline->is_completed,
+                    'is_overdue' => $deadline->isOverdue(),
+                    'completed_at' => $deadline->completed_at
+                ];
+            });
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode' => $episodeData,
+                    'program' => [
+                        'id' => $episode->program->id,
+                        'name' => $episode->program->name
+                    ],
+                    'workflow_steps' => $workflowSteps,
+                    'progress' => [
+                        'percentage' => $progressPercentage,
+                        'completed_steps' => $completedSteps,
+                        'total_steps' => $totalSteps
+                    ],
+                    'timeline' => $timeline,
+                    'deadlines' => $deadlinesSummary,
+                    'production_team' => $episode->productionTeam ? [
+                        'id' => $episode->productionTeam->id,
+                        'name' => $episode->productionTeam->name,
+                        'members' => $episode->productionTeam->members->map(function($member) {
+                            return [
+                                'id' => $member->id,
+                                'user_id' => $member->user_id,
+                                'user_name' => $member->user->name ?? null,
+                                'role' => $member->role
+                            ];
+                        })
+                    ] : null
+                ],
+                'message' => 'Episode workflow monitoring data retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get workflow monitoring',
                 'error' => $e->getMessage()
             ], 500);
         }
