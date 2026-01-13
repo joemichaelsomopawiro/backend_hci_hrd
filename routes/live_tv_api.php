@@ -110,6 +110,7 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     Route::get('/programs/{programId}/performance', [ManagerProgramController::class, 'getProgramPerformance'])->middleware('throttle:60,1');
     Route::get('/programs/{programId}/weekly-performance', [ManagerProgramController::class, 'getWeeklyPerformance'])->middleware('throttle:60,1');
     Route::post('/evaluate-all-programs', [ManagerProgramController::class, 'evaluateAllPrograms'])->middleware('throttle:sensitive');
+    Route::get('/programs/underperforming', [ManagerProgramController::class, 'getUnderperformingPrograms'])->middleware('throttle:60,1');
     
     // Monitoring & Tracking
     Route::get('/episodes/{episodeId}/monitor-workflow', [ManagerProgramController::class, 'monitorEpisodeWorkflow'])->middleware('throttle:60,1');

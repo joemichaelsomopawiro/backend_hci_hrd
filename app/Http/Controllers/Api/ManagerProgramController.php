@@ -924,6 +924,108 @@ class ManagerProgramController extends Controller
     }
     
     /**
+     * Get programs dengan performa buruk (tidak berkembang)
+     * Untuk monitoring program yang perlu dipertimbangkan untuk ditutup
+     */
+    public function getUnderperformingPrograms(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can view underperforming programs'
+            ], 403);
+        }
+        
+        try {
+            $query = Program::with(['managerProgram', 'productionTeam'])
+                ->whereIn('status', ['active', 'in_production', 'approved'])
+                ->whereNotNull('target_views_per_episode')
+                ->where('target_views_per_episode', '>', 0);
+            
+            // Filter hanya program dengan poor performance
+            $performanceStatus = $request->get('performance_status', 'poor'); // default: poor
+            if ($performanceStatus === 'poor') {
+                $query->where('performance_status', 'poor');
+            } elseif ($performanceStatus === 'warning') {
+                $query->whereIn('performance_status', ['poor', 'warning']);
+            }
+            
+            // Filter min episodes aired akan dilakukan di filtering setelah get data
+            $minEpisodes = $request->get('min_episodes', 4);
+            
+            // Calculate achievement percentage untuk sorting
+            $programs = $query->get()->map(function($program) {
+                $targetViews = $program->target_views_per_episode ?? 1;
+                $averageViews = $program->average_views_per_episode ?? 0;
+                $achievement = $targetViews > 0 ? ($averageViews / $targetViews) * 100 : 0;
+                $airedEpisodes = $program->episodes()->where('status', 'aired')->count();
+                
+                return [
+                    'id' => $program->id,
+                    'name' => $program->name,
+                    'status' => $program->status,
+                    'performance_status' => $program->performance_status,
+                    'target_views_per_episode' => $program->target_views_per_episode,
+                    'average_views_per_episode' => round($averageViews, 2),
+                    'total_actual_views' => $program->total_actual_views ?? 0,
+                    'achievement_percentage' => round($achievement, 2),
+                    'aired_episodes' => $airedEpisodes,
+                    'total_episodes' => $program->episodes()->count(),
+                    'auto_close_enabled' => $program->auto_close_enabled,
+                    'last_performance_check' => $program->last_performance_check,
+                    'created_at' => $program->created_at,
+                    'manager_program' => $program->managerProgram ? [
+                        'id' => $program->managerProgram->id,
+                        'name' => $program->managerProgram->name
+                    ] : null
+                ];
+            })->filter(function($program) use ($minEpisodes) {
+                // Filter berdasarkan min episodes aired
+                return $program['aired_episodes'] >= $minEpisodes;
+            });
+            
+            // Sort by achievement percentage (terendah dulu)
+            $programs = $programs->sortBy('achievement_percentage')->values();
+            
+            // Pagination manual
+            $page = $request->get('page', 1);
+            $perPage = $request->get('per_page', 15);
+            $offset = ($page - 1) * $perPage;
+            $paginatedPrograms = $programs->slice($offset, $perPage)->values();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'programs' => $paginatedPrograms,
+                    'pagination' => [
+                        'current_page' => $page,
+                        'per_page' => $perPage,
+                        'total' => $programs->count(),
+                        'last_page' => ceil($programs->count() / $perPage)
+                    ],
+                    'summary' => [
+                        'total_underperforming' => $programs->count(),
+                        'total_poor' => $programs->where('performance_status', 'poor')->count(),
+                        'total_warning' => $programs->where('performance_status', 'warning')->count(),
+                        'average_achievement' => $programs->count() > 0 
+                            ? round($programs->avg('achievement_percentage'), 2) 
+                            : 0
+                    ]
+                ],
+                'message' => 'Underperforming programs retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get underperforming programs',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
      * Manually close program
      */
     public function closeProgram(Request $request, int $programId): JsonResponse
