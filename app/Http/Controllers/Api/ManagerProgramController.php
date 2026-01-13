@@ -590,6 +590,68 @@ class ManagerProgramController extends Controller
     }
     
     /**
+     * Set/Update target views per episode untuk program
+     */
+    public function setTargetViews(Request $request, int $programId): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can set target views'
+            ], 403);
+        }
+        
+        $validator = Validator::make($request->all(), [
+            'target_views_per_episode' => 'required|integer|min:0'
+        ]);
+        
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+        
+        try {
+            $program = Program::findOrFail($programId);
+            $oldTarget = $program->target_views_per_episode;
+            
+            // Update target views
+            $program->update([
+                'target_views_per_episode' => $request->target_views_per_episode
+            ]);
+            
+            // Re-evaluate performance setelah update target
+            $performanceService = app(ProgramPerformanceService::class);
+            $performanceService->evaluateProgramPerformance($program);
+            
+            $program->refresh();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'program_id' => $program->id,
+                    'program_name' => $program->name,
+                    'old_target_views' => $oldTarget,
+                    'new_target_views' => $program->target_views_per_episode,
+                    'average_views_per_episode' => $program->average_views_per_episode,
+                    'performance_status' => $program->performance_status
+                ],
+                'message' => 'Target views updated successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update target views',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
      * Evaluate all active programs performance
      */
     public function evaluateAllPrograms(): JsonResponse

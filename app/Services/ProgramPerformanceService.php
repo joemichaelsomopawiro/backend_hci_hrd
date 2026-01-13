@@ -178,31 +178,52 @@ class ProgramPerformanceService
             ->orderBy('air_date', 'desc')
             ->get();
         
+        $targetViews = $program->target_views_per_episode ?? 0;
         $weeklyData = [];
+        
         foreach ($recentEpisodes as $episode) {
             $week = $episode->air_date->format('Y-W');
+            $weekStart = Carbon::parse($episode->air_date)->startOfWeek()->format('Y-m-d');
+            $weekEnd = Carbon::parse($episode->air_date)->endOfWeek()->format('Y-m-d');
+            
             if (!isset($weeklyData[$week])) {
                 $weeklyData[$week] = [
                     'week' => $week,
+                    'week_start' => $weekStart,
+                    'week_end' => $weekEnd,
                     'episodes' => [],
                     'total_views' => 0,
-                    'average_views' => 0
+                    'target_total_views' => 0,
+                    'average_views' => 0,
+                    'achievement_percentage' => 0
                 ];
             }
+            
+            $episodeAchievement = $targetViews > 0 
+                ? ($episode->actual_views / $targetViews) * 100 
+                : 0;
             
             $weeklyData[$week]['episodes'][] = [
                 'episode_number' => $episode->episode_number,
                 'title' => $episode->title,
-                'views' => $episode->actual_views,
+                'actual_views' => $episode->actual_views ?? 0,
+                'target_views' => $targetViews,
+                'achievement_percentage' => round($episodeAchievement, 2),
                 'air_date' => $episode->air_date->format('Y-m-d')
             ];
-            $weeklyData[$week]['total_views'] += $episode->actual_views;
+            
+            $weeklyData[$week]['total_views'] += $episode->actual_views ?? 0;
+            $weeklyData[$week]['target_total_views'] += $targetViews;
         }
         
-        // Calculate averages
+        // Calculate averages and achievement
         foreach ($weeklyData as $week => &$data) {
-            $data['average_views'] = count($data['episodes']) > 0 
-                ? $data['total_views'] / count($data['episodes']) 
+            $episodeCount = count($data['episodes']);
+            $data['average_views'] = $episodeCount > 0 
+                ? $data['total_views'] / $episodeCount 
+                : 0;
+            $data['achievement_percentage'] = $data['target_total_views'] > 0 
+                ? ($data['total_views'] / $data['target_total_views']) * 100 
                 : 0;
         }
         
@@ -217,7 +238,7 @@ class ProgramPerformanceService
             ],
             'weekly_data' => array_values($weeklyData),
             'total_aired_episodes' => $recentEpisodes->count(),
-            'achievement_percentage' => $program->target_views_per_episode > 0 
+            'overall_achievement_percentage' => $program->target_views_per_episode > 0 
                 ? ($program->average_views_per_episode / $program->target_views_per_episode) * 100 
                 : 0
         ];

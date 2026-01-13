@@ -106,6 +106,7 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     
     // Performance & Views Tracking (NEW)
     Route::put('/episodes/{episodeId}/views', [ManagerProgramController::class, 'updateEpisodeViews'])->middleware('throttle:sensitive');
+    Route::put('/programs/{programId}/target-views', [ManagerProgramController::class, 'setTargetViews'])->middleware('throttle:sensitive');
     Route::get('/programs/{programId}/performance', [ManagerProgramController::class, 'getProgramPerformance'])->middleware('throttle:60,1');
     Route::get('/programs/{programId}/weekly-performance', [ManagerProgramController::class, 'getWeeklyPerformance'])->middleware('throttle:60,1');
     Route::post('/evaluate-all-programs', [ManagerProgramController::class, 'evaluateAllPrograms'])->middleware('throttle:sensitive');
