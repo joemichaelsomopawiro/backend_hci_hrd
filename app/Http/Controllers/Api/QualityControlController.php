@@ -933,6 +933,28 @@ class QualityControlController extends Controller
                         ]
                     ]);
                 }
+
+                // Notifikasi ke Manager Program ketika ada perbaikan di QC
+                // Manager Program dapat mengedit deadline jika ada kebutuhan khusus
+                if ($episode->program && $episode->program->manager_program_id) {
+                    Notification::create([
+                        'user_id' => $episode->program->manager_program_id,
+                        'type' => 'qc_rejected_manager_notification',
+                        'title' => 'QC Ditolak - Perlu Perbaikan',
+                        'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number} dari program '{$episode->program->name}'. Alasan: {$request->notes}. Anda dapat mengedit deadline jika diperlukan.",
+                        'data' => [
+                            'episode_id' => $work->episode_id,
+                            'program_id' => $episode->program->id,
+                            'qc_work_id' => $work->id,
+                            'revision_notes' => $request->notes,
+                            'qc_notes' => $work->qc_notes ?? null,
+                            'quality_score' => $work->quality_score ?? null,
+                            'program_name' => $episode->program->name
+                        ],
+                        'program_id' => $episode->program->id,
+                        'priority' => 'high'
+                    ]);
+                }
             }
 
             return response()->json([
