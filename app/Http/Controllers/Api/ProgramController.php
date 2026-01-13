@@ -314,7 +314,7 @@ class ProgramController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $program->load(['episodes', 'managerProgram', 'productionTeam']),
-                'message' => 'Program created successfully with 53 episodes generated'
+                'message' => 'Program created successfully with 52 episodes generated'
             ], 201);
         } catch (\Exception $e) {
             return response()->json([

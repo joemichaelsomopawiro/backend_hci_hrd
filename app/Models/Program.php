@@ -151,7 +151,9 @@ class Program extends Model
     }
 
     /**
-     * Generate 53 episodes untuk program
+     * Generate 52 episodes untuk program (1 tahun = 52 minggu)
+     * Episode 1 = Sabtu pertama di tahun program
+     * Setiap episode tayang setiap Sabtu (mingguan)
      * @param bool $regenerate Jika true, akan hapus episode yang sudah ada dulu
      */
     public function generateEpisodes(bool $regenerate = false): void
@@ -171,10 +173,26 @@ class Program extends Model
             });
         }
         
+        // Detect Sabtu pertama di tahun program (dari start_date)
         $startDate = Carbon::parse($this->start_date);
+        $year = $startDate->year;
         
-        for ($i = 1; $i <= 53; $i++) {
-            $airDate = $startDate->copy()->addWeeks($i - 1);
+        // Cari Sabtu pertama di bulan Januari tahun tersebut
+        $firstSaturday = Carbon::create($year, 1, 1);
+        // Jika tanggal 1 bukan Sabtu, hitung hari ke depan untuk sampai Sabtu pertama
+        if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
+            // dayOfWeek: 0=Minggu, 1=Senin, ..., 6=Sabtu
+            // Hitung berapa hari ke depan untuk sampai Sabtu (hari ke-6)
+            $dayOfWeek = $firstSaturday->dayOfWeek;
+            $daysToAdd = (6 - $dayOfWeek + 7) % 7;
+            if ($daysToAdd === 0) $daysToAdd = 7; // Jika hari ini sudah Sabtu (tidak akan terjadi karena sudah di-check)
+            $firstSaturday->addDays($daysToAdd);
+        }
+        
+        // Generate 52 episode (1 tahun = 52 minggu)
+        for ($i = 1; $i <= 52; $i++) {
+            // Episode 1 = Sabtu pertama, Episode 2 = Sabtu berikutnya (7 hari kemudian), dst
+            $airDate = $firstSaturday->copy()->addWeeks($i - 1);
             
             $episode = $this->episodes()->create([
                 'episode_number' => $i,
@@ -187,6 +205,8 @@ class Program extends Model
             ]);
 
             // Generate deadlines untuk episode
+            // Deadline Editor: 7 hari sebelum tayang
+            // Deadline Creative & Produksi: 9 hari sebelum tayang
             $episode->generateDeadlines();
         }
     }

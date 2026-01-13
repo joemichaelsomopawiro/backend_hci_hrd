@@ -14,7 +14,9 @@ use Illuminate\Support\Facades\DB;
 class ProgramWorkflowService
 {
     /**
-     * Create new program dan auto-generate 53 episodes
+     * Create new program dan auto-generate 52 episodes (1 tahun = 52 minggu)
+     * Episode 1 = Sabtu pertama di tahun program
+     * Setiap episode tayang setiap Sabtu (mingguan)
      * Episode otomatis ter-generate saat create program
      */
     public function createProgram(array $data): Program
@@ -23,7 +25,7 @@ class ProgramWorkflowService
             // Create program
             $program = Program::create($data);
             
-            // Auto-generate 53 episodes saat create program
+            // Auto-generate 52 episodes saat create program
             // Menggunakan method generateEpisodes() dengan regenerate=false
             // Jika episode sudah ada (tidak mungkin untuk program baru), tidak akan generate lagi
             $program->generateEpisodes(false);
