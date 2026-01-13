@@ -174,11 +174,15 @@ class Program extends Model
         }
         
         // Detect Sabtu pertama di tahun program (dari start_date)
+        // Parse start_date dan ambil tahunnya (pastikan tanpa timezone issue)
         $startDate = Carbon::parse($this->start_date);
         $year = $startDate->year;
         
         // Cari Sabtu pertama di bulan Januari tahun tersebut
-        $firstSaturday = Carbon::create($year, 1, 1);
+        // Gunakan createFromDate dengan timezone UTC dari awal untuk menghindari timezone shift
+        $firstSaturday = Carbon::createFromDate($year, 1, 1, 'UTC');
+        $firstSaturday->setTime(0, 0, 0);
+        
         // Jika tanggal 1 bukan Sabtu, hitung hari ke depan untuk sampai Sabtu pertama
         if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
             // dayOfWeek: 0=Minggu, 1=Senin, ..., 6=Sabtu
@@ -189,20 +193,46 @@ class Program extends Model
             $firstSaturday->addDays($daysToAdd);
         }
         
+        // Pastikan timezone UTC dan time 00:00:00
+        $firstSaturday->setTime(0, 0, 0)->utc();
+        
         // Generate 52 episode (1 tahun = 52 minggu)
         for ($i = 1; $i <= 52; $i++) {
             // Episode 1 = Sabtu pertama, Episode 2 = Sabtu berikutnya (7 hari kemudian), dst
-            $airDate = $firstSaturday->copy()->addWeeks($i - 1);
+            // Copy dulu, baru add weeks untuk menghindari mutation
+            $airDate = $firstSaturday->copy();
+            if ($i > 1) {
+                $airDate->addWeeks($i - 1);
+            }
+            // Pastikan timezone UTC dan time 00:00:00 untuk konsistensi
+            $airDate->utc()->setTime(0, 0, 0);
             
-            $episode = $this->episodes()->create([
+            // Production date = 7 hari sebelum tayang
+            $productionDate = $airDate->copy()->subDays(7);
+            $productionDate->utc()->setTime(0, 0, 0);
+            
+            // Gunakan DB::table dengan DB::raw untuk insert langsung tanpa timezone conversion
+            // Format: INSERT dengan timezone UTC eksplisit menggunakan DB::raw
+            $airDateStr = $airDate->format('Y-m-d H:i:s');
+            $productionDateStr = $productionDate->format('Y-m-d H:i:s');
+            
+            // Insert langsung dengan DB::table dan DB::raw untuk menghindari timezone conversion
+            $episodeId = \DB::table('episodes')->insertGetId([
+                'program_id' => $this->id,
                 'episode_number' => $i,
                 'title' => "Episode {$i}",
                 'description' => "Episode {$i} dari program {$this->name}",
-                'air_date' => $airDate,
-                'production_date' => $airDate->copy()->subDays(7), // 7 hari sebelum tayang
+                'air_date' => \DB::raw("'{$airDateStr}'"),  // Raw string tanpa timezone conversion
+                'production_date' => \DB::raw("'{$productionDateStr}'"),
                 'status' => 'draft',
-                'current_workflow_state' => 'program_created'
+                'current_workflow_state' => 'program_created',
+                'format_type' => 'weekly',
+                'created_at' => now(),
+                'updated_at' => now()
             ]);
+            
+            // Load episode untuk generate deadlines
+            $episode = \App\Models\Episode::find($episodeId);
 
             // Generate deadlines untuk episode
             // Deadline Editor: 7 hari sebelum tayang

@@ -15,7 +15,234 @@ Authorization: Bearer {token}
 
 ## 📋 DAFTAR ENDPOINT
 
-### 1. **SET/UPDATE TARGET VIEWS PER PROGRAM**
+### 1. **CREATE PROGRAM (Auto-Generate 52 Episode Setiap Sabtu)**
+
+#### Endpoint
+```
+POST /api/live-tv/programs
+```
+
+#### HTTP Method
+`POST`
+
+#### Description
+Membuat program baru. Sistem akan **otomatis generate 52 episode** dengan logic:
+- Episode 1 = **Sabtu pertama di tahun program** (dari `start_date`)
+- Setiap episode tayang **setiap Sabtu** (mingguan)
+- Total 52 episode (1 tahun = 52 minggu)
+- Deadline otomatis dibuat: Editor (7 hari sebelum), Creative & Produksi (9 hari sebelum)
+
+#### Request Body (Form Data atau JSON)
+```json
+{
+  "name": "Hope Musik",
+  "description": "Program musik mingguan",
+  "category": "musik",
+  "manager_program_id": 2,
+  "production_team_id": 1,
+  "start_date": "2026-01-01",
+  "air_time": "19:00",
+  "duration_minutes": 60,
+  "broadcast_channel": "Saptu Alam",
+  "target_views_per_episode": 100000,
+  "proposal_file": "<file>" // Optional: PDF/DOC/DOCX, max 10MB
+}
+```
+
+#### Request Validation
+- `name` (required, string, max: 255)
+- `description` (optional, string)
+- `category` (optional, in: musik, live_tv, regular, special, other)
+- `manager_program_id` (required, exists: users, id)
+- `production_team_id` (optional, exists: production_teams, id)
+- `start_date` (required, date, after_or_equal: today)
+- `air_time` (required, date_format: H:i)
+- `duration_minutes` (optional, integer, min: 1)
+- `broadcast_channel` (optional, string, max: 255)
+- `target_views_per_episode` (optional, integer, min: 0)
+- `proposal_file` (optional, file, mimes: pdf,doc,docx, max: 10240 KB)
+
+#### Success Response (201 Created)
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "name": "Hope Musik",
+    "description": "Program musik mingguan",
+    "category": "musik",
+    "status": "draft",
+    "manager_program_id": 2,
+    "production_team_id": 1,
+    "start_date": "2026-01-01",
+    "air_time": "19:00:00",
+    "duration_minutes": 60,
+    "broadcast_channel": "Saptu Alam",
+    "target_views_per_episode": 100000,
+    "proposal_file_path": "programs/proposals/abc123.pdf",
+    "proposal_file_name": "proposal.pdf",
+    "created_at": "2026-01-06T10:00:00.000000Z",
+    "updated_at": "2026-01-06T10:00:00.000000Z",
+    "manager_program": {
+      "id": 2,
+      "name": "Manager Name"
+    },
+    "production_team": {
+      "id": 1,
+      "name": "Production Team Name"
+    },
+    "episodes": [
+      {
+        "id": 1,
+        "episode_number": 1,
+        "title": "Episode 1",
+        "description": "Episode 1 dari program Hope Musik",
+        "air_date": "2026-01-03T00:00:00.000000Z",
+        "status": "draft",
+        "current_workflow_state": "program_created"
+      },
+      {
+        "id": 2,
+        "episode_number": 2,
+        "title": "Episode 2",
+        "air_date": "2026-01-10T00:00:00.000000Z",
+        "status": "draft"
+      }
+      // ... sampai Episode 52
+    ]
+  },
+  "message": "Program created successfully with 52 episodes generated"
+}
+```
+
+#### Auto-Generate Logic
+Saat program dibuat, sistem akan:
+
+1. **Detect Sabtu pertama di tahun program:**
+   - Ambil tahun dari `start_date`
+   - Cari Sabtu pertama di bulan Januari tahun tersebut
+   - Contoh: Tahun 2026, Sabtu pertama = 3 Januari 2026
+
+2. **Generate 52 episode:**
+   - Episode 1: 3 Januari 2026 (Sabtu pertama)
+   - Episode 2: 10 Januari 2026 (Sabtu berikutnya)
+   - Episode 3: 17 Januari 2026
+   - ... sampai Episode 52
+
+3. **Auto-generate deadlines per episode:**
+   - **Editor**: 7 hari sebelum tayang
+   - **Creative**: 9 hari sebelum tayang
+   - **Produksi**: 9 hari sebelum tayang
+   - **Music Arranger**: 9 hari sebelum tayang
+   - **Sound Engineer**: 9 hari sebelum tayang
+
+#### Example Timeline (Tahun 2026)
+```
+Episode 1:
+  - Tayang: 3 Januari 2026 (Sabtu)
+  - Deadline Editor: 27 Desember 2025 (7 hari sebelum)
+  - Deadline Creative: 25 Desember 2025 (9 hari sebelum)
+
+Episode 2:
+  - Tayang: 10 Januari 2026 (Sabtu)
+  - Deadline Editor: 3 Januari 2026 (7 hari sebelum)
+  - Deadline Creative: 1 Januari 2026 (9 hari sebelum)
+
+Episode 3:
+  - Tayang: 17 Januari 2026 (Sabtu)
+  - Deadline Editor: 10 Januari 2026
+  - Deadline Creative: 8 Januari 2026
+
+... sampai Episode 52
+```
+
+#### Error Response (422 Validation Error)
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "errors": {
+    "name": ["The name field is required."],
+    "start_date": ["The start date must be a date after or equal to today."]
+  }
+}
+```
+
+#### Error Response (403 Forbidden)
+```json
+{
+  "success": false,
+  "message": "Unauthorized: Only Manager Program can create programs or manager_program_id must match logged in user"
+}
+```
+
+#### Frontend Integration Example
+```javascript
+// Create Program dengan FormData (untuk file upload)
+const createProgram = async (programData, proposalFile) => {
+  const formData = new FormData();
+  formData.append('name', programData.name);
+  formData.append('description', programData.description);
+  formData.append('category', programData.category);
+  formData.append('manager_program_id', programData.manager_program_id);
+  formData.append('production_team_id', programData.production_team_id);
+  formData.append('start_date', programData.start_date); // Format: YYYY-MM-DD
+  formData.append('air_time', programData.air_time); // Format: HH:mm
+  formData.append('duration_minutes', programData.duration_minutes);
+  formData.append('broadcast_channel', programData.broadcast_channel);
+  formData.append('target_views_per_episode', programData.target_views_per_episode);
+  
+  if (proposalFile) {
+    formData.append('proposal_file', proposalFile);
+  }
+  
+  try {
+    const response = await axios.post(
+      '/api/live-tv/programs',
+      formData,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data'
+        }
+      }
+    );
+    
+    console.log('Program created:', response.data);
+    console.log('Episodes generated:', response.data.data.episodes.length); // Should be 52
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error creating program:', error.response.data);
+    throw error;
+  }
+};
+
+// Usage
+createProgram({
+  name: 'Hope Musik',
+  description: 'Program musik mingguan',
+  category: 'musik',
+  manager_program_id: 2,
+  production_team_id: 1,
+  start_date: '2026-01-01',
+  air_time: '19:00',
+  duration_minutes: 60,
+  broadcast_channel: 'Saptu Alam',
+  target_views_per_episode: 100000
+}, proposalFile);
+```
+
+#### Important Notes
+- **Auto-generate episodes**: 52 episode otomatis dibuat saat program dibuat
+- **Sabtu pertama**: Sistem otomatis detect Sabtu pertama di tahun program
+- **Deadline auto-generate**: Setiap episode otomatis punya deadline untuk semua role
+- **File upload**: Proposal file optional, max 10MB
+- **Status default**: Program dibuat dengan status `draft`
+
+---
+
+### 2. **SET/UPDATE TARGET VIEWS PER PROGRAM**
 
 #### Endpoint
 ```
@@ -559,15 +786,16 @@ Override approval/rejection di semua bidang dengan override authority.
 
 | No | Endpoint | Method | Description | Key Fields |
 |---|---|---|---|---|
-| 1 | `/programs/{id}/target-views` | PUT | Set/Update target views | `target_views_per_episode` |
-| 2 | `/programs/{id}/weekly-performance` | GET | Get weekly performance | - |
-| 3 | `/deadlines/{id}` | PUT | Edit deadline | `deadline_date`, `reason` |
-| 4 | `/episodes/{id}/monitor-workflow` | GET | Monitor workflow | - |
-| 5 | `/programs/underperforming` | GET | Get underperforming programs | `performance_status`, `min_episodes`, `page`, `per_page` |
-| 6 | `/programs/{id}/close` | POST | Close program | `reason` |
-| 7 | `/schedules/{id}/cancel` | POST | Cancel schedule | `reason`, `notify_team` |
-| 8 | `/schedules/{id}/reschedule` | POST | Reschedule schedule | `new_datetime`, `reason`, `location` |
-| 9 | `/approvals/{id}/override` | POST | Override approval | `action`, `reason`, `notes` |
+| 1 | `/programs` | POST | Create program (auto-generate 52 episode setiap Sabtu) | `name`, `start_date`, `manager_program_id`, `proposal_file` |
+| 2 | `/programs/{id}/target-views` | PUT | Set/Update target views | `target_views_per_episode` |
+| 3 | `/programs/{id}/weekly-performance` | GET | Get weekly performance | - |
+| 4 | `/deadlines/{id}` | PUT | Edit deadline | `deadline_date`, `reason` |
+| 5 | `/episodes/{id}/monitor-workflow` | GET | Monitor workflow | - |
+| 6 | `/programs/underperforming` | GET | Get underperforming programs | `performance_status`, `min_episodes`, `page`, `per_page` |
+| 7 | `/programs/{id}/close` | POST | Close program | `reason` |
+| 8 | `/schedules/{id}/cancel` | POST | Cancel schedule | `reason`, `notify_team` |
+| 9 | `/schedules/{id}/reschedule` | POST | Reschedule schedule | `new_datetime`, `reason`, `location` |
+| 10 | `/approvals/{id}/override` | POST | Override approval | `action`, `reason`, `notes` |
 
 ---
 

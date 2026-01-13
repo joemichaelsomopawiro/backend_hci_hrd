@@ -71,6 +71,15 @@ class Episode extends Model
     ];
 
     /**
+     * Prepare a date for array / JSON serialization.
+     * Memastikan timezone UTC untuk air_date dan production_date
+     */
+    protected function serializeDate(\DateTimeInterface $date)
+    {
+        return $date->format('Y-m-d\TH:i:s.v\Z');
+    }
+
+    /**
      * Relationship dengan Program
      */
     public function program(): BelongsTo
