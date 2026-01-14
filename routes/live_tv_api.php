@@ -127,10 +127,12 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     Route::get('/programs/{programId}/schedule-options', [ManagerProgramController::class, 'getScheduleOptions'])->middleware('throttle:60,1');
     
     // Schedule Interference (Override Authority)
+    Route::get('/schedules', [ManagerProgramController::class, 'getAllSchedules'])->middleware('throttle:60,1');
     Route::post('/schedules/{scheduleId}/cancel', [ManagerProgramController::class, 'cancelSchedule'])->middleware('throttle:sensitive');
     Route::post('/schedules/{scheduleId}/reschedule', [ManagerProgramController::class, 'reschedule'])->middleware('throttle:sensitive');
     
     // Approval Override (Override Authority)
+    Route::get('/approvals', [ManagerProgramController::class, 'getAllApprovals'])->middleware('throttle:60,1');
     Route::post('/approvals/{approvalId}/override', [ManagerProgramController::class, 'overrideApproval'])->middleware('throttle:sensitive');
     
     // Quality Control Monitoring (GET only)

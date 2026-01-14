@@ -3033,5 +3033,200 @@ class ManagerProgramController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get all approvals for Manager Program
+     * Includes rundown edit requests and special budget approvals
+     */
+    public function getAllApprovals(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!in_array(strtolower($user->role), ['manager program', 'program manager', 'managerprogram'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only Manager Program can access this'
+                ], 403);
+            }
+
+            $includeCompleted = $request->boolean('include_completed', false);
+
+            // Get programs managed by this user
+            $programIds = Program::where('manager_program_id', $user->id)->pluck('id');
+
+            // Get rundown edit requests (episode_rundown atau rundown_edit)
+            $rundownEdits = ProgramApproval::whereIn('approval_type', ['episode_rundown', 'rundown_edit'])
+                ->when(!$includeCompleted, function($q) {
+                    $q->whereIn('status', ['pending', 'reviewed']);
+                })
+                ->with(['approvable', 'requestedBy'])
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->filter(function($approval) use ($user, $programIds) {
+                    try {
+                        // Filter by programs managed by this Manager Program
+                        $approvable = $approval->approvable;
+                        if (!$approvable) return false;
+                        
+                        // Handle different approvable types
+                        if ($approvable instanceof Episode) {
+                            return $programIds->contains($approvable->program_id);
+                        } elseif (method_exists($approvable, 'episode')) {
+                            $episode = $approvable->episode;
+                            if (!$episode) return false;
+                            return $programIds->contains($episode->program_id);
+                        }
+                        
+                        return false;
+                    } catch (\Exception $e) {
+                        Log::warning('Error filtering rundown edit approval', [
+                            'approval_id' => $approval->id,
+                            'error' => $e->getMessage()
+                        ]);
+                        return false;
+                    }
+                });
+
+            // Get special budget approvals
+            $specialBudgets = ProgramApproval::where('approval_type', 'special_budget')
+                ->when(!$includeCompleted, function($q) {
+                    $q->whereIn('status', ['pending', 'reviewed']);
+                })
+                ->where('approvable_type', 'App\Models\CreativeWork')
+                ->with(['approvable', 'requestedBy'])
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->filter(function($approval) use ($user, $programIds) {
+                    try {
+                        // Filter by programs managed by this Manager Program
+                        $approvable = $approval->approvable;
+                        if (!$approvable) return false;
+                        
+                        // CreativeWork has episode relationship
+                        if (method_exists($approvable, 'episode')) {
+                            $episode = $approvable->episode;
+                            if (!$episode) return false;
+                            return $programIds->contains($episode->program_id);
+                        }
+                        
+                        return false;
+                    } catch (\Exception $e) {
+                        Log::warning('Error filtering special budget approval', [
+                            'approval_id' => $approval->id,
+                            'error' => $e->getMessage()
+                        ]);
+                        return false;
+                    }
+                });
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'rundown_edits' => $rundownEdits->values(),
+                    'special_budgets' => $specialBudgets->values(),
+                    'total_pending' => $rundownEdits->where('status', 'pending')->count() + 
+                                      $specialBudgets->where('status', 'pending')->count(),
+                    'total_all' => $rundownEdits->count() + $specialBudgets->count()
+                ],
+                'message' => 'Approvals retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error retrieving approvals: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving approvals: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all schedules for Manager Program
+     * Includes shooting schedules and broadcasting schedules
+     */
+    public function getAllSchedules(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!in_array(strtolower($user->role), ['manager program', 'program manager', 'managerprogram'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only Manager Program can access this'
+                ], 403);
+            }
+
+            // Get programs managed by this user
+            $programIds = Program::where('manager_program_id', $user->id)
+                ->pluck('id');
+
+            if ($programIds->isEmpty()) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'schedules' => [],
+                        'pagination' => [
+                            'current_page' => 1,
+                            'per_page' => 15,
+                            'total' => 0,
+                            'last_page' => 1
+                        ]
+                    ],
+                    'message' => 'No schedules found'
+                ]);
+            }
+
+            // Get broadcasting schedules
+            $query = BroadcastingSchedule::whereHas('episode', function($q) use ($programIds) {
+                $q->whereIn('program_id', $programIds);
+            })
+            ->with([
+                'episode.program.managerProgram',
+                'episode.program.productionTeam'
+            ]);
+
+            // Filter by status
+            if ($request->has('status')) {
+                $statuses = explode(',', $request->status);
+                $query->whereIn('status', $statuses);
+            }
+
+            // Filter cancelled
+            if (!$request->boolean('include_cancelled', false)) {
+                $query->where('status', '!=', 'cancelled');
+            }
+
+            // Filter by date range
+            if ($request->has('start_date')) {
+                $query->where('schedule_date', '>=', $request->start_date);
+            }
+            if ($request->has('end_date')) {
+                $query->where('schedule_date', '<=', $request->end_date);
+            }
+
+            // Pagination
+            $perPage = $request->get('per_page', 15);
+            $schedules = $query->orderBy('schedule_date', 'desc')
+                ->paginate($perPage);
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedules,
+                'message' => 'Schedules retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error retrieving schedules: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving schedules: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
 
