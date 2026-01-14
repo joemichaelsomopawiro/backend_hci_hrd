@@ -24,35 +24,67 @@ class UnifiedNotificationService
      */
     public function getAllNotificationsForUser(int $userId, array $filters = []): array
     {
-        $user = User::findOrFail($userId);
-        $notifications = [];
+        try {
+            $user = User::findOrFail($userId);
+            $notifications = [];
 
-        // 1. Get notifications from main Notification model
-        $mainNotifications = $this->getMainNotifications($userId, $filters);
-        $notifications = array_merge($notifications, $mainNotifications);
+            // 1. Get notifications from main Notification model
+            try {
+                $mainNotifications = $this->getMainNotifications($userId, $filters);
+                $notifications = array_merge($notifications, $mainNotifications);
+            } catch (\Exception $e) {
+                Log::warning('Error getting main notifications: ' . $e->getMessage());
+            }
 
-        // 2. Get Program Notifications
-        $programNotifications = $this->getProgramNotifications($userId, $filters);
-        $notifications = array_merge($notifications, $programNotifications);
+            // 2. Get Program Notifications
+            try {
+                $programNotifications = $this->getProgramNotifications($userId, $filters);
+                $notifications = array_merge($notifications, $programNotifications);
+            } catch (\Exception $e) {
+                Log::warning('Error getting program notifications: ' . $e->getMessage());
+            }
 
-        // 3. Get Music Notifications
-        $musicNotifications = $this->getMusicNotifications($userId, $filters);
-        $notifications = array_merge($notifications, $musicNotifications);
+            // 3. Get Music Notifications
+            try {
+                $musicNotifications = $this->getMusicNotifications($userId, $filters);
+                $notifications = array_merge($notifications, $musicNotifications);
+            } catch (\Exception $e) {
+                Log::warning('Error getting music notifications: ' . $e->getMessage());
+            }
 
-        // 4. Get Music Workflow Notifications
-        $musicWorkflowNotifications = $this->getMusicWorkflowNotifications($userId, $filters);
-        $notifications = array_merge($notifications, $musicWorkflowNotifications);
+            // 4. Get Music Workflow Notifications
+            try {
+                $musicWorkflowNotifications = $this->getMusicWorkflowNotifications($userId, $filters);
+                $notifications = array_merge($notifications, $musicWorkflowNotifications);
+            } catch (\Exception $e) {
+                Log::warning('Error getting music workflow notifications: ' . $e->getMessage());
+            }
 
-        // 5. Get Leave Request Notifications (based on role)
-        $leaveNotifications = $this->getLeaveRequestNotifications($user, $filters);
-        $notifications = array_merge($notifications, $leaveNotifications);
+            // 5. Get Leave Request Notifications (based on role)
+            try {
+                $leaveNotifications = $this->getLeaveRequestNotifications($user, $filters);
+                $notifications = array_merge($notifications, $leaveNotifications);
+            } catch (\Exception $e) {
+                Log::warning('Error getting leave request notifications: ' . $e->getMessage());
+            }
 
-        // Sort by created_at descending
-        usort($notifications, function($a, $b) {
-            return strtotime($b['created_at']) - strtotime($a['created_at']);
-        });
+            // Sort by created_at descending
+            usort($notifications, function($a, $b) {
+                try {
+                    return strtotime($b['created_at'] ?? '1970-01-01') - strtotime($a['created_at'] ?? '1970-01-01');
+                } catch (\Exception $e) {
+                    return 0;
+                }
+            });
 
-        return $notifications;
+            return $notifications;
+        } catch (\Exception $e) {
+            Log::error('Error in getAllNotificationsForUser: ' . $e->getMessage(), [
+                'user_id' => $userId,
+                'trace' => $e->getTraceAsString()
+            ]);
+            return [];
+        }
     }
 
     /**
@@ -220,87 +252,127 @@ class UnifiedNotificationService
     private function getLeaveRequestNotifications(User $user, array $filters): array
     {
         $notifications = [];
-        $userRole = $user->role;
+        
+        try {
+            $userRole = $user->role;
 
-        // Check if user can approve leave requests
-        $canApprove = \App\Services\RoleHierarchyService::canApproveLeave($userRole, null);
+            // Check if user can approve leave requests
+            try {
+                $canApprove = \App\Services\RoleHierarchyService::canApproveLeave($userRole, null);
+            } catch (\Exception $e) {
+                Log::warning('Error checking canApproveLeave: ' . $e->getMessage());
+                $canApprove = false;
+            }
 
-        if ($canApprove) {
-            // Get pending leave requests that need approval
-            $pendingRequests = LeaveRequest::where('overall_status', 'pending')
-                ->whereHas('employee.user', function($query) use ($userRole) {
-                    // Get employees that this user can approve
+            if ($canApprove) {
+                try {
+                    // Get subordinate roles
                     $subordinateRoles = \App\Services\RoleHierarchyService::getSubordinateRoles($userRole);
-                    $query->whereIn('role', $subordinateRoles);
-                })
-                ->with(['employee.user'])
-                ->orderBy('created_at', 'desc')
-                ->limit($filters['limit'] ?? 50)
-                ->get();
+                    
+                    if (empty($subordinateRoles)) {
+                        return $notifications;
+                    }
 
-            foreach ($pendingRequests as $request) {
-                $employee = $request->employee;
-                $employeeUser = $employee->user;
+                    // Get pending leave requests that need approval
+                    $pendingRequests = LeaveRequest::where('overall_status', 'pending')
+                        ->whereHas('employee.user', function($query) use ($subordinateRoles) {
+                            $query->whereIn('role', $subordinateRoles);
+                        })
+                        ->with(['employee.user'])
+                        ->orderBy('created_at', 'desc')
+                        ->limit($filters['limit'] ?? 50)
+                        ->get();
+                } catch (\Exception $e) {
+                    Log::warning('Error getting pending leave requests: ' . $e->getMessage());
+                    $pendingRequests = collect([]);
+                }
 
-                $notifications[] = [
-                    'id' => 'leave_' . $request->id,
-                    'source' => 'leave_request',
-                    'type' => 'leave_approval_required',
-                    'title' => 'Permohonan Cuti Menunggu Persetujuan',
-                    'message' => "{$employeeUser->name} mengajukan permohonan cuti dari {$request->start_date} sampai {$request->end_date}",
-                    'priority' => 'high',
-                    'status' => 'unread',
-                    'is_read' => false,
-                    'read_at' => null,
-                    'created_at' => $request->created_at->toDateTimeString(),
-                    'data' => [
-                        'leave_request_id' => $request->id,
-                        'employee_id' => $employee->id,
-                        'employee_name' => $employeeUser->name,
-                        'start_date' => $request->start_date,
-                        'end_date' => $request->end_date,
-                        'leave_type' => $request->leave_type,
-                        'days' => $request->days,
-                    ],
-                ];
+                foreach ($pendingRequests as $request) {
+                    try {
+                        $employee = $request->employee;
+                        if (!$employee) continue;
+                        
+                        $employeeUser = $employee->user;
+                        if (!$employeeUser) continue;
+
+                        $notifications[] = [
+                            'id' => 'leave_' . $request->id,
+                            'source' => 'leave_request',
+                            'type' => 'leave_approval_required',
+                            'title' => 'Permohonan Cuti Menunggu Persetujuan',
+                            'message' => "{$employeeUser->name} mengajukan permohonan cuti dari {$request->start_date} sampai {$request->end_date}",
+                            'priority' => 'high',
+                            'status' => 'unread',
+                            'is_read' => false,
+                            'read_at' => null,
+                            'created_at' => $request->created_at->toDateTimeString(),
+                            'data' => [
+                                'leave_request_id' => $request->id,
+                                'employee_id' => $employee->id,
+                                'employee_name' => $employeeUser->name,
+                                'start_date' => $request->start_date,
+                                'end_date' => $request->end_date,
+                                'leave_type' => $request->leave_type,
+                                'days' => $request->days,
+                            ],
+                        ];
+                    } catch (\Exception $e) {
+                        Log::warning('Error processing leave request notification: ' . $e->getMessage(), [
+                            'request_id' => $request->id ?? null
+                        ]);
+                    }
+                }
             }
-        }
 
-        // Get leave requests for the user's own employee record
-        if ($user->employee_id) {
-            $myLeaveRequests = LeaveRequest::where('employee_id', $user->employee_id)
-                ->whereIn('overall_status', ['approved', 'rejected'])
-                ->orderBy('updated_at', 'desc')
-                ->limit($filters['limit'] ?? 20)
-                ->get();
+            // Get leave requests for the user's own employee record
+            if ($user->employee_id) {
+                try {
+                    $myLeaveRequests = LeaveRequest::where('employee_id', $user->employee_id)
+                        ->whereIn('overall_status', ['approved', 'rejected'])
+                        ->orderBy('updated_at', 'desc')
+                        ->limit($filters['limit'] ?? 20)
+                        ->get();
 
-            foreach ($myLeaveRequests as $request) {
-                $status = $request->overall_status;
-                $notifications[] = [
-                    'id' => 'leave_' . $request->id,
-                    'source' => 'leave_request',
-                    'type' => $status === 'approved' ? 'leave_approved' : 'leave_rejected',
-                    'title' => $status === 'approved' 
-                        ? 'Permohonan Cuti Disetujui' 
-                        : 'Permohonan Cuti Ditolak',
-                    'message' => $status === 'approved'
-                        ? "Permohonan cuti Anda dari {$request->start_date} sampai {$request->end_date} telah disetujui"
-                        : "Permohonan cuti Anda dari {$request->start_date} sampai {$request->end_date} telah ditolak",
-                    'priority' => $status === 'approved' ? 'normal' : 'high',
-                    'status' => 'unread',
-                    'is_read' => false,
-                    'read_at' => null,
-                    'created_at' => $request->updated_at->toDateTimeString(),
-                    'data' => [
-                        'leave_request_id' => $request->id,
-                        'start_date' => $request->start_date,
-                        'end_date' => $request->end_date,
-                        'leave_type' => $request->leave_type,
-                        'days' => $request->days,
-                        'status' => $status,
-                    ],
-                ];
+                    foreach ($myLeaveRequests as $request) {
+                        try {
+                            $status = $request->overall_status;
+                            $notifications[] = [
+                                'id' => 'leave_' . $request->id,
+                                'source' => 'leave_request',
+                                'type' => $status === 'approved' ? 'leave_approved' : 'leave_rejected',
+                                'title' => $status === 'approved' 
+                                    ? 'Permohonan Cuti Disetujui' 
+                                    : 'Permohonan Cuti Ditolak',
+                                'message' => $status === 'approved'
+                                    ? "Permohonan cuti Anda dari {$request->start_date} sampai {$request->end_date} telah disetujui"
+                                    : "Permohonan cuti Anda dari {$request->start_date} sampai {$request->end_date} telah ditolak",
+                                'priority' => $status === 'approved' ? 'normal' : 'high',
+                                'status' => 'unread',
+                                'is_read' => false,
+                                'read_at' => null,
+                                'created_at' => $request->updated_at->toDateTimeString(),
+                                'data' => [
+                                    'leave_request_id' => $request->id,
+                                    'start_date' => $request->start_date,
+                                    'end_date' => $request->end_date,
+                                    'leave_type' => $request->leave_type,
+                                    'days' => $request->days,
+                                    'status' => $status,
+                                ],
+                            ];
+                        } catch (\Exception $e) {
+                            Log::warning('Error processing my leave request notification: ' . $e->getMessage());
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Error getting my leave requests: ' . $e->getMessage());
+                }
             }
+        } catch (\Exception $e) {
+            Log::error('Error in getLeaveRequestNotifications: ' . $e->getMessage(), [
+                'user_id' => $user->id ?? null,
+                'trace' => $e->getTraceAsString()
+            ]);
         }
 
         return $notifications;
@@ -311,8 +383,15 @@ class UnifiedNotificationService
      */
     public function getUnreadCount(int $userId): int
     {
-        $notifications = $this->getAllNotificationsForUser($userId, ['status' => 'unread']);
-        return count($notifications);
+        try {
+            $notifications = $this->getAllNotificationsForUser($userId, ['status' => 'unread']);
+            return count($notifications);
+        } catch (\Exception $e) {
+            Log::error('Error getting unread count: ' . $e->getMessage(), [
+                'user_id' => $userId
+            ]);
+            return 0;
+        }
     }
 
     /**

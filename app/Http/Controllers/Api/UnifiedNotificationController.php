@@ -68,10 +68,16 @@ class UnifiedNotificationController extends Controller
                 'message' => 'Notifications retrieved successfully'
             ]);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error in UnifiedNotificationController@index: ' . $e->getMessage(), [
+                'user_id' => auth()->id(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve notifications',
-                'error' => $e->getMessage()
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
             ], 500);
         }
     }
@@ -102,10 +108,16 @@ class UnifiedNotificationController extends Controller
                 'message' => 'Unread count retrieved successfully'
             ]);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error in UnifiedNotificationController@unreadCount: ' . $e->getMessage(), [
+                'user_id' => auth()->id(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to get unread count',
-                'error' => $e->getMessage()
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
             ], 500);
         }
     }
