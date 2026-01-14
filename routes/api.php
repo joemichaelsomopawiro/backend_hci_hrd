@@ -26,14 +26,10 @@ use App\Http\Controllers\ZoomLinkController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ManualWorshipAttendanceController;
 use App\Http\Controllers\AttendanceTxtUploadController;
-use App\Http\Controllers\ReminderNotificationController;
-use App\Http\Controllers\TeamManagementController;
-use App\Http\Controllers\WorkflowController;
-use App\Http\Controllers\FileManagementController;
-use App\Http\Controllers\NotificationController;
-use App\Http\Controllers\ApprovalWorkflowController;
-use App\Http\Controllers\ArtSetPropertiController;
-use App\Http\Controllers\ProgramAnalyticsController;
+use App\Http\Controllers\Api\PrManagerProgramController;
+use App\Http\Controllers\Api\PrProducerController;
+use App\Http\Controllers\Api\PrManagerDistribusiController;
+use App\Http\Controllers\Api\PrRevisionController;
 
 /*
 |--------------------------------------------------------------------------
@@ -685,230 +681,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
 });
 
 // Program Management System Routes
-use App\Http\Controllers\ProgramController;
-use App\Http\Controllers\TeamController;
-use App\Http\Controllers\EpisodeController;
-use App\Http\Controllers\ScheduleController;
-use App\Http\Controllers\MediaController;
-use App\Http\Controllers\ProductionController;
-use App\Http\Controllers\ProgramNotificationController;
-
-// Programs Routes
-Route::apiResource('programs', ProgramController::class);
-Route::post('/programs/{program}/assign-teams', [ProgramController::class, 'assignTeams']);
-Route::get('/programs/{program}/dashboard', [ProgramController::class, 'dashboard']);
-Route::get('/programs/{program}/statistics', [ProgramController::class, 'statistics']);
-
-// Teams Routes
-Route::post('/teams/{id}/add-members', [TeamController::class, 'addMembers']);
-Route::post('/teams/{id}/remove-members', [TeamController::class, 'removeMembers']);
-Route::put('/teams/{id}/update-member-role', [TeamController::class, 'updateMemberRole']);
-Route::apiResource('teams', TeamController::class);
-
-// Episodes Routes
-Route::apiResource('episodes', EpisodeController::class);
-Route::patch('/episodes/{episode}/update-status', [EpisodeController::class, 'updateStatus']);
-Route::get('/episodes/upcoming', [EpisodeController::class, 'getUpcoming']);
-Route::get('/episodes/aired', [EpisodeController::class, 'getAired']);
-Route::get('/episodes/by-program/{programId}', [EpisodeController::class, 'getByProgram']);
-
-// Schedules Routes
-Route::apiResource('schedules', ScheduleController::class);
-Route::patch('/schedules/{schedule}/update-status', [ScheduleController::class, 'updateStatus']);
-Route::get('/schedules/upcoming', [ScheduleController::class, 'getUpcoming']);
-Route::get('/schedules/today', [ScheduleController::class, 'getToday']);
-Route::get('/schedules/overdue', [ScheduleController::class, 'getOverdue']);
-
-// Media Files Routes
-Route::apiResource('media-files', MediaController::class);
-Route::post('/media-files/upload', [MediaController::class, 'upload']);
-Route::get('/media-files/type/{type}', [MediaController::class, 'getByType']);
-Route::get('/media-files/program/{programId}', [MediaController::class, 'getByProgram']);
-Route::get('/media-files/episode/{episodeId}', [MediaController::class, 'getByEpisode']);
-
-// Production Equipment Routes
-Route::apiResource('production-equipment', ProductionController::class);
-Route::post('/production-equipment/{equipment}/assign', [ProductionController::class, 'assign']);
-Route::post('/production-equipment/{equipment}/unassign', [ProductionController::class, 'unassign']);
-Route::get('/production-equipment/available', [ProductionController::class, 'getAvailable']);
-Route::get('/production-equipment/needs-maintenance', [ProductionController::class, 'getNeedsMaintenance']);
-
-// Program Notifications Routes
-Route::get('/program-notifications/unread-count', [ProgramNotificationController::class, 'getUnreadCount']);
-Route::get('/program-notifications/unread', [ProgramNotificationController::class, 'unread']);
-Route::get('/program-notifications/scheduled', [ProgramNotificationController::class, 'scheduled']);
-Route::post('/program-notifications/mark-all-read', [ProgramNotificationController::class, 'markAllAsRead']);
-Route::post('/program-notifications/{notification}/mark-read', [ProgramNotificationController::class, 'markAsRead']);
-Route::apiResource('program-notifications', ProgramNotificationController::class);
-
-// Users Routes (for Program Management)
-Route::get('/users', [UserController::class, 'index']);
-Route::get('/users/{id}', [UserController::class, 'show']);
-
-// Art & Set Properti Routes (using ProductionController)
-Route::get('/art-set-properti', [ProductionController::class, 'index']);
-Route::post('/art-set-properti', [ProductionController::class, 'store']);
-Route::get('/art-set-properti/{equipment}', [ProductionController::class, 'show']);
-Route::put('/art-set-properti/{equipment}', [ProductionController::class, 'update']);
-Route::delete('/art-set-properti/{equipment}', [ProductionController::class, 'destroy']);
-Route::post('/art-set-properti/{equipment}/assign', [ProductionController::class, 'assign']);
-Route::post('/art-set-properti/{equipment}/unassign', [ProductionController::class, 'unassign']);
-Route::get('/art-set-properti/available', [ProductionController::class, 'getAvailable']);
-Route::get('/art-set-properti/needs-maintenance', [ProductionController::class, 'getNeedsMaintenance']);
-
-// Approval Workflow Routes (simplified - using existing controllers)
-Route::post('/programs/{program}/submit-approval', [ProgramController::class, 'submitForApproval']);
-Route::post('/programs/{program}/approve', [ProgramController::class, 'approve']);
-Route::post('/programs/{program}/reject', [ProgramController::class, 'reject']);
-Route::post('/episodes/{episode}/submit-rundown', [EpisodeController::class, 'submitRundownForApproval']);
-Route::post('/episodes/{episode}/approve-rundown', [EpisodeController::class, 'approveRundown']);
-Route::post('/episodes/{episode}/reject-rundown', [EpisodeController::class, 'rejectRundown']);
-Route::post('/schedules/{schedule}/submit-approval', [ScheduleController::class, 'submitForApproval']);
-Route::post('/schedules/{schedule}/approve', [ScheduleController::class, 'approve']);
-Route::post('/schedules/{schedule}/reject', [ScheduleController::class, 'reject']);
-Route::get('/approvals/pending', [ProgramController::class, 'getPendingApprovals']);
-Route::get('/approvals/history', [ProgramController::class, 'getApprovalHistory']);
-
-// Analytics Routes (simplified - using existing controllers)
-Route::get('/programs/{program}/analytics', [ProgramController::class, 'getAnalytics']);
-Route::get('/programs/{program}/performance-metrics', [ProgramController::class, 'getPerformanceMetrics']);
-Route::get('/programs/{program}/kpi-summary', [ProgramController::class, 'getKPISummary']);
-Route::get('/programs/{program}/team-performance', [ProgramController::class, 'getTeamPerformance']);
-Route::get('/programs/{program}/content-analytics', [ProgramController::class, 'getContentAnalytics']);
-Route::get('/programs/{program}/trends', [ProgramController::class, 'getTrends']);
-Route::get('/programs/{program}/views-tracking', [ProgramController::class, 'getViewsTracking']);
-Route::get('/analytics/dashboard', [ProgramController::class, 'getDashboardAnalytics']);
-Route::get('/analytics/comparative', [ProgramController::class, 'getComparativeAnalytics']);
-Route::get('/programs/{program}/analytics/export', [ProgramController::class, 'exportAnalytics']);
-
-// Export Routes (simplified - using existing controllers)
-Route::get('/episodes/{episode}/export/word', [EpisodeController::class, 'exportScriptToWord']);
-Route::get('/episodes/{episode}/export/powerpoint', [EpisodeController::class, 'exportScriptToPowerPoint']);
-Route::get('/episodes/{episode}/export/pdf', [EpisodeController::class, 'exportScriptToPDF']);
-Route::get('/programs/{program}/export/data', [ProgramController::class, 'exportProgramData']);
-Route::get('/schedules/{schedule}/export/data', [ScheduleController::class, 'exportScheduleData']);
-Route::get('/programs/{program}/export/media', [ProgramController::class, 'exportMediaFiles']);
-Route::post('/episodes/bulk-export', [EpisodeController::class, 'bulkExportEpisodes']);
-
-// Reminder & Notification Routes (Extended)
-Route::get('/notifications', [ReminderNotificationController::class, 'index']);
-Route::get('/notifications/unread-count', [ReminderNotificationController::class, 'getUnreadCount']);
-Route::post('/notifications/{notification}/mark-read', [ReminderNotificationController::class, 'markAsRead']);
-Route::post('/notifications/mark-all-read', [ReminderNotificationController::class, 'markAllAsRead']);
-Route::post('/notifications/reminder', [ReminderNotificationController::class, 'createReminder']);
-Route::get('/notifications/upcoming', [ReminderNotificationController::class, 'getUpcomingReminders']);
-Route::get('/notifications/deadlines', [ReminderNotificationController::class, 'getDeadlineReminders']);
-Route::get('/notifications/overdue', [ReminderNotificationController::class, 'getOverdueAlerts']);
-Route::get('/notifications/preferences', [ReminderNotificationController::class, 'getNotificationPreferences']);
-Route::post('/notifications/preferences', [ReminderNotificationController::class, 'updateNotificationPreferences']);
-Route::delete('/notifications/{notification}', [ReminderNotificationController::class, 'destroy']);
-Route::post('/notifications/bulk-delete', [ReminderNotificationController::class, 'bulkDelete']);
-
-// Workflow Automation Routes (Cron Jobs)
-Route::post('/workflow/send-reminders', [ReminderNotificationController::class, 'sendReminderNotifications']);
-Route::post('/workflow/update-episode-statuses', [ReminderNotificationController::class, 'updateEpisodeStatuses']);
-Route::post('/workflow/auto-close-programs', [ReminderNotificationController::class, 'autoCloseInactivePrograms']);
-Route::post('/workflow/set-deadlines/{program}', [ReminderNotificationController::class, 'setAutomaticDeadlines']);
-
-// ===== NEW PROGRAM WORKFLOW SYSTEM ROUTES =====
-
-// Team Management Routes
-Route::prefix('teams')->group(function () {
-    Route::get('/', [TeamManagementController::class, 'index']);
-    Route::post('/', [TeamManagementController::class, 'store']);
-    Route::get('/{id}', [TeamManagementController::class, 'show']);
-    Route::put('/{id}', [TeamManagementController::class, 'update']);
-    Route::post('/{id}/members', [TeamManagementController::class, 'addMember']);
-    Route::delete('/{id}/members', [TeamManagementController::class, 'removeMember']);
-    Route::put('/{id}/members/role', [TeamManagementController::class, 'updateMemberRole']);
-    Route::get('/by-role', [TeamManagementController::class, 'getTeamsByRole']);
-    Route::get('/department/{department}', [TeamManagementController::class, 'getTeamsByDepartment']);
-    Route::get('/user/my-teams', [TeamManagementController::class, 'getUserTeams']);
-});
-
-// Workflow State Machine Routes
-Route::prefix('workflow')->group(function () {
-    Route::get('/{entityType}/{entityId}/transitions', [WorkflowController::class, 'getAvailableTransitions']);
-    Route::post('/{entityType}/{entityId}/execute', [WorkflowController::class, 'executeTransition']);
-    Route::get('/{entityType}/{entityId}/status', [WorkflowController::class, 'getWorkflowStatus']);
-    Route::get('/steps', [WorkflowController::class, 'getWorkflowSteps']);
-    Route::get('/states', [WorkflowController::class, 'getWorkflowStates']);
-    Route::get('/dashboard', [WorkflowController::class, 'getWorkflowDashboard']);
-});
-
-// File Management Routes
-Route::prefix('files')->group(function () {
-    Route::post('/upload', [FileManagementController::class, 'uploadFile']);
-    Route::post('/bulk-upload', [FileManagementController::class, 'bulkUpload']);
-    Route::get('/statistics', [FileManagementController::class, 'getFileStatistics']);
-    Route::get('/{entityType}/{entityId}', [FileManagementController::class, 'getFiles']);
-    Route::get('/{id}/download', [FileManagementController::class, 'downloadFile']);
-    Route::put('/{id}', [FileManagementController::class, 'updateFile']);
-    Route::delete('/{id}', [FileManagementController::class, 'deleteFile']);
-    Route::get('/{entityType}/{entityId}/statistics', [FileManagementController::class, 'getFileStatistics']);
-});
-
-// Enhanced Notification Routes
-Route::prefix('notifications')->group(function () {
-    Route::get('/', [NotificationController::class, 'index']);
-    Route::post('/{id}/read', [NotificationController::class, 'markAsRead']);
-    Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead']);
-    Route::delete('/{id}', [NotificationController::class, 'destroy']);
-    Route::get('/statistics', [NotificationController::class, 'getStatistics']);
-    Route::get('/workflow', [NotificationController::class, 'getWorkflowNotifications']);
-    Route::post('/test', [NotificationController::class, 'sendTestNotification']);
-    Route::get('/preferences', [NotificationController::class, 'getPreferences']);
-    Route::put('/preferences', [NotificationController::class, 'updatePreferences']);
-});
-
-// Music Notification Routes (Compatibility for frontend)
-Route::prefix('music/notifications')->middleware('auth:sanctum')->group(function () {
-    Route::get('/read-status/{id}', [\App\Http\Controllers\Api\NotificationController::class, 'getReadStatus']);
-});
-
-// Enhanced Approval Workflow Routes
-Route::prefix('approvals')->group(function () {
-    Route::post('/programs/{id}/submit', [ApprovalWorkflowController::class, 'submitProgramForApproval']);
-    Route::post('/programs/{id}/approve', [ApprovalWorkflowController::class, 'approveProgram']);
-    Route::post('/programs/{id}/reject', [ApprovalWorkflowController::class, 'rejectProgram']);
-    Route::post('/rundowns/{id}/submit', [ApprovalWorkflowController::class, 'submitRundownForApproval']);
-    Route::post('/rundowns/{id}/approve', [ApprovalWorkflowController::class, 'approveRundown']);
-    Route::post('/rundowns/{id}/reject', [ApprovalWorkflowController::class, 'rejectRundown']);
-    Route::post('/schedules/{id}/submit', [ApprovalWorkflowController::class, 'submitScheduleForApproval']);
-    Route::post('/schedules/{id}/approve', [ApprovalWorkflowController::class, 'approveSchedule']);
-    Route::post('/schedules/{id}/reject', [ApprovalWorkflowController::class, 'rejectSchedule']);
-    Route::get('/pending', [ApprovalWorkflowController::class, 'getPendingApprovals']);
-    Route::get('/history', [ApprovalWorkflowController::class, 'getApprovalHistory']);
-});
-
-// Art & Set Properti Routes
-Route::prefix('art-set-properti')->group(function () {
-    Route::get('/', [ArtSetPropertiController::class, 'index']);
-    Route::post('/', [ArtSetPropertiController::class, 'store']);
-    Route::get('/{id}', [ArtSetPropertiController::class, 'show']);
-    Route::put('/{id}', [ArtSetPropertiController::class, 'update']);
-    Route::delete('/{id}', [ArtSetPropertiController::class, 'destroy']);
-    Route::post('/{id}/approve', [ArtSetPropertiController::class, 'approveRequest']);
-    Route::post('/{id}/reject', [ArtSetPropertiController::class, 'rejectRequest']);
-    Route::post('/{id}/assign', [ArtSetPropertiController::class, 'assignEquipment']);
-    Route::post('/{id}/return', [ArtSetPropertiController::class, 'returnEquipment']);
-    Route::get('/inventory/summary', [ArtSetPropertiController::class, 'getInventory']);
-});
-
-// Program Analytics Routes
-Route::prefix('analytics')->group(function () {
-    Route::get('/programs/{id}', [ProgramAnalyticsController::class, 'getProgramAnalytics']);
-    Route::get('/programs/{id}/performance', [ProgramAnalyticsController::class, 'getPerformanceMetrics']);
-    Route::get('/programs/{id}/kpi', [ProgramAnalyticsController::class, 'getKPISummary']);
-    Route::get('/programs/{id}/team-performance', [ProgramAnalyticsController::class, 'getTeamPerformance']);
-    Route::get('/programs/{id}/content', [ProgramAnalyticsController::class, 'getContentAnalytics']);
-    Route::get('/programs/{id}/trends', [ProgramAnalyticsController::class, 'getTrends']);
-    Route::get('/programs/{id}/views', [ProgramAnalyticsController::class, 'getViewsTracking']);
-    Route::get('/dashboard', [ProgramAnalyticsController::class, 'getDashboardAnalytics']);
-    Route::get('/comparative', [ProgramAnalyticsController::class, 'getComparativeAnalytics']);
-    Route::get('/programs/{id}/export', [ProgramAnalyticsController::class, 'exportAnalytics']);
-});
-
 
 // // ===== MUSIC PROGRAM ROUTES =====
 // // Load Music System API routes
@@ -918,3 +690,70 @@ Route::prefix('analytics')->group(function () {
 
 // // Include Live TV Program API Routes
 // require __DIR__.'/live_tv_api.php';
+
+// ===== PROGRAM REGULAR ROUTES =====
+Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function () {
+    
+    // Manager Program Routes
+    Route::prefix('manager-program')->group(function () {
+        Route::post('/programs', [PrManagerProgramController::class, 'createProgram']); // Create program (hanya Manager Program)
+        Route::get('/programs', [PrManagerProgramController::class, 'listPrograms']); // List semua program (semua bisa lihat)
+        Route::get('/programs/{id}', [PrManagerProgramController::class, 'showProgram']); // Detail program
+        Route::put('/programs/{id}', [PrManagerProgramController::class, 'updateProgram']); // Update program
+        Route::delete('/programs/{id}', [PrManagerProgramController::class, 'deleteProgram']); // Delete program
+        Route::post('/programs/{id}/concepts', [PrManagerProgramController::class, 'createConcept']); // Create konsep
+        Route::post('/programs/{id}/approve', [PrManagerProgramController::class, 'approveProgram']); // Approve program dari Producer
+        Route::post('/programs/{id}/reject', [PrManagerProgramController::class, 'rejectProgram']); // Reject program dari Producer
+        Route::post('/programs/{id}/submit-to-distribusi', [PrManagerProgramController::class, 'submitToDistribusi']); // Submit ke Manager Distribusi
+        Route::get('/programs/{id}/schedules', [PrManagerProgramController::class, 'viewSchedules']); // View jadwal
+        Route::get('/programs/{id}/distribution-reports', [PrManagerProgramController::class, 'viewDistributionReports']); // View laporan distribusi
+        Route::get('/programs/{id}/revision-history', [PrManagerProgramController::class, 'viewRevisionHistory']); // View revision history
+        Route::put('/episodes/{id}', [PrManagerProgramController::class, 'updateEpisode']); // Update episode
+        Route::delete('/episodes/{id}', [PrManagerProgramController::class, 'deleteEpisode']); // Delete episode
+    });
+
+    // Producer Routes
+    Route::prefix('producer')->group(function () {
+        Route::get('/concepts', [PrProducerController::class, 'listConceptsForApproval']); // List konsep untuk approval
+        Route::post('/concepts/{id}/approve', [PrProducerController::class, 'approveConcept']); // Approve konsep
+        Route::post('/concepts/{id}/reject', [PrProducerController::class, 'rejectConcept']); // Reject konsep
+        Route::post('/programs/{id}/production-schedules', [PrProducerController::class, 'createProductionSchedule']); // Create jadwal produksi
+        Route::put('/production-schedules/{id}', [PrProducerController::class, 'updateProductionSchedule']); // Update jadwal produksi
+        Route::delete('/production-schedules/{id}', [PrProducerController::class, 'deleteProductionSchedule']); // Delete jadwal produksi
+        Route::put('/episodes/{id}/status', [PrProducerController::class, 'updateEpisodeStatus']); // Update status episode
+        Route::put('/episodes/{id}', [PrProducerController::class, 'updateEpisode']); // Update episode
+        Route::delete('/episodes/{id}', [PrProducerController::class, 'deleteEpisode']); // Delete episode
+        Route::post('/episodes/{id}/files', [PrProducerController::class, 'uploadFile']); // Upload file setelah editing
+        Route::post('/programs/{id}/submit-to-manager', [PrProducerController::class, 'submitToManager']); // Submit ke Manager Program
+        Route::get('/programs/{id}/distribution-schedules', [PrProducerController::class, 'viewDistributionSchedules']); // View jadwal tayang
+        Route::get('/programs/{id}/distribution-reports', [PrProducerController::class, 'viewDistributionReports']); // View laporan distribusi
+        Route::get('/programs/{id}/revision-history', [PrProducerController::class, 'viewRevisionHistory']); // View revision history
+    });
+
+    // Manager Distribusi Routes
+    Route::prefix('distribusi')->group(function () {
+        Route::get('/programs', [PrManagerDistribusiController::class, 'listProgramsForDistribusi']); // List program untuk distribusi
+        Route::post('/programs/{id}/verify', [PrManagerDistribusiController::class, 'verifyProgram']); // Verify program
+        Route::get('/programs/{id}/concept', [PrManagerDistribusiController::class, 'viewProgramConcept']); // View konsep program
+        Route::get('/programs/{id}/production-schedules', [PrManagerDistribusiController::class, 'viewProductionSchedules']); // View jadwal produksi
+        Route::get('/episodes/{id}/shooting-schedule', [PrManagerDistribusiController::class, 'viewShootingSchedule']); // View jadwal syuting per episode
+        Route::get('/programs/{id}/files', [PrManagerDistribusiController::class, 'viewProgramFiles']); // View file program
+        Route::post('/programs/{id}/distribution-schedules', [PrManagerDistribusiController::class, 'createDistributionSchedule']); // Create jadwal tayang
+        Route::put('/distribution-schedules/{id}', [PrManagerDistribusiController::class, 'updateDistributionSchedule']); // Update jadwal tayang
+        Route::delete('/distribution-schedules/{id}', [PrManagerDistribusiController::class, 'deleteDistributionSchedule']); // Delete jadwal tayang
+        Route::post('/episodes/{id}/mark-aired', [PrManagerDistribusiController::class, 'markAsAired']); // Mark episode as aired
+        Route::post('/programs/{id}/distribution-reports', [PrManagerDistribusiController::class, 'createDistributionReport']); // Create laporan distribusi
+        Route::get('/distribution-reports', [PrManagerDistribusiController::class, 'listDistributionReports']); // List laporan distribusi
+        Route::put('/distribution-reports/{id}', [PrManagerDistribusiController::class, 'updateDistributionReport']); // Update laporan distribusi
+        Route::delete('/distribution-reports/{id}', [PrManagerDistribusiController::class, 'deleteDistributionReport']); // Delete laporan distribusi
+        Route::get('/programs/{id}/revision-history', [PrManagerDistribusiController::class, 'viewRevisionHistory']); // View revision history
+    });
+
+    // Revision Routes (semua role bisa request, hanya Manager Program yang bisa approve/reject)
+    Route::prefix('revisions')->group(function () {
+        Route::post('/programs/{id}/request', [PrRevisionController::class, 'requestRevision']); // Request revisi
+        Route::get('/programs/{id}/history', [PrRevisionController::class, 'getRevisionHistory']); // History revisi
+        Route::post('/{id}/approve', [PrRevisionController::class, 'approveRevision']); // Approve revisi (hanya Manager Program)
+        Route::post('/{id}/reject', [PrRevisionController::class, 'rejectRevision']); // Reject revisi (hanya Manager Program)
+    });
+});

@@ -1,0 +1,103 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class PrEpisode extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $table = 'pr_episodes';
+
+    protected $fillable = [
+        'program_id',
+        'episode_number',
+        'title',
+        'description',
+        'air_date',
+        'air_time',
+        'production_date',
+        'status',
+        'production_notes',
+        'editing_notes'
+    ];
+
+    protected $casts = [
+        'air_date' => 'date',
+        'air_time' => 'datetime:H:i',
+        'production_date' => 'date'
+    ];
+
+    /**
+     * Relationship dengan Program
+     */
+    public function program(): BelongsTo
+    {
+        return $this->belongsTo(PrProgram::class, 'program_id');
+    }
+
+    /**
+     * Relationship dengan Production Schedules
+     */
+    public function productionSchedules(): HasMany
+    {
+        return $this->hasMany(PrProductionSchedule::class, 'episode_id');
+    }
+
+    /**
+     * Relationship dengan Program Files
+     */
+    public function files(): HasMany
+    {
+        return $this->hasMany(PrProgramFile::class, 'episode_id');
+    }
+
+    /**
+     * Relationship dengan Distribution Schedules
+     */
+    public function distributionSchedules(): HasMany
+    {
+        return $this->hasMany(PrDistributionSchedule::class, 'episode_id');
+    }
+
+    /**
+     * Relationship dengan Distribution Reports
+     */
+    public function distributionReports(): HasMany
+    {
+        return $this->hasMany(PrDistributionReport::class, 'episode_id');
+    }
+
+    /**
+     * Get edited video file
+     */
+    public function editedVideo()
+    {
+        return $this->files()
+            ->where('category', 'edited_video')
+            ->where('status', 'active')
+            ->latest()
+            ->first();
+    }
+
+    /**
+     * Check if episode is ready for review
+     */
+    public function isReadyForReview(): bool
+    {
+        return $this->status === 'ready_for_review';
+    }
+
+    /**
+     * Check if episode is approved by manager
+     */
+    public function isManagerApproved(): bool
+    {
+        return $this->status === 'manager_approved';
+    }
+}
