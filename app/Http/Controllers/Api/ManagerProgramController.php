@@ -1689,6 +1689,140 @@ class ManagerProgramController extends Controller
     }
 
     /**
+     * Cancel shooting schedule from Creative Work (Override authority)
+     * Manager Program dapat cancel jadwal syuting dari Creative Work
+     */
+    public function cancelCreativeWorkShooting(Request $request, int $creativeWorkId): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can cancel shooting schedules'
+            ], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'reason' => 'required|string|max:1000',
+            'notify_team' => 'nullable|boolean',
+            'new_shooting_schedule' => 'nullable|date|after:now'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $creativeWork = CreativeWork::with(['episode.program.productionTeam'])->findOrFail($creativeWorkId);
+            
+            // Check if shooting schedule exists and can be cancelled
+            if (!$creativeWork->shooting_schedule) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No shooting schedule found for this creative work'
+                ], 400);
+            }
+
+            if ($creativeWork->shooting_schedule_cancelled) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Shooting schedule already cancelled'
+                ], 400);
+            }
+
+            // Cancel shooting schedule
+            $creativeWork->update([
+                'shooting_schedule_cancelled' => true,
+                'shooting_cancellation_reason' => $request->reason . ' (Cancelled by Manager Program)',
+                'shooting_schedule_new' => $request->new_shooting_schedule
+            ]);
+
+            // Cancel shooting team assignments
+            $shootingAssignments = \App\Models\ProductionTeamAssignment::where('episode_id', $creativeWork->episode_id)
+                ->where('team_type', 'shooting')
+                ->where('status', '!=', 'cancelled')
+                ->get();
+
+            foreach ($shootingAssignments as $assignment) {
+                $assignment->update(['status' => 'cancelled']);
+            }
+
+            // Notify team members if requested
+            if ($request->get('notify_team', true)) {
+                // Notify production team members
+                if ($creativeWork->episode->program->productionTeam) {
+                    $teamMembers = $creativeWork->episode->program->productionTeam->members()
+                        ->where('is_active', true)
+                        ->get();
+                    
+                    foreach ($teamMembers as $member) {
+                        \App\Models\Notification::create([
+                            'user_id' => $member->user_id,
+                            'type' => 'shooting_cancelled',
+                            'title' => 'Jadwal Syuting Dibatalkan',
+                            'message' => "Jadwal syuting untuk Episode {$creativeWork->episode->episode_number} telah dibatalkan oleh Manager Program. Alasan: {$request->reason}",
+                            'data' => [
+                                'creative_work_id' => $creativeWork->id,
+                                'episode_id' => $creativeWork->episode_id,
+                                'cancellation_reason' => $request->reason,
+                                'new_schedule' => $request->new_shooting_schedule
+                            ]
+                        ]);
+                    }
+                }
+
+                // Notify Creative
+                \App\Models\Notification::create([
+                    'user_id' => $creativeWork->created_by,
+                    'type' => 'shooting_cancelled',
+                    'title' => 'Jadwal Syuting Dibatalkan',
+                    'message' => "Jadwal syuting untuk Episode {$creativeWork->episode->episode_number} telah dibatalkan oleh Manager Program. Alasan: {$request->reason}",
+                    'data' => [
+                        'creative_work_id' => $creativeWork->id,
+                        'episode_id' => $creativeWork->episode_id
+                    ]
+                ]);
+            }
+
+            // Create approval record for audit trail
+            ProgramApproval::create([
+                'approvable_type' => CreativeWork::class,
+                'approvable_id' => $creativeWork->id,
+                'approval_type' => 'shooting_schedule_cancellation',
+                'requested_by' => $user->id,
+                'request_notes' => $request->reason,
+                'status' => 'approved',
+                'approved_by' => $user->id,
+                'approved_at' => now(),
+                'approval_notes' => 'Cancelled by Manager Program (Override authority)',
+                'priority' => 'high'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $creativeWork->fresh(['episode.program']),
+                'message' => 'Shooting schedule cancelled successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error cancelling shooting schedule: ' . $e->getMessage(), [
+                'creative_work_id' => $creativeWorkId,
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to cancel shooting schedule',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Reschedule shooting/recording schedule (Override authority)
      * Manager Program dapat merubah jadwal syuting dengan alasan
      */

@@ -154,24 +154,6 @@ class Episode extends Model
             'created_by' => auth()->id() ?? 1
         ]);
 
-        // Deadline Music Arranger: 9 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'musik_arr',
-            'deadline_date' => $airDate->copy()->subDays(9),
-            'description' => 'Deadline music arrangement episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
-        
-        // Deadline Sound Engineer: 9 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'sound_eng',
-            'deadline_date' => $airDate->copy()->subDays(9),
-            'description' => 'Deadline sound engineering episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
-
         // Notifikasi ke semua role yang terkait
         $this->notifyDeadlineCreation();
     }
