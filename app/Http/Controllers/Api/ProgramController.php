@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Program;
 use App\Models\Episode;
+use App\Models\ProductionTeam;
+use App\Models\Notification;
 use App\Services\ProgramWorkflowService;
 use App\Services\AnalyticsService;
 use App\Helpers\QueryOptimizer;
@@ -369,16 +371,62 @@ class ProgramController extends Controller
         }
         
         try {
+            $oldTeamId = $program->production_team_id;
             $program->update($request->all());
+            
+            // Jika production_team_id di-update, auto-assign ke semua episode yang belum punya team sendiri
+            if ($request->has('production_team_id') && $request->production_team_id != $oldTeamId && $request->production_team_id) {
+                $newTeamId = $request->production_team_id;
+                $team = ProductionTeam::findOrFail($newTeamId);
+                
+                // Get semua episode yang belum punya team sendiri (production_team_id = null)
+                $episodesWithoutTeam = $program->episodes()
+                    ->whereNull('production_team_id')
+                    ->get();
+                
+                // Auto-assign team ke semua episode yang belum punya team
+                foreach ($episodesWithoutTeam as $episode) {
+                    $episode->update([
+                        'production_team_id' => $newTeamId,
+                        'team_assigned_by' => $user->id,
+                        'team_assigned_at' => now(),
+                        'team_assignment_notes' => "Auto-assigned dari Program team"
+                    ]);
+                    
+                    // Notify team members untuk setiap episode
+                    $teamMembers = $team->members()->where('is_active', true)->get();
+                    foreach ($teamMembers as $member) {
+                        \App\Models\Notification::create([
+                            'user_id' => $member->user_id,
+                            'type' => 'team_assigned',
+                            'title' => 'Ditugaskan ke Episode',
+                            'message' => "Anda ditugaskan untuk Episode {$episode->episode_number} - {$episode->title} (Auto-assigned dari Program)",
+                            'data' => [
+                                'episode_id' => $episode->id,
+                                'program_id' => $program->id,
+                                'notes' => 'Auto-assigned dari Program team'
+                            ]
+                        ]);
+                    }
+                }
+            }
             
             // Clear cache setelah update
             QueryOptimizer::clearIndexCache('programs');
             QueryOptimizer::clearIndexCache('episodes'); // Episodes juga perlu di-clear karena terkait program
             
+            $message = 'Program updated successfully';
+            if ($request->has('production_team_id') && $request->production_team_id != $oldTeamId && $request->production_team_id) {
+                $episodesCount = $episodesWithoutTeam->count();
+                if ($episodesCount > 0) {
+                    $message .= ". Team telah di-assign ke {$episodesCount} episode yang belum punya team.";
+                }
+            }
+            
             return response()->json([
                 'success' => true,
-                'data' => $program,
-                'message' => 'Program updated successfully'
+                'data' => $program->fresh(['episodes', 'productionTeam']),
+                'message' => $message
             ]);
         } catch (\Exception $e) {
             return response()->json([
