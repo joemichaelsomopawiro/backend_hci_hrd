@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class ProgramController extends Controller
 {
@@ -202,7 +203,26 @@ class ProgramController extends Controller
             'category' => 'nullable|in:musik,live_tv,regular,special,other',
             'manager_program_id' => 'required|exists:users,id',
             'production_team_id' => 'nullable|exists:production_teams,id',
-            'start_date' => 'required|date|after_or_equal:today',
+            'start_date' => [
+                'required',
+                'date',
+                function ($attribute, $value, $fail) {
+                    // Validasi: start_date untuk planning Episode 1
+                    // Boleh di masa lalu (program yang sudah berjalan) atau masa depan (planning)
+                    // Tapi tahun harus masuk akal (antara tahun sekarang - 1 sampai tahun sekarang + 5)
+                    $startDate = Carbon::parse($value);
+                    $currentYear = Carbon::now()->year;
+                    $year = $startDate->year;
+                    
+                    if ($year < ($currentYear - 1)) {
+                        $fail('The start_date year cannot be more than 1 year in the past. Start date is used for planning Episode 1.');
+                    }
+                    
+                    if ($year > ($currentYear + 5)) {
+                        $fail('The start_date year cannot be more than 5 years in the future. Please select a reasonable planning date.');
+                    }
+                },
+            ],
             'air_time' => 'required|date_format:H:i',
             'duration_minutes' => 'nullable|integer|min:1',
             'broadcast_channel' => 'nullable|string|max:255',
@@ -355,7 +375,26 @@ class ProgramController extends Controller
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string',
             'production_team_id' => 'nullable|exists:production_teams,id',
-            'start_date' => 'sometimes|date|after_or_equal:today',
+            'start_date' => [
+                'sometimes',
+                'date',
+                function ($attribute, $value, $fail) {
+                    // Validasi: start_date untuk planning Episode 1
+                    // Boleh di masa lalu (program yang sudah berjalan) atau masa depan (planning)
+                    // Tapi tahun harus masuk akal (antara tahun sekarang - 1 sampai tahun sekarang + 5)
+                    $startDate = Carbon::parse($value);
+                    $currentYear = Carbon::now()->year;
+                    $year = $startDate->year;
+                    
+                    if ($year < ($currentYear - 1)) {
+                        $fail('The start_date year cannot be more than 1 year in the past. Start date is used for planning Episode 1.');
+                    }
+                    
+                    if ($year > ($currentYear + 5)) {
+                        $fail('The start_date year cannot be more than 5 years in the future. Please select a reasonable planning date.');
+                    }
+                },
+            ],
             'air_time' => 'sometimes|date_format:H:i',
             'duration_minutes' => 'nullable|integer|min:1',
             'broadcast_channel' => 'nullable|string|max:255',

@@ -237,12 +237,41 @@ class ManagerProgramController extends Controller
             ], 403);
         }
         
-        $validated = $request->validate([
+        $validator = Validator::make($request->all(), [
             'number_of_episodes' => 'required|integer|min:1|max:100',
-            'start_date' => 'required|date|after_or_equal:today',
+            'start_date' => [
+                'required',
+                'date',
+                function ($attribute, $value, $fail) {
+                    // Validasi: start_date untuk planning Episode 1
+                    // Boleh di masa lalu (program yang sudah berjalan) atau masa depan (planning)
+                    // Tapi tahun harus masuk akal (antara tahun sekarang - 1 sampai tahun sekarang + 5)
+                    $startDate = Carbon::parse($value);
+                    $currentYear = Carbon::now()->year;
+                    $year = $startDate->year;
+                    
+                    if ($year < ($currentYear - 1)) {
+                        $fail('The start_date year cannot be more than 1 year in the past. Start date is used for planning Episode 1.');
+                    }
+                    
+                    if ($year > ($currentYear + 5)) {
+                        $fail('The start_date year cannot be more than 5 years in the future. Please select a reasonable planning date.');
+                    }
+                },
+            ],
             'interval_days' => 'required|integer|min:1|max:30',
             'regenerate' => 'nullable|boolean' // Opsi untuk regenerate episode yang sudah ada
         ]);
+        
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+        
+        $validated = $validator->validated();
         
         try {
             $program = Program::findOrFail($programId);
