@@ -165,16 +165,69 @@ class MusicArrangerController extends Controller
 
             $songTitle = $request->song_title;
             $songId = $request->song_id;
+            
+            // Jika pilih dari database, ambil song_title
             if ($songId && !$songTitle) {
                 $song = \App\Models\Song::find($songId);
                 if ($song) $songTitle = $song->title;
             }
+            
+            // Jika input manual song_title, auto-save ke database jika belum ada
+            if ($songTitle && !$songId) {
+                $existingSong = \App\Models\Song::where('title', $songTitle)->first();
+                if ($existingSong) {
+                    // Jika sudah ada, gunakan yang sudah ada
+                    $songId = $existingSong->id;
+                    $songTitle = $existingSong->title;
+                } else {
+                    // Jika belum ada, create song baru ke database
+                    $newSong = \App\Models\Song::create([
+                        'title' => $songTitle,
+                        'status' => 'available',
+                        'created_by' => $user->id
+                    ]);
+                    $songId = $newSong->id;
+                }
+            }
 
             $singerName = $request->singer_name;
             $singerId = $request->singer_id;
+            
+            // Jika pilih dari database, ambil singer_name
             if ($singerId && !$singerName) {
                 $singer = \App\Models\User::find($singerId);
                 if ($singer) $singerName = $singer->name;
+            }
+            
+            // Jika input manual singer_name, auto-save ke database sebagai User dengan role Singer jika belum ada
+            if ($singerName && !$singerId) {
+                $existingSinger = \App\Models\User::where('name', $singerName)
+                    ->where('role', 'Singer')
+                    ->first();
+                if ($existingSinger) {
+                    // Jika sudah ada, gunakan yang sudah ada
+                    $singerId = $existingSinger->id;
+                    $singerName = $existingSinger->name;
+                } else {
+                    // Jika belum ada, create user baru dengan role Singer
+                    // Generate email dari name jika tidak ada
+                    $email = strtolower(str_replace(' ', '.', $singerName)) . '@singer.local';
+                    // Pastikan email unique
+                    $counter = 1;
+                    while (\App\Models\User::where('email', $email)->exists()) {
+                        $email = strtolower(str_replace(' ', '.', $singerName)) . $counter . '@singer.local';
+                        $counter++;
+                    }
+                    
+                    $newSinger = \App\Models\User::create([
+                        'name' => $singerName,
+                        'email' => $email,
+                        'password' => bcrypt('password'), // Default password, bisa diubah nanti
+                        'role' => 'Singer',
+                        'email_verified_at' => now()
+                    ]);
+                    $singerId = $newSinger->id;
+                }
             }
 
             $filePath = null;
