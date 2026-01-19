@@ -675,6 +675,39 @@ class ProduksiController extends Controller
                 ]);
             }
 
+            // Auto-create EditorWork
+            $existingEditorWork = \App\Models\EditorWork::where('episode_id', $work->episode_id)
+                ->where('work_type', 'main_episode')
+                ->first();
+
+            if (!$existingEditorWork) {
+                $editorWork = \App\Models\EditorWork::create([
+                    'episode_id' => $work->episode_id,
+                    'work_type' => 'main_episode',
+                    'status' => 'draft',
+                    'source_files' => [
+                        'produksi_work_id' => $work->id,
+                        'shooting_files' => $uploadedFiles,
+                        'shooting_file_links' => $filePaths
+                    ],
+                    'file_complete' => false, // Editor perlu cek kelengkapan file
+                    'created_by' => $user->id
+                ]);
+            } else {
+                // Update existing EditorWork dengan file terbaru
+                $existingSourceFiles = $existingEditorWork->source_files ?? [];
+                $existingEditorWork->update([
+                    'source_files' => array_merge($existingSourceFiles, [
+                        'produksi_work_id' => $work->id,
+                        'shooting_files' => $uploadedFiles,
+                        'shooting_file_links' => $filePaths,
+                        'updated_at' => now()->toDateTimeString()
+                    ]),
+                    'file_complete' => false // Reset status karena ada file baru
+                ]);
+                $editorWork = $existingEditorWork;
+            }
+
             // Notify Editor
             $editorUsers = \App\Models\User::where('role', 'Editor')->get();
             foreach ($editorUsers as $editorUser) {
@@ -686,22 +719,77 @@ class ProduksiController extends Controller
                     'data' => [
                         'produksi_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
+                        'editor_work_id' => $editorWork->id
                     ]
                 ]);
             }
 
-            // Notify Design Grafis - File dari Produksi sudah tersedia
+            // Auto-create DesignGrafisWork untuk Thumbnail YouTube dan BTS
+            $designGrafisWorkTypes = ['thumbnail_youtube', 'thumbnail_bts'];
+            $createdDesignGrafisWorks = [];
+
+            foreach ($designGrafisWorkTypes as $workType) {
+                $existingDesignGrafisWork = \App\Models\DesignGrafisWork::where('episode_id', $work->episode_id)
+                    ->where('work_type', $workType)
+                    ->first();
+
+                if (!$existingDesignGrafisWork) {
+                    $designGrafisWork = \App\Models\DesignGrafisWork::create([
+                        'episode_id' => $work->episode_id,
+                        'work_type' => $workType,
+                        'title' => $workType === 'thumbnail_youtube' 
+                            ? "Thumbnail YouTube - Episode {$work->episode->episode_number}"
+                            : "Thumbnail BTS - Episode {$work->episode->episode_number}",
+                        'description' => "Design thumbnail untuk Episode {$work->episode->episode_number}. File referensi dari Produksi sudah tersedia.",
+                        'status' => 'draft',
+                        'source_files' => [
+                            'produksi_work_id' => $work->id,
+                            'produksi_files' => [
+                                'files' => $uploadedFiles,
+                                'file_links' => $filePaths
+                            ],
+                            'available' => true,
+                            'fetched_at' => now()->toDateTimeString()
+                        ],
+                        'created_by' => $user->id
+                    ]);
+                    $createdDesignGrafisWorks[] = $designGrafisWork;
+                } else {
+                    // Update existing DesignGrafisWork dengan file terbaru
+                    $existingSourceFiles = $existingDesignGrafisWork->source_files ?? [];
+                    $existingDesignGrafisWork->update([
+                        'source_files' => array_merge($existingSourceFiles, [
+                            'produksi_work_id' => $work->id,
+                            'produksi_files' => [
+                                'files' => $uploadedFiles,
+                                'file_links' => $filePaths,
+                                'updated_at' => now()->toDateTimeString()
+                            ]
+                        ])
+                    ]);
+                    $createdDesignGrafisWorks[] = $existingDesignGrafisWork;
+                }
+            }
+
+            // Notify Design Grafis - File dari Produksi sudah tersedia dan work sudah dibuat
             $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
             foreach ($designGrafisUsers as $designUser) {
                 Notification::create([
                     'user_id' => $designUser->id,
                     'type' => 'produksi_files_available',
                     'title' => 'File Produksi Tersedia',
-                    'message' => "Produksi telah mengupload file hasil syuting untuk Episode {$work->episode->episode_number}. File dapat diakses untuk referensi design.",
+                    'message' => "Produksi telah mengupload file hasil syuting untuk Episode {$work->episode->episode_number}. Design Grafis work untuk Thumbnail YouTube dan BTS sudah dibuat.",
                     'data' => [
                         'produksi_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
-                        'file_count' => count($uploadedFiles)
+                        'file_count' => count($uploadedFiles),
+                        'design_grafis_works' => array_map(function($dgWork) {
+                            return [
+                                'id' => $dgWork->id,
+                                'work_type' => $dgWork->work_type,
+                                'title' => $dgWork->title
+                            ];
+                        }, $createdDesignGrafisWorks)
                     ]
                 ]);
             }
@@ -829,6 +917,175 @@ class ProduksiController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error retrieving QC results: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get Producer requests
+     * GET /api/live-tv/roles/produksi/producer-requests
+     */
+    public function getProducerRequests(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Production') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $produksiWorks = ProduksiWork::with(['episode.program.productionTeam'])
+                ->whereHas('episode.program.productionTeam')
+                ->whereNotNull('producer_requests')
+                ->get();
+
+            $requests = [];
+            foreach ($produksiWorks as $work) {
+                $producerRequests = $work->producer_requests ?? [];
+                foreach ($producerRequests as $req) {
+                    if (isset($req['status']) && $req['status'] === 'pending') {
+                        $requests[] = [
+                            'request_id' => $req['id'] ?? null,
+                            'produksi_work_id' => $work->id,
+                            'episode_id' => $work->episode_id,
+                            'episode_number' => $work->episode->episode_number,
+                            'request_type' => $req['request_type'] ?? null,
+                            'reason' => $req['reason'] ?? null,
+                            'missing_files' => $req['missing_files'] ?? [],
+                            'shooting_schedule' => $req['shooting_schedule'] ?? null,
+                            'requested_by' => $req['requested_by_name'] ?? null,
+                            'requested_at' => $req['requested_at'] ?? null,
+                            'work' => $work
+                        ];
+                    }
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $requests,
+                'message' => 'Producer requests retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving producer requests: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Accept Producer request and proceed
+     * POST /api/live-tv/roles/produksi/producer-requests/{produksi_work_id}/accept
+     */
+    public function acceptProducerRequest(Request $request, int $produksiWorkId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Production') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'request_id' => 'required|string',
+                'action' => 'nullable|in:accept,reject',
+                'notes' => 'nullable|string|max:2000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $produksiWork = ProduksiWork::with(['episode.program.productionTeam'])->findOrFail($produksiWorkId);
+
+            if ($produksiWork->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This work is not assigned to you.'
+                ], 403);
+            }
+
+            $producerRequests = $produksiWork->producer_requests ?? [];
+            $requestFound = false;
+
+            foreach ($producerRequests as &$req) {
+                if (isset($req['id']) && $req['id'] === $request->request_id) {
+                    $requestFound = true;
+                    $req['status'] = $request->action === 'accept' ? 'accepted' : 'rejected';
+                    $req['accepted_by'] = $user->id;
+                    $req['accepted_by_name'] = $user->name;
+                    $req['accepted_at'] = now()->toDateTimeString();
+                    $req['notes'] = $request->notes;
+
+                    // If accepted and request type is reshoot, reset shooting files
+                    if ($req['status'] === 'accepted' && $req['request_type'] === 'reshoot') {
+                        $produksiWork->update([
+                            'shooting_files' => null,
+                            'shooting_file_links' => null,
+                            'status' => 'in_progress'
+                        ]);
+                    }
+
+                    break;
+                }
+            }
+
+            if (!$requestFound) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Request not found'
+                ], 404);
+            }
+
+            $produksiWork->update(['producer_requests' => $producerRequests]);
+
+            // Notify Producer
+            $producer = $produksiWork->episode->program->productionTeam->producer ?? null;
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'produksi_accepted_producer_request',
+                    'title' => 'Produksi Menerima Permintaan',
+                    'message' => "Produksi {$user->name} telah " . 
+                        ($request->action === 'accept' ? 'menerima' : 'menolak') . 
+                        " permintaan untuk Episode {$produksiWork->episode->episode_number}.",
+                    'data' => [
+                        'produksi_work_id' => $produksiWork->id,
+                        'episode_id' => $produksiWork->episode_id,
+                        'request_id' => $request->request_id,
+                        'action' => $request->action,
+                        'notes' => $request->notes
+                    ]
+                ]);
+            }
+
+            // If accepted, update work status back to in_progress
+            if ($request->action === 'accept' && $produksiWork->status === 'completed') {
+                $produksiWork->update(['status' => 'in_progress']);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $produksiWork->fresh(['episode']),
+                'message' => 'Producer request ' . ($request->action === 'accept' ? 'accepted' : 'rejected') . ' successfully. Producer has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting producer request: ' . $e->getMessage()
             ], 500);
         }
     }

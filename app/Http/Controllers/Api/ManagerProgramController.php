@@ -875,10 +875,10 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can view performance'
+                'message' => 'Only Manager Program or Distribution Manager can view performance'
             ], 403);
         }
         
@@ -949,10 +949,10 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can view performance'
+                'message' => 'Only Manager Program or Distribution Manager can view performance'
             ], 403);
         }
         
@@ -981,10 +981,10 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can set target views'
+                'message' => 'Only Manager Program or Distribution Manager can set target views'
             ], 403);
         }
         
@@ -1044,10 +1044,10 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can monitor workflow'
+                'message' => 'Only Manager Program or Distribution Manager can monitor workflow'
             ], 403);
         }
         
@@ -1311,10 +1311,10 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can view underperforming programs'
+                'message' => 'Only Manager Program or Distribution Manager can view underperforming programs'
             ], 403);
         }
         
@@ -1412,10 +1412,10 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can close programs'
+                'message' => 'Only Manager Program or Distribution Manager can close programs'
             ], 403);
         }
         

@@ -12,6 +12,7 @@ use App\Models\SoundEngineerRecording;
 use App\Models\SoundEngineerEditing;
 use App\Models\EditorWork;
 use App\Models\DesignGrafisWork;
+use App\Models\ProduksiWork;
 use App\Models\PromotionMaterial;
 use Illuminate\Support\Facades\Log;
 use App\Models\BroadcastingSchedule;
@@ -1440,12 +1441,13 @@ class ProducerController extends Controller
                         ], 400);
                     }
 
-                    // Reject editing
+                    // Reject editing - reset to revision_needed so Sound Engineer can edit again
                     $item->update([
                         'status' => 'revision_needed',
                         'rejected_by' => auth()->id(),
                         'rejected_at' => now(),
-                        'rejection_reason' => $request->reason
+                        'rejection_reason' => $request->reason,
+                        'submitted_at' => null // Reset submitted_at to allow resubmission
                     ]);
 
                     // Notify Sound Engineer
@@ -4957,6 +4959,175 @@ class ProducerController extends Controller
                 'success' => false,
                 'message' => 'Failed to copy team assignment',
                 'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get Editor missing files reports
+     * GET /api/live-tv/producer/editor-missing-files
+     */
+    public function getEditorMissingFiles(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $notifications = Notification::where('type', 'editor_missing_files_reported')
+                ->whereIn('user_id', function($query) use ($user) {
+                    $query->select('id')
+                        ->from('users')
+                        ->where('id', $user->id);
+                })
+                ->with(['user'])
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            $reports = [];
+            foreach ($notifications as $notification) {
+                $editorWork = EditorWork::with(['episode.program.productionTeam', 'createdBy'])
+                    ->find($notification->data['editor_work_id'] ?? null);
+                
+                if ($editorWork && $editorWork->episode->program->productionTeam->producer_id === $user->id) {
+                    $reports[] = [
+                        'notification_id' => $notification->id,
+                        'editor_work' => $editorWork,
+                        'missing_files' => $notification->data['missing_files'] ?? [],
+                        'notes' => $notification->data['notes'] ?? null,
+                        'reported_at' => $notification->created_at,
+                        'editor' => $editorWork->createdBy,
+                        'file_notes' => $editorWork->file_notes
+                    ];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $reports,
+                'message' => 'Editor missing files reports retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving editor missing files reports: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Request Produksi to reshoot/complete files/fix
+     * POST /api/live-tv/producer/request-produksi-action
+     */
+    public function requestProduksiAction(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'produksi_work_id' => 'required|exists:produksi_works,id',
+                'request_type' => 'required|in:reshoot,complete_files,fix',
+                'reason' => 'required|string|max:5000',
+                'missing_files' => 'nullable|array', // Untuk complete_files
+                'missing_files.*.file_type' => 'required|string',
+                'missing_files.*.description' => 'required|string',
+                'shooting_schedule' => 'nullable|date|after:now', // Untuk reshoot
+                'editor_work_id' => 'nullable|exists:editor_works,id' // Link ke Editor Work yang report missing files
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $produksiWork = ProduksiWork::with(['episode.program.productionTeam'])->findOrFail($request->produksi_work_id);
+
+            // Validate Producer has access
+            if ($produksiWork->episode->program->productionTeam->producer_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This produksi work is not from your production team.'
+                ], 403);
+            }
+
+            // Create request entry
+            $requestData = [
+                'id' => uniqid('req_', true),
+                'request_type' => $request->request_type,
+                'reason' => $request->reason,
+                'requested_by' => $user->id,
+                'requested_by_name' => $user->name,
+                'requested_at' => now()->toDateTimeString(),
+                'status' => 'pending',
+                'editor_work_id' => $request->editor_work_id,
+                'missing_files' => $request->missing_files ?? [],
+                'shooting_schedule' => $request->shooting_schedule
+            ];
+
+            // Add to producer_requests array
+            $producerRequests = $produksiWork->producer_requests ?? [];
+            $producerRequests[] = $requestData;
+            $produksiWork->update(['producer_requests' => $producerRequests]);
+
+            // Notify Produksi team
+            $produksiUsers = \App\Models\User::where('role', 'Production')->get();
+            foreach ($produksiUsers as $produksiUser) {
+                Notification::create([
+                    'user_id' => $produksiUser->id,
+                    'type' => 'producer_request_produksi_action',
+                    'title' => 'Permintaan Producer',
+                    'message' => "Producer {$user->name} meminta Produksi untuk " . 
+                        ($request->request_type === 'reshoot' ? 'syuting ulang' : 
+                         ($request->request_type === 'complete_files' ? 'melengkapi file' : 'perbaikan')) . 
+                        " untuk Episode {$produksiWork->episode->episode_number}.",
+                    'data' => [
+                        'produksi_work_id' => $produksiWork->id,
+                        'episode_id' => $produksiWork->episode_id,
+                        'request_id' => $requestData['id'],
+                        'request_type' => $request->request_type,
+                        'reason' => $request->reason,
+                        'missing_files' => $request->missing_files ?? [],
+                        'shooting_schedule' => $request->shooting_schedule,
+                        'requested_by' => $user->id,
+                        'requested_by_name' => $user->name
+                    ]
+                ]);
+            }
+
+            // Update ProduksiWork status jika belum in_progress
+            if ($produksiWork->status === 'completed') {
+                $produksiWork->update(['status' => 'in_progress']);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'produksi_work' => $produksiWork->fresh(['episode']),
+                    'request' => $requestData
+                ],
+                'message' => 'Request sent to Produksi successfully. Produksi team has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error requesting produksi action: ' . $e->getMessage()
             ], 500);
         }
     }

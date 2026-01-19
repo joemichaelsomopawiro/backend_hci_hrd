@@ -413,24 +413,40 @@ class ProgramController extends Controller
             $oldTeamId = $program->production_team_id;
             $program->update($request->all());
             
-            // Jika production_team_id di-update, auto-assign ke semua episode yang belum punya team sendiri
+            // Counter untuk tracking (inisialisasi di luar if)
+            $updatedCount = 0;
+            $skippedCount = 0;
+            
+            // Jika production_team_id di-update, auto-assign ke SEMUA episode di program
+            // Episode yang sudah punya team sendiri akan di-override (kecuali ada flag khusus)
             if ($request->has('production_team_id') && $request->production_team_id != $oldTeamId && $request->production_team_id) {
                 $newTeamId = $request->production_team_id;
                 $team = ProductionTeam::findOrFail($newTeamId);
                 
-                // Get semua episode yang belum punya team sendiri (production_team_id = null)
-                $episodesWithoutTeam = $program->episodes()
-                    ->whereNull('production_team_id')
-                    ->get();
+                // Get SEMUA episode di program (baik yang sudah punya team maupun belum)
+                $allEpisodes = $program->episodes()->get();
                 
-                // Auto-assign team ke semua episode yang belum punya team
-                foreach ($episodesWithoutTeam as $episode) {
+                // Auto-assign team ke SEMUA episode
+                foreach ($allEpisodes as $episode) {
+                    // Skip jika episode sudah di-soft delete
+                    if ($episode->deleted_at) {
+                        $skippedCount++;
+                        continue;
+                    }
+                    
+                    // Update semua episode (termasuk yang sudah punya team - akan di-override)
+                    $wasOverridden = !is_null($episode->production_team_id) && $episode->production_team_id != $newTeamId;
+                    
                     $episode->update([
                         'production_team_id' => $newTeamId,
                         'team_assigned_by' => $user->id,
                         'team_assigned_at' => now(),
-                        'team_assignment_notes' => "Auto-assigned dari Program team"
+                        'team_assignment_notes' => $wasOverridden 
+                            ? "Auto-assigned dari Program team (Overrode previous team)" 
+                            : "Auto-assigned dari Program team"
                     ]);
+                    
+                    $updatedCount++;
                     
                     // Notify team members untuk setiap episode
                     $teamMembers = $team->members()->where('is_active', true)->get();
@@ -438,12 +454,17 @@ class ProgramController extends Controller
                         \App\Models\Notification::create([
                             'user_id' => $member->user_id,
                             'type' => 'team_assigned',
-                            'title' => 'Ditugaskan ke Episode',
-                            'message' => "Anda ditugaskan untuk Episode {$episode->episode_number} - {$episode->title} (Auto-assigned dari Program)",
+                            'title' => $wasOverridden ? 'Team Diubah untuk Episode' : 'Ditugaskan ke Episode',
+                            'message' => $wasOverridden
+                                ? "Team untuk Episode {$episode->episode_number} - {$episode->title} telah diubah (Auto-assigned dari Program)"
+                                : "Anda ditugaskan untuk Episode {$episode->episode_number} - {$episode->title} (Auto-assigned dari Program)",
                             'data' => [
                                 'episode_id' => $episode->id,
                                 'program_id' => $program->id,
-                                'notes' => 'Auto-assigned dari Program team'
+                                'notes' => $wasOverridden 
+                                    ? 'Auto-assigned dari Program team (Overrode previous team)' 
+                                    : 'Auto-assigned dari Program team',
+                                'was_overridden' => $wasOverridden
                             ]
                         ]);
                     }
@@ -455,10 +476,9 @@ class ProgramController extends Controller
             QueryOptimizer::clearIndexCache('episodes'); // Episodes juga perlu di-clear karena terkait program
             
             $message = 'Program updated successfully';
-            if ($request->has('production_team_id') && $request->production_team_id != $oldTeamId && $request->production_team_id) {
-                $episodesCount = $episodesWithoutTeam->count();
-                if ($episodesCount > 0) {
-                    $message .= ". Team telah di-assign ke {$episodesCount} episode yang belum punya team.";
+            if ($request->has('production_team_id') && $request->production_team_id != $oldTeamId && $request->production_team_id && isset($updatedCount)) {
+                if ($updatedCount > 0) {
+                    $message .= ". Team telah di-assign ke {$updatedCount} episode" . ($skippedCount > 0 ? " ({$skippedCount} episode di-skip karena soft deleted)" : "") . ".";
                 }
             }
             

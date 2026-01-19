@@ -1261,18 +1261,676 @@
 					}
 				},
 				{
-					"name": "Approve Special Budget",
+					"name": "Update Program",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Program Musik Test Updated\",\n  \"description\": \"Deskripsi updated\",\n  \"air_time\": \"20:00\",\n  \"duration_minutes\": 90\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Update program. Hanya bisa update jika status masih 'draft'.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/programs/{{program_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "programs", "{{program_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Get All Programs",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get all programs with optional filters: status, category, manager_id, search, page",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/programs?status=draft&category=musik&page=1",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "programs"],
+							"query": [
+								{"key": "status", "value": "draft", "disabled": true},
+								{"key": "category", "value": "musik", "disabled": true},
+								{"key": "page", "value": "1", "disabled": true}
+							]
+						}
+					}
+				},
+				{
+					"name": "Edit Deadline",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"deadline_date\": \"2026-01-20\",\n  \"reason\": \"Perlu perbaikan QC\",\n  \"description\": \"Deadline diperpanjang karena ada perbaikan QC\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Edit deadline untuk episode. Auto-notify role yang terkait.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/deadlines/{{deadline_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "deadlines", "{{deadline_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Monitor Workflow",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Monitor semua workflow episode dari awal sampai tayang. Menampilkan timeline semua tahap produksi.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/episodes/{{episode_id}}/monitor-workflow",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "episodes", "{{episode_id}}", "monitor-workflow"]
+						}
+					}
+				},
+				{
+					"name": "Program Performance",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get program performance: average views, target views, performance status, recommendations",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/performance",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "performance"]
+						}
+					}
+				},
+				{
+					"name": "Weekly Performance",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get weekly performance report untuk program",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/weekly-performance",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "weekly-performance"]
+						}
+					}
+				},
+				{
+					"name": "Update Episode Views",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"actual_views\": 95000\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Update actual views untuk episode. Sistem akan otomatis hitung growth rate dan performance.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/episodes/{{episode_id}}/views",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "episodes", "{{episode_id}}", "views"]
+						}
+					}
+				},
+				{
+					"name": "Set Target Views",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"target_views_per_episode\": 100000\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Set target views per episode untuk evaluasi performa program",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/target-views",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "target-views"]
+						}
+					}
+				},
+				{
+					"name": "Generate Next Year Episodes",
 					"request": {
 						"method": "POST",
 						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Auto-generate episodes untuk tahun berikutnya",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/generate-next-year-episodes",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "generate-next-year-episodes"]
+						}
+					}
+				},
+				{
+					"name": "Generate Episodes for Year",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"approved_amount\": 5000000,\n  \"notes\": \"Budget disetujui dengan penyesuaian\"\n}"
+							"raw": "{\n  \"year\": 2026\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
 						},
+						"description": "Generate episodes untuk tahun tertentu",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/generate-episodes-for-year",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "generate-episodes-for-year"]
+						}
+					}
+				},
+				{
+					"name": "Check Next Year Episodes",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Check apakah episode tahun depan sudah ada",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/check-next-year-episodes",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "check-next-year-episodes"]
+						}
+					}
+				},
+				{
+					"name": "Get Program Years",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get daftar tahun yang memiliki episode",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/years",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "years"]
+						}
+					}
+				},
+				{
+					"name": "Get Episodes by Year",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get episodes yang dikelompokkan per tahun. Optional filter: ?year=2026",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/episodes-by-year?year=2026",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "episodes-by-year"],
+							"query": [
+								{"key": "year", "value": "2026", "disabled": true}
+							]
+						}
+					}
+				},
+				{
+					"name": "Close Program",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Close program - update status, notify team, archive program",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/close",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "close"]
+						}
+					}
+				},
+				{
+					"name": "Evaluate All Programs",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Evaluate semua program berdasarkan performa",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/evaluate-all-programs",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "evaluate-all-programs"]
+						}
+					}
+				},
+				{
+					"name": "Get Underperforming Programs",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get list program yang underperform",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/underperforming",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "underperforming"]
+						}
+					}
+				},
+				{
+					"name": "Get All Approvals",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get semua approval yang perlu review atau override",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/approvals",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "approvals"]
+						}
+					}
+				},
+				{
+					"name": "Override Approval",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"action\": \"approve\",\n  \"reason\": \"Override approval karena urgent\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Override approval/rejection dari Producer. Action: 'approve' atau 'reject'",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/approvals/{{approval_id}}/override",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "approvals", "{{approval_id}}", "override"]
+						}
+					}
+				},
+				{
+					"name": "Get All Schedules",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get semua jadwal (syuting, recording, tayang)",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/schedules",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "schedules"]
+						}
+					}
+				},
+				{
+					"name": "Cancel Schedule",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"Jadwal bentrok dengan event penting\",\n  \"notify_team\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Cancel jadwal syuting/recording dengan alasan. Auto-notify team members.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/schedules/{{schedule_id}}/cancel",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "schedules", "{{schedule_id}}", "cancel"]
+						}
+					}
+				},
+				{
+					"name": "Reschedule Schedule",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"new_datetime\": \"2026-02-15T10:00:00\",\n  \"reason\": \"Perubahan jadwal karena cuaca\",\n  \"location\": \"Studio A\",\n  \"location_address\": \"Jl. Studio No. 1\",\n  \"schedule_notes\": \"Jadwal baru untuk syuting\",\n  \"notify_team\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Reschedule jadwal syuting/recording. Auto-notify team members.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/schedules/{{schedule_id}}/reschedule",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "schedules", "{{schedule_id}}", "reschedule"]
+						}
+					}
+				},
+				{
+					"name": "Cancel Creative Work Shooting",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"Jadwal syuting perlu diubah\",\n  \"notify_team\": true,\n  \"new_shooting_schedule\": \"2026-02-20\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Cancel jadwal syuting dari Creative Work. Optional: set jadwal baru.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/creative-works/{{creative_work_id}}/cancel-shooting",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "creative-works", "{{creative_work_id}}", "cancel-shooting"]
+						}
+					}
+				},
+				{
+					"name": "Get Quality Controls (Program)",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get semua QC work untuk program",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/quality-controls",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "quality-controls"]
+						}
+					}
+				},
+				{
+					"name": "Get Quality Controls (Episode)",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get semua QC work untuk episode",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/episodes/{{episode_id}}/quality-controls",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "episodes", "{{episode_id}}", "quality-controls"]
+						}
+					}
+				},
+				{
+					"name": "Get Rundown Edit Requests",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get semua permintaan edit rundown dari Producer",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/rundown-edit-requests",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "rundown-edit-requests"]
+						}
+					}
+				},
+				{
+					"name": "Approve Rundown Edit",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Approve permintaan edit rundown",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/rundown-edit-requests/{{approval_id}}/approve",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "rundown-edit-requests", "{{approval_id}}", "approve"]
+						}
+					}
+				},
+				{
+					"name": "Reject Rundown Edit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"Rundown tidak sesuai dengan konsep program\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Reject permintaan edit rundown dengan alasan",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/rundown-edit-requests/{{approval_id}}/reject",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "rundown-edit-requests", "{{approval_id}}", "reject"]
+						}
+					}
+				},
+				{
+					"name": "Get Special Budget Approvals",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get semua special budget approvals yang pending",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/special-budget-approvals",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "special-budget-approvals"]
+						}
+					}
+				},
+				{
+					"name": "Approve Special Budget (Amount Diminta)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"approval_notes\": \"Budget disetujui sesuai permintaan\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Approve special budget request dengan amount yang diminta Producer (tanpa edit). Jika approved_amount tidak diisi/null, akan menggunakan requested_amount.",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/manager-program/special-budget-approvals/{{approval_id}}/approve",
 							"host": ["{{base_url}}"],
 							"path": ["api", "live-tv", "manager-program", "special-budget-approvals", "{{approval_id}}", "approve"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var approvalId = pm.collectionVariables.get('approval_id');",
+								"if (!approvalId) {",
+								"    console.log('⚠️ approval_id tidak ditemukan! Gunakan request \"Get Special Budget Approvals\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Special budget berhasil di-approve');",
+								"        console.log('Approved Amount: Rp ' + jsonData.data.approval.request_data.approved_amount);",
+								"        console.log('Is Revised: ' + jsonData.data.approval.request_data.is_revised);",
+								"        console.log('✅ Producer dan Creative sudah di-notify');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Approve Special Budget (Edit Amount)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"approved_amount\": 3000000,\n  \"approval_notes\": \"Budget disetujui dengan revisi: dari Rp 5.000.000 menjadi Rp 3.000.000 karena ada penghematan\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Approve special budget request dengan amount yang di-edit oleh Manager Program. Jika budget tidak sesuai, Manager bisa edit approved_amount (kurang dari atau sama dengan requested_amount).",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/special-budget-approvals/{{approval_id}}/approve",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "special-budget-approvals", "{{approval_id}}", "approve"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var approvalId = pm.collectionVariables.get('approval_id');",
+								"if (!approvalId) {",
+								"    console.log('⚠️ approval_id tidak ditemukan! Gunakan request \"Get Special Budget Approvals\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Special budget berhasil di-approve dengan revisi');",
+								"        console.log('Requested Amount: Rp ' + jsonData.data.approval.request_data.special_budget_amount);",
+								"        console.log('Approved Amount: Rp ' + jsonData.data.approval.request_data.approved_amount);",
+								"        console.log('Is Revised: ' + jsonData.data.approval.request_data.is_revised);",
+								"        console.log('✅ Producer dan Creative sudah di-notify tentang revisi');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Reject Special Budget",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"rejection_notes\": \"Budget terlalu besar, tidak sesuai dengan alokasi program. Silakan gunakan budget normal atau ajukan kembali dengan amount yang lebih kecil\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Reject special budget request dengan alasan. Special budget item akan dihapus dari Creative Work budget_data. Producer dan Creative akan di-notify.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/special-budget-approvals/{{approval_id}}/reject",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "special-budget-approvals", "{{approval_id}}", "reject"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var approvalId = pm.collectionVariables.get('approval_id');",
+								"if (!approvalId) {",
+								"    console.log('⚠️ approval_id tidak ditemukan! Gunakan request \"Get Special Budget Approvals\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Special budget berhasil di-reject');",
+								"        console.log('Status: ' + jsonData.data.approval.status);",
+								"        console.log('✅ Special budget item sudah dihapus dari Creative Work');",
+								"        console.log('✅ Producer dan Creative sudah di-notify');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Get Revised Schedules",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get jadwal yang sudah direvisi oleh Manager Broadcasting",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/revised-schedules",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "revised-schedules"]
 						}
 					}
 				}
@@ -1855,12 +2513,274 @@
 					"request": {
 						"method": "GET",
 						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get semua pending approvals untuk Producer (song proposals, arrangements, creative works, dll)",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/producer/approvals",
 							"host": ["{{base_url}}"],
 							"path": ["api", "live-tv", "producer", "approvals"]
 						}
+					},
+					"event": [{
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success && jsonData.data) {",
+								"        // Cari song proposal pertama",
+								"        if (jsonData.data.song_proposals && jsonData.data.song_proposals.length > 0) {",
+								"            var firstSongProposal = jsonData.data.song_proposals[0];",
+								"            pm.collectionVariables.set('arrangement_id', firstSongProposal.id);",
+								"            pm.collectionVariables.set('approval_id', firstSongProposal.id);",
+								"            console.log('✅ Song Proposal ID: ' + firstSongProposal.id);",
+								"        }",
+								"        // Cari arrangement yang sudah submit file",
+								"        if (jsonData.data.music_arrangements && jsonData.data.music_arrangements.length > 0) {",
+								"            var firstArrangement = jsonData.data.music_arrangements[0];",
+								"            if (!pm.collectionVariables.get('arrangement_id')) {",
+								"                pm.collectionVariables.set('arrangement_id', firstArrangement.id);",
+								"                pm.collectionVariables.set('approval_id', firstArrangement.id);",
+								"            }",
+								"            console.log('✅ Music Arrangement ID: ' + firstArrangement.id);",
+								"        }",
+								"        console.log('✅ Total Song Proposals: ' + (jsonData.data.song_proposals ? jsonData.data.song_proposals.length : 0));",
+								"        console.log('✅ Total Arrangements: ' + (jsonData.data.music_arrangements ? jsonData.data.music_arrangements.length : 0));",
+								"    }",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Get Notifications (Song Proposal)",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get notifikasi song proposal dari Music Arranger",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/notifications?type=song_proposal_submitted,music_arrangement_submitted",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "notifications"],
+							"query": [
+								{"key": "type", "value": "song_proposal_submitted,music_arrangement_submitted", "description": "Filter notification type"},
+								{"key": "read", "value": "false", "description": "Filter unread only", "disabled": true},
+								{"key": "page", "value": "1", "description": "Pagination", "disabled": true}
+							]
+						}
+					},
+					"event": [{
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success && jsonData.data && jsonData.data.data) {",
+								"        var songProposalNotif = jsonData.data.data.find(n => n.type === 'song_proposal_submitted');",
+								"        if (songProposalNotif && songProposalNotif.data && songProposalNotif.data.arrangement_id) {",
+								"            pm.collectionVariables.set('arrangement_id', songProposalNotif.data.arrangement_id);",
+								"            pm.collectionVariables.set('approval_id', songProposalNotif.data.arrangement_id);",
+								"            console.log('✅ Song Proposal Notification found: Arrangement ID ' + songProposalNotif.data.arrangement_id);",
+								"        }",
+								"        console.log('✅ Total notifications: ' + jsonData.data.total);",
+								"    }",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Get Available Songs (for Edit)",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get list songs yang tersedia untuk dipilih saat edit song proposal",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/producer/songs",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "producer", "songs"]
+						}
 					}
+				},
+				{
+					"name": "Get Available Singers (for Edit)",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get list singers yang tersedia untuk dipilih saat edit song proposal",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/producer/singers",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "producer", "singers"]
+						}
+					}
+				},
+				{
+					"name": "Approve Song Proposal",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": \"song_proposal\",\n  \"notes\": \"Lagu dan penyanyi sesuai, silakan lanjut arrange\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Approve usulan lagu & penyanyi dari Music Arranger. Setelah approve, Music Arranger bisa lanjut arrange lagu.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/producer/approvals/{{approval_id}}/approve",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "producer", "approvals", "{{approval_id}}", "approve"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var approvalId = pm.collectionVariables.get('approval_id');",
+								"if (!approvalId) {",
+								"    console.log('⚠️ approval_id tidak ditemukan! Gunakan request \"Get Approvals\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Song proposal berhasil di-approve');",
+								"        console.log('Status: ' + jsonData.data.status);",
+								"        console.log('✅ Music Arranger sudah di-notify');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Reject Song Proposal",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": \"song_proposal\",\n  \"reason\": \"Lagu tidak sesuai dengan tema episode\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Reject usulan lagu & penyanyi dari Music Arranger. Music Arranger dan Sound Engineers akan di-notify.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/producer/approvals/{{approval_id}}/reject",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "producer", "approvals", "{{approval_id}}", "reject"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var approvalId = pm.collectionVariables.get('approval_id');",
+								"if (!approvalId) {",
+								"    console.log('⚠️ approval_id tidak ditemukan! Gunakan request \"Get Approvals\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Song proposal berhasil di-reject');",
+								"        console.log('Status: ' + jsonData.data.status);",
+								"        console.log('✅ Music Arranger dan Sound Engineers sudah di-notify');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Edit Arrangement Song/Singer",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"song_id\": 2,\n  \"singer_id\": 2,\n  \"song_title\": \"Lagu Baru\",\n  \"singer_name\": \"Penyanyi Baru\",\n  \"modification_notes\": \"Diubah oleh producer karena lebih sesuai\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Producer dapat mengganti usulan lagu & penyanyi dari Music Arranger. Bisa ganti song dan/atau singer. Music Arranger akan di-notify tentang perubahan.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/producer/arrangements/{{arrangement_id}}/edit-song-singer",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "producer", "arrangements", "{{arrangement_id}}", "edit-song-singer"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var arrangementId = pm.collectionVariables.get('arrangement_id');",
+								"if (!arrangementId) {",
+								"    console.log('⚠️ arrangement_id tidak ditemukan! Gunakan request \"Get Approvals\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Song/Singer berhasil di-edit');",
+								"        console.log('Song: ' + jsonData.data.song_title);",
+								"        console.log('Singer: ' + jsonData.data.singer_name);",
+								"        console.log('✅ Music Arranger sudah di-notify tentang perubahan');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
 				},
 				{
 					"name": "Approve Arrangement",
@@ -2148,8 +3068,67 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "live-tv", "producer", "creative-works", "{{creative_work_id}}", "final-approval"]
 						},
-						"description": "⚠️ PENTING: Pastikan Content-Type header adalah 'application/json'!\n\n📋 Required Fields:\n- action: 'reject' (required)\n- notes: Alasan penolakan (optional, max: 2000 characters)\n\n✅ Setelah reject:\n- Status creative work berubah menjadi 'rejected'\n- Creative bisa revise dan resubmit\n- Notifikasi dikirim ke Creative"
+						"description": "⚠️ PENTING: Pastikan Content-Type header adalah 'application/json'!\n\n📋 Required Fields:\n- action: 'reject' (required)\n- notes: Alasan penolakan (optional, max: 2000 characters)\n\n✅ Setelah reject:\n- Status creative work berubah menjadi 'rejected'\n- Creative bisa revise dan resubmit\n- Producer bisa edit langsung untuk perbaikan\n- Notifikasi dikirim ke Creative"
 					}
+				},
+				{
+					"name": "Edit Creative Work (Producer Edit Langsung)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"script_content\": \"Script yang diperbaiki...\",\n  \"storyboard_data\": {...},\n  \"budget_data\": {...},\n  \"recording_schedule\": \"2026-02-01 10:00:00\",\n  \"shooting_schedule\": \"2026-02-03 08:00:00\",\n  \"shooting_location\": \"Studio B\",\n  \"edit_notes\": \"Diperbaiki oleh Producer sesuai kebutuhan\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Producer dapat mengedit creative work langsung untuk perbaikan. Jika status 'rejected', otomatis berubah menjadi 'revised' dan review fields di-reset. Creative akan di-notify tentang perubahan.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/producer/creative-works/{{creative_work_id}}/edit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "producer", "creative-works", "{{creative_work_id}}", "edit"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var creativeWorkId = pm.collectionVariables.get('creative_work_id');",
+								"if (!creativeWorkId) {",
+								"    console.log('⚠️ creative_work_id tidak ditemukan! Gunakan request \"Get Creative Work Detail (Producer)\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Creative work berhasil diedit oleh Producer');",
+								"        console.log('Status: ' + jsonData.data.status);",
+								"        if (jsonData.data.status === 'revised') {",
+								"            console.log('✅ Status auto-berubah menjadi revised (dari rejected)');",
+								"            console.log('✅ Review fields sudah di-reset');",
+								"            console.log('✅ Creative sudah di-notify');",
+								"        }",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
 				},
 				{
 					"name": "QC Sound Engineer Editing",
@@ -3076,20 +4055,115 @@
 					}
 				},
 				{
-					"name": "Revise Work",
+					"name": "Revise Creative Work (Setelah Reject)",
 					"request": {
 						"method": "PUT",
-						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"script_content\": \"Script revisi\",\n  \"revision_notes\": \"Perbaikan sesuai feedback\"\n}"
+							"raw": "{\n  \"script_content\": \"Script yang diperbaiki...\",\n  \"storyboard_data\": {...},\n  \"budget_data\": {...},\n  \"recording_schedule\": \"2026-02-01 10:00:00\",\n  \"shooting_schedule\": \"2026-02-03 08:00:00\",\n  \"shooting_location\": \"Studio B\",\n  \"revision_notes\": \"Diperbaiki sesuai feedback Producer\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
 						},
+						"description": "Perbaiki creative work setelah Producer reject. Status akan berubah menjadi 'revised' dan review fields akan di-reset. Setelah revise, gunakan 'Resubmit Creative Work' untuk ajukan kembali ke Producer.",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/creative/works/{{creative_work_id}}/revise",
 							"host": ["{{base_url}}"],
 							"path": ["api", "live-tv", "roles", "creative", "works", "{{creative_work_id}}", "revise"]
 						}
-					}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var creativeWorkId = pm.collectionVariables.get('creative_work_id');",
+								"if (!creativeWorkId) {",
+								"    console.log('⚠️ creative_work_id tidak ditemukan! Gunakan request \"Get My Works\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Creative work berhasil direvisi');",
+								"        console.log('Status: ' + jsonData.data.status + ' (revised)');",
+								"        console.log('✅ Review fields sudah di-reset');",
+								"        console.log('💡 Sekarang bisa resubmit ke Producer dengan request \"Resubmit Creative Work\"');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Resubmit Creative Work",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Ajukan kembali creative work yang sudah direvisi ke Producer. Hanya bisa resubmit jika status 'revised'. Pastikan script, storyboard, dan budget sudah lengkap.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/creative/works/{{creative_work_id}}/resubmit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "roles", "creative", "works", "{{creative_work_id}}", "resubmit"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"var creativeWorkId = pm.collectionVariables.get('creative_work_id');",
+								"if (!creativeWorkId) {",
+								"    console.log('⚠️ creative_work_id tidak ditemukan! Gunakan request \"Get My Works\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Creative work berhasil di-resubmit');",
+								"        console.log('Status: ' + jsonData.data.status + ' (submitted)');",
+								"        console.log('✅ Producer sudah di-notify untuk review kembali');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
 				}
 			]
 		},
@@ -5305,6 +6379,355 @@
 							"path": ["api", "live-tv", "manager-broadcasting", "statistics"]
 						}
 					}
+				},
+				{
+					"name": "Dashboard",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Dashboard Manager Distribusi: today schedules, pending approvals, active programs, recent activity",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/distribution/dashboard",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "distribution", "dashboard"]
+						}
+					}
+				},
+				{
+					"name": "Get Notifications",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get semua notifikasi untuk Manager Distribusi (termasuk notifikasi program, schedule options, dll)",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/notifications?type=schedule_options_submitted,schedule_option_approved,program_submitted",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "notifications"],
+							"query": [
+								{"key": "type", "value": "schedule_options_submitted,schedule_option_approved,program_submitted", "disabled": true}
+							]
+						}
+					}
+				},
+				{
+					"name": "Monitor Episode Workflow",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Monitor semua workflow episode dari awal sampai penayangan",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/episodes/{{episode_id}}/monitor-workflow",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "episodes", "{{episode_id}}", "monitor-workflow"]
+						}
+					}
+				},
+				{
+					"name": "Get Program Performance",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get program performance: average views, target views, performance status",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/performance",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "performance"]
+						}
+					}
+				},
+				{
+					"name": "Get Weekly Performance",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get weekly performance report (tarik data mingguan) untuk program",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/weekly-performance",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "weekly-performance"]
+						}
+					}
+				},
+				{
+					"name": "Set Target Views (Program)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"target_views_per_episode\": 100000\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Buat target pencapaian views untuk program (Manager Distribusi bisa set target)",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/target-views",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "target-views"]
+						}
+					}
+				},
+				{
+					"name": "Get Underperforming Programs",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get list program yang tidak berkembang (underperform) untuk dipertimbangkan ditutup",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/underperforming?performance_status=poor&min_episodes=4",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "underperforming"],
+							"query": [
+								{"key": "performance_status", "value": "poor", "disabled": true},
+								{"key": "min_episodes", "value": "4", "disabled": true}
+							]
+						}
+					}
+				},
+				{
+					"name": "Close Program",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"Program tidak berkembang, performa rendah\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Menutup program reguler yang tidak berkembang",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-program/programs/{{program_id}}/close",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-program", "programs", "{{program_id}}", "close"]
+						}
+					}
+				},
+				{
+					"name": "Get All Programs",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get all programs untuk monitoring (bisa filter by status, category)",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/programs?status=approved&page=1",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "programs"],
+							"query": [
+								{"key": "status", "value": "approved", "disabled": true},
+								{"key": "page", "value": "1", "disabled": true}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Program Episodes",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get episodes program untuk monitoring progress",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/programs/{{program_id}}/episodes?year=2026",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "programs", "{{program_id}}", "episodes"],
+							"query": [
+								{"key": "year", "value": "2026", "disabled": true}
+							]
+						}
+					}
+				},
+				{
+					"name": "Revise Schedule (Detailed)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"new_schedule_date\": \"2026-02-15 21:00:00\",\n  \"reason\": \"Jadwal perlu diubah karena bentrok dengan event lain\",\n  \"notes\": \"Jadwal baru untuk tayang\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Revise jadwal dan otomatis memberitahu Manager Program jadwal yang di-ACC",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-broadcasting/schedules/{{schedule_id}}/revise",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-broadcasting", "schedules", "{{schedule_id}}", "revise"]
+						}
+					},
+					"event": [{
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Schedule berhasil direvisi');",
+								"        console.log('✅ Manager Program sudah diberitahu');",
+								"        console.log('Old Date: ' + jsonData.data.old_schedule_date);",
+								"        console.log('New Date: ' + jsonData.data.new_schedule_date);",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Approve Schedule Option (Detailed)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"selected_option_index\": 0,\n  \"review_notes\": \"Opsi jadwal pertama dipilih untuk tayang\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Approve/Select opsi jadwal dari Manager Program. Otomatis create BroadcastingSchedule dan notify Manager Program",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/manager-broadcasting/schedule-options/{{schedule_option_id}}/approve",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "manager-broadcasting", "schedule-options", "{{schedule_option_id}}", "approve"]
+						}
+					},
+					"event": [{
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Schedule option berhasil di-approve');",
+								"        console.log('✅ Manager Program sudah diberitahu');",
+								"        console.log('Selected Option: ' + JSON.stringify(jsonData.data.selected_option));",
+								"        if (jsonData.data.broadcasting_schedule) {",
+								"            console.log('✅ BroadcastingSchedule sudah dibuat: ' + jsonData.data.broadcasting_schedule.id);",
+								"        }",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Get Available Workers (by Role)",
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Authorization", "value": "Bearer {{auth_token}}"}],
+						"description": "Get list available workers berdasarkan role untuk assign work. Role: broadcasting, promotion, graphic_design, social_media, editor_promotion",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/distribution/available-workers/broadcasting",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "distribution", "available-workers", "broadcasting"]
+						}
+					},
+					"event": [{
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success && jsonData.data && jsonData.data.length > 0) {",
+								"        var firstWorker = jsonData.data[0];",
+								"        pm.collectionVariables.set('worker_user_id', firstWorker.id);",
+								"        console.log('✅ Available workers: ' + jsonData.data.length);",
+								"        console.log('✅ First worker ID tersimpan: ' + firstWorker.id);",
+								"    } else {",
+								"        console.log('⚠️ Tidak ada workers tersedia untuk role ini');",
+								"    }",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
+				},
+				{
+					"name": "Assign Work to Distribution Team",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{auth_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"broadcasting\",\n  \"user_ids\": [{{worker_user_id}}],\n  \"work_type\": \"upload_youtube\",\n  \"notes\": \"Upload episode ke YouTube\",\n  \"deadline\": \"2026-02-15 23:59:59\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Membagi pekerjaan ke distribution team berdasarkan jabatan. Role: broadcasting, promotion, graphic_design, social_media, editor_promotion. Work type: upload_youtube, upload_website, create_promotion, design_poster, social_media_post",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/distribution/episodes/{{episode_id}}/assign-work",
+							"host": ["{{base_url}}"],
+							"path": ["api", "live-tv", "distribution", "episodes", "{{episode_id}}", "assign-work"]
+						}
+					},
+					"event": [{
+						"listen": "prerequest",
+						"script": {
+							"exec": [
+								"// Validasi episode_id",
+								"var episodeId = pm.collectionVariables.get('episode_id');",
+								"if (!episodeId) {",
+								"    console.log('⚠️ episode_id tidak ditemukan. Gunakan request \"Get Program Episodes\" terlebih dahulu.');",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}, {
+						"listen": "test",
+						"script": {
+							"exec": [
+								"if (pm.response.code === 200 || pm.response.code === 201) {",
+								"    var jsonData = pm.response.json();",
+								"    if (jsonData.success) {",
+								"        console.log('✅ Work berhasil di-assign');",
+								"        console.log('Episode ID: ' + jsonData.data.episode_id);",
+								"        console.log('Total assignments: ' + jsonData.data.assignments.length);",
+								"        console.log('Workers akan menerima notifikasi');",
+								"    }",
+								"} else {",
+								"    console.log('❌ Error: ' + pm.response.code);",
+								"    console.log('Response: ' + pm.response.text());",
+								"}"
+							],
+							"type": "text/javascript"
+						}
+					}]
 				}
 			]
 		},

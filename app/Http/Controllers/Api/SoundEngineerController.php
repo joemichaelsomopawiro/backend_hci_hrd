@@ -1779,6 +1779,214 @@ class SoundEngineerController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Return Equipment to Art & Set Properti
+     * POST /api/live-tv/sound-engineer/recordings/{id}/return-equipment
+     */
+    public function returnEquipment(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$this->isSoundEngineer($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'equipment_request_ids' => 'required|array|min:1',
+                'equipment_request_ids.*' => 'required|integer|exists:production_equipment,id',
+                'return_condition' => 'required|array|min:1',
+                'return_condition.*.equipment_request_id' => 'required|integer',
+                'return_condition.*.condition' => 'required|in:good,damaged,lost',
+                'return_condition.*.notes' => 'nullable|string|max:1000',
+                'return_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $recording = SoundEngineerRecording::with(['episode'])->findOrFail($id);
+
+            // Check if user has access
+            if ($recording->created_by !== $user->id) {
+                $episode = $recording->episode;
+                if ($episode && $episode->program && $episode->program->productionTeam) {
+                    $hasAccess = $episode->program->productionTeam->members()
+                        ->where('user_id', $user->id)
+                        ->where('role', 'sound_eng')
+                        ->where('is_active', true)
+                        ->exists();
+                    
+                    if (!$hasAccess) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Unauthorized: This recording is not assigned to you.'
+                        ], 403);
+                    }
+                } else {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized: This recording is not assigned to you.'
+                    ], 403);
+                }
+            }
+
+            $equipmentRequestIds = $request->equipment_request_ids;
+            $returnConditions = collect($request->return_condition)->keyBy('equipment_request_id');
+            
+            $returnedEquipment = [];
+            $failedEquipment = [];
+
+            foreach ($equipmentRequestIds as $equipmentRequestId) {
+                $equipment = ProductionEquipment::find($equipmentRequestId);
+                
+                if (!$equipment) {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => 'Equipment request not found'
+                    ];
+                    continue;
+                }
+
+                // Verify equipment belongs to this recording's episode
+                if ($equipment->episode_id !== $recording->episode_id) {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => 'Equipment request does not belong to this episode'
+                    ];
+                    continue;
+                }
+
+                // Verify equipment was requested by this user
+                if ($equipment->requested_by !== $user->id) {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => 'Equipment request was not created by you'
+                    ];
+                    continue;
+                }
+
+                // Verify equipment is approved (can only return approved equipment)
+                if ($equipment->status !== 'approved' && $equipment->status !== 'in_use') {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => "Equipment is not in approved or in_use status (current: {$equipment->status})"
+                    ];
+                    continue;
+                }
+
+                // Get return condition for this equipment
+                $conditionData = $returnConditions->get($equipmentRequestId);
+                if (!$conditionData) {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => 'Return condition not provided'
+                    ];
+                    continue;
+                }
+
+                // Update equipment status to returned
+                $equipment->update([
+                    'status' => 'returned',
+                    'return_condition' => $conditionData['condition'],
+                    'return_notes' => ($conditionData['notes'] ?? '') . ($request->return_notes ? "\n" . $request->return_notes : ''),
+                    'returned_at' => now()
+                ]);
+
+                // Update EquipmentInventory if exists
+                $equipmentInventory = \App\Models\EquipmentInventory::where('episode_id', $equipment->episode_id)
+                    ->where('equipment_name', is_array($equipment->equipment_list) ? $equipment->equipment_list[0] : $equipment->equipment_list)
+                    ->where('status', 'assigned')
+                    ->where('assigned_to', $user->id)
+                    ->first();
+
+                if ($equipmentInventory) {
+                    $equipmentInventory->update([
+                        'status' => 'returned',
+                        'return_condition' => $conditionData['condition'],
+                        'return_notes' => $conditionData['notes'] ?? null,
+                        'returned_at' => now()
+                    ]);
+                }
+
+                $returnedEquipment[] = $equipment->fresh();
+            }
+
+            // Notify Art & Set Properti
+            if (!empty($returnedEquipment)) {
+                $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
+                $equipmentNames = collect($returnedEquipment)->map(function($eq) {
+                    return is_array($eq->equipment_list) ? implode(', ', $eq->equipment_list) : ($eq->equipment_list ?? 'N/A');
+                })->implode('; ');
+
+                foreach ($artSetUsers as $artSetUser) {
+                    Notification::create([
+                        'user_id' => $artSetUser->id,
+                        'type' => 'equipment_returned',
+                        'title' => 'Alat Dikembalikan oleh Sound Engineer',
+                        'message' => "Sound Engineer {$user->name} telah mengembalikan alat untuk Episode {$recording->episode->episode_number}. Alat: {$equipmentNames}",
+                        'data' => [
+                            'recording_id' => $recording->id,
+                            'episode_id' => $recording->episode_id,
+                            'equipment_request_ids' => collect($returnedEquipment)->pluck('id')->toArray(),
+                            'equipment_list' => $equipmentNames,
+                            'returned_by' => $user->id,
+                            'returned_by_name' => $user->name
+                        ]
+                    ]);
+                }
+            }
+
+            // Audit logging
+            if (!empty($returnedEquipment)) {
+                \App\Helpers\ControllerSecurityHelper::logCrud('sound_engineer_equipment_returned', $recording, [
+                    'equipment_count' => count($returnedEquipment),
+                    'equipment_request_ids' => collect($returnedEquipment)->pluck('id')->toArray(),
+                    'failed_count' => count($failedEquipment)
+                ], $request);
+            }
+
+            // Clear cache
+            \App\Helpers\QueryOptimizer::clearAllIndexCaches();
+
+            if (!empty($failedEquipment)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'recording' => $recording->fresh(['episode']),
+                        'returned_equipment' => $returnedEquipment,
+                        'failed_equipment' => $failedEquipment
+                    ],
+                    'message' => count($returnedEquipment) . ' equipment returned successfully. ' . count($failedEquipment) . ' equipment failed to return.',
+                    'warnings' => $failedEquipment
+                ], 207); // 207 Multi-Status
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'recording' => $recording->fresh(['episode']),
+                    'returned_equipment' => $returnedEquipment
+                ],
+                'message' => 'Equipment returned successfully. Art & Set Properti has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error returning equipment: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
 
 

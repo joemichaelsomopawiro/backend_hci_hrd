@@ -25,6 +25,8 @@ class ProductionEquipment extends Model
         'rejection_reason',
         'assigned_at',
         'returned_at',
+        'return_condition',
+        'return_notes',
         'assigned_to'
     ];
 

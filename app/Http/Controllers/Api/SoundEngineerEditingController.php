@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Validator;
 class SoundEngineerEditingController extends Controller
 {
     /**
-     * Check if user is Sound Engineer Editing (supports multiple role formats)
+     * Check if user is Sound Engineer (Sound Engineer adalah satu role, editing adalah tugasnya)
      */
     private function isSoundEngineerEditing($user): bool
     {
@@ -24,9 +24,8 @@ class SoundEngineerEditingController extends Controller
         }
         
         $role = strtolower($user->role ?? '');
+        // Sound Engineer adalah satu role, editing dan recording adalah tugasnya
         return in_array($role, [
-            'sound engineer editing',
-            'sound_engineer_editing',
             'sound engineer',
             'sound_engineer'
         ]);
@@ -141,6 +140,110 @@ class SoundEngineerEditingController extends Controller
     }
 
     /**
+     * Accept work - Sound Engineer terima tugas editing
+     * POST /api/live-tv/sound-engineer-editing/works/{id}/accept-work
+     */
+    public function acceptWork(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json(['message' => 'Unauthorized'], 401);
+            }
+
+            if (!$this->isSoundEngineerEditing($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Access denied. Your role (' . ($user->role ?? 'unknown') . ') does not have access to Sound Engineer Editing endpoints.'
+                ], 403);
+            }
+
+            $work = SoundEngineerEditing::with(['episode', 'soundEngineer', 'recording'])->findOrFail($id);
+
+            // Check if work is assigned to this user or user is in the production team
+            if ($work->sound_engineer_id !== $user->id) {
+                // Check if user is in the production team for this episode
+                $episode = $work->episode;
+                if ($episode && $episode->program && $episode->program->productionTeam) {
+                    $hasAccess = $episode->program->productionTeam->members()
+                        ->where('user_id', $user->id)
+                        ->where('role', 'sound_eng')
+                        ->where('is_active', true)
+                        ->exists();
+                    
+                    if (!$hasAccess) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Unauthorized: This editing work is not assigned to you.'
+                        ], 403);
+                    }
+                } else {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized: This editing work is not assigned to you.'
+                    ], 403);
+                }
+            }
+
+            // Check if work can be accepted (status should be in_progress, draft, pending, or revision_needed)
+            if (!in_array($work->status, ['in_progress', 'draft', 'pending', 'revision_needed'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Work cannot be accepted. Current status: {$work->status}"
+                ], 400);
+            }
+
+            // Update work status to in_progress and assign to user
+            // If status was revision_needed, reset submission fields
+            $updateData = [
+                'status' => 'in_progress',
+                'sound_engineer_id' => $user->id
+            ];
+            
+            // Reset submission fields if work was rejected (revision_needed)
+            if ($work->status === 'revision_needed') {
+                $updateData['rejected_by'] = null;
+                $updateData['rejected_at'] = null;
+                $updateData['rejection_reason'] = null;
+                $updateData['submitted_at'] = null; // Reset submitted_at for resubmission
+            }
+            
+            $work->update($updateData);
+
+            // Notify Producer
+            $episode = $work->episode;
+            $productionTeam = $episode->program->productionTeam;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'sound_engineer_editing_accepted',
+                    'title' => 'Sound Engineer Editing Work Accepted',
+                    'message' => "Sound Engineer {$user->name} telah menerima tugas editing untuk Episode {$episode->episode_number}.",
+                    'data' => [
+                        'editing_id' => $work->id,
+                        'episode_id' => $episode->id,
+                        'sound_engineer_id' => $user->id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Editing work accepted successfully. You can now proceed with editing.',
+                'data' => $work->fresh(['episode', 'soundEngineer', 'recording'])
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Update sound engineer editing work
      */
     public function update(Request $request, $id): JsonResponse
@@ -207,6 +310,14 @@ class SoundEngineerEditingController extends Controller
             ], 403);
         }
 
+        // Check if work can be submitted (must be in_progress, or revision_needed for resubmission)
+        if (!in_array($work->status, ['in_progress', 'revision_needed'])) {
+            return response()->json([
+                'success' => false,
+                'message' => "Work cannot be submitted. Current status: {$work->status}. Please accept work first."
+            ], 400);
+        }
+
         $validator = Validator::make($request->all(), [
             'final_file_path' => 'required|string',
             'submission_notes' => 'nullable|string'
@@ -220,12 +331,21 @@ class SoundEngineerEditingController extends Controller
             ], 422);
         }
 
-        $work->update([
+        // Reset rejection fields if resubmitting after rejection
+        $updateData = [
             'final_file_path' => $request->final_file_path,
             'submission_notes' => $request->submission_notes,
             'status' => 'submitted',
             'submitted_at' => now()
-        ]);
+        ];
+        
+        if ($work->status === 'revision_needed') {
+            $updateData['rejected_by'] = null;
+            $updateData['rejected_at'] = null;
+            $updateData['rejection_reason'] = null;
+        }
+
+        $work->update($updateData);
 
         // Notify Producer for QC
         $this->notifyProducerForQC($work);

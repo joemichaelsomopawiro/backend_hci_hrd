@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class DistributionManagerController extends Controller
 {
@@ -321,17 +322,174 @@ class DistributionManagerController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error retrieving dashboard: ' . $e->getMessage()
+                'message' => 'Error retrieving dashboard',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Assign work to distribution team members (berdasarkan jabatan)
+     * Distribution Manager dapat membagi pekerjaan ke distribution team berdasarkan role
+     */
+    public function assignWork(Request $request, int $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Distribution Manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'role' => 'required|string|in:broadcasting,promotion,graphic_design,social_media,editor_promotion',
+                'user_ids' => 'required|array|min:1',
+                'user_ids.*' => 'required|exists:users,id',
+                'work_type' => 'required|string|in:upload_youtube,upload_website,create_promotion,design_poster,social_media_post',
+                'notes' => 'nullable|string|max:1000',
+                'deadline' => 'nullable|date|after:now'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $episode = Episode::with('program')->findOrFail($episodeId);
+
+            // Validate users have correct role
+            $roleMapping = [
+                'broadcasting' => 'Broadcasting',
+                'promotion' => 'Promotion',
+                'graphic_design' => 'Graphic Design',
+                'social_media' => 'Social Media',
+                'editor_promotion' => 'Editor Promotion'
+            ];
+
+            $requiredRole = $roleMapping[$request->role] ?? null;
+            if (!$requiredRole) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid role specified'
+                ], 400);
+            }
+
+            // Verify all users have the correct role
+            $users = \App\Models\User::whereIn('id', $request->user_ids)
+                ->where('role', $requiredRole)
+                ->get();
+
+            if ($users->count() !== count($request->user_ids)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Some users do not have the required role: ' . $requiredRole
+                ], 400);
+            }
+
+            // Create work assignments
+            $assignments = [];
+            foreach ($request->user_ids as $userId) {
+                // Create notification for assigned user
+                \App\Models\Notification::create([
+                    'user_id' => $userId,
+                    'type' => 'work_assigned',
+                    'title' => 'Pekerjaan Ditugaskan',
+                    'message' => "Anda ditugaskan untuk {$request->work_type} untuk Episode {$episode->episode_number} - {$episode->title}",
+                    'data' => [
+                        'episode_id' => $episodeId,
+                        'program_id' => $episode->program_id,
+                        'work_type' => $request->work_type,
+                        'role' => $request->role,
+                        'assigned_by' => $user->id,
+                        'deadline' => $request->deadline,
+                        'notes' => $request->notes
+                    ]
+                ]);
+
+                $assignments[] = [
+                    'user_id' => $userId,
+                    'role' => $request->role,
+                    'work_type' => $request->work_type
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode_id' => $episodeId,
+                    'episode_number' => $episode->episode_number,
+                    'assignments' => $assignments,
+                    'assigned_by' => $user->id,
+                    'assigned_at' => now(),
+                    'deadline' => $request->deadline,
+                    'notes' => $request->notes
+                ],
+                'message' => 'Work assigned successfully to ' . count($assignments) . ' user(s)'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error assigning work',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get available workers by role (untuk assign work)
+     */
+    public function getAvailableWorkers(string $role): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Distribution Manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $roleMapping = [
+                'broadcasting' => 'Broadcasting',
+                'promotion' => 'Promotion',
+                'graphic_design' => 'Graphic Design',
+                'social_media' => 'Social Media',
+                'editor_promotion' => 'Editor Promotion'
+            ];
+
+            $userRole = $roleMapping[$role] ?? null;
+            if (!$userRole) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid role. Allowed roles: ' . implode(', ', array_keys($roleMapping))
+                ], 400);
+            }
+
+            $workers = \App\Models\User::where('role', $userRole)
+                ->where('is_active', true)
+                ->select('id', 'name', 'email', 'role')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $workers,
+                'message' => 'Available workers retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving workers',
+                'error' => $e->getMessage()
             ], 500);
         }
     }
 }
-
-
-
-
-
-
-
-
-

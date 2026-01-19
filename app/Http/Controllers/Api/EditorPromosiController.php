@@ -472,6 +472,90 @@ class EditorPromosiController extends Controller
     }
 
     /**
+     * Fetch source files from Editor and Promosi (BTS) for a work
+     */
+    private function fetchSourceFilesForWork(int $episodeId): array
+    {
+        $sourceFiles = [
+            'editor_files' => [],
+            'bts_files' => [],
+            'fetched_at' => now()->toDateTimeString()
+        ];
+
+        // Get files from Editor (main editor work)
+        $editorWorks = \App\Models\EditorWork::where('episode_id', $episodeId)
+            ->whereIn('status', ['completed', 'approved'])
+            ->get();
+
+        foreach ($editorWorks as $editorWork) {
+            if ($editorWork->file_path) {
+                $sourceFiles['editor_files'][] = [
+                    'editor_work_id' => $editorWork->id,
+                    'file_path' => $editorWork->file_path,
+                    'file_name' => $editorWork->file_name,
+                    'file_size' => $editorWork->file_size,
+                    'mime_type' => $editorWork->mime_type,
+                    'work_type' => $editorWork->work_type
+                ];
+            }
+        }
+
+        // Get files from Promosi (BTS video dan foto talent)
+        $promotionWorks = PromotionWork::where('episode_id', $episodeId)
+            ->whereIn('work_type', ['bts_video', 'bts_photo'])
+            ->whereIn('status', ['editing', 'review', 'approved', 'published'])
+            ->get();
+
+        foreach ($promotionWorks as $promotionWork) {
+            if ($promotionWork->file_paths) {
+                $filePaths = is_array($promotionWork->file_paths) 
+                    ? $promotionWork->file_paths 
+                    : json_decode($promotionWork->file_paths, true);
+                
+                if (is_array($filePaths)) {
+                    foreach ($filePaths as $file) {
+                        // Filter hanya BTS video (bukan talent photos)
+                        if (is_array($file)) {
+                            if (isset($file['type']) && $file['type'] === 'bts_video') {
+                                $sourceFiles['bts_files'][] = [
+                                    'promotion_work_id' => $promotionWork->id,
+                                    'work_type' => $promotionWork->work_type,
+                                    'file_type' => $file['type'],
+                                    'file_path' => $file['file_path'] ?? $file['url'] ?? null,
+                                    'file_name' => $file['file_name'] ?? basename($file['file_path'] ?? ''),
+                                    'file_size' => $file['file_size'] ?? null,
+                                    'mime_type' => $file['mime_type'] ?? null,
+                                    'url' => $file['url'] ?? null
+                                ];
+                            } elseif (isset($file['file_path']) && !isset($file['type'])) {
+                                // Fallback: jika tidak ada type tapi ada file_path, assume BTS video
+                                $sourceFiles['bts_files'][] = [
+                                    'promotion_work_id' => $promotionWork->id,
+                                    'work_type' => $promotionWork->work_type,
+                                    'file_path' => $file['file_path'],
+                                    'file_name' => $file['file_name'] ?? basename($file['file_path']),
+                                    'file_size' => $file['file_size'] ?? null,
+                                    'mime_type' => $file['mime_type'] ?? null
+                                ];
+                            }
+                        } elseif (is_string($file)) {
+                            // Handle simple string paths
+                            $sourceFiles['bts_files'][] = [
+                                'promotion_work_id' => $promotionWork->id,
+                                'work_type' => $promotionWork->work_type,
+                                'file_path' => $file,
+                                'file_name' => basename($file)
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        return $sourceFiles;
+    }
+
+    /**
      * Notify related roles about Editor Promosi work
      */
     private function notifyRelatedRoles(PromotionWork $work, string $action): void
@@ -525,24 +609,61 @@ class EditorPromosiController extends Controller
 
             $work = PromotionWork::findOrFail((int) $id);
 
-            // Check if work is in draft/planning status (baru dibuat oleh Editor atau sistem)
-            if (!in_array($work->status, ['draft', 'planning'])) {
+            // Check if work can be accepted (draft, planning, editing, atau rejected jika perlu revisi)
+            if (!in_array($work->status, ['draft', 'planning', 'editing', 'rejected', 'review'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be accepted when status is draft or planning'
+                    'message' => "Work cannot be accepted. Current status: {$work->status}. Work must be in draft, planning, editing, rejected, or review status."
                 ], 400);
             }
 
-            // Update work status to in_progress/editing and assign to current user
-            $work->update([
-                'status' => 'editing', // atau 'in_progress' tergantung workflow
-                'created_by' => $user->id
-            ]);
+            // Auto-fetch source files dari Editor dan Promosi (BTS)
+            $sourceFiles = $this->fetchSourceFilesForWork($work->episode_id);
+            
+            // Reset review fields jika ini resubmission setelah reject
+            $updateData = [
+                'status' => 'editing',
+                'created_by' => $user->id,
+                'file_paths' => array_merge($work->file_paths ?? [], [
+                    'source_files' => $sourceFiles,
+                    'accepted_at' => now()->toDateTimeString(),
+                    'accepted_by' => $user->id
+                ])
+            ];
+            
+            // Reset review fields jika status adalah rejected atau review (resubmission)
+            if (in_array($work->status, ['rejected', 'review'])) {
+                $updateData['review_notes'] = null;
+                $updateData['reviewed_by'] = null;
+                $updateData['reviewed_at'] = null;
+            }
+            
+            $work->update($updateData);
+
+            // Notify Producer
+            $episode = $work->episode;
+            $productionTeam = $episode->program->productionTeam ?? null;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'editor_promosi_work_accepted',
+                    'title' => 'Editor Promosi Work Accepted',
+                    'message' => "Editor Promosi {$user->name} telah menerima pekerjaan {$work->work_type} untuk Episode {$episode->episode_number}.",
+                    'data' => [
+                        'promotion_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
+                        'work_type' => $work->work_type,
+                        'editor_promosi_id' => $user->id
+                    ]
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Work accepted successfully. You can now start editing.'
+                'message' => 'Work accepted successfully. Source files from Editor and BTS have been fetched. You can now start editing.'
             ]);
 
         } catch (\Exception $e) {
@@ -585,42 +706,123 @@ class EditorPromosiController extends Controller
                 ], 400);
             }
 
-            // Create or update QualityControlWork
-            $qcWork = \App\Models\QualityControlWork::updateOrCreate(
-                [
-                    'episode_id' => $work->episode_id,
-                    'qc_type' => 'main_episode'
-                ],
-                [
-                    'title' => "QC Work - Episode {$work->episode->episode_number}",
-                    'description' => "File dari Editor Promosi untuk QC",
-                    'editor_promosi_file_locations' => array_map(function($path) {
-                        return [
-                            'file_path' => $path,
-                            'file_name' => basename($path),
-                            'source' => 'editor_promosi'
-                        ];
-                    }, $work->file_paths),
-                    'status' => 'pending',
-                    'created_by' => $user->id
-                ]
-            );
-
-            // Notify Quality Control
-            $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
-            foreach ($qcUsers as $qcUser) {
-                Notification::create([
-                    'user_id' => $qcUser->id,
-                    'type' => 'qc_work_assigned',
-                    'title' => 'Tugas QC Baru',
-                    'message' => "Editor Promosi telah mengajukan file untuk QC Episode {$work->episode->episode_number}.",
-                    'data' => [
-                        'qc_work_id' => $qcWork->id,
-                        'episode_id' => $work->episode_id,
-                        'editor_promosi_work_id' => $work->id
-                    ]
-                ]);
+            // Validasi status harus editing atau completed
+            if (!in_array($work->status, ['editing', 'completed', 'review'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Work must be in 'editing', 'completed', or 'review' status before submitting to QC. Current status: {$work->status}"
+                ], 400);
             }
+
+            // Map work_type to qc_type
+            $qcTypeMap = [
+                'bts_video' => 'bts_video',
+                'iklan_episode_tv' => 'advertisement_tv',
+                'highlight_ig' => 'highlight_ig',
+                'highlight_tv' => 'highlight_tv',
+                'highlight_facebook' => 'highlight_facebook'
+            ];
+            
+            $qcType = $qcTypeMap[$work->work_type] ?? 'bts_video'; // Default fallback
+
+            // Prepare file locations with promotion_work_id
+            $fileLocations = [];
+            if (is_array($work->file_paths)) {
+                foreach ($work->file_paths as $file) {
+                    if (is_array($file) && isset($file['file_path'])) {
+                        $fileLocations[] = [
+                            'promotion_work_id' => $work->id,
+                            'file_path' => $file['file_path'],
+                            'file_name' => $file['file_name'] ?? basename($file['file_path']),
+                            'file_size' => $file['file_size'] ?? null,
+                            'mime_type' => $file['mime_type'] ?? null,
+                            'work_type' => $work->work_type,
+                            'source' => 'editor_promosi',
+                            'submitted_at' => now()->toDateTimeString()
+                        ];
+                    } elseif (is_string($file)) {
+                        $fileLocations[] = [
+                            'promotion_work_id' => $work->id,
+                            'file_path' => $file,
+                            'file_name' => basename($file),
+                            'work_type' => $work->work_type,
+                            'source' => 'editor_promosi',
+                            'submitted_at' => now()->toDateTimeString()
+                        ];
+                    }
+                }
+            }
+
+            // Check if QC work already exists for this work type
+            $existingQCWork = \App\Models\QualityControlWork::where('episode_id', $work->episode_id)
+                ->where('qc_type', $qcType)
+                ->where('status', '!=', 'approved')
+                ->first();
+
+            if (!$existingQCWork) {
+                // Create new QualityControlWork
+                $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                $qcWork = \App\Models\QualityControlWork::create([
+                    'episode_id' => $work->episode_id,
+                    'qc_type' => $qcType,
+                    'title' => "QC {$work->title}",
+                    'description' => "Quality Control untuk {$work->work_type} dari Editor Promosi",
+                    'editor_promosi_file_locations' => $fileLocations,
+                    'status' => 'pending',
+                    'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
+                ]);
+
+                // Notify Quality Control
+                foreach ($qcUsers as $qcUser) {
+                    Notification::create([
+                        'user_id' => $qcUser->id,
+                        'type' => 'editor_promosi_submitted_to_qc',
+                        'title' => 'Editor Promosi Work Submitted to QC',
+                        'message' => "Editor Promosi telah mengajukan {$work->work_type} untuk QC Episode {$work->episode->episode_number}.",
+                        'data' => [
+                            'promotion_work_id' => $work->id,
+                            'qc_work_id' => $qcWork->id,
+                            'episode_id' => $work->episode_id,
+                            'work_type' => $work->work_type,
+                            'qc_type' => $qcType
+                        ]
+                    ]);
+                }
+            } else {
+                // Update existing QC work with latest editor promosi files
+                $existingEditorPromosiFiles = $existingQCWork->editor_promosi_file_locations ?? [];
+                $existingEditorPromosiFiles = array_merge($existingEditorPromosiFiles, $fileLocations);
+                
+                $existingQCWork->update([
+                    'editor_promosi_file_locations' => $existingEditorPromosiFiles,
+                    'status' => 'pending' // Reset to pending for re-review
+                ]);
+
+                // Notify Quality Control
+                $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                foreach ($qcUsers as $qcUser) {
+                    Notification::create([
+                        'user_id' => $qcUser->id,
+                        'type' => 'editor_promosi_resubmitted_to_qc',
+                        'title' => 'Editor Promosi Work Resubmitted to QC',
+                        'message' => "Editor Promosi telah mengajukan ulang {$work->work_type} untuk QC Episode {$work->episode->episode_number}.",
+                        'data' => [
+                            'promotion_work_id' => $work->id,
+                            'qc_work_id' => $existingQCWork->id,
+                            'episode_id' => $work->episode_id,
+                            'work_type' => $work->work_type
+                        ]
+                    ]);
+                }
+                $qcWork = $existingQCWork;
+            }
+
+            // Update PromotionWork status
+            $work->update([
+                'status' => 'review' // Status review, menunggu QC
+            ]);
+
+            QueryOptimizer::clearAllIndexCaches();
 
             return response()->json([
                 'success' => true,

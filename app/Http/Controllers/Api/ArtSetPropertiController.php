@@ -7,6 +7,8 @@ use App\Models\EquipmentInventory;
 use App\Models\ProductionEquipment;
 use App\Models\Episode;
 use App\Models\Notification;
+use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -333,6 +335,129 @@ class ArtSetPropertiController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error returning equipment: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Accept/Confirm returned equipment
+     * POST /api/live-tv/art-set-properti/equipment/{id}/accept-returned
+     */
+    public function acceptReturnedEquipment(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not authenticated.'
+                ], 401);
+            }
+            
+            if ($user->role !== 'Art & Set Properti') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'verification_notes' => 'nullable|string|max:1000',
+                'set_available' => 'nullable|boolean' // Jika true, set equipment jadi available lagi
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $equipment = ProductionEquipment::with(['episode', 'requestedBy'])->findOrFail($id);
+
+            // Check if equipment is in returned status
+            if ($equipment->status !== 'returned') {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Equipment is not in returned status. Current status: {$equipment->status}"
+                ], 400);
+            }
+
+            // Update ProductionEquipment - add confirmation note to return_notes
+            $existingNotes = $equipment->return_notes ?? '';
+            $confirmationNote = "\n\n[Confirmed by Art & Set Properti - " . now()->format('Y-m-d H:i:s') . "]\n" .
+                "Confirmed by: {$user->name}\n" .
+                ($request->verification_notes ? "Verification notes: {$request->verification_notes}" : 'Confirmed');
+            
+            $equipment->update([
+                'return_notes' => $existingNotes . $confirmationNote
+            ]);
+
+            // Update EquipmentInventory if exists and set to available if condition is good
+            $equipmentInventory = EquipmentInventory::where('episode_id', $equipment->episode_id)
+                ->where('equipment_name', is_array($equipment->equipment_list) ? $equipment->equipment_list[0] : $equipment->equipment_list)
+                ->where('status', 'returned')
+                ->where('assigned_to', $equipment->requested_by)
+                ->first();
+
+            if ($equipmentInventory) {
+                // If equipment condition is good and set_available is true, set to available
+                if ($request->boolean('set_available', false) && $equipment->return_condition === 'good') {
+                    $equipmentInventory->update([
+                        'status' => 'available',
+                        'return_notes' => ($equipmentInventory->return_notes ?? '') . $confirmationNote
+                    ]);
+                } else {
+                    // Just confirm the return (update notes)
+                    $equipmentInventory->update([
+                        'return_notes' => ($equipmentInventory->return_notes ?? '') . $confirmationNote
+                    ]);
+                }
+            }
+
+            // Notify Production/Sound Engineer that return has been confirmed
+            if ($equipment->requestedBy) {
+                Notification::create([
+                    'user_id' => $equipment->requested_by,
+                    'type' => 'equipment_return_confirmed',
+                    'title' => 'Pengembalian Alat Dikonfirmasi',
+                    'message' => "Art & Set Properti telah mengkonfirmasi pengembalian alat untuk Episode {$equipment->episode->episode_number}.",
+                    'data' => [
+                        'equipment_id' => $equipment->id,
+                        'episode_id' => $equipment->episode_id,
+                        'verification_notes' => $request->verification_notes,
+                        'confirmed_by' => $user->id,
+                        'confirmed_by_name' => $user->name
+                    ]
+                ]);
+            }
+
+            // Audit logging
+            ControllerSecurityHelper::logUpdate($equipment, [], [
+                'return_notes' => $equipment->return_notes,
+                'verified_by' => $user->id,
+                'verification_notes' => $request->verification_notes
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'equipment' => $equipment->fresh(['episode', 'requestedBy']),
+                    'equipment_inventory' => $equipmentInventory ? $equipmentInventory->fresh() : null,
+                    'set_to_available' => $request->boolean('set_available', false) && $equipment->return_condition === 'good'
+                ],
+                'message' => 'Returned equipment accepted and confirmed successfully. Equipment is now available for use again.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting returned equipment: ' . $e->getMessage()
             ], 500);
         }
     }

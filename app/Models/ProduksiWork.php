@@ -25,6 +25,7 @@ class ProduksiWork extends Model
         'needs_requests',
         'shooting_files',
         'shooting_file_links',
+        'producer_requests',
         'notes',
         'completed_at',
         'completed_by'
@@ -36,6 +37,7 @@ class ProduksiWork extends Model
         'needs_list' => 'array',
         'needs_requests' => 'array',
         'shooting_files' => 'array',
+        'producer_requests' => 'array',
         'completed_at' => 'datetime'
     ];
 
