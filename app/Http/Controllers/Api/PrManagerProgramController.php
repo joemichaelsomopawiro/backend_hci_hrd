@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
+use App\Constants\Role;
 
 class PrManagerProgramController extends Controller
 {
@@ -38,8 +39,20 @@ class PrManagerProgramController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if ($user->role !== 'Manager Program') {
+
+            \Illuminate\Support\Facades\Log::info('Create Program Attempt', [
+                'user_id' => $user->id,
+                'user_name' => $user->name,
+                'raw_role' => $user->role,
+                'normalized_role' => Role::normalize($user->role),
+                'expected_role' => Role::PROGRAM_MANAGER,
+                'is_match' => Role::normalize($user->role) === Role::PROGRAM_MANAGER
+            ]);
+
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                \Illuminate\Support\Facades\Log::warning('Create Program Unauthorized', [
+                    'user_role' => $user->role
+                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Hanya Manager Program yang dapat membuat program baru'
@@ -72,6 +85,10 @@ class PrManagerProgramController extends Controller
                 'data' => $program->load(['managerProgram', 'episodes'])
             ], 201);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Create Program Exception', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Error: ' . $e->getMessage()
@@ -139,7 +156,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($programId);
 
-            if ($user->role !== 'Manager Program' || $program->manager_program_id !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER || $program->manager_program_id !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -163,7 +180,7 @@ class PrManagerProgramController extends Controller
             }
 
             $concept = $this->conceptService->createConcept($program, $request->all(), $user->id);
-            
+
             // Send notification
             $this->notificationService->notifyConceptCreated($concept);
 
@@ -189,7 +206,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($id);
 
-            if ($user->role !== 'Manager Program') {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -209,7 +226,7 @@ class PrManagerProgramController extends Controller
             }
 
             $this->programService->updateStatus($program, 'manager_approved', $user->id);
-            
+
             // Send notification
             $this->notificationService->notifyProgramReviewed($program, 'disetujui');
 
@@ -235,7 +252,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($id);
 
-            if ($user->role !== 'Manager Program') {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -255,7 +272,7 @@ class PrManagerProgramController extends Controller
             }
 
             $this->programService->updateStatus($program, 'manager_rejected', $user->id);
-            
+
             // Send notification
             $this->notificationService->notifyProgramReviewed($program, 'ditolak');
 
@@ -281,7 +298,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($id);
 
-            if ($user->role !== 'Manager Program') {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -296,7 +313,7 @@ class PrManagerProgramController extends Controller
             }
 
             $this->programService->updateStatus($program, 'submitted_to_distribusi', $user->id);
-            
+
             // Send notification
             $this->notificationService->notifyProgramSubmittedToDistribusi($program);
 
@@ -365,7 +382,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($id);
 
-            if ($user->role !== 'Manager Program' || $program->manager_program_id !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER || $program->manager_program_id !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -390,8 +407,12 @@ class PrManagerProgramController extends Controller
             }
 
             $program->update($request->only([
-                'name', 'description', 'start_date', 'air_time', 
-                'duration_minutes', 'broadcast_channel'
+                'name',
+                'description',
+                'start_date',
+                'air_time',
+                'duration_minutes',
+                'broadcast_channel'
             ]));
 
             return response()->json([
@@ -416,7 +437,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($id);
 
-            if ($user->role !== 'Manager Program' || $program->manager_program_id !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER || $program->manager_program_id !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -446,7 +467,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $episode = PrEpisode::findOrFail($episodeId);
 
-            if ($user->role !== 'Manager Program') {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -469,7 +490,10 @@ class PrManagerProgramController extends Controller
             }
 
             $episode->update($request->only([
-                'title', 'description', 'air_date', 'production_date'
+                'title',
+                'description',
+                'air_date',
+                'production_date'
             ]));
 
             return response()->json([
@@ -494,7 +518,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $episode = PrEpisode::findOrFail($episodeId);
 
-            if ($user->role !== 'Manager Program') {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
