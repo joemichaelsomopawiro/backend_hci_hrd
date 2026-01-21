@@ -16,6 +16,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
+use App\Constants\Role;
 
 class PrProducerController extends Controller
 {
@@ -40,8 +41,8 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if ($user->role !== 'Producer') {
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -70,8 +71,8 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if ($user->role !== 'Producer') {
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -80,7 +81,7 @@ class PrProducerController extends Controller
 
             $concept = PrProgramConcept::findOrFail($conceptId);
             $concept = $this->conceptService->approveConcept($concept, $user->id, $request->notes ?? null);
-            
+
             // Send notification
             $this->notificationService->notifyConceptReviewed($concept, 'disetujui');
 
@@ -98,14 +99,45 @@ class PrProducerController extends Controller
     }
 
     /**
+     * Mark concept as read (NEW workflow - replaces approval)
+     */
+    public function markConceptAsRead($conceptId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $concept = PrProgramConcept::findOrFail($conceptId);
+            $concept = $this->conceptService->markAsRead($concept, $user->id);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Konsep ditandai sudah dibaca',
+                'data' => $concept->load(['program', 'creator', 'reader'])
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Reject konsep
      */
     public function rejectConcept(Request $request, $conceptId): JsonResponse
     {
         try {
             $user = Auth::user();
-            
-            if ($user->role !== 'Producer') {
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -126,7 +158,7 @@ class PrProducerController extends Controller
 
             $concept = PrProgramConcept::findOrFail($conceptId);
             $concept = $this->conceptService->rejectConcept($concept, $user->id, $request->notes);
-            
+
             // Send notification
             $this->notificationService->notifyConceptReviewed($concept, 'ditolak');
 
@@ -152,7 +184,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($programId);
 
-            if ($user->role !== 'Producer') {
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -202,7 +234,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $episode = PrEpisode::findOrFail($episodeId);
 
-            if ($user->role !== 'Producer') {
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -250,7 +282,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $episode = PrEpisode::findOrFail($episodeId);
 
-            if ($user->role !== 'Producer') {
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -258,7 +290,7 @@ class PrProducerController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'file' => 'required|file|max:102400', // Max 100GB
+                'file' => 'required|file|max:104857600', // Max 100GB
                 'category' => 'required|in:raw_footage,edited_video,thumbnail,script,rundown,other',
                 'description' => 'nullable|string'
             ]);
@@ -309,7 +341,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($programId);
 
-            if ($user->role !== 'Producer') {
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -336,7 +368,7 @@ class PrProducerController extends Controller
             }
 
             $program->update(['status' => 'submitted_to_manager']);
-            
+
             // Send notification
             $this->notificationService->notifyProgramSubmitted($program);
 
@@ -362,7 +394,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $schedule = PrProductionSchedule::findOrFail($scheduleId);
 
-            if ($user->role !== 'Producer' || $schedule->created_by !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PRODUCER || $schedule->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -385,7 +417,10 @@ class PrProducerController extends Controller
             }
 
             $schedule->update($request->only([
-                'scheduled_date', 'scheduled_time', 'schedule_notes', 'status'
+                'scheduled_date',
+                'scheduled_time',
+                'schedule_notes',
+                'status'
             ]));
 
             return response()->json([
@@ -410,7 +445,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $schedule = PrProductionSchedule::findOrFail($scheduleId);
 
-            if ($user->role !== 'Producer' || $schedule->created_by !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PRODUCER || $schedule->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -440,7 +475,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $episode = PrEpisode::findOrFail($episodeId);
 
-            if ($user->role !== 'Producer') {
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -464,7 +499,11 @@ class PrProducerController extends Controller
             }
 
             $episode->update($request->only([
-                'title', 'description', 'production_date', 'production_notes', 'editing_notes'
+                'title',
+                'description',
+                'production_date',
+                'production_notes',
+                'editing_notes'
             ]));
 
             return response()->json([
@@ -489,7 +528,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $episode = PrEpisode::findOrFail($episodeId);
 
-            if ($user->role !== 'Producer') {
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'

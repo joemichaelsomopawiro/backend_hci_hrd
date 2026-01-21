@@ -82,6 +82,43 @@ class PrConceptService
         $query = PrProgramConcept::with(['program', 'creator'])
             ->where('status', 'pending_approval');
 
+        // TEAM-BASED FILTERING: Only show concepts for programs where user is assigned as Producer
+        if ($producerId) {
+            $query->whereHas('program.crews', function ($q) use ($producerId) {
+                $q->where('user_id', $producerId)
+                    ->where('role', 'Producer');
+            });
+        }
+
         return $query->orderBy('created_at', 'desc');
+    }
+
+    /**
+     * Update konsep (for Manager Program edit)
+     */
+    public function updateConcept(PrProgramConcept $concept, array $data): PrProgramConcept
+    {
+        $concept->update([
+            'concept' => $data['concept'],
+            'objectives' => $data['objectives'] ?? null,
+            'target_audience' => $data['target_audience'] ?? null,
+            'content_outline' => $data['content_outline'] ?? null,
+            'format_description' => $data['format_description'] ?? null,
+        ]);
+
+        return $concept->fresh();
+    }
+
+    /**
+     * Mark konsep as read by Producer
+     */
+    public function markAsRead(PrProgramConcept $concept, int $userId): PrProgramConcept
+    {
+        $concept->update([
+            'read_by' => $userId,
+            'read_at' => now()
+        ]);
+
+        return $concept->fresh();
     }
 }

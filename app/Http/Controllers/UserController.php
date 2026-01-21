@@ -14,21 +14,43 @@ class UserController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = User::with('employee');
-        
+
         // Filter by role
+        // Filter by role or employee jabatan (case-insensitive for robustness)
         if ($request->has('role')) {
-            $role = $request->input('role');
-            $query->where('role', $role);
+            $roleInput = $request->input('role');
+
+            // Map common aliases/Indonesian terms to DB equivalents
+            $roleMap = [
+                'kreatif' => 'Creative',
+                'musik arr' => 'Music Arranger',
+                'sound eng' => 'Sound Engineer',
+                'produksi' => 'Production',
+                'art & set design' => 'Art & Set Properti',
+                'art & set' => 'Art & Set Properti',
+                'manager distribusi' => 'Distribution Manager',
+            ];
+
+            $mappedRole = $roleMap[strtolower($roleInput)] ?? $roleInput;
+
+            $query->where(function ($q) use ($mappedRole, $roleInput) {
+                $q->where('role', $mappedRole)
+                    ->orWhere('role', $roleInput)
+                    ->orWhereHas('employee', function ($q2) use ($mappedRole, $roleInput) {
+                        $q2->where('jabatan_saat_ini', $mappedRole)
+                            ->orWhere('jabatan_saat_ini', $roleInput);
+                    });
+            });
         }
-        
+
         // Filter by department
         if ($request->has('department')) {
             $department = $request->input('department');
-            $query->whereHas('employee', function($q) use ($department) {
+            $query->whereHas('employee', function ($q) use ($department) {
                 $q->where('department', $department);
             });
         }
-        
+
         // Filter by access level (untuk custom roles)
         if ($request->has('access_level')) {
             $accessLevel = $request->input('access_level');
@@ -37,19 +59,19 @@ class UserController extends Controller
                 ->where('is_active', true)
                 ->pluck('role_name')
                 ->toArray();
-            
+
             if (!empty($customRoleNames)) {
                 $query->whereIn('role', $customRoleNames);
             }
         }
-        
+
         // Limit results
         if ($request->has('limit')) {
             $query->limit($request->input('limit'));
         }
-        
+
         $users = $query->get();
-        
+
         return response()->json([
             'success' => true,
             'data' => $users
@@ -63,7 +85,7 @@ class UserController extends Controller
     {
         try {
             $user = User::with('employee')->findOrFail($id);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $user
@@ -75,4 +97,4 @@ class UserController extends Controller
             ], 404);
         }
     }
-} 
+}

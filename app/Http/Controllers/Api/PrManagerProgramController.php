@@ -156,7 +156,7 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($programId);
 
-            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER || $program->manager_program_id !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -189,6 +189,84 @@ class PrManagerProgramController extends Controller
                 'message' => 'Konsep program berhasil dibuat',
                 'data' => $concept->load(['program', 'creator'])
             ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Update konsep program
+     */
+    public function updateConcept(Request $request, $programId, $conceptId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $concept = PrProgramConcept::findOrFail($conceptId);
+
+            $validator = Validator::make($request->all(), [
+                'concept' => 'required|string',
+                'objectives' => 'nullable|string',
+                'target_audience' => 'nullable|string',
+                'content_outline' => 'nullable|string',
+                'format_description' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $concept = $this->conceptService->updateConcept($concept, $request->all());
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Konsep berhasil diupdate',
+                'data' => $concept->load(['program', 'creator', 'reader'])
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete konsep program
+     */
+    public function deleteConcept($programId, $conceptId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $concept = PrProgramConcept::findOrFail($conceptId);
+            $concept->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Konsep berhasil dihapus'
+            ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

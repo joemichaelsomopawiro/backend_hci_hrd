@@ -27,12 +27,15 @@ class PrProgramConcept extends Model
         'rejected_by',
         'rejected_at',
         'rejection_notes',
-        'created_by'
+        'created_by',
+        'read_by',
+        'read_at'
     ];
 
     protected $casts = [
         'approved_at' => 'datetime',
-        'rejected_at' => 'datetime'
+        'rejected_at' => 'datetime',
+        'read_at' => 'datetime'
     ];
 
     /**
@@ -68,6 +71,14 @@ class PrProgramConcept extends Model
     }
 
     /**
+     * Relationship dengan User yang read (Producer)
+     */
+    public function reader(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'read_by');
+    }
+
+    /**
      * Check if concept is approved
      */
     public function isApproved(): bool
@@ -81,5 +92,13 @@ class PrProgramConcept extends Model
     public function isRejected(): bool
     {
         return $this->status === 'rejected';
+    }
+
+    /**
+     * Check if concept has been read
+     */
+    public function getIsReadAttribute(): bool
+    {
+        return !is_null($this->read_at);
     }
 }

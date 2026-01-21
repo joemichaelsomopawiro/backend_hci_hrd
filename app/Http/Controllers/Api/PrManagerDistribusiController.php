@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
+use App\Constants\Role;
 
 class PrManagerDistribusiController extends Controller
 {
@@ -35,8 +36,8 @@ class PrManagerDistribusiController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if ($user->role !== 'Manager Distribusi') {
+
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -69,7 +70,7 @@ class PrManagerDistribusiController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($id);
 
-            if ($user->role !== 'Manager Distribusi') {
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -117,7 +118,7 @@ class PrManagerDistribusiController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($programId);
 
-            if ($user->role !== 'Manager Distribusi') {
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -168,7 +169,7 @@ class PrManagerDistribusiController extends Controller
             $user = Auth::user();
             $episode = PrEpisode::findOrFail($episodeId);
 
-            if ($user->role !== 'Manager Distribusi') {
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -199,7 +200,7 @@ class PrManagerDistribusiController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($programId);
 
-            if ($user->role !== 'Manager Distribusi') {
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -250,8 +251,8 @@ class PrManagerDistribusiController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if ($user->role !== 'Manager Distribusi') {
+
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -326,7 +327,7 @@ class PrManagerDistribusiController extends Controller
             $user = Auth::user();
             $schedule = PrDistributionSchedule::findOrFail($scheduleId);
 
-            if ($user->role !== 'Manager Distribusi' || $schedule->created_by !== $user->id) {
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER || $schedule->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -350,7 +351,11 @@ class PrManagerDistribusiController extends Controller
             }
 
             $schedule->update($request->only([
-                'schedule_date', 'schedule_time', 'channel', 'schedule_notes', 'status'
+                'schedule_date',
+                'schedule_time',
+                'channel',
+                'schedule_notes',
+                'status'
             ]));
 
             return response()->json([
@@ -375,7 +380,7 @@ class PrManagerDistribusiController extends Controller
             $user = Auth::user();
             $schedule = PrDistributionSchedule::findOrFail($scheduleId);
 
-            if ($user->role !== 'Manager Distribusi' || $schedule->created_by !== $user->id) {
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER || $schedule->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -405,7 +410,7 @@ class PrManagerDistribusiController extends Controller
             $user = Auth::user();
             $report = PrDistributionReport::findOrFail($reportId);
 
-            if ($user->role !== 'Manager Distribusi' || $report->created_by !== $user->id) {
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER || $report->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -429,7 +434,11 @@ class PrManagerDistribusiController extends Controller
             }
 
             $report->update($request->only([
-                'report_title', 'report_content', 'distribution_data', 'analytics_data', 'status'
+                'report_title',
+                'report_content',
+                'distribution_data',
+                'analytics_data',
+                'status'
             ]));
 
             return response()->json([
@@ -454,7 +463,7 @@ class PrManagerDistribusiController extends Controller
             $user = Auth::user();
             $report = PrDistributionReport::findOrFail($reportId);
 
-            if ($user->role !== 'Manager Distribusi' || $report->created_by !== $user->id) {
+            if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER || $report->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'

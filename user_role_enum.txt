@@ -1,0 +1,1 @@
+enum('HR','Manager','Employee','GA','Singer','Creative','Producer','Social Media','Music Arranger','Program Manager','Hopeline Care','Distribution Manager','Sound Engineer','General Affairs')

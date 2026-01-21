@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
+use App\Constants\Role;
 
 class PrRevisionController extends Controller
 {
@@ -108,7 +109,7 @@ class PrRevisionController extends Controller
             $revision = PrProgramRevision::findOrFail($revisionId);
 
             // Hanya Manager Program yang bisa approve revisi
-            if ($user->role !== 'Manager Program') {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -156,7 +157,7 @@ class PrRevisionController extends Controller
             $revision = PrProgramRevision::findOrFail($revisionId);
 
             // Hanya Manager Program yang bisa reject revisi
-            if ($user->role !== 'Manager Program') {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'

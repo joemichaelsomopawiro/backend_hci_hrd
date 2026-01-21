@@ -1,0 +1,1 @@
+enum('Creative','Distribution Manager','Editor','Employee','Finance','GA','General Affairs','Graphic Design','HR','Hopeline Care','Music Arranger','Office Assistant','President Director','Producer','Production','Program Manager','Promotion','Social Media','Sound Engineer','VP President','backend','senior developer')

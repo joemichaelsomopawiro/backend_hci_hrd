@@ -116,6 +116,14 @@ class PrProgram extends Model
     }
 
     /**
+     * Relationship dengan Team Members (Crews)
+     */
+    public function crews(): HasMany
+    {
+        return $this->hasMany(PrProgramCrew::class, 'program_id');
+    }
+
+    /**
      * Get current concept (latest approved or pending)
      */
     public function currentConcept()
@@ -133,10 +141,10 @@ class PrProgram extends Model
     {
         $startDate = Carbon::parse($this->start_date);
         $airTime = Carbon::parse($this->air_time)->format('H:i:s');
-        
+
         for ($i = 1; $i <= 53; $i++) {
             $airDate = $startDate->copy()->addWeeks($i - 1);
-            
+
             $this->episodes()->create([
                 'episode_number' => $i,
                 'title' => "Episode {$i}",
@@ -172,5 +180,19 @@ class PrProgram extends Model
     public function scopeByYear($query, $year)
     {
         return $query->where('program_year', $year);
+    }
+
+    /**
+     * Scope untuk program berdasarkan team membership
+     * Filter programs where user is assigned as a crew member
+     */
+    public function scopeForUser($query, $userId, $role = null)
+    {
+        return $query->whereHas('crews', function ($q) use ($userId, $role) {
+            $q->where('user_id', $userId);
+            if ($role) {
+                $q->where('role', $role);
+            }
+        });
     }
 }
