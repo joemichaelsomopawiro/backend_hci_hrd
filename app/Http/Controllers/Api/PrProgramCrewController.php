@@ -30,7 +30,12 @@ class PrProgramCrewController extends Controller
         // Optional: Check permissions specific to viewing crew
         // For now, allow authenticated users to view
 
-        $crews = PrProgramCrew::with('user:id,name,email,role,profile_picture')
+        $crews = PrProgramCrew::with([
+            'user' => function ($query) {
+                // Select only relevant user fields, avoiding profile_picture if it doesn't exist
+                $query->select('id', 'name', 'email', 'role');
+            }
+        ])
             ->where('program_id', $programId)
             ->get();
 
@@ -88,7 +93,11 @@ class PrProgramCrewController extends Controller
             ]);
 
             // Transform response to include user details
-            $crew->load('user:id,name,email,role,profile_picture');
+            $crew->load([
+                'user' => function ($query) {
+                    $query->select('id', 'name', 'email', 'role');
+                }
+            ]);
 
             return response()->json([
                 'success' => true,

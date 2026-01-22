@@ -31,6 +31,7 @@ use App\Http\Controllers\Api\PrProducerController;
 use App\Http\Controllers\Api\PrManagerDistribusiController;
 use App\Http\Controllers\Api\PrRevisionController;
 use App\Http\Controllers\Api\PrProgramCrewController;
+use App\Http\Controllers\Api\PrRoleFilterController;
 
 /*
 |--------------------------------------------------------------------------
@@ -694,6 +695,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
 // ===== PROGRAM REGULAR ROUTES =====
 Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function () {
+
+    // Role Filtering Routes (untuk semua role dengan hierarki)
+    Route::get('/accessible-roles', [PrRoleFilterController::class, 'getAccessibleRoles']); // Get list role yang bisa di-filter
+    Route::get('/validate-role-access/{targetRole}', [PrRoleFilterController::class, 'validateRoleAccess']); // Validate akses ke role tertentu
 
     // Manager Program Routes
     Route::prefix('manager-program')->group(function () {

@@ -36,12 +36,30 @@ class PrManagerDistribusiController extends Controller
     {
         try {
             $user = Auth::user();
+            $userRole = $user->role;
 
             if (Role::normalize($user->role) !== Role::DISTRIBUTION_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
                 ], 403);
+            }
+
+            $filterByRole = $request->query('filter_by_role');
+
+            // If filter_by_role is specified and not 'all'
+            if ($filterByRole && $filterByRole !== 'all') {
+                // Validate that user has access to view this role's data
+                if (!\App\Services\RoleHierarchyService::canAccessRoleData($userRole, $filterByRole)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized to filter by this role',
+                        'error' => "Role {$userRole} cannot access data for role {$filterByRole}"
+                    ], 403);
+                }
+
+                // TODO: Implement role-based data filtering logic here
+                // For now, just pass the filter information in response
             }
 
             $programs = PrProgram::with(['managerProgram', 'producer', 'episodes'])
@@ -51,12 +69,18 @@ class PrManagerDistribusiController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $programs
+                'data' => $programs,
+                'filter' => [
+                    'applied' => $filterByRole !== null && $filterByRole !== 'all',
+                    'role' => $filterByRole,
+                    'user_role' => $userRole
+                ]
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error: ' . $e->getMessage()
+                'message' => 'Failed to retrieve programs',
+                'error' => $e->getMessage()
             ], 500);
         }
     }
