@@ -2038,14 +2038,13 @@ class ProducerController extends Controller
                 ], 403);
             }
 
-            // Get production team members (semua crew program selain manager)
-            $availableMembers = $productionTeam->members()
-                ->where('is_active', true)
-                ->where('role', '!=', 'manager_program')
-                ->pluck('user_id')
+            // ENHANCED: Allow Producer to select ANY active user (not restricted to production team)
+            // Get all active users in the system
+            $allActiveUsers = \App\Models\User::where('is_active', true)
+                ->pluck('id')
                 ->toArray();
 
-            // Validate all team members are from production team
+            // Validate all selected team members are valid active users
             $allTeamMemberIds = array_merge(
                 $request->shooting_team_ids ?? [],
                 $request->setting_team_ids ?? [],
@@ -2053,12 +2052,12 @@ class ProducerController extends Controller
             );
 
             if (!empty($allTeamMemberIds)) {
-                $invalidMembers = array_diff($allTeamMemberIds, $availableMembers);
+                $invalidMembers = array_diff($allTeamMemberIds, $allActiveUsers);
                 if (!empty($invalidMembers)) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Some team members are not part of the production team',
-                        'invalid_members' => array_values($invalidMembers)
+                        'message' => 'Some selected users are not active or do not exist',
+                        'invalid_users' => array_values($invalidMembers)
                     ], 400);
                 }
             }
@@ -4494,110 +4493,129 @@ class ProducerController extends Controller
                     ]);
                 }
 
-                // Notify Creative
+                // ✨ PARALLEL NOTIFICATIONS ✨
+                // Creative Work Approved → Notify multiple roles simultaneously
+                $episode = $creativeWork->episode;
+                $program = $episode->program;
+                
+                // 1. Notify Creative (single user)
                 Notification::create([
                     'user_id' => $creativeWork->created_by,
                     'type' => 'creative_work_approved',
                     'title' => 'Creative Work Disetujui',
-                    'message' => "Creative work untuk Episode {$creativeWork->episode->episode_number} telah disetujui oleh Producer. Permohonan dana telah dikirim ke General Affairs.",
+                    'message' => "Creative work untuk Episode {$episode->episode_number} telah disetujui oleh Producer. Permohonan dana telah dikirim ke General Affairs.",
                     'data' => [
                         'creative_work_id' => $creativeWork->id,
-                        'episode_id' => $creativeWork->episode_id,
+                        'episode_id' => $episode->id,
                         'review_notes' => $request->notes
                     ]
                 ]);
 
-                // Auto-create PromosiWork task
-                $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
-                if ($promosiUsers->isNotEmpty()) {
-                    $promosiWork = \App\Models\PromotionWork::create([
-                        'episode_id' => $creativeWork->episode_id,
-                        'work_type' => 'bts_video',
-                        'title' => "BTS Video & Talent Photos - Episode {$creativeWork->episode->episode_number}",
-                        'description' => "Buat video BTS dan foto talent untuk Episode {$creativeWork->episode->episode_number}",
-                        'shooting_date' => $creativeWork->shooting_schedule,
-                        'status' => 'planning'
-                    ]);
+                // 2. Create tasks first (so we have IDs for notifications)
+                $createdTasks = [];
+                
+                // Create PromosiWork
+                $promosiWork = \App\Models\PromotionWork::create([
+                    'episode_id' => $episode->id,
+                    'work_type' => 'bts_video',
+                    'title' => "BTS Video & Talent Photos - Episode {$episode->episode_number}",
+                    'description' => "Buat video BTS dan foto talent untuk Episode {$episode->episode_number}",
+                    'shooting_date' => $creativeWork->shooting_schedule,
+                    'status' => 'planning'
+                ]);
+                $createdTasks['promotion_work_id'] = $promosiWork->id;
 
-                    // Notify Promosi users
-                    foreach ($promosiUsers as $promosiUser) {
-                        Notification::create([
-                            'user_id' => $promosiUser->id,
-                            'type' => 'promosi_work_assigned',
-                            'title' => 'Tugas Promosi Baru',
-                            'message' => "Anda mendapat tugas untuk membuat video BTS dan foto talent untuk Episode {$creativeWork->episode->episode_number}. Jadwal syuting: " . ($creativeWork->shooting_schedule ? \Carbon\Carbon::parse($creativeWork->shooting_schedule)->format('d M Y') : 'TBD'),
-                            'data' => [
-                                'promotion_work_id' => $promosiWork->id,
-                                'episode_id' => $creativeWork->episode_id,
-                                'shooting_date' => $creativeWork->shooting_schedule
-                            ]
-                        ]);
-                    }
-                }
+                // Create ProduksiWork
+                $produksiWork = \App\Models\ProduksiWork::create([
+                    'episode_id' => $episode->id,
+                    'creative_work_id' => $creativeWork->id,
+                    'status' => 'pending'
+                ]);
+                $createdTasks['produksi_work_id'] = $produksiWork->id;
 
-                // Auto-create ProduksiWork task
-                $produksiUsers = \App\Models\User::where('role', 'Production')->get();
-                if ($produksiUsers->isNotEmpty()) {
-                    $produksiWork = \App\Models\ProduksiWork::create([
-                        'episode_id' => $creativeWork->episode_id,
-                        'creative_work_id' => $creativeWork->id,
-                        'status' => 'pending'
-                    ]);
-
-                    // Notify Produksi users
-                    foreach ($produksiUsers as $produksiUser) {
-                        Notification::create([
-                            'user_id' => $produksiUser->id,
-                            'type' => 'produksi_work_assigned',
-                            'title' => 'Tugas Produksi Baru',
-                            'message' => "Anda mendapat tugas produksi untuk Episode {$creativeWork->episode->episode_number}. Silakan input list alat dan kebutuhan.",
-                            'data' => [
-                                'produksi_work_id' => $produksiWork->id,
-                                'episode_id' => $creativeWork->episode_id,
-                                'creative_work_id' => $creativeWork->id
-                            ]
-                        ]);
-                    }
-                }
-
-                // Auto-create SoundEngineerRecording task untuk rekaman vokal (jika ada recording_schedule)
+                // Create SoundEngineerRecording (if recording_schedule exists)
+                $recordingId = null;
                 if ($creativeWork->recording_schedule) {
-                    $episode = $creativeWork->episode;
-                    $productionTeam = $episode->program->productionTeam;
-                    
+                    $productionTeam = $program->productionTeam;
+                    if ($productionTeam) {
+                        // Check if recording already exists
+                        $existingRecording = SoundEngineerRecording::where('episode_id', $episode->id)
+                            ->whereNull('music_arrangement_id')
+                            ->first();
+
+                        if (!$existingRecording) {
+                            $recording = SoundEngineerRecording::create([
+                                'episode_id' => $episode->id,
+                                'music_arrangement_id' => null,
+                                'recording_notes' => "Recording task untuk rekaman vokal Episode {$episode->episode_number}",
+                                'recording_schedule' => $creativeWork->recording_schedule,
+                                'status' => 'draft',
+                                'created_by' => $user->id
+                            ]);
+                            $recordingId = $recording->id;
+                            $createdTasks['recording_id'] = $recordingId;
+                        }
+                    }
+                }
+
+                // 3. Send PARALLEL notifications to all roles at once
+                // Roles to notify: Promotion, Production, Sound Engineer (if recording), General Affairs (already notified above in loop)
+                $rolesToNotify = ['Promotion', 'Production'];
+                
+                // Add Sound Engineer only if recording task was created
+                if ($recordingId) {
+                    // Get sound engineers from production team
+                    $productionTeam = $program->productionTeam;
                     if ($productionTeam) {
                         $soundEngineers = $productionTeam->members()
                             ->where('role', 'sound_eng')
                             ->where('is_active', true)
                             ->get();
-
+                        
                         foreach ($soundEngineers as $soundEngineerMember) {
-                            // Check if recording already exists for this episode (vocal recording)
-                            $existingRecording = SoundEngineerRecording::where('episode_id', $episode->id)
-                                ->whereNull('music_arrangement_id') // Vocal recording tidak punya music_arrangement_id
-                                ->first();
-
-                            if (!$existingRecording) {
-                                // Create draft recording task untuk rekaman vokal
-                                $recording = SoundEngineerRecording::create([
+                            Notification::create([
+                                'user_id' => $soundEngineerMember->user_id,
+                                'type' => 'vocal_recording_task_created',
+                                'title' => 'Tugas Rekaman Vokal Baru',
+                                'message' => "Anda mendapat tugas untuk rekaman vokal Episode {$episode->episode_number}. Jadwal rekaman: " . \Carbon\Carbon::parse($creativeWork->recording_schedule)->format('d M Y'),
+                                'data' => [
+                                    'recording_id' => $recordingId,
                                     'episode_id' => $episode->id,
-                                    'music_arrangement_id' => null, // Vocal recording
-                                    'recording_notes' => "Recording task untuk rekaman vokal Episode {$episode->episode_number}",
-                                    'recording_schedule' => $creativeWork->recording_schedule,
-                                    'status' => 'draft',
-                                    'created_by' => $soundEngineerMember->user_id
-                                ]);
+                                    'recording_schedule' => $creativeWork->recording_schedule
+                                ]
+                            ]);
+                        }
+                    }
+                }
 
-                                // Notify Sound Engineer
-                                Notification::create([
-                                    'user_id' => $soundEngineerMember->user_id,
-                                    'type' => 'vocal_recording_task_created',
-                                    'title' => 'Tugas Rekaman Vokal Baru',
-                                    'message' => "Anda mendapat tugas untuk rekaman vokal Episode {$episode->episode_number}. Jadwal rekaman: " . \Carbon\Carbon::parse($creativeWork->recording_schedule)->format('d M Y'),
-                                    'data' => [
-                                        'recording_id' => $recording->id,
-                                        'episode_id' => $episode->id,
-                                        'recording_schedule' => $creativeWork->recording_schedule
+                // Send PARALLEL notifications to Promotion and Production roles
+                \App\Services\ParallelNotificationService::notifyRoles(
+                    $rolesToNotify,
+                    [
+                        'type' => 'creative_work_approved_task_assigned',
+                        'title' => 'Creative Work Approved - Tugas Baru',
+                        'message' => "Creative Work Episode {$episode->episode_number} telah disetujui. Anda mendapat tugas baru. Jadwal syuting: " . ($creativeWork->shooting_schedule ? \Carbon\Carbon::parse($creativeWork->shooting_schedule)->format('d M Y') : 'TBD'),
+                        'data' => array_merge([
+                            'episode_id' => $episode->id,
+                            'episode_number' => $episode->episode_number,
+                            'creative_work_id' => $creativeWork->id,
+                            'shooting_schedule' => $creativeWork->shooting_schedule,
+                        ], $createdTasks)
+                    ],
+                    $program->id
+                );
+
+                // Audit logging
+                ControllerSecurityHelper::logCrud('creative_work_approved_parallel_notif', $creativeWork, [
+                    'parallel_notifications_sent' => count($rolesToNotify), // Promotion, Production
+                    'sound_engineer_notified' => $recordingId ? true : false,
+                    'tasks_created' => array_keys($createdTasks)
+                ], $request);
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $creativeWork->fresh(['episode', 'specialBudgetApproval']),
+                    'message' => 'Creative work approved successfully. ' . count($rolesToNotify) . ' team roles notified simultaneously.' . ($recordingId ? ' Sound Engineer also notified for vocal recording.' : '')
                                     ]
                                 ]);
                             }

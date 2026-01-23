@@ -8,6 +8,7 @@ use App\Models\Episode;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
 use App\Services\FileUploadService;
+use App\Services\WorkAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -143,6 +144,18 @@ class CreativeController extends Controller
         }
         
         try {
+            // Get episode details for auto-assignment logic
+            $episode = Episode::with('program')->findOrFail($request->episode_id);
+            
+            // AUTO-ASSIGNMENT LOGIC: Use WorkAssignmentService to determine assignee
+            $assignedUserId = WorkAssignmentService::getNextAssignee(
+                CreativeWork::class,
+                $episode->program_id,
+                $episode->episode_number,
+                null,  // CreativeWork doesn't have work_type
+                $request->created_by  // Use requested creator ID as fallback
+            );
+
             $work = CreativeWork::create([
                 'episode_id' => $request->episode_id,
                 'script_content' => $request->script_content,
@@ -152,7 +165,9 @@ class CreativeController extends Controller
                 'shooting_schedule' => $request->shooting_schedule,
                 'shooting_location' => $request->shooting_location,
                 'status' => 'draft',
-                'created_by' => $request->created_by
+                'created_by' => $assignedUserId,           // AUTO-ASSIGNED
+                'originally_assigned_to' => null,           // Reset
+                'was_reassigned' => false                   // Reset
             ]);
             
             // Audit logging

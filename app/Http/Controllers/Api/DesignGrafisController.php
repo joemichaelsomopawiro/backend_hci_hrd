@@ -11,6 +11,7 @@ use App\Models\Notification;
 use App\Helpers\FileUploadHelper;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
+use App\Services\WorkAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -111,6 +112,18 @@ class DesignGrafisController extends Controller
                 ], 422);
             }
 
+            // Get episode details for auto-assignment logic
+            $episode = Episode::with('program')->findOrFail($request->episode_id);
+            
+            // AUTO-ASSIGNMENT LOGIC: Use WorkAssignmentService to determine assignee
+            $assignedUserId = WorkAssignmentService::getNextAssignee(
+                DesignGrafisWork::class,
+                $episode->program_id,
+                $episode->episode_number,
+                $request->work_type,  // Work type filter
+                $user->id
+            );
+
             $work = DesignGrafisWork::create([
                 'episode_id' => $request->episode_id,
                 'work_type' => $request->work_type,
@@ -124,7 +137,9 @@ class DesignGrafisController extends Controller
                 'deadline' => $request->deadline,
                 'platform' => $request->platform,
                 'status' => 'draft',
-                'created_by' => $user->id
+                'created_by' => $assignedUserId,           // AUTO-ASSIGNED
+                'originally_assigned_to' => null,           // Reset
+                'was_reassigned' => false                   // Reset
             ]);
 
             // Auto-fetch source files from Produksi and Promosi

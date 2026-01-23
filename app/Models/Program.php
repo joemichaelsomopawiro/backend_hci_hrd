@@ -25,10 +25,11 @@ class Program extends Model
         'duration_minutes',
         'broadcast_channel',
         'target_views_per_episode',
-        'proposal_file_path',
-        'proposal_file_name',
-        'proposal_file_size',
-        'proposal_file_mime_type',
+        'proposal_file_link',        // New: External storage link for proposal
+        'proposal_file_path',        // Kept for backward compatibility
+        'proposal_file_name',        // Kept for backward compatibility
+        'proposal_file_size',        // Kept for backward compatibility
+        'proposal_file_mime_type',   // Kept for backward compatibility
         'submitted_by',
         'submitted_at',
         'submission_notes',

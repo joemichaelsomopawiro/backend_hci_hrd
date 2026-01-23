@@ -25,7 +25,9 @@ class PromotionWork extends Model
         'shooting_time',
         'shooting_notes',
         'file_paths',
+        'file_links',           // New: External storage links (array) (Google Drive, etc.)
         'social_media_links',
+        'social_media_proof',   // New: Social media sharing proof links (JSON)
         'status',
         'reviewed_by',
         'reviewed_at',
@@ -37,7 +39,9 @@ class PromotionWork extends Model
         'location_data' => 'array',
         'equipment_needed' => 'array',
         'file_paths' => 'array',
+        'file_links' => 'array',        // New: Cast file_links as array
         'social_media_links' => 'array',
+        'social_media_proof' => 'array', // New: Cast social_media_proof as array
         'shooting_date' => 'date',
         'shooting_time' => 'datetime:H:i',
         'reviewed_at' => 'datetime'

@@ -32,6 +32,8 @@ use App\Http\Controllers\Api\PrManagerDistribusiController;
 use App\Http\Controllers\Api\PrRevisionController;
 use App\Http\Controllers\Api\PrProgramCrewController;
 use App\Http\Controllers\Api\PrRoleFilterController;
+use App\Http\Controllers\Api\TaskVisibilityController;
+use App\Http\Controllers\Api\TaskReassignmentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -773,4 +775,17 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/{id}/approve', [PrRevisionController::class, 'approveRevision']); // Approve revisi (hanya Manager Program)
         Route::post('/{id}/reject', [PrRevisionController::class, 'rejectRevision']); // Reject revisi (hanya Manager Program)
     });
+});
+
+// ===== TASK VISIBILITY & REASSIGNMENT ROUTES =====
+Route::prefix('tasks')->middleware(['auth:sanctum'])->group(function () {
+    // Task Visibility Routes (All roles can access)
+    Route::get('/all', [\App\Http\Controllers\Api\TaskVisibilityController::class, 'getAllTasks']); // Get all tasks with filters
+    Route::get('/statistics', [\App\Http\Controllers\Api\TaskVisibilityController::class, 'getTaskStatistics']); // Get task statistics
+    Route::get('/{taskType}/{taskId}', [\App\Http\Controllers\Api\TaskVisibilityController::class, 'getTaskDetail']); // Get task detail
+
+    // Task Reassignment Routes (Manager Program and Producer only)
+    Route::post('/reassign', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'reassignTask']); // Reassign task
+    Route::get('/{taskType}/{taskId}/reassignment-history', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'getReassignmentHistory']); // Get reassignment history
+    Route::get('/available-users', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'getAvailableUsers']); // Get available users for dropdown
 });
