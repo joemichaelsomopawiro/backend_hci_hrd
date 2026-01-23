@@ -727,6 +727,9 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
 
     // Producer Routes
     Route::prefix('producer')->group(function () {
+        Route::get('/programs', [PrProducerController::class, 'listPrograms']); // List programs assigned to Producer
+        Route::get('/dashboard/stats', [PrProducerController::class, 'getDashboardStats']); // Dashboard statistics
+        Route::post('/programs/{id}/mark-as-read', [PrProducerController::class, 'markProgramAsRead']); // Mark program as read
         Route::get('/concepts', [PrProducerController::class, 'listConceptsForApproval']); // List konsep untuk approval
         Route::post('/concepts/{id}/approve', [PrProducerController::class, 'approveConcept']); // Approve konsep (DEPRECATED)
         Route::post('/concepts/{id}/reject', [PrProducerController::class, 'rejectConcept']); // Reject konsep (DEPRECATED)

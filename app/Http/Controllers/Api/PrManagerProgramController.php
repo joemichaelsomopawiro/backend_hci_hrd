@@ -490,10 +490,10 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($id);
 
-            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER || $program->manager_program_id !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized'
+                    'message' => 'Unauthorized: Only Program Manager can update programs'
                 ], 403);
             }
 
@@ -545,10 +545,10 @@ class PrManagerProgramController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($id);
 
-            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER || $program->manager_program_id !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized'
+                    'message' => 'Unauthorized: Only Program Manager can delete programs'
                 ], 403);
             }
 

@@ -35,6 +35,176 @@ class PrProducerController extends Controller
     }
 
     /**
+     * List programs assigned to Producer
+     * GET /api/program-regular/producer/programs
+     */
+    public function listPrograms(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $filterByRole = $request->query('filter_by_role');
+
+            // Start query for programs assigned to this Producer
+            $query = PrProgram::where('producer_id', $user->id)
+                ->with(['managerProgram', 'producer', 'managerDistribusi', 'episodes']);
+
+            // Role-based filtering
+            if ($filterByRole && $filterByRole !== 'all') {
+                if (!\App\Services\RoleHierarchyService::canAccessRoleData($user->role, $filterByRole)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized to filter by this role'
+                    ], 403);
+                }
+            }
+
+            // Filter by year if provided
+            if ($request->has('year') && $request->year !== 'all') {
+                $query->where('program_year', $request->year);
+            }
+
+            // Filter by read status if provided
+            if ($request->has('read_status')) {
+                if ($request->read_status === 'unread') {
+                    $query->unreadByProducer();
+                } elseif ($request->read_status === 'read') {
+                    $query->readByProducer();
+                }
+            }
+
+            $programs = $query->orderBy('created_at', 'desc')
+                ->paginate($request->get('per_page', 15));
+
+            return response()->json([
+                'success' => true,
+                'data' => $programs,
+                'filter' => [
+                    'year' => $request->year ?? 'all',
+                    'read_status' => $request->read_status ?? 'all',
+                    'role' => $filterByRole
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve programs',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get dashboard statistics for Producer
+     * GET /api/program-regular/producer/dashboard/stats
+     */
+    public function getDashboardStats(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $filterByRole = $request->query('filter_by_role');
+
+            // Base query for Producer's programs
+            $baseQuery = PrProgram::where('producer_id', $user->id);
+
+            // Role-based filtering
+            if ($filterByRole && $filterByRole !== 'all') {
+                if (!\App\Services\RoleHierarchyService::canAccessRoleData($user->role, $filterByRole)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized to filter by this role'
+                    ], 403);
+                }
+            }
+
+            // Calculate statistics
+            $stats = [
+                'unread_programs_count' => (clone $baseQuery)->unreadByProducer()->count(),
+                'total_programs_count' => (clone $baseQuery)->count(),
+                'in_production_count' => (clone $baseQuery)->byStatus('in_production')->count(),
+                'in_editing_count' => (clone $baseQuery)->byStatus('editing')->count(),
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $stats
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve dashboard statistics',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mark program as read by Producer
+     * POST /api/program-regular/producer/programs/{id}/mark-as-read
+     */
+    public function markProgramAsRead($programId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $program = PrProgram::findOrFail($programId);
+
+            // Check if program is assigned to this Producer
+            if ($program->producer_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Program not assigned to you.'
+                ], 403);
+            }
+
+            // Check if already read
+            if ($program->read_by_producer) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Program sudah ditandai sebagai dibaca sebelumnya',
+                    'data' => $program->load(['managerProgram', 'producer'])
+                ]);
+            }
+
+            // Mark as read
+            $program->markAsReadByProducer();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Program berhasil ditandai sudah dibaca',
+                'data' => $program->fresh()->load(['managerProgram', 'producer'])
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * List konsep untuk approval
      */
     public function listConceptsForApproval(Request $request): JsonResponse

@@ -26,13 +26,17 @@ class PrProgram extends Model
         'broadcast_channel',
         'program_year',
         'producer_id',
-        'manager_distribusi_id'
+        'manager_distribusi_id',
+        'read_by_producer',
+        'read_at'
     ];
 
     protected $casts = [
         'start_date' => 'date',
         'air_time' => 'datetime:H:i',
-        'program_year' => 'integer'
+        'program_year' => 'integer',
+        'read_by_producer' => 'boolean',
+        'read_at' => 'datetime'
     ];
 
     /**
@@ -194,5 +198,32 @@ class PrProgram extends Model
                 $q->where('role', $role);
             }
         });
+    }
+
+    /**
+     * Scope untuk filter program yang belum dibaca Producer
+     */
+    public function scopeUnreadByProducer($query)
+    {
+        return $query->where('read_by_producer', false);
+    }
+
+    /**
+     * Scope untuk filter program yang sudah dibaca Producer
+     */
+    public function scopeReadByProducer($query)
+    {
+        return $query->where('read_by_producer', true);
+    }
+
+    /**
+     * Mark program as read by Producer
+     */
+    public function markAsReadByProducer(): void
+    {
+        $this->update([
+            'read_by_producer' => true,
+            'read_at' => now()
+        ]);
     }
 }

@@ -29,6 +29,10 @@ class UserController extends Controller
                 'art & set design' => 'Art & Set Properti',
                 'art & set' => 'Art & Set Properti',
                 'manager distribusi' => 'Distribution Manager',
+                'editor promosi' => 'Editor Promotion',
+                'design grafis' => 'Graphic Design',
+                'qc' => 'Quality Control',
+                'promosi' => 'Promotion',
             ];
 
             $mappedRole = $roleMap[strtolower($roleInput)] ?? $roleInput;

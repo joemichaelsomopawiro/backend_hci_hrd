@@ -48,6 +48,9 @@ class PrProgramCrewController extends Controller
     /**
      * Add a crew member to a program
      */
+    /**
+     * Add crew members to a program (Bulk Support)
+     */
     public function store(Request $request, $programId)
     {
         $program = PrProgram::find($programId);
@@ -59,58 +62,103 @@ class PrProgramCrewController extends Controller
             ], 404);
         }
 
-        // Validate request
-        $validator = Validator::make($request->all(), [
-            'user_id' => 'required|exists:users,id',
-            'role' => 'required|string|max:100', // e.g. "Kreatif", "Editor"
-        ]);
+        // Support both single entry (legacy) and bulk (new)
+        $members = $request->input('members');
+        
+        // If 'members' is not present, assume single entry and normalize to array
+        if (!$members) {
+            $members = [[
+                'user_id' => $request->user_id,
+                'role' => $request->role
+            ]];
+        }
 
-        if ($validator->fails()) {
+        $addedMembers = [];
+        $errors = [];
+
+        foreach ($members as $index => $memberData) {
+            $validator = Validator::make($memberData, [
+                'user_id' => 'required|exists:users,id',
+                'role' => 'required|string|max:100',
+            ]);
+
+            if ($validator->fails()) {
+                $errors[] = [
+                    'index' => $index,
+                    'message' => 'Validasi gagal',
+                    'errors' => $validator->errors()
+                ];
+                continue;
+            }
+
+            // CRITICAL: Check if ROLE already exists in this program
+            // "Tidak boleh ada 2 role yang sama."
+            $roleExists = PrProgramCrew::where('program_id', $programId)
+                ->where('role', $memberData['role'])
+                ->exists();
+
+            if ($roleExists) {
+                // If it's the exact same user AND role, just skip (idempotent)
+                $exactMatch = PrProgramCrew::where('program_id', $programId)
+                    ->where('role', $memberData['role'])
+                    ->where('user_id', $memberData['user_id'])
+                    ->exists();
+
+                if ($exactMatch) {
+                    continue; // Already exists, perfectly fine
+                }
+
+                // If role exists but handled by someone else (or even same person but caught by logic above)
+                // Actually constraint is "No 2 same roles".
+                $errors[] = [
+                    'index' => $index,
+                    'message' => "Posisi '{$memberData['role']}' sudah terisi di program ini."
+                ];
+                continue;
+            }
+
+            // Note: We DO NOT check if user_id exists anymore. 
+            // "Kalau nama Boleh sama" means one user can have multiple roles.
+
+            try {
+                $crew = PrProgramCrew::create([
+                    'program_id' => $programId,
+                    'user_id' => $memberData['user_id'],
+                    'role' => $memberData['role']
+                ]);
+
+                // Transform response to include user details
+                $crew->load([
+                    'user' => function ($query) {
+                        $query->select('id', 'name', 'email', 'role');
+                    }
+                ]);
+
+                $addedMembers[] = $crew;
+
+            } catch (\Exception $e) {
+                $errors[] = [
+                    'index' => $index,
+                    'message' => 'Error database: ' . $e->getMessage()
+                ];
+            }
+        }
+
+        if (count($errors) > 0 && count($addedMembers) === 0) {
+            // If all failed
             return response()->json([
                 'success' => false,
-                'message' => 'Validasi gagal',
-                'errors' => $validator->errors()
+                'message' => 'Gagal menambahkan anggota tim',
+                'errors' => $errors
             ], 422);
         }
 
-        // Check if user is already assigned to this program
-        $exists = PrProgramCrew::where('program_id', $programId)
-            ->where('user_id', $request->user_id)
-            ->exists();
-
-        if ($exists) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Staff ini sudah ada di dalam tim program ini'
-            ], 400);
-        }
-
-        try {
-            $crew = PrProgramCrew::create([
-                'program_id' => $programId,
-                'user_id' => $request->user_id,
-                'role' => $request->role
-            ]);
-
-            // Transform response to include user details
-            $crew->load([
-                'user' => function ($query) {
-                    $query->select('id', 'name', 'email', 'role');
-                }
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Berhasil menambahkan anggota tim',
-                'data' => $crew
-            ], 201);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Gagal menambahkan anggota tim: ' . $e->getMessage()
-            ], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'Berhasil menambahkan ' . count($addedMembers) . ' anggota tim',
+            'data' => $addedMembers,
+            'partial_errors' => count($errors) > 0 ? $errors : null
+        ], 201);
     }
 
     /**

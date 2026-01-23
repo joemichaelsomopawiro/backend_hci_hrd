@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             MorningReflectionAttendanceSeeder::class,
             DeveloperJuly2025AttendanceSeeder::class,
+            JoeConDummyUsersSeeder::class,
         ]);
     }
 }
