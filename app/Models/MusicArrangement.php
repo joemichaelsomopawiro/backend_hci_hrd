@@ -24,10 +24,11 @@ class MusicArrangement extends Model
         'producer_modified',
         'producer_modified_at',
         'arrangement_notes',
-        'file_path',
-        'file_name',
-        'file_size',
-        'mime_type',
+        'file_link',            // New: External storage link (Google Drive, etc.)
+        'file_path',            // Kept for backward compatibility
+        'file_name',            // Kept for backward compatibility
+        'file_size',            // Kept for backward compatibility
+        'mime_type',            // Kept for backward compatibility
         'status',
         'created_by',
         'reviewed_by',
@@ -91,11 +92,12 @@ class MusicArrangement extends Model
     }
 
     /**
-     * Relationship dengan Singer (User)
+     * Relationship dengan Singer
+     * Updated: menggunakan Singer model, bukan User
      */
     public function singer(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'singer_id');
+        return $this->belongsTo(\App\Models\Singer::class, 'singer_id');
     }
 
     /**

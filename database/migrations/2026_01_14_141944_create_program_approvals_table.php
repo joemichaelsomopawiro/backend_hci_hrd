@@ -11,6 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Check if table already exists (for backward compatibility)
+        if (Schema::hasTable('program_approvals')) {
+            return;
+        }
+        
         Schema::create('program_approvals', function (Blueprint $table) {
             $table->id();
             

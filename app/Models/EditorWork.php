@@ -18,6 +18,7 @@ class EditorWork extends Model
         'file_name',
         'file_size',
         'mime_type',
+        'file_link',            // New: External storage link (Google Drive, etc.)
         'status',
         'source_files',
         'file_notes',

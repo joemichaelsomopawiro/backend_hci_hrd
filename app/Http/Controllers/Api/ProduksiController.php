@@ -844,7 +844,7 @@ class ProduksiController extends Controller
                 ], 422);
             }
 
-            $work = ProduksiWork::findOrFail($id);
+            $work = ProduksiWork::with(['episode.program'])->findOrFail($id);
 
             if ($work->created_by !== $user->id) {
                 return response()->json([
@@ -859,10 +859,46 @@ class ProduksiController extends Controller
                 'shooting_file_links' => implode(',', array_column($request->file_links, 'url'))
             ]);
 
+            // ✨ PARALLEL NOTIFICATIONS ✨
+            // Produksi selesai syuting → notify 4 roles simultaneously:
+            // 1. Art & Set Properti → alat kembali
+            // 2. Producer → FYI
+            // 3. Editor → file ready for editing
+            // 4. Design Grafis → file ready for thumbnail
+            
+            $episode = $work->episode;
+            $program = $episode->program;
+            
+            \App\Services\ParallelNotificationService::notifyRoles(
+                ['Art & Set Properti', 'Producer', 'Editor', 'Graphic Design'],
+                [
+                    'type' => 'shooting_completed',
+                    'title' => 'Syuting Selesai',
+                    'message' => "Syuting Episode {$episode->episode_number} - {$episode->title} telah selesai dan file sudah diupload",
+                    'data' => [
+                        'episode_id' => $episode->id,
+                        'episode_number' => $episode->episode_number,
+                        'produksi_work_id' => $work->id,
+                        'file_count' => count($request->file_links),
+                        'shooting_file_links' => $work->shooting_file_links
+                    ]
+                ],
+                $program->id
+            );
+
+            // Audit logging
+            ControllerSecurityHelper::logCrud('produksi_file_links_input', $work, [
+                'file_count' => count($request->file_links),
+                'parallel_notifications_sent' => 4 // Art & Set, Producer, Editor, Design Grafis
+            ], $request);
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'creativeWork']),
-                'message' => 'File links input successfully'
+                'message' => 'File links input successfully. 4 team members notified (Art & Set, Producer, Editor, Design Grafis).'
             ]);
 
         } catch (\Exception $e) {

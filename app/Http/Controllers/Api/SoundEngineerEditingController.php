@@ -87,10 +87,19 @@ class SoundEngineerEditingController extends Controller
 
         $validator = Validator::make($request->all(), [
             'episode_id' => 'required|exists:episodes,id',
-            'vocal_file_path' => 'required|string',
+            'vocal_file_path' => 'nullable|string', // Keep for backward compatibility
+            'vocal_file_link' => 'nullable|url|max:2048', // New: External storage link
             'editing_notes' => 'nullable|string',
             'estimated_completion' => 'nullable|date'
         ]);
+        
+        // Require either vocal_file_path or vocal_file_link
+        if (!$request->has('vocal_file_path') && !$request->has('vocal_file_link')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Either vocal_file_path or vocal_file_link is required.'
+            ], 422);
+        }
 
         if ($validator->fails()) {
             return response()->json([
@@ -103,7 +112,8 @@ class SoundEngineerEditingController extends Controller
         $work = SoundEngineerEditing::create([
             'episode_id' => $request->episode_id,
             'sound_engineer_id' => $user->id,
-            'vocal_file_path' => $request->vocal_file_path,
+            'vocal_file_path' => $request->vocal_file_path, // Backward compatibility
+            'vocal_file_link' => $request->vocal_file_link, // New: External storage link
             'editing_notes' => $request->editing_notes,
             'estimated_completion' => $request->estimated_completion,
             'status' => 'in_progress',
@@ -263,7 +273,10 @@ class SoundEngineerEditingController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'vocal_file_path' => 'nullable|string',
+            'vocal_file_path' => 'nullable|string', // Backward compatibility
+            'vocal_file_link' => 'nullable|url|max:2048', // New: External storage link
+            'final_file_path' => 'nullable|string', // Backward compatibility
+            'final_file_link' => 'nullable|url|max:2048', // New: External storage link
             'editing_notes' => 'nullable|string',
             'estimated_completion' => 'nullable|date',
             'status' => 'nullable|in:in_progress,completed,revision_needed'
@@ -278,7 +291,10 @@ class SoundEngineerEditingController extends Controller
         }
 
         $work->update($request->only([
-            'vocal_file_path',
+            'vocal_file_path', // Backward compatibility
+            'vocal_file_link', // New: External storage link
+            'final_file_path', // Backward compatibility
+            'final_file_link', // New: External storage link
             'editing_notes',
             'estimated_completion',
             'status'
@@ -319,9 +335,18 @@ class SoundEngineerEditingController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'final_file_path' => 'required|string',
+            'final_file_path' => 'nullable|string', // Backward compatibility
+            'final_file_link' => 'nullable|url|max:2048', // New: External storage link
             'submission_notes' => 'nullable|string'
         ]);
+        
+        // Require either final_file_path or final_file_link
+        if (!$request->has('final_file_path') && !$request->has('final_file_link')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Either final_file_path or final_file_link is required.'
+            ], 422);
+        }
 
         if ($validator->fails()) {
             return response()->json([
@@ -333,7 +358,8 @@ class SoundEngineerEditingController extends Controller
 
         // Reset rejection fields if resubmitting after rejection
         $updateData = [
-            'final_file_path' => $request->final_file_path,
+            'final_file_path' => $request->final_file_path, // Backward compatibility
+            'final_file_link' => $request->final_file_link, // New: External storage link
             'submission_notes' => $request->submission_notes,
             'status' => 'submitted',
             'submitted_at' => now()

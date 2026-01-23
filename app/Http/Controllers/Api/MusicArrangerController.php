@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\MusicArrangement;
 use App\Models\Episode;
 use App\Models\Notification;
+use App\Services\WorkAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -129,7 +130,7 @@ class MusicArrangerController extends Controller
                 'singer_id' => 'nullable|exists:users,id', 
                 'singer_name' => 'nullable|string|max:255',
                 'arrangement_notes' => 'nullable|string',
-                'file' => 'nullable|file|mimes:mp3,wav,midi|max:102400', 
+                'file_link' => 'nullable|url|max:2048', // New: Accept external link instead of file upload
             ]);
 
             if ($validator->fails()) {
@@ -195,69 +196,43 @@ class MusicArrangerController extends Controller
             
             // Jika pilih dari database, ambil singer_name
             if ($singerId && !$singerName) {
-                $singer = \App\Models\User::find($singerId);
+                $singer = \App\Models\Singer::find($singerId);
                 if ($singer) $singerName = $singer->name;
             }
             
-            // Jika input manual singer_name, auto-save ke database sebagai User dengan role Singer jika belum ada
+            // Jika input manual singer_name, auto-save ke singers table (master data)
             if ($singerName && !$singerId) {
-                $existingSinger = \App\Models\User::where('name', $singerName)
-                    ->where('role', 'Singer')
-                    ->first();
+                $existingSinger = \App\Models\Singer::where('name', $singerName)->first();
                 if ($existingSinger) {
                     // Jika sudah ada, gunakan yang sudah ada
                     $singerId = $existingSinger->id;
                     $singerName = $existingSinger->name;
                 } else {
-                    // Jika belum ada, create user baru dengan role Singer
-                    // Generate email dari name jika tidak ada
-                    $email = strtolower(str_replace(' ', '.', $singerName)) . '@singer.local';
-                    // Pastikan email unique
-                    $counter = 1;
-                    while (\App\Models\User::where('email', $email)->exists()) {
-                        $email = strtolower(str_replace(' ', '.', $singerName)) . $counter . '@singer.local';
-                        $counter++;
-                    }
-                    
-                    $newSinger = \App\Models\User::create([
+                    // Jika belum ada, create singer baru ke singers table (BUKAN User table!)
+                    $newSinger = \App\Models\Singer::create([
                         'name' => $singerName,
-                        'email' => $email,
-                        'password' => bcrypt('password'), // Default password, bisa diubah nanti
-                        'role' => 'Singer',
-                        'email_verified_at' => now()
+                        'is_active' => true
                     ]);
                     $singerId = $newSinger->id;
                 }
             }
 
-            $filePath = null;
-            $fileName = null;
-            $fileSize = null;
-            $mimeType = null;
 
-            if ($request->hasFile('file')) {
-                // Validate file
-                $file = $request->file('file');
-                $validator = Validator::make(['file' => $file], [
-                    'file' => 'required|file|mimes:mp3,wav,midi|max:102400', // 100MB max
-                ]);
-                
-                if ($validator->fails()) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Validation failed',
-                        'errors' => $validator->errors()
-                    ], 422);
-                }
-                
-                // Store file to public disk (consistent with update method)
-                $filePath = $file->store('music-arrangements', 'public');
-                $fileName = $file->getClientOriginalName();
-                $fileSize = $file->getSize();
-                $mimeType = $file->getMimeType();
-            }
+            // Handle file_link (external storage URL) instead of file upload
+            $fileLink = $request->file_link ?? null;
+            
+            // Determine status based on whether file_link is provided
+            $status = $fileLink ? 'draft' : 'song_proposal';
 
-            $status = $filePath ? 'draft' : 'song_proposal';
+            // AUTO-ASSIGNMENT LOGIC: Use WorkAssignmentService to determine assignee
+            // Checks if previous episode's MusicArrangement was reassigned
+            $assignedUserId = WorkAssignmentService::getNextAssignee(
+                MusicArrangement::class,
+                $episode->program_id,
+                $episode->episode_number,
+                null,  // MusicArrangement doesn't have work_type
+                $user->id
+            );
 
             $arrangement = MusicArrangement::create([
                 'episode_id' => $request->episode_id,
@@ -268,12 +243,16 @@ class MusicArrangerController extends Controller
                 'original_song_title' => $songTitle,
                 'original_singer_name' => $singerName,
                 'arrangement_notes' => $request->arrangement_notes,
-                'file_path' => $filePath,
-                'file_name' => $fileName,
-                'file_size' => $fileSize,
-                'mime_type' => $mimeType,
+                'file_link' => $fileLink,  // New: Store external link
+                // Old fields kept as null for backward compatibility
+                'file_path' => null,
+                'file_name' => null,
+                'file_size' => null,
+                'mime_type' => null,
                 'status' => $status,
-                'created_by' => $user->id,
+                'created_by' => $assignedUserId,          // AUTO-ASSIGNED
+                'originally_assigned_to' => null,          // Reset
+                'was_reassigned' => false                  // Reset
             ]);
 
             $producer = $productionTeam->producer;
@@ -330,40 +309,44 @@ class MusicArrangerController extends Controller
             if ($arrangement->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: You can only upload files for your own arrangements.'
+                    'message' => 'Unauthorized: You can only update your own arrangements.'
                 ], 403);
             }
 
-            if ($request->hasFile('file')) {
-                if ($arrangement->file_path) Storage::disk('public')->delete($arrangement->file_path);
-                $file = $request->file('file');
-                $filePath = $file->store('music-arrangements', 'public');
-                
-                // Determine new status based on current status
-                $newStatus = $arrangement->status;
-                if ($arrangement->status === 'song_approved') {
-                    // Jika song sudah approved, langsung submit arrangement
-                    $newStatus = 'arrangement_submitted';
-                } elseif (in_array($arrangement->status, ['arrangement_rejected', 'rejected'])) {
-                    // Jika arrangement ditolak, setelah upload file status tetap rejected
-                    // Music Arranger perlu submit ulang secara manual
-                    $newStatus = 'arrangement_rejected'; // Tetap rejected sampai di-submit ulang
-                }
-                
-                $arrangement->update([
-                    'file_path' => $filePath,
-                    'file_name' => $file->getClientOriginalName(),
-                    'file_size' => $file->getSize(),
-                    'mime_type' => $file->getMimeType(),
-                    'status' => $newStatus
-                ]);
+            // Validate file_link
+            $validator = Validator::make($request->all(), [
+                'file_link' => 'required|url|max:2048'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
             }
+            
+            // Determine new status based on current status
+            $newStatus = $arrangement->status;
+            if ($arrangement->status === 'song_approved') {
+                // Jika song sudah approved, langsung submit arrangement
+                $newStatus = 'arrangement_submitted';
+            } elseif (in_array($arrangement->status, ['arrangement_rejected', 'rejected'])) {
+                // Jika arrangement ditolak, setelah upload file status tetap rejected
+                // Music Arranger perlu submit ulang secara manual
+                $newStatus = 'arrangement_rejected'; // Tetap rejected sampai di-submit ulang
+            }
+            
+            $arrangement->update([
+                'file_link' => $request->file_link,  // New: Store external link
+                'status' => $newStatus
+            ]);
 
             return response()->json([
                 'success' => true,
                 'message' => in_array($arrangement->status, ['arrangement_rejected', 'rejected']) 
-                    ? 'File uploaded successfully. Please submit the arrangement again for Producer review.'
-                    : 'File uploaded successfully.',
+                    ? 'File link updated successfully. Please submit the arrangement again for Producer review.'
+                    : 'File link updated successfully.',
                 'data' => $arrangement->fresh()
             ]);
         } catch (\Exception $e) {
@@ -546,7 +529,10 @@ class MusicArrangerController extends Controller
 
     public function getAvailableSingers(Request $request): JsonResponse
     {
-        return response()->json(['success' => true, 'data' => \App\Models\User::where('role', 'Singer')->get()]);
+        return response()->json([
+            'success' => true, 
+            'data' => \App\Models\Singer::active()->orderBy('name')->get()
+        ]);
     }
 
     public function acceptWork(Request $request, int $id): JsonResponse

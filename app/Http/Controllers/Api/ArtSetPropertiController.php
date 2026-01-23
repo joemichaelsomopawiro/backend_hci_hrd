@@ -154,6 +154,20 @@ class ArtSetPropertiController extends Controller
                 ], 400);
             }
 
+            // CRITICAL VALIDATION: Check if equipment is already assigned/in_use
+            // This prevents double-booking of equipment
+            $equipmentInUse = EquipmentInventory::where('equipment_name', $equipment->equipment_name)
+                ->where('status', 'assigned') // Equipment is currently assigned/in_use
+                ->exists();
+
+            if ($equipmentInUse) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Equipment '{$equipment->equipment_name}' is currently in use and cannot be assigned. Please wait until it is returned or choose different equipment.",
+                    'error_code' => 'EQUIPMENT_IN_USE'
+                ], 409); // 409 Conflict - resource is already in use
+            }
+
             $equipment->update([
                 'status' => 'approved',
                 'approved_by' => $user->id,

@@ -18,6 +18,8 @@ class SoundEngineerEditing extends Model
         'sound_engineer_id',
         'vocal_file_path',
         'final_file_path',
+        'vocal_file_link',      // New: External storage link for vocal file
+        'final_file_link',       // New: External storage link for final file
         'editing_notes',
         'submission_notes',
         'status',

@@ -318,8 +318,17 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'bts_video' => 'required|file|mimes:mp4,mov,avi,mkv|max:102400' // Max 100MB
+                'bts_video' => 'nullable|file|mimes:mp4,mov,avi,mkv|max:102400', // Max 100MB (backward compatibility)
+                'file_link' => 'nullable|url|max:2048' // New: External storage link
             ]);
+            
+            // Require either bts_video file or file_link
+            if (!$request->hasFile('bts_video') && !$request->has('file_link')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Either bts_video file or file_link is required.'
+                ], 422);
+            }
 
             if ($validator->fails()) {
                 return response()->json([
@@ -339,42 +348,62 @@ class PromosiController extends Controller
                 ], 403);
             }
 
-            $file = $request->file('bts_video');
-            
-            // Store file in promosi/bts_videos directory
-            $directory = 'promosi/bts_videos';
-            $disk = 'private';
-            $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($file->getClientOriginalName());
-            $path = $file->storeAs($directory, $safeFileName, $disk);
-            
-            // Generate URL (for private storage, we'll use signed URL later if needed)
-            // For now, just store the path
-            $url = null;
-
-            // Get existing file_paths or initialize
+            // Get existing file_paths and file_links or initialize
             $filePaths = $work->file_paths ?? [];
+            $fileLinks = $work->file_links ?? [];
             
             // Remove existing BTS video if any
             $filePaths = array_filter($filePaths, function($item) {
                 return isset($item['type']) && $item['type'] !== 'bts_video';
             });
+            $fileLinks = array_filter($fileLinks, function($item) {
+                return isset($item['type']) && $item['type'] !== 'bts_video';
+            });
             
-            // Add new BTS video
-            $filePaths[] = [
-                'type' => 'bts_video',
-                'file_path' => $path,
-                'file_name' => $safeFileName,
-                'original_name' => $file->getClientOriginalName(),
-                'file_size' => $file->getSize(),
-                'mime_type' => $file->getMimeType(),
-                'url' => $url,
-                'uploaded_at' => now()->toDateTimeString(),
-                'uploaded_by' => $user->id
-            ];
+            $updateData = [];
+            
+            // Handle file upload (backward compatibility)
+            if ($request->hasFile('bts_video')) {
+                $file = $request->file('bts_video');
+                
+                // Store file in promosi/bts_videos directory
+                $directory = 'promosi/bts_videos';
+                $disk = 'private';
+                $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($file->getClientOriginalName());
+                $path = $file->storeAs($directory, $safeFileName, $disk);
+                
+                // Generate URL (for private storage, we'll use signed URL later if needed)
+                $url = null;
 
-            $work->update([
-                'file_paths' => array_values($filePaths)
-            ]);
+                // Add new BTS video to file_paths
+                $filePaths[] = [
+                    'type' => 'bts_video',
+                    'file_path' => $path,
+                    'file_name' => $safeFileName,
+                    'original_name' => $file->getClientOriginalName(),
+                    'file_size' => $file->getSize(),
+                    'mime_type' => $file->getMimeType(),
+                    'url' => $url,
+                    'uploaded_at' => now()->toDateTimeString(),
+                    'uploaded_by' => $user->id
+                ];
+                
+                $updateData['file_paths'] = array_values($filePaths);
+            }
+            
+            // Handle file_link (new: external storage link)
+            if ($request->has('file_link')) {
+                $fileLinks[] = [
+                    'type' => 'bts_video',
+                    'file_link' => $request->file_link,
+                    'uploaded_at' => now()->toDateTimeString(),
+                    'uploaded_by' => $user->id
+                ];
+                
+                $updateData['file_links'] = array_values($fileLinks);
+            }
+
+            $work->update($updateData);
 
             // Audit logging
             ControllerSecurityHelper::logCrud('promosi_bts_video_uploaded', $work, [
@@ -416,9 +445,20 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'talent_photos' => 'required|array|min:1',
-                'talent_photos.*' => 'required|file|mimes:jpg,jpeg,png|max:10240' // Max 10MB per photo
+                'talent_photos' => 'nullable|array|min:1', // Backward compatibility
+                'talent_photos.*' => 'nullable|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB per photo
+                'file_links' => 'nullable|array|min:1', // New: External storage links (array)
+                'file_links.*' => 'nullable|url|max:2048' // Each link must be valid URL
             ]);
+            
+            // Require either talent_photos files or file_links
+            if ((!$request->hasFile('talent_photos') || empty($request->file('talent_photos'))) && 
+                (!$request->has('file_links') || empty($request->file_links))) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Either talent_photos files or file_links array is required.'
+                ], 422);
+            }
 
             if ($validator->fails()) {
                 return response()->json([
@@ -438,46 +478,69 @@ class PromosiController extends Controller
                 ], 403);
             }
 
-            $uploadedPhotos = [];
-            $directory = 'promosi/talent_photos';
-            $disk = 'public'; // Talent photos bisa public
-
-            foreach ($request->file('talent_photos') as $photo) {
-                // Upload file
-                $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($photo->getClientOriginalName());
-                $path = $photo->storeAs($directory, $safeFileName, $disk);
-                
-                // Generate URL
-                $url = Storage::disk($disk)->url($path);
-
-                $uploadedPhotos[] = [
-                    'file_path' => $path,
-                    'file_name' => $safeFileName,
-                    'original_name' => $photo->getClientOriginalName(),
-                    'file_size' => $photo->getSize(),
-                    'mime_type' => $photo->getMimeType(),
-                    'url' => $url,
-                    'uploaded_at' => now()->toDateTimeString(),
-                    'uploaded_by' => $user->id
-                ];
-            }
-
-            // Get existing file_paths or initialize
+            // Get existing file_paths and file_links or initialize
             $filePaths = $work->file_paths ?? [];
+            $fileLinks = $work->file_links ?? [];
             
             // Remove existing talent photos if any
             $filePaths = array_filter($filePaths, function($item) {
                 return isset($item['type']) && $item['type'] !== 'talent_photo';
             });
+            $fileLinks = array_filter($fileLinks, function($item) {
+                return isset($item['type']) && $item['type'] !== 'talent_photo';
+            });
             
-            // Add new talent photos
-            foreach ($uploadedPhotos as $photo) {
-                $filePaths[] = array_merge($photo, ['type' => 'talent_photo']);
+            $updateData = [];
+            $uploadedPhotos = [];
+
+            // Handle file upload (backward compatibility)
+            if ($request->hasFile('talent_photos')) {
+                $directory = 'promosi/talent_photos';
+                $disk = 'public'; // Talent photos bisa public
+
+                foreach ($request->file('talent_photos') as $photo) {
+                    // Upload file
+                    $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($photo->getClientOriginalName());
+                    $path = $photo->storeAs($directory, $safeFileName, $disk);
+                    
+                    // Generate URL
+                    $url = Storage::disk($disk)->url($path);
+
+                    $uploadedPhotos[] = [
+                        'file_path' => $path,
+                        'file_name' => $safeFileName,
+                        'original_name' => $photo->getClientOriginalName(),
+                        'file_size' => $photo->getSize(),
+                        'mime_type' => $photo->getMimeType(),
+                        'url' => $url,
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id
+                    ];
+                }
+                
+                // Add new talent photos to file_paths
+                foreach ($uploadedPhotos as $photo) {
+                    $filePaths[] = array_merge($photo, ['type' => 'talent_photo']);
+                }
+                
+                $updateData['file_paths'] = array_values($filePaths);
+            }
+            
+            // Handle file_links (new: external storage links)
+            if ($request->has('file_links') && is_array($request->file_links)) {
+                foreach ($request->file_links as $link) {
+                    $fileLinks[] = [
+                        'type' => 'talent_photo',
+                        'file_link' => $link,
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id
+                    ];
+                }
+                
+                $updateData['file_links'] = array_values($fileLinks);
             }
 
-            $work->update([
-                'file_paths' => array_values($filePaths)
-            ]);
+            $work->update($updateData);
 
             // Audit logging
             ControllerSecurityHelper::logCrud('promosi_talent_photos_uploaded', $work, [
@@ -574,16 +637,28 @@ class PromosiController extends Controller
                 ], 400);
             }
 
-            // Validate: BTS video and talent photos must be uploaded
+            // Validate: BTS video and talent photos must be uploaded (check both file_paths and file_links)
             $filePaths = $work->file_paths ?? [];
+            $fileLinks = $work->file_links ?? [];
             $hasBTSVideo = false;
             $hasTalentPhotos = false;
 
+            // Check file_paths (backward compatibility)
             foreach ($filePaths as $file) {
                 if (isset($file['type']) && $file['type'] === 'bts_video') {
                     $hasBTSVideo = true;
                 }
                 if (isset($file['type']) && $file['type'] === 'talent_photo') {
+                    $hasTalentPhotos = true;
+                }
+            }
+            
+            // Check file_links (new: external storage links)
+            foreach ($fileLinks as $link) {
+                if (isset($link['type']) && $link['type'] === 'bts_video') {
+                    $hasBTSVideo = true;
+                }
+                if (isset($link['type']) && $link['type'] === 'talent_photo') {
                     $hasTalentPhotos = true;
                 }
             }
@@ -634,10 +709,13 @@ class PromosiController extends Controller
                 ->where('work_type', 'thumbnail_bts')
                 ->first();
 
-            // Get BTS video and talent photos paths
+            // Get BTS video and talent photos paths/links
             $btsVideoPath = null;
+            $btsVideoLink = null;
             $talentPhotoPaths = [];
+            $talentPhotoLinks = [];
             
+            // Check file_paths (backward compatibility)
             if (!empty($work->file_paths)) {
                 $filePaths = is_array($work->file_paths) ? $work->file_paths : json_decode($work->file_paths, true);
                 foreach ($filePaths as $file) {
@@ -650,8 +728,26 @@ class PromosiController extends Controller
                     }
                 }
             }
+            
+            // Check file_links (new: external storage links)
+            if (!empty($work->file_links)) {
+                $fileLinks = is_array($work->file_links) ? $work->file_links : json_decode($work->file_links, true);
+                foreach ($fileLinks as $link) {
+                    if (isset($link['type'])) {
+                        if ($link['type'] === 'bts_video') {
+                            $btsVideoLink = $link['file_link'] ?? $link;
+                        } elseif ($link['type'] === 'talent_photo') {
+                            $talentPhotoLinks[] = $link['file_link'] ?? $link;
+                        }
+                    }
+                }
+            }
 
-            if (!$existingThumbnailBTS && !empty($talentPhotoPaths)) {
+            // Use file_links if available, otherwise use file_paths (priority logic)
+            $finalBTSVideo = $btsVideoLink ?? $btsVideoPath;
+            $finalTalentPhotos = !empty($talentPhotoLinks) ? $talentPhotoLinks : $talentPhotoPaths;
+            
+            if (!$existingThumbnailBTS && !empty($finalTalentPhotos)) {
                 $designGrafisWork = \App\Models\DesignGrafisWork::create([
                     'episode_id' => $work->episode_id,
                     'work_type' => 'thumbnail_bts',
@@ -660,8 +756,12 @@ class PromosiController extends Controller
                     'status' => 'draft',
                     'source_files' => [
                         'promotion_work_id' => $work->id,
-                        'talent_photos' => $talentPhotoPaths,
-                        'bts_video' => $btsVideoPath,
+                        'talent_photos' => $finalTalentPhotos, // Use file_links if available
+                        'talent_photo_paths' => $talentPhotoPaths, // Backward compatibility
+                        'talent_photo_links' => $talentPhotoLinks, // New: External storage links
+                        'bts_video' => $finalBTSVideo, // Use file_link if available
+                        'bts_video_path' => $btsVideoPath, // Backward compatibility
+                        'bts_video_link' => $btsVideoLink, // New: External storage link
                         'available' => true,
                         'fetched_at' => now()->toDateTimeString()
                     ],
@@ -680,19 +780,23 @@ class PromosiController extends Controller
                             'promotion_work_id' => $work->id,
                             'design_grafis_work_id' => $designGrafisWork->id,
                             'episode_id' => $work->episode_id,
-                            'talent_photos_count' => count($talentPhotoPaths),
-                            'bts_video_available' => !empty($btsVideoPath)
+                            'talent_photos_count' => count($finalTalentPhotos),
+                            'bts_video_available' => !empty($finalBTSVideo)
                         ]
                     ]);
                 }
-            } elseif ($existingThumbnailBTS && !empty($talentPhotoPaths)) {
+            } elseif ($existingThumbnailBTS && !empty($finalTalentPhotos)) {
                 // Update existing DesignGrafisWork dengan file terbaru dari Promosi
                 $existingSourceFiles = $existingThumbnailBTS->source_files ?? [];
                 $existingThumbnailBTS->update([
                     'source_files' => array_merge($existingSourceFiles, [
                         'promotion_work_id' => $work->id,
-                        'talent_photos' => $talentPhotoPaths,
-                        'bts_video' => $btsVideoPath,
+                        'talent_photos' => $finalTalentPhotos, // Use file_links if available
+                        'talent_photo_paths' => $talentPhotoPaths, // Backward compatibility
+                        'talent_photo_links' => $talentPhotoLinks, // New: External storage links
+                        'bts_video' => $finalBTSVideo, // Use file_link if available
+                        'bts_video_path' => $btsVideoPath, // Backward compatibility
+                        'bts_video_link' => $btsVideoLink, // New: External storage link
                         'updated_at' => now()->toDateTimeString()
                     ]),
                     'status' => 'draft' // Reset status ke draft agar bisa di-accept lagi
@@ -710,7 +814,7 @@ class PromosiController extends Controller
                             'promotion_work_id' => $work->id,
                             'design_grafis_work_id' => $existingThumbnailBTS->id,
                             'episode_id' => $work->episode_id,
-                            'talent_photos_count' => count($talentPhotoPaths)
+                            'talent_photos_count' => count($finalTalentPhotos)
                         ]
                     ]);
                 }
@@ -733,13 +837,26 @@ class PromosiController extends Controller
                     ->first();
 
                 if (!$existingPromotionWork) {
-                    // Get BTS file paths
+                    // Get BTS file paths/links
                     $btsFiles = [];
+                    $btsFileLinks = [];
+                    
+                    // Check file_paths (backward compatibility)
                     if (!empty($work->file_paths)) {
                         $filePaths = is_array($work->file_paths) ? $work->file_paths : json_decode($work->file_paths, true);
                         foreach ($filePaths as $file) {
                             if (is_array($file) && isset($file['type']) && $file['type'] === 'bts_video') {
                                 $btsFiles[] = $file;
+                            }
+                        }
+                    }
+                    
+                    // Check file_links (new: external storage links)
+                    if (!empty($work->file_links)) {
+                        $fileLinks = is_array($work->file_links) ? $work->file_links : json_decode($work->file_links, true);
+                        foreach ($fileLinks as $link) {
+                            if (is_array($link) && isset($link['type']) && $link['type'] === 'bts_video') {
+                                $btsFileLinks[] = $link;
                             }
                         }
                     }
@@ -752,8 +869,17 @@ class PromosiController extends Controller
                         'status' => 'editing', // Siap untuk diterima Editor Promosi
                         'file_paths' => [
                             'promotion_work_id' => $work->id,
-                            'bts_files' => $btsFiles,
-                            'talent_photos' => $talentPhotoPaths,
+                            'bts_files' => $btsFiles, // Backward compatibility
+                            'talent_photos' => $finalTalentPhotos, // Use file_links if available
+                            'talent_photo_paths' => $talentPhotoPaths, // Backward compatibility
+                            'talent_photo_links' => $talentPhotoLinks, // New: External storage links
+                            'available' => true,
+                            'fetched_at' => now()->toDateTimeString()
+                        ],
+                        'file_links' => [
+                            'promotion_work_id' => $work->id,
+                            'bts_file_links' => $btsFileLinks, // New: External storage links
+                            'talent_photo_links' => $talentPhotoLinks, // New: External storage links
                             'available' => true,
                             'fetched_at' => now()->toDateTimeString()
                         ],
@@ -763,7 +889,11 @@ class PromosiController extends Controller
                 } else {
                     // Update existing PromotionWork dengan file terbaru dari Promosi
                     $existingFilePaths = $existingPromotionWork->file_paths ?? [];
+                    $existingFileLinks = $existingPromotionWork->file_links ?? [];
                     $btsFiles = [];
+                    $btsFileLinks = [];
+                    
+                    // Check file_paths (backward compatibility)
                     if (!empty($work->file_paths)) {
                         $filePaths = is_array($work->file_paths) ? $work->file_paths : json_decode($work->file_paths, true);
                         foreach ($filePaths as $file) {
@@ -772,12 +902,30 @@ class PromosiController extends Controller
                             }
                         }
                     }
+                    
+                    // Check file_links (new: external storage links)
+                    if (!empty($work->file_links)) {
+                        $fileLinks = is_array($work->file_links) ? $work->file_links : json_decode($work->file_links, true);
+                        foreach ($fileLinks as $link) {
+                            if (is_array($link) && isset($link['type']) && $link['type'] === 'bts_video') {
+                                $btsFileLinks[] = $link;
+                            }
+                        }
+                    }
 
                     $existingPromotionWork->update([
                         'file_paths' => array_merge($existingFilePaths, [
                             'promotion_work_id' => $work->id,
-                            'bts_files' => $btsFiles,
-                            'talent_photos' => $talentPhotoPaths,
+                            'bts_files' => $btsFiles, // Backward compatibility
+                            'talent_photos' => $finalTalentPhotos, // Use file_links if available
+                            'talent_photo_paths' => $talentPhotoPaths, // Backward compatibility
+                            'talent_photo_links' => $talentPhotoLinks, // New: External storage links
+                            'updated_at' => now()->toDateTimeString()
+                        ]),
+                        'file_links' => array_merge($existingFileLinks, [
+                            'promotion_work_id' => $work->id,
+                            'bts_file_links' => $btsFileLinks, // New: External storage links
+                            'talent_photo_links' => $talentPhotoLinks, // New: External storage links
                             'updated_at' => now()->toDateTimeString()
                         ])
                     ]);
@@ -796,8 +944,9 @@ class PromosiController extends Controller
                     'data' => [
                         'promotion_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
-                        'bts_files_available' => !empty($btsFiles),
-                        'talent_photos_count' => count($talentPhotoPaths),
+                        'bts_files_available' => !empty($btsFiles) || !empty($btsFileLinks),
+                        'bts_video_available' => !empty($finalBTSVideo),
+                            'talent_photos_count' => count($finalTalentPhotos),
                         'promotion_works' => array_map(function($pw) {
                             return [
                                 'id' => $pw->id,

@@ -19,6 +19,7 @@ class SoundEngineerRecording extends Model
         'file_name',
         'file_size',
         'mime_type',
+        'file_link',            // New: External storage link (Google Drive, etc.)
         'equipment_used',
         'status',
         'recording_schedule',

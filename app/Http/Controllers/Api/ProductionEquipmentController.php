@@ -77,6 +77,51 @@ class ProductionEquipmentController extends Controller
             ], 422);
         }
 
+        // CRITICAL VALIDATION: Prevent double-booking
+        // Check if equipment is currently in_use
+        $inUseCount = ProductionEquipment::where('equipment_name', $request->equipment_name)
+            ->where('status', 'in_use')
+            ->count();
+
+        if ($inUseCount > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Equipment "' . $request->equipment_name . '" is currently in use and unavailable. Please wait until it is returned or choose different equipment.',
+                'details' => [
+                    'equipment_name' => $request->equipment_name,
+                    'status' => 'in_use',
+                    'in_use_count' => $inUseCount
+                ]
+            ], 400);
+        }
+
+        // Optional: Check against inventory quantity if inventory system exists
+        $inventoryItem = EquipmentInventory::where('name', $request->equipment_name)->first();
+        if ($inventoryItem) {
+            // Count all approved and in_use equipment
+            $totalInUse = ProductionEquipment::where('equipment_name', $request->equipment_name)
+                ->whereIn('status', ['approved', 'in_use'])
+                ->sum('quantity');
+            
+            $requestedQuantity = $request->quantity;
+            $availableQuantity = $inventoryItem->quantity - $totalInUse;
+
+            if ($requestedQuantity > $availableQuantity) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Insufficient equipment quantity. Requested: ' . $requestedQuantity . ', Available: ' . $availableQuantity,
+                    'details' => [
+                        'equipment_name' => $request->equipment_name,
+                        'total_inventory' => $inventoryItem->quantity,
+                        'currently_in_use' => $totalInUse,
+                        'available' => $availableQuantity,
+                        'requested' => $requestedQuantity
+                    ]
+                ], 400);
+            }
+        }
+
+        // If validation passes, create the request
         $equipment = ProductionEquipment::create([
             'episode_id' => $request->episode_id,
             'equipment_type' => $request->equipment_type,

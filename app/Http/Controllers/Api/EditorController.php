@@ -12,6 +12,7 @@ use App\Models\Notification;
 use App\Helpers\FileUploadHelper;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
+use App\Services\WorkAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -105,6 +106,19 @@ class EditorController extends Controller
                 ], 422);
             }
 
+            // Get episode details for auto-assignment logic
+            $episode = Episode::with('program')->findOrFail($request->episode_id);
+            
+            // AUTO-ASSIGNMENT LOGIC: Use WorkAssignmentService to determine assignee
+            // Checks if previous episode's work was reassigned, and reverts to original user if yes
+            $assignedUserId = WorkAssignmentService::getNextAssignee(
+                EditorWork::class,
+                $episode->program_id,
+                $episode->episode_number,
+                $request->work_type,  // Work type filter
+                $user->id             // Fallback to current user
+            );
+
             $work = EditorWork::create([
                 'episode_id' => $request->episode_id,
                 'work_type' => $request->work_type,
@@ -112,7 +126,9 @@ class EditorController extends Controller
                 'source_files' => $request->source_files,
                 'status' => 'draft',
                 'file_complete' => false,
-                'created_by' => $user->id
+                'created_by' => $assignedUserId,         // AUTO-ASSIGNED (may be different from current user)
+                'originally_assigned_to' => null,         // Reset for new task
+                'was_reassigned' => false                 // Reset for new task
             ]);
 
             // Audit logging
@@ -298,8 +314,9 @@ class EditorController extends Controller
                 ->first();
 
             // Check completeness
-            $hasProductionFiles = $produksiWork && !empty($produksiWork->shooting_files);
-            $hasAudio = $approvedAudio && !empty($approvedAudio->final_file_path);
+            $hasProductionFiles = $produksiWork && (!empty($produksiWork->shooting_files) || !empty($produksiWork->shooting_file_links));
+            // Check audio from SoundEngineerEditing (support both file_path and file_link)
+            $hasAudio = $approvedAudio && (!empty($approvedAudio->final_file_path) || !empty($approvedAudio->final_file_link));
             $isComplete = $hasProductionFiles && $hasAudio;
 
             // Update work dengan source files lengkap
@@ -313,7 +330,8 @@ class EditorController extends Controller
             if ($hasAudio && $approvedAudio) {
                 $sourceFiles['approved_audio'] = [
                     'editing_id' => $approvedAudio->id,
-                    'final_file_path' => $approvedAudio->final_file_path,
+                    'final_file_path' => $approvedAudio->final_file_path, // Backward compatibility
+                    'final_file_link' => $approvedAudio->final_file_link, // New: External storage link
                     'editing_notes' => $approvedAudio->editing_notes,
                     'approved_at' => $approvedAudio->approved_at?->toDateTimeString()
                 ];
@@ -323,8 +341,8 @@ class EditorController extends Controller
             if ($hasProductionFiles && $produksiWork) {
                 $sourceFiles['produksi_work'] = [
                     'produksi_work_id' => $produksiWork->id,
-                    'shooting_files' => $produksiWork->shooting_files,
-                    'shooting_file_links' => $produksiWork->shooting_file_links
+                    'shooting_files' => $produksiWork->shooting_files, // Backward compatibility
+                    'shooting_file_links' => $produksiWork->shooting_file_links // New: External storage links
                 ];
             }
             
@@ -629,7 +647,8 @@ class EditorController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'editing_notes' => 'nullable|string|max:5000',
-                'file' => 'nullable|file|mimes:mp4,avi,mov,mkv|max:1024000', // Max 1GB
+                'file' => 'nullable|file|mimes:mp4,avi,mov,mkv|max:1024000', // Max 1GB (backward compatibility)
+                'file_link' => 'nullable|url|max:2048', // New: External storage link
                 'file_notes' => 'nullable|string|max:2000'
             ]);
 
@@ -644,7 +663,7 @@ class EditorController extends Controller
             $oldData = $work->toArray();
             $updateData = [];
 
-            // Handle file upload
+            // Handle file upload (backward compatibility)
             if ($request->hasFile('file')) {
                 $uploadedFile = FileUploadHelper::validateVideoFile($request->file('file'), 1000); // Max 1GB
                 
@@ -669,6 +688,11 @@ class EditorController extends Controller
                     $work,
                     $request
                 );
+            }
+            
+            // Handle file_link (new: external storage link)
+            if ($request->has('file_link')) {
+                $updateData['file_link'] = $request->file_link;
             }
 
             // Update other fields
@@ -835,11 +859,11 @@ class EditorController extends Controller
                 ], 400);
             }
 
-            // Validate if file is uploaded
-            if (!$work->file_path) {
+            // Validate if file is uploaded or file_link is provided
+            if (!$work->file_path && !$work->file_link) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Please upload edited file or input file links before submitting.'
+                    'message' => 'Please upload edited file or provide file_link before submitting.'
                 ], 400);
             }
 
@@ -865,7 +889,8 @@ class EditorController extends Controller
                     'data' => [
                         'editor_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
-                        'file_path' => $work->file_path,
+                        'file_path' => $work->file_path, // Backward compatibility
+                        'file_link' => $work->file_link, // New: External storage link
                         'submission_notes' => $request->submission_notes
                     ]
                 ]);
@@ -896,7 +921,8 @@ class EditorController extends Controller
                         'status' => 'editing', // Siap untuk diterima Editor Promosi
                         'file_paths' => [
                             'editor_work_id' => $work->id,
-                            'editor_file_path' => $work->file_path,
+                            'editor_file_path' => $work->file_path, // Backward compatibility
+                            'editor_file_link' => $work->file_link, // New: External storage link
                             'editor_file_name' => $work->file_name,
                             'available' => true,
                             'fetched_at' => now()->toDateTimeString()
@@ -910,7 +936,8 @@ class EditorController extends Controller
                     $existingPromotionWork->update([
                         'file_paths' => array_merge($existingFilePaths, [
                             'editor_work_id' => $work->id,
-                            'editor_file_path' => $work->file_path,
+                            'editor_file_path' => $work->file_path, // Backward compatibility
+                            'editor_file_link' => $work->file_link, // New: External storage link
                             'editor_file_name' => $work->file_name,
                             'updated_at' => now()->toDateTimeString()
                         ])
@@ -930,7 +957,8 @@ class EditorController extends Controller
                     'data' => [
                         'editor_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
-                        'editor_file_path' => $work->file_path,
+                        'editor_file_path' => $work->file_path, // Backward compatibility
+                        'editor_file_link' => $work->file_link, // New: External storage link
                         'promotion_works' => array_map(function($pw) {
                             return [
                                 'id' => $pw->id,
@@ -956,7 +984,8 @@ class EditorController extends Controller
                     'files_to_check' => [
                         [
                             'editor_work_id' => $work->id,
-                            'file_path' => $work->file_path,
+                            'file_path' => $work->file_path, // Backward compatibility
+                            'file_link' => $work->file_link, // New: External storage link
                             'file_name' => $work->file_name,
                             'file_size' => $work->file_size,
                             'mime_type' => $work->mime_type,
@@ -980,7 +1009,8 @@ class EditorController extends Controller
                             'qc_work_id' => $qcWork->id,
                             'episode_id' => $work->episode_id,
                             'editor_work_id' => $work->id,
-                            'file_path' => $work->file_path
+                            'file_path' => $work->file_path, // Backward compatibility
+                            'file_link' => $work->file_link // New: External storage link
                         ]
                     ]);
                 }
@@ -989,7 +1019,8 @@ class EditorController extends Controller
                 $existingFiles = $existingQCWork->files_to_check ?? [];
                 $existingFiles[] = [
                     'editor_work_id' => $work->id,
-                    'file_path' => $work->file_path,
+                    'file_path' => $work->file_path, // Backward compatibility
+                    'file_link' => $work->file_link, // New: External storage link
                     'file_name' => $work->file_name,
                     'file_size' => $work->file_size,
                     'mime_type' => $work->mime_type,
@@ -1017,8 +1048,53 @@ class EditorController extends Controller
                 }
             }
 
+            // ✨ PARALLEL NOTIFICATIONS ✨
+            // Editor submits work → Notify Producer, Editor Promosi, and QC simultaneously
+            $episode = $work->episode;
+            $program = $episode->program;
+
+            // 1. Notify Producer (single user)
+            $productionTeam = $program->productionTeam;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'editor_work_submitted',
+                    'title' => 'Editor Work Submitted',
+                    'message' => "Editor {$user->name} telah submit hasil editing untuk Episode {$episode->episode_number}. Mohon review.",
+                    'data' => [
+                        'editor_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
+                        'file_path' => $work->file_path,
+                        'file_link' => $work->file_link,
+                        'submission_notes' => $request->submission_notes
+                    ]
+                ]);
+            }
+
+            // 2. Send PARALLEL notifications to Editor Promosi and QC
+            \App\Services\ParallelNotificationService::notifyRoles(
+                ['Editor Promotion', 'Quality Control'],
+                [
+                    'type' => 'editor_submitted_files_available',
+                    'title' => 'File Editor Tersedia',
+                    'message' => "Editor telah submit hasil editing untuk Episode {$episode->episode_number}. Files ready for review and further processing.",
+                    'data' => [
+                        'editor_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
+                        'editor_file_link' => $work->file_link,
+                        'submission_notes' => $request->submission_notes
+                    ]
+                ],
+                $program->id
+            );
+
             // Audit logging
-            ControllerSecurityHelper::logUpdate($work, [], ['status' => 'completed'], $request);
+            ControllerSecurityHelper::logUpdate($work, [], [
+                'status' => 'completed',
+                'parallel_notifications_sent' => 2 // Editor Promosi, QC
+            ], $request);
 
             // Clear cache
             QueryOptimizer::clearAllIndexCaches();
@@ -1026,7 +1102,7 @@ class EditorController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Editor work submitted to Producer successfully. Producer has been notified.'
+                'message' => 'Editor work submitted successfully. 3 notifications sent (Producer, Editor Promosi, QC).'
             ]);
 
         } catch (\Exception $e) {
@@ -1072,7 +1148,8 @@ class EditorController extends Controller
                     'approved_audio_files' => $approvedAudio->map(function($audio) {
                         return [
                             'id' => $audio->id,
-                            'final_file_path' => $audio->final_file_path,
+                            'final_file_path' => $audio->final_file_path, // Backward compatibility
+                            'final_file_link' => $audio->final_file_link, // New: External storage link
                             'editing_notes' => $audio->editing_notes,
                             'submission_notes' => $audio->submission_notes,
                             'approved_at' => $audio->approved_at,

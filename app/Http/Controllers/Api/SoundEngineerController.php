@@ -301,7 +301,8 @@ class SoundEngineerController extends Controller
             $updateData = $request->only([
                 'recording_notes',
                 'equipment_used',
-                'recording_schedule'
+                'recording_schedule',
+                'file_link' // New: External storage link
             ]);
             $recording->update($updateData);
             
@@ -436,7 +437,8 @@ class SoundEngineerController extends Controller
                     'episode_id' => $recording->episode_id,
                     'sound_engineer_recording_id' => $recording->id,
                     'sound_engineer_id' => $user->id,
-                    'vocal_file_path' => $recording->file_path, // Copy recording file path
+                    'vocal_file_path' => $recording->file_path ?? null, // Copy recording file path (backward compatibility)
+                    'vocal_file_link' => $recording->file_link ?? null, // Copy recording file link (new)
                     'editing_notes' => "Editing task created automatically from completed recording. Recording notes: " . ($recording->recording_notes ?? 'N/A'),
                     'status' => 'in_progress',
                     'created_by' => $user->id
