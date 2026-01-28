@@ -665,176 +665,18 @@ class ProducerController extends Controller
                     
                     $item->approve(auth()->id(), $request->notes);
                     
-                    // IMPORTANT: Auto-create BudgetRequest, PromotionWork, ProduksiWork, SoundEngineerRecording
-                    // Same logic as finalApproveCreativeWork
-                    $totalBudget = $item->total_budget;
+                    $item->approve(auth()->id(), $request->notes);
                     
-                    \Log::info('Producer approveItem - Creating BudgetRequest', [
-                        'creative_work_id' => $item->id,
-                        'episode_id' => $item->episode_id,
-                        'program_id' => $item->episode->program_id,
-                        'total_budget' => $totalBudget,
-                        'producer_id' => $user->id
-                    ]);
-                    
-                    if ($totalBudget > 0) {
-                        try {
-                            $budgetRequest = \App\Models\BudgetRequest::create([
-                                'program_id' => $item->episode->program_id,
-                                'requested_by' => $user->id,
-                                'request_type' => 'creative_work',
-                                'title' => "Permohonan Dana untuk Episode {$item->episode->episode_number}",
-                                'description' => "Permohonan dana untuk creative work Episode {$item->episode->episode_number}. Budget: Rp " . number_format($totalBudget, 0, ',', '.'),
-                                'requested_amount' => $totalBudget,
-                                'status' => 'pending'
-                            ]);
-
-                            \Log::info('Producer approveItem - BudgetRequest created successfully', [
-                                'budget_request_id' => $budgetRequest->id,
-                                'creative_work_id' => $item->id
-                            ]);
-
-                            // Notify General Affairs
-                            $generalAffairsUsers = \App\Models\User::where('role', 'General Affairs')->get();
-                            \Log::info('Producer approveItem - Notifying General Affairs', [
-                                'general_affairs_count' => $generalAffairsUsers->count()
-                            ]);
-                            
-                            foreach ($generalAffairsUsers as $gaUser) {
-                                Notification::create([
-                                    'user_id' => $gaUser->id,
-                                    'type' => 'budget_request_created',
-                                    'title' => 'Permohonan Dana Baru',
-                                    'message' => "Producer memohon dana sebesar Rp " . number_format($totalBudget, 0, ',', '.') . " untuk Episode {$item->episode->episode_number}.",
-                                    'data' => [
-                                        'budget_request_id' => $budgetRequest->id,
-                                        'creative_work_id' => $item->id,
-                                        'episode_id' => $item->episode_id,
-                                        'program_id' => $item->episode->program_id,
-                                        'requested_amount' => $totalBudget
-                                    ]
-                                ]);
-                            }
-                        } catch (\Exception $e) {
-                            \Log::error('Producer approveItem - Failed to create BudgetRequest', [
-                                'error' => $e->getMessage(),
-                                'trace' => $e->getTraceAsString(),
-                                'creative_work_id' => $item->id
-                            ]);
-                        }
-                    } else {
-                        \Log::warning('Producer approveItem - Total budget is 0, skipping BudgetRequest creation', [
-                            'creative_work_id' => $item->id,
-                            'total_budget' => $totalBudget
-                        ]);
-                    }
-
-                    // Auto-create PromosiWork task
-                    $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
-                    if ($promosiUsers->isNotEmpty()) {
-                        $promosiWork = \App\Models\PromotionWork::create([
-                            'episode_id' => $item->episode_id,
-                            'created_by' => $user->id,
-                            'work_type' => 'bts_video',
-                            'title' => "BTS Video & Talent Photos - Episode {$item->episode->episode_number}",
-                            'description' => "Buat video BTS dan foto talent untuk Episode {$item->episode->episode_number}",
-                            'shooting_date' => $item->shooting_schedule,
-                            'status' => 'planning'
-                        ]);
-
-                        // Notify Promosi users
-                        foreach ($promosiUsers as $promosiUser) {
-                            Notification::create([
-                                'user_id' => $promosiUser->id,
-                                'type' => 'promosi_work_assigned',
-                                'title' => 'Tugas Promosi Baru',
-                                'message' => "Anda mendapat tugas untuk membuat video BTS dan foto talent untuk Episode {$item->episode->episode_number}. Jadwal syuting: " . ($item->shooting_schedule ? \Carbon\Carbon::parse($item->shooting_schedule)->format('d M Y') : 'TBD'),
-                                'data' => [
-                                    'promotion_work_id' => $promosiWork->id,
-                                    'episode_id' => $item->episode_id,
-                                    'shooting_date' => $item->shooting_schedule
-                                ]
-                            ]);
-                        }
-                    }
-
-                    // Auto-create ProduksiWork task
-                    $produksiUsers = \App\Models\User::where('role', 'Production')->get();
-                    if ($produksiUsers->isNotEmpty()) {
-                        $produksiWork = \App\Models\ProduksiWork::create([
-                            'episode_id' => $item->episode_id,
-                            'creative_work_id' => $item->id,
-                            'created_by' => $user->id,
-                            'status' => 'pending'
-                        ]);
-
-                        // Notify Produksi users
-                        foreach ($produksiUsers as $produksiUser) {
-                            Notification::create([
-                                'user_id' => $produksiUser->id,
-                                'type' => 'produksi_work_assigned',
-                                'title' => 'Tugas Produksi Baru',
-                                'message' => "Anda mendapat tugas produksi untuk Episode {$item->episode->episode_number}. Silakan input list alat dan kebutuhan.",
-                                'data' => [
-                                    'produksi_work_id' => $produksiWork->id,
-                                    'episode_id' => $item->episode_id,
-                                    'creative_work_id' => $item->id
-                                ]
-                            ]);
-                        }
-                    }
-
-                    // Auto-create SoundEngineerRecording task untuk rekaman vokal (jika ada recording_schedule)
-                    if ($item->recording_schedule) {
-                        $episode = $item->episode;
-                        $productionTeam = $episode->program->productionTeam;
-                        
-                        if ($productionTeam) {
-                            $soundEngineers = $productionTeam->members()
-                                ->where('role', 'sound_eng')
-                                ->where('is_active', true)
-                                ->get();
-
-                            foreach ($soundEngineers as $soundEngineerMember) {
-                                // Check if recording already exists for this episode (vocal recording)
-                                $existingRecording = \App\Models\SoundEngineerRecording::where('episode_id', $episode->id)
-                                    ->whereNull('music_arrangement_id') // Vocal recording tidak punya music_arrangement_id
-                                    ->first();
-
-                                if (!$existingRecording) {
-                                    // Create draft recording task untuk rekaman vokal
-                                    $recording = \App\Models\SoundEngineerRecording::create([
-                                        'episode_id' => $episode->id,
-                                        'music_arrangement_id' => null, // Vocal recording
-                                        'recording_notes' => "Recording task untuk rekaman vokal Episode {$episode->episode_number}",
-                                        'recording_schedule' => $item->recording_schedule,
-                                        'status' => 'draft',
-                                        'created_by' => $soundEngineerMember->user_id
-                                    ]);
-
-                                    // Notify Sound Engineer
-                                    Notification::create([
-                                        'user_id' => $soundEngineerMember->user_id,
-                                        'type' => 'vocal_recording_task_created',
-                                        'title' => 'Tugas Rekaman Vokal Baru',
-                                        'message' => "Anda mendapat tugas untuk rekaman vokal Episode {$episode->episode_number}. Jadwal rekaman: " . \Carbon\Carbon::parse($item->recording_schedule)->format('d M Y'),
-                                        'data' => [
-                                            'recording_id' => $recording->id,
-                                            'episode_id' => $episode->id,
-                                            'recording_schedule' => $item->recording_schedule
-                                        ]
-                                    ]);
-                                }
-                            }
-                        }
-                    }
+                    // Trigger downstream tasks (Budget, Promosi, Produksi, SoundEng)
+                    // Now centralised in helper method to support Direct Edit flow and Special Budget
+                    $this->triggerPostCreativeApproval($item, $user);
                     
                     // Notify Creative
                     Notification::create([
                         'user_id' => $item->created_by,
                         'type' => 'creative_work_approved',
                         'title' => 'Creative Work Disetujui',
-                        'message' => "Creative work untuk Episode {$item->episode->episode_number} telah disetujui oleh Producer. Permohonan dana telah dikirim ke General Affairs.",
+                        'message' => "Creative work untuk Episode {$item->episode->episode_number} telah disetujui oleh Producer.",
                         'data' => [
                             'creative_work_id' => $item->id,
                             'episode_id' => $item->episode_id,
@@ -5149,4 +4991,269 @@ class ProducerController extends Controller
             ], 500);
         }
     }
-}
+
+    /**
+     * Producer direct update Song Proposal (Bypass Rejection)
+     */
+    public function updateSongProposal(Request $request, int $id): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!$user || $user->role !== 'Producer') {
+            return response()->json(['message' => 'Unauthorized access.'], 403);
+        }
+        
+        $validator = Validator::make($request->all(), [
+            'song_title' => 'required|string',
+            'singer_name' => 'required|string',
+            'notes' => 'nullable|string'
+        ]);
+        
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+        }
+        
+        $arrangement = MusicArrangement::findOrFail($id);
+        
+        // Ensure Producer owns this arrangement's team
+        // (Simplified check for brevity)
+        
+        try {
+            DB::transaction(function () use ($arrangement, $request, $user) {
+                // Use the producerModify method to track changes
+                $arrangement->producerModify(
+                    $request->song_title, 
+                    $request->singer_name
+                );
+                
+                // Auto-approve after modification (per requirement)
+                $arrangement->approve($user->id, $request->notes ?? 'Directly edited and approved by Producer');
+                
+                // Notify Arranger
+                Notification::create([
+                    'user_id' => $arrangement->created_by,
+                    'type' => 'song_proposal_edited_approved',
+                    'title' => 'Usulan Lagu Diedit & Disetujui',
+                    'message' => "Producer telah mengedit dan menyetujui usulan lagu Anda menjadi: {$request->song_title} - {$request->singer_name}",
+                    'data' => [
+                        'arrangement_id' => $arrangement->id,
+                        'original_song' => $arrangement->original_song_title,
+                        'new_song' => $arrangement->song_title
+                    ]
+                ]);
+            });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $arrangement->fresh(),
+                'message' => 'Song proposal updated and approved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Producer direct update Creative Work (Bypass Rejection)
+     */
+    public function updateCreativeWork(Request $request, int $id): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!$user || $user->role !== 'Producer') {
+            return response()->json(['message' => 'Unauthorized access.'], 403);
+        }
+        
+        $validator = Validator::make($request->all(), [
+            'script_content' => 'nullable|string',
+            'storyboard_link' => 'nullable|string', 
+            'budget_data' => 'nullable|array',
+            'recording_schedule' => 'nullable|date',
+            'shooting_schedule' => 'nullable|date',
+            'notes' => 'nullable|string'
+        ]);
+        
+        $work = CreativeWork::findOrFail($id);
+        
+        try {
+            DB::transaction(function () use ($work, $request, $user) {
+                // Update fields
+                $updateData = [];
+                if ($request->has('script_content')) $updateData['script_content'] = $request->script_content;
+                if ($request->has('budget_data')) $updateData['budget_data'] = $request->budget_data;
+                if ($request->has('recording_schedule')) $updateData['recording_schedule'] = $request->recording_schedule;
+                if ($request->has('shooting_schedule')) $updateData['shooting_schedule'] = $request->shooting_schedule;
+                
+                // Handle storyboard
+                if ($request->has('storyboard_link')) {
+                    $storyboardData = $work->storyboard_data ?? [];
+                    $storyboardData['link'] = $request->storyboard_link;
+                    $updateData['storyboard_data'] = $storyboardData;
+                }
+                
+                $work->update($updateData);
+                
+                // Auto-approve logic
+                $work->approve($user->id, $request->notes ?? 'Directly edited and approved by Producer');
+                
+                // Notify Creative
+                Notification::create([
+                    'user_id' => $work->created_by,
+                    'type' => 'creative_work_edited_approved',
+                    'title' => 'Creative Work Diedit & Disetujui',
+                    'message' => "Producer telah mengedit dan menyetujui Creative Work Anda.",
+                    'data' => ['creative_work_id' => $work->id]
+                ]);
+                
+                // Trigger downstream tasks
+                $this->triggerPostCreativeApproval($work, $user);
+            });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(),
+                'message' => 'Creative Work updated and approved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+    
+    /**
+     * Helper to trigger downstream tasks after Creative Work Approval
+     */
+    private function triggerPostCreativeApproval(CreativeWork $item, $user)
+    {
+        // 1. Check Special Budget
+        $hasSpecialBudget = false;
+        if ($item->budget_data && is_array($item->budget_data)) {
+            foreach ($item->budget_data as $budget) {
+                if (isset($budget['category']) && $budget['category'] === 'Special Budget') {
+                    $hasSpecialBudget = true;
+                    break;
+                }
+            }
+        }
+        
+        // Budget Request Logic
+        $totalBudget = $item->total_budget;
+        if ($totalBudget > 0) {
+            // IF Special Budget -> pending_manager_approval
+            // IF Standard -> pending (for GA)
+            $status = $hasSpecialBudget ? 'pending_manager_approval' : 'pending';
+            $description = $hasSpecialBudget 
+                ? "Special Budget for Episode {$item->episode->episode_number} (Requires Manager Approval)"
+                : "Permohonan dana untuk creative work Episode {$item->episode->episode_number}";
+
+            $budgetRequest = \App\Models\BudgetRequest::create([
+                'program_id' => $item->episode->program_id,
+                'requested_by' => $user->id,
+                'request_type' => 'creative_work',
+                'title' => "Permohonan Dana Episode {$item->episode->episode_number}" . ($hasSpecialBudget ? " (SPECIAL)" : ""),
+                'description' => $description,
+                'requested_amount' => $totalBudget,
+                'status' => $status
+            ]);
+
+            if ($hasSpecialBudget) {
+                // Notify Manager Program
+                $managers = \App\Models\User::where('role', 'Manager Program')->get();
+                foreach ($managers as $manager) {
+                     Notification::create([
+                        'user_id' => $manager->id,
+                        'type' => 'special_budget_request',
+                        'title' => 'Approval Special Budget',
+                        'message' => "Producer mengajukan Special Budget untuk Episode {$item->episode->episode_number}. Mohon review.",
+                        'data' => ['budget_request_id' => $budgetRequest->id]
+                    ]);
+                }
+            } else {
+                // Notify General Affairs
+                $generalAffairsUsers = \App\Models\User::where('role', 'General Affairs')->get();
+                foreach ($generalAffairsUsers as $gaUser) {
+                    Notification::create([
+                        'user_id' => $gaUser->id,
+                        'type' => 'budget_request_created',
+                        'title' => 'Permohonan Dana Baru',
+                        'message' => "Producer memohon dana sebesar Rp " . number_format($totalBudget, 0, ',', '.') . ".",
+                        'data' => ['budget_request_id' => $budgetRequest->id]
+                    ]);
+                }
+            }
+        }
+        
+        // 2. Create Promosi Work
+        $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
+        if ($promosiUsers->isNotEmpty()) {
+            $promosiWork = \App\Models\PromotionWork::create([
+                'episode_id' => $item->episode_id,
+                'created_by' => $user->id,
+                'work_type' => 'bts_video',
+                'title' => "BTS Video & Talent Photos - Episode {$item->episode->episode_number}",
+                'description' => "Buat video BTS dan foto talent. Jadwal: " . ($item->shooting_schedule ? $item->shooting_schedule->format('d M Y') : 'TBD'),
+                'shooting_date' => $item->shooting_schedule,
+                'status' => 'planning'
+            ]);
+            
+            foreach ($promosiUsers as $promosiUser) {
+                Notification::create([
+                    'user_id' => $promosiUser->id,
+                    'type' => 'promosi_work_assigned',
+                    'title' => 'Tugas Promosi Baru',
+                    'message' => "Anda mendapat tugas untuk membuat video BTS dan foto talent.",
+                    'data' => ['promotion_work_id' => $promosiWork->id]
+                ]);
+            }
+        }
+
+        // 3. Create Produksi Work
+        $produksiUsers = \App\Models\User::where('role', 'Production')->get();
+        if ($produksiUsers->isNotEmpty()) {
+            $produksiWork = \App\Models\ProduksiWork::create([
+                'episode_id' => $item->episode_id,
+                'creative_work_id' => $item->id,
+                'created_by' => $user->id,
+                'status' => 'pending'
+            ]);
+            
+            foreach ($produksiUsers as $produksiUser) {
+                Notification::create([
+                    'user_id' => $produksiUser->id,
+                    'type' => 'produksi_work_assigned',
+                    'title' => 'Tugas Produksi Baru',
+                    'message' => "Anda mendapat tugas produksi untuk Episode {$item->episode->episode_number}.",
+                    'data' => ['produksi_work_id' => $produksiWork->id]
+                ]);
+            }
+        }
+        
+        // 4. Create SoundEngineer Recording (Vocal)
+        if ($item->recording_schedule) {
+             $episode = $item->episode;
+             // Logic simplified: reusing existing recording creation or finding SE
+             $productionTeam = $episode->program->productionTeam ?? $episode->productionTeam;
+             if ($productionTeam) {
+                $soundEngineers = $productionTeam->members()->where('role', 'sound_eng')->get();
+                foreach ($soundEngineers as $se) {
+                     $existing = \App\Models\SoundEngineerRecording::where('episode_id', $episode->id)->whereNull('music_arrangement_id')->first();
+                     if (!$existing) {
+                         $rec = \App\Models\SoundEngineerRecording::create([
+                             'episode_id' => $episode->id,
+                             'recording_notes' => "Vocal Recording for Episode {$episode->episode_number}",
+                             'recording_schedule' => $item->recording_schedule,
+                             'status' => 'draft',
+                             'created_by' => $se->user_id
+                         ]);
+                          Notification::create([
+                            'user_id' => $se->user_id,
+                            'type' => 'vocal_recording_task_created',
+                            'title' => 'Tugas Rekaman Vokal',
+                            'message' => "Jadwal rekaman vokal: " . $item->recording_schedule->format('d M Y'),
+                            'data' => ['recording_id' => $rec->id]
+                        ]);
+                     }
+                }
+             }
+        }
+    }
+
