@@ -218,22 +218,28 @@ class ProductionTeamService
      */
     public function getAvailableUsersForRole(string $role): array
     {
-        // Map production team role to user role
-        $roleMapping = [
-            'creative' => 'Creative',
-            'musik_arr' => 'Music Arranger',
-            'sound_eng' => 'Sound Engineer',
-            'production' => 'Production',
-            'editor' => 'Editor',
-            'art_set_design' => 'Art & Set Properti',
-        ];
-        
-        // Get user role from mapping, fallback to original role if not found
-        $userRole = $roleMapping[$role] ?? $role;
-        
-        $users = User::where('role', $userRole)
-            ->where('is_active', true)
-            ->get();
+        // Special logic for Tim Syuting (production) and Tim Setting (art_set_design)
+        // Producer can select ANY user (except Managers) for these roles
+        if (in_array($role, ['production', 'art_set_design'])) {
+             $users = User::whereNotIn('role', ['Manager Program', 'Program Manager', 'General Manager', 'Administrator'])
+                ->where('is_active', true)
+                ->get();
+        } else {
+            // Map production team role to user role for other specialized roles
+            $roleMapping = [
+                'creative' => 'Creative',
+                'musik_arr' => 'Music Arranger',
+                'sound_eng' => 'Sound Engineer',
+                'editor' => 'Editor',
+            ];
+            
+            // Get user role from mapping, fallback to original role if not found
+            $userRole = $roleMapping[$role] ?? $role;
+            
+            $users = User::where('role', $userRole)
+                ->where('is_active', true)
+                ->get();
+        }
             
         return $users->map(function ($user) {
             return [

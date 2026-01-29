@@ -3391,5 +3391,122 @@ class ManagerProgramController extends Controller
             ], 500);
         }
     }
-}
+    }
+
+    /**
+     * Approve Special Budget Request
+     * Manager Program approves budget -> Status becomes 'pending' (for General Affairs)
+     */
+    public function approveSpecialBudget(Request $request, int $id): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array(strtolower($user->role), ['manager program', 'program manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can approve special budgets'
+            ], 403);
+        }
+        
+        $budgetRequest = \App\Models\BudgetRequest::findOrFail($id);
+        
+        // Ensure it is a pending manager request
+        if ($budgetRequest->status !== 'pending_manager_approval') {
+            return response()->json([
+                'success' => false,
+                'message' => 'This request is not pending Manager Program approval'
+            ], 400);
+        }
+        
+        try {
+            DB::transaction(function () use ($budgetRequest, $request, $user) {
+                // Update amount if edited
+                if ($request->has('approved_amount')) {
+                    $budgetRequest->approved_amount = $request->approved_amount;
+                } else {
+                    $budgetRequest->approved_amount = $budgetRequest->requested_amount;
+                }
+                
+                $budgetRequest->status = 'pending'; // Move to General Affairs inbox
+                $budgetRequest->approved_by = $user->id;
+                $budgetRequest->approved_at = now();
+                $budgetRequest->approval_notes = $request->notes;
+                $budgetRequest->save();
+                
+                // Notify Producer (Success)
+                Notification::create([
+                    'user_id' => $budgetRequest->requested_by,
+                    'type' => 'special_budget_approved',
+                    'title' => 'Special Budget Disetujui',
+                    'message' => "Special Budget untuk '{$budgetRequest->title}' telah disetujui oleh Manager Program. Sekarang diproses oleh General Affairs.",
+                    'data' => ['budget_request_id' => $budgetRequest->id]
+                ]);
+                
+                // Notify General Affairs
+                $gaUsers = \App\Models\User::where('role', 'General Affairs')->get();
+                foreach ($gaUsers as $gaUser) {
+                    Notification::create([
+                        'user_id' => $gaUser->id,
+                        'type' => 'budget_request_created', // Treat as new request for GA
+                        'title' => 'Permohonan Dana Baru (Approved by Manager)',
+                        'message' => "Permohonan dana (Special Budget) telah disetujui Manager Program. Harap diproses.",
+                        'data' => [
+                            'budget_request_id' => $budgetRequest->id,
+                            'program_id' => $budgetRequest->program_id
+                        ]
+                    ]);
+                }
+            });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $budgetRequest,
+                'message' => 'Special budget approved and forwarded to General Affairs'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Reject Special Budget Request
+     */
+    public function rejectSpecialBudget(Request $request, int $id): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array(strtolower($user->role), ['manager program', 'program manager', 'managerprogram'])) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+        
+        $budgetRequest = \App\Models\BudgetRequest::findOrFail($id);
+        
+        if ($budgetRequest->status !== 'pending_manager_approval') {
+            return response()->json(['message' => 'Invalid status'], 400);
+        }
+        
+        $budgetRequest->update([
+            'status' => 'rejected',
+            'rejected_by' => $user->id,
+            'rejected_at' => now(),
+            'rejection_reason' => $request->reason
+        ]);
+        
+        // Notify Producer
+        Notification::create([
+            'user_id' => $budgetRequest->requested_by,
+            'type' => 'special_budget_rejected',
+            'title' => 'Special Budget Ditolak',
+            'message' => "Special Budget ditolak oleh Manager Program. Alasan: {$request->reason}",
+            'data' => ['budget_request_id' => $budgetRequest->id]
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $budgetRequest,
+            'message' => 'Special budget rejected'
+        ]);
+    }
+
 
