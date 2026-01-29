@@ -82,11 +82,14 @@ class PrConceptService
         $query = PrProgramConcept::with(['program', 'creator'])
             ->where('status', 'pending_approval');
 
-        // TEAM-BASED FILTERING: Only show concepts for programs where user is assigned as Producer
+        // TEAM-BASED FILTERING: Show concepts where user is assigned as Producer (either via producer_id OR crews)
         if ($producerId) {
-            $query->whereHas('program.crews', function ($q) use ($producerId) {
-                $q->where('user_id', $producerId)
-                    ->where('role', 'Producer');
+            $query->whereHas('program', function ($q) use ($producerId) {
+                $q->where('producer_id', $producerId)
+                    ->orWhereHas('crews', function ($subQ) use ($producerId) {
+                        $subQ->where('user_id', $producerId)
+                            ->where('role', 'Producer');
+                    });
             });
         }
 

@@ -10,6 +10,8 @@ class PrCreativeWork extends Model
 {
     use HasFactory, SoftDeletes;
 
+    protected $table = 'pr_creative_works';
+
     protected $fillable = [
         'pr_episode_id',
         'script_content',
@@ -18,6 +20,8 @@ class PrCreativeWork extends Model
         'recording_schedule',
         'shooting_schedule',
         'shooting_location',
+        'setup_schedule',
+        'talent_data',
         'script_approved',
         'script_review_notes',
         'script_approved_by',
@@ -46,6 +50,8 @@ class PrCreativeWork extends Model
         'budget_data' => 'array',
         'recording_schedule' => 'datetime',
         'shooting_schedule' => 'datetime',
+        'setup_schedule' => 'datetime',
+        'talent_data' => 'array',
         'script_approved' => 'boolean',
         'storyboard_approved' => 'boolean',
         'budget_approved' => 'boolean',

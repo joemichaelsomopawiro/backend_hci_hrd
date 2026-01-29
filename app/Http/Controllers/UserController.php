@@ -17,7 +17,7 @@ class UserController extends Controller
 
         // Filter by role
         // Filter by role or employee jabatan (case-insensitive for robustness)
-        if ($request->has('role')) {
+        if ($request->has('role') && !empty($request->input('role'))) {
             $roleInput = $request->input('role');
 
             // Map common aliases/Indonesian terms to DB equivalents
