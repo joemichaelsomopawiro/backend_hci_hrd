@@ -32,7 +32,7 @@ class UnifiedNotificationService
             try {
                 $mainNotifications = $this->getMainNotifications($userId, $filters);
                 $notifications = array_merge($notifications, $mainNotifications);
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::warning('Error getting main notifications: ' . $e->getMessage());
             }
 
@@ -40,7 +40,7 @@ class UnifiedNotificationService
             try {
                 $programNotifications = $this->getProgramNotifications($userId, $filters);
                 $notifications = array_merge($notifications, $programNotifications);
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::warning('Error getting program notifications: ' . $e->getMessage());
             }
 
@@ -48,7 +48,7 @@ class UnifiedNotificationService
             try {
                 $musicNotifications = $this->getMusicNotifications($userId, $filters);
                 $notifications = array_merge($notifications, $musicNotifications);
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::warning('Error getting music notifications: ' . $e->getMessage());
             }
 
@@ -56,7 +56,7 @@ class UnifiedNotificationService
             try {
                 $musicWorkflowNotifications = $this->getMusicWorkflowNotifications($userId, $filters);
                 $notifications = array_merge($notifications, $musicWorkflowNotifications);
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::warning('Error getting music workflow notifications: ' . $e->getMessage());
             }
 
@@ -69,7 +69,7 @@ class UnifiedNotificationService
             }
 
             // Sort by created_at descending
-            usort($notifications, function($a, $b) {
+            usort($notifications, function ($a, $b) {
                 try {
                     return strtotime($b['created_at'] ?? '1970-01-01') - strtotime($a['created_at'] ?? '1970-01-01');
                 } catch (\Exception $e) {
@@ -110,7 +110,7 @@ class UnifiedNotificationService
             ->limit($filters['limit'] ?? 100)
             ->get();
 
-        return $notifications->map(function($notification) {
+        return $notifications->map(function ($notification) {
             return [
                 'id' => 'main_' . $notification->id,
                 'source' => 'main',
@@ -149,7 +149,7 @@ class UnifiedNotificationService
             ->limit($filters['limit'] ?? 100)
             ->get();
 
-        return $notifications->map(function($notification) {
+        return $notifications->map(function ($notification) {
             return [
                 'id' => 'program_' . $notification->id,
                 'source' => 'program',
@@ -188,7 +188,7 @@ class UnifiedNotificationService
             ->limit($filters['limit'] ?? 100)
             ->get();
 
-        return $notifications->map(function($notification) {
+        return $notifications->map(function ($notification) {
             return [
                 'id' => 'music_' . $notification->id,
                 'source' => 'music',
@@ -227,7 +227,7 @@ class UnifiedNotificationService
             ->limit($filters['limit'] ?? 100)
             ->get();
 
-        return $notifications->map(function($notification) {
+        return $notifications->map(function ($notification) {
             return [
                 'id' => 'musicworkflow_' . $notification->id,
                 'source' => 'music_workflow',
@@ -252,7 +252,7 @@ class UnifiedNotificationService
     private function getLeaveRequestNotifications(User $user, array $filters): array
     {
         $notifications = [];
-        
+
         try {
             $userRole = $user->role;
 
@@ -268,14 +268,14 @@ class UnifiedNotificationService
                 try {
                     // Get subordinate roles
                     $subordinateRoles = \App\Services\RoleHierarchyService::getSubordinateRoles($userRole);
-                    
+
                     if (empty($subordinateRoles)) {
                         return $notifications;
                     }
 
                     // Get pending leave requests that need approval
                     $pendingRequests = LeaveRequest::where('overall_status', 'pending')
-                        ->whereHas('employee.user', function($query) use ($subordinateRoles) {
+                        ->whereHas('employee.user', function ($query) use ($subordinateRoles) {
                             $query->whereIn('role', $subordinateRoles);
                         })
                         ->with(['employee.user'])
@@ -290,10 +290,12 @@ class UnifiedNotificationService
                 foreach ($pendingRequests as $request) {
                     try {
                         $employee = $request->employee;
-                        if (!$employee) continue;
-                        
+                        if (!$employee)
+                            continue;
+
                         $employeeUser = $employee->user;
-                        if (!$employeeUser) continue;
+                        if (!$employeeUser)
+                            continue;
 
                         $notifications[] = [
                             'id' => 'leave_' . $request->id,
@@ -340,8 +342,8 @@ class UnifiedNotificationService
                                 'id' => 'leave_' . $request->id,
                                 'source' => 'leave_request',
                                 'type' => $status === 'approved' ? 'leave_approved' : 'leave_rejected',
-                                'title' => $status === 'approved' 
-                                    ? 'Permohonan Cuti Disetujui' 
+                                'title' => $status === 'approved'
+                                    ? 'Permohonan Cuti Disetujui'
                                     : 'Permohonan Cuti Ditolak',
                                 'message' => $status === 'approved'
                                     ? "Permohonan cuti Anda dari {$request->start_date} sampai {$request->end_date} telah disetujui"
@@ -418,7 +420,7 @@ class UnifiedNotificationService
                 $notification = Notification::where('id', $notificationId)
                     ->where('user_id', $userId)
                     ->first();
-                
+
                 if ($notification) {
                     $notification->markAsRead();
                     return true;

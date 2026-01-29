@@ -6,13 +6,64 @@ use App\Http\Controllers\Controller;
 use App\Models\PrCreativeWork;
 use App\Models\PrEpisode;
 use App\Models\Notification;
+use App\Models\PrEpisodeWorkflowProgress;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use App\Models\PrProgramCrew;
+use App\Models\PrProgramFile;
 
 class PrCreativeController extends Controller
 {
+    /**
+     * Get episodes available for creating new creative work
+     */
+    public function getAvailableEpisodes(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            // Relaxed check for 'kreatif' or 'Creative'
+            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            // Get programs where current user is assigned as Kreatif crew
+            // Checking for both 'kreatif' and 'Creative' roles in crew assignment
+            $assignedProgramIds = PrProgramCrew::where('user_id', $user->id)
+                ->whereIn('role', ['kreatif', 'Creative', 'creative'])
+                ->pluck('program_id')
+                ->toArray();
+
+            // Get episodes from assigned programs that don't have a creative work yet
+            $existingEpisodeIds = PrCreativeWork::pluck('pr_episode_id')->toArray();
+
+            $episodes = PrEpisode::whereIn('program_id', $assignedProgramIds)
+                ->whereNotIn('id', $existingEpisodeIds)
+                ->whereHas('program', function ($q) {
+                    $q->where('read_by_producer', true);
+                })
+                ->with('program')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $episodes,
+                'message' => 'Available episodes retrieved successfully'
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving available episodes: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     /**
      * Get creative works for current user (Creative role)
      * GET /api/pr/creative/works
@@ -22,17 +73,27 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            $query = PrCreativeWork::with(['episode.program', 'createdBy']);
+            // Get programs where current user is assigned as Kreatif crew
+            $assignedProgramIds = \App\Models\PrProgramCrew::where('user_id', $user->id)
+                ->whereIn('role', ['kreatif', 'Creative', 'creative'])
+                ->pluck('program_id')
+                ->toArray();
 
-            // Filter by status
-            if ($request->has('status')) {
+            // Start query with episode relationship for program filtering
+            $query = PrCreativeWork::with(['episode.program', 'createdBy'])
+                ->whereHas('episode', function ($q) use ($assignedProgramIds) {
+                    $q->whereIn('program_id', $assignedProgramIds);
+                });
+
+            // Filter by status (only if not empty)
+            if ($request->filled('status')) {
                 $query->where('status', $request->status);
             }
 
@@ -41,7 +102,12 @@ class PrCreativeController extends Controller
                 $query->where('created_by', $user->id);
             }
 
-            $works = $query->orderBy('created_at', 'desc')->paginate(15);
+            // Check for 'all' parameter to disable pagination
+            if ($request->has('all') && $request->boolean('all')) {
+                $works = $query->orderBy('created_at', 'desc')->get();
+            } else {
+                $works = $query->orderBy('created_at', 'desc')->paginate($request->input('per_page', 15));
+            }
 
             return response()->json([
                 'success' => true,
@@ -49,10 +115,11 @@ class PrCreativeController extends Controller
                 'message' => 'Creative works retrieved successfully'
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            file_put_contents(base_path('public/debug_log.txt'), $e->getMessage() . "\n" . $e->getTraceAsString());
             return response()->json([
                 'success' => false,
-                'message' => 'Error retrieving creative works: ' . $e->getMessage()
+                'message' => 'Error retrieving creative works: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine()
             ], 500);
         }
     }
@@ -96,7 +163,7 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -104,7 +171,8 @@ class PrCreativeController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'pr_episode_id' => 'required|exists:pr_episodes,id'
+                'pr_episode_id' => 'required|exists:pr_episodes,id',
+                'episode_title' => 'nullable|string|max:255'
             ]);
 
             if ($validator->fails()) {
@@ -125,11 +193,31 @@ class PrCreativeController extends Controller
                 ], 400);
             }
 
-            $work = PrCreativeWork::create([
-                'pr_episode_id' => $request->pr_episode_id,
-                'status' => 'draft',
-                'created_by' => $user->id
+            $data = $request->only([
+                'pr_episode_id',
+                'script_content',
+                'storyboard_data',
+                'budget_data',
+                'recording_schedule',
+                'shooting_schedule',
+                'shooting_location',
+                'setup_schedule',
+                'talent_data',
+                'requires_special_budget_approval'
             ]);
+            $data['status'] = 'draft';
+            $data['created_by'] = $user->id;
+
+            $work = PrCreativeWork::create($data);
+
+            // Update Episode Title if provided
+            if ($request->filled('episode_title')) {
+                $episode = PrEpisode::find($request->pr_episode_id);
+                if ($episode) {
+                    $episode->title = $request->episode_title;
+                    $episode->save();
+                }
+            }
 
             return response()->json([
                 'success' => true,
@@ -154,7 +242,7 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -197,8 +285,10 @@ class PrCreativeController extends Controller
     {
         try {
             $user = Auth::user();
+            $isProducer = strtolower($user->role) === 'producer' || $user->role === 'Producer';
+            $isCreative = strtolower($user->role) === 'kreatif' || strtolower($user->role) === 'creative';
 
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || (!$isCreative && !$isProducer)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -207,14 +297,16 @@ class PrCreativeController extends Controller
 
             $work = PrCreativeWork::findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // If not Producer, enforce ownership
+            if (!$isProducer && $work->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
                 ], 403);
             }
 
-            if (!in_array($work->status, ['draft', 'in_progress', 'rejected', 'revised'])) {
+            // If not Producer, enforce status check
+            if (!$isProducer && !in_array($work->status, ['draft', 'in_progress', 'rejected', 'revised'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Work cannot be updated in current status: ' . $work->status
@@ -226,8 +318,12 @@ class PrCreativeController extends Controller
                 'storyboard_data' => 'nullable|array',
                 'budget_data' => 'nullable|array',
                 'recording_schedule' => 'nullable|date',
-                'shooting_schedule' => 'nullable|date|after:today',
-                'shooting_location' => 'nullable|string|max:500'
+                'shooting_schedule' => 'nullable|date|after_or_equal:today',
+                'shooting_location' => 'nullable|string|max:500',
+                'setup_schedule' => 'nullable|date',
+                'talent_data' => 'nullable|array',
+                'requires_special_budget_approval' => 'boolean',
+                'episode_title' => 'nullable|string|max:255'
             ]);
 
             if ($validator->fails()) {
@@ -244,10 +340,22 @@ class PrCreativeController extends Controller
                 'budget_data',
                 'recording_schedule',
                 'shooting_schedule',
-                'shooting_location'
+                'shooting_location',
+                'setup_schedule',
+                'talent_data',
+                'requires_special_budget_approval'
             ]);
 
             $work->update($updateData);
+
+            // Update Episode Title if provided
+            if ($request->filled('episode_title')) {
+                $episode = $work->episode;
+                if ($episode) {
+                    $episode->title = $request->episode_title;
+                    $episode->save();
+                }
+            }
 
             return response()->json([
                 'success' => true,
@@ -272,7 +380,7 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -288,10 +396,10 @@ class PrCreativeController extends Controller
                 ], 403);
             }
 
-            if (!in_array($work->status, ['in_progress', 'revised'])) {
+            if (!in_array($work->status, ['draft', 'in_progress', 'revised'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be submitted when in_progress or revised'
+                    'message' => 'Work can only be submitted when draft, in_progress or revised'
                 ], 400);
             }
 
@@ -330,6 +438,19 @@ class PrCreativeController extends Controller
                 ]);
             }
 
+            // Automate Workflow Step 3 Completion: Creative Submits to Producer
+            $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
+                ->where('workflow_step', 3)
+                ->first();
+
+            if ($workflowProgress) {
+                $workflowProgress->update([
+                    'status' => 'completed',
+                    'completed_at' => now(),
+                    // 'completed_by' => $user->id // Optional, if column exists
+                ]);
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
@@ -340,6 +461,176 @@ class PrCreativeController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error submitting creative work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    /**
+     * Upload file (Script, etc.)
+     * POST /api/pr/creative/episodes/{id}/files
+     */
+    public function uploadFile(Request $request, $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $episode = PrEpisode::with('program')->findOrFail($episodeId);
+            $program = $episode->program;
+
+            // Check assignment
+            $isAssigned = \App\Models\PrProgramCrew::where('user_id', $user->id)
+                ->where('program_id', $program->id)
+                ->whereIn('role', ['kreatif', 'Creative', 'creative'])
+                ->exists();
+
+            if (!$isAssigned) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. You are not assigned to this program.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'file' => 'required|file|mimes:pdf|max:104857600', // Max 100MB, PDF only
+                'category' => 'required|in:raw_footage,edited_video,thumbnail,script,rundown,other',
+                'description' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed. Only PDF files are allowed.',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $file = $request->file('file');
+            $path = $file->store('program-regular/files', 'public');
+
+            $programFile = \App\Models\PrProgramFile::create([
+                'program_id' => $episode->program_id,
+                'episode_id' => $episode->id,
+                'file_name' => $file->getClientOriginalName(),
+                'file_path' => $path,
+                'file_type' => $file->getClientMimeType(),
+                'mime_type' => $file->getClientMimeType(),
+                'file_size' => $file->getSize(),
+                'category' => $request->category,
+                'uploaded_by' => $user->id,
+                'description' => $request->description
+            ]);
+
+            // If it is a script, we might want to return the URL for easy access
+            $fileUrl = asset('storage/' . $path);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'File berhasil diupload',
+                'data' => $programFile->load(['program', 'episode', 'uploader']),
+                'file_url' => $fileUrl
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get files for an episode
+     * GET /api/pr/creative/episodes/{id}/files
+     */
+    public function getFiles(Request $request, $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            // Check authorization
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $files = \App\Models\PrProgramFile::where('episode_id', $episodeId)
+                ->with('uploader')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            // Add full URL
+            $files->transform(function ($file) {
+                $file->file_url = asset('storage/' . $file->file_path);
+                return $file;
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $files
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching files: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    /**
+     * Delete file
+     * DELETE /api/pr/creative/episodes/{id}/files/{fileId}
+     */
+    public function deleteFile(Request $request, $episodeId, $fileId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $file = \App\Models\PrProgramFile::where('id', $fileId)
+                ->where('episode_id', $episodeId)
+                ->firstOrFail();
+
+            // Check if user is the uploader
+            if ($file->uploaded_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. You can only delete files you uploaded.'
+                ], 403);
+            }
+
+            // Create path relative to storage/app/public
+            // The file_path in DB is like 'program-regular/files/filename.pdf'
+            // Storage::disk('public')->delete() expects path relative to public root
+            if (\Illuminate\Support\Facades\Storage::disk('public')->exists($file->file_path)) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($file->file_path);
+            }
+
+            $file->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'File deleted successfully'
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File not found.'
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error deleting file: ' . $e->getMessage()
             ], 500);
         }
     }

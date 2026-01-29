@@ -30,7 +30,7 @@ class GaDashboardController extends Controller
             $period = $request->get('period'); // Parameter period baru dari frontend
             $startDateParam = $request->get('start_date'); // Parameter start_date dari frontend
             $attendanceMethod = $request->get('attendance_method'); // Filter baru untuk metode absensi
-            
+
             Log::info('GA Dashboard: Loading worship attendance data', [
                 'date_filter' => $dateFilter,
                 'all_data' => $allData,
@@ -77,13 +77,13 @@ class GaDashboardController extends Controller
             // Ambil semua data cuti yang disetujui dalam rentang tanggal
             $leaves = LeaveRequest::with(['employee.user'])
                 ->where('overall_status', 'approved')
-                ->where(function($query) use ($startDate, $endDate) {
+                ->where(function ($query) use ($startDate, $endDate) {
                     $query->whereBetween('start_date', [$startDate, $endDate])
-                          ->orWhereBetween('end_date', [$startDate, $endDate])
-                          ->orWhere(function($q) use ($startDate, $endDate) {
-                              $q->where('start_date', '<=', $startDate)
+                        ->orWhereBetween('end_date', [$startDate, $endDate])
+                        ->orWhere(function ($q) use ($startDate, $endDate) {
+                            $q->where('start_date', '<=', $startDate)
                                 ->where('end_date', '>=', $endDate);
-                          });
+                        });
                 })
                 ->get();
 
@@ -98,7 +98,7 @@ class GaDashboardController extends Controller
                     'name' => $record['employee_name'],
                     'position' => $record['employee_position'] ?? '-',
                     'date' => $record['date'],
-                    'attendance_time' => $record['join_time'] ? 
+                    'attendance_time' => $record['join_time'] ?
                         Carbon::parse($record['join_time'])->format('H:i') : '-',
                     'status' => $record['status'],
                     'status_label' => $this->getStatusLabel($record['status']),
@@ -129,7 +129,7 @@ class GaDashboardController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengambil data absensi renungan pagi',
@@ -141,18 +141,18 @@ class GaDashboardController extends Controller
     /**
      * Mendapatkan data absensi renungan pagi untuk periode mingguan (dari start_date hingga hari ini)
      */
-    public function     getWorshipAttendanceWeek(Request $request)
+    public function getWorshipAttendanceWeek(Request $request)
     {
         try {
             // Ambil start_date dari request, default ke awal minggu ini
             $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->format('Y-m-d'));
-            
+
             // Untuk periode week, ada 2 opsi logic:
             // 1. Sampai hari ini (untuk data real-time) 
             // 2. Seminggu penuh dari start_date (untuk historical data)
-            
+
             $includeFullWeek = $request->boolean('full_week', true); // Default true untuk seminggu penuh
-            
+
             if ($includeFullWeek) {
                 // Seminggu penuh: start_date + 6 hari (total 7 hari)
                 $endDate = Carbon::parse($startDate)->addDays(6)->format('Y-m-d');
@@ -162,9 +162,9 @@ class GaDashboardController extends Controller
                 $todayDate = Carbon::now()->format('Y-m-d');
                 $endDate = $weekEndDate <= $todayDate ? $weekEndDate : $todayDate;
             }
-            
+
             $attendanceMethod = $request->get('attendance_method');
-            
+
             Log::info('GA Dashboard: Loading weekly worship attendance data', [
                 'start_date' => $startDate,
                 'end_date' => $endDate,
@@ -198,13 +198,13 @@ class GaDashboardController extends Controller
             // Ambil data cuti yang disetujui dalam rentang tanggal
             $leaves = LeaveRequest::with(['employee.user'])
                 ->where('overall_status', 'approved')
-                ->where(function($query) use ($startDate, $endDate) {
+                ->where(function ($query) use ($startDate, $endDate) {
                     $query->whereBetween('start_date', [$startDate, $endDate])
-                          ->orWhereBetween('end_date', [$startDate, $endDate])
-                          ->orWhere(function($q) use ($startDate, $endDate) {
-                              $q->where('start_date', '<=', $startDate)
+                        ->orWhereBetween('end_date', [$startDate, $endDate])
+                        ->orWhere(function ($q) use ($startDate, $endDate) {
+                            $q->where('start_date', '<=', $startDate)
                                 ->where('end_date', '>=', $endDate);
-                          });
+                        });
                 })
                 ->get();
 
@@ -224,7 +224,7 @@ class GaDashboardController extends Controller
                     ],
                     'date' => $record['date'],
                     'join_time' => $record['join_time'],
-                    'attendance_time' => $record['join_time'] ? 
+                    'attendance_time' => $record['join_time'] ?
                         Carbon::parse($record['join_time'])->format('H:i') : '-',
                     'status' => $record['status'],
                     'attendance_method' => $record['attendance_method'] ?? 'online',
@@ -250,7 +250,7 @@ class GaDashboardController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengambil data absensi renungan pagi mingguan',
@@ -269,7 +269,7 @@ class GaDashboardController extends Controller
             $startDate = $request->get('start_date', Carbon::now()->startOfMonth()->format('Y-m-d'));
             $endDate = Carbon::now()->format('Y-m-d');
             $attendanceMethod = $request->get('attendance_method');
-            
+
             Log::info('GA Dashboard: Loading monthly worship attendance data', [
                 'start_date' => $startDate,
                 'end_date' => $endDate,
@@ -301,13 +301,13 @@ class GaDashboardController extends Controller
             // Ambil data cuti yang disetujui dalam rentang tanggal
             $leaves = LeaveRequest::with(['employee.user'])
                 ->where('overall_status', 'approved')
-                ->where(function($query) use ($startDate, $endDate) {
+                ->where(function ($query) use ($startDate, $endDate) {
                     $query->whereBetween('start_date', [$startDate, $endDate])
-                          ->orWhereBetween('end_date', [$startDate, $endDate])
-                          ->orWhere(function($q) use ($startDate, $endDate) {
-                              $q->where('start_date', '<=', $startDate)
+                        ->orWhereBetween('end_date', [$startDate, $endDate])
+                        ->orWhere(function ($q) use ($startDate, $endDate) {
+                            $q->where('start_date', '<=', $startDate)
                                 ->where('end_date', '>=', $endDate);
-                          });
+                        });
                 })
                 ->get();
 
@@ -327,7 +327,7 @@ class GaDashboardController extends Controller
                     ],
                     'date' => $record['date'],
                     'join_time' => $record['join_time'],
-                    'attendance_time' => $record['join_time'] ? 
+                    'attendance_time' => $record['join_time'] ?
                         Carbon::parse($record['join_time'])->format('H:i') : '-',
                     'status' => $record['status'],
                     'attendance_method' => $record['attendance_method'] ?? 'online',
@@ -343,7 +343,7 @@ class GaDashboardController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $transformedData,  
+                'data' => $transformedData,
                 'message' => 'Data absensi renungan pagi bulanan berhasil diambil',
                 'total_records' => $transformedData->count()
             ], 200);
@@ -353,7 +353,7 @@ class GaDashboardController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengambil data absensi renungan pagi bulanan',
@@ -369,7 +369,7 @@ class GaDashboardController extends Controller
     {
         try {
             $attendanceMethod = $request->get('attendance_method');
-            
+
             Log::info('GA Dashboard: Loading all worship attendance data', [
                 'attendance_method' => $attendanceMethod,
                 'user_id' => auth()->id()
@@ -421,7 +421,7 @@ class GaDashboardController extends Controller
                     ],
                     'date' => $record['date'],
                     'join_time' => $record['join_time'],
-                    'attendance_time' => $record['join_time'] ? 
+                    'attendance_time' => $record['join_time'] ?
                         Carbon::parse($record['join_time'])->format('H:i') : '-',
                     'status' => $record['status'],
                     'attendance_method' => $record['attendance_method'] ?? 'online',
@@ -446,7 +446,7 @@ class GaDashboardController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengambil semua data absensi renungan pagi',
@@ -466,7 +466,7 @@ class GaDashboardController extends Controller
             $attendanceMethod = $request->get('attendance_method'); // Filter opsional untuk metode absensi
             $page = $request->get('page', 1);
             $perPage = $request->get('per_page', 50); // Default 50 records per page
-            
+
             Log::info('GA Dashboard: Loading ALL worship attendance data for "Periode: Semua"', [
                 'attendance_method' => $attendanceMethod,
                 'page' => $page,
@@ -484,8 +484,8 @@ class GaDashboardController extends Controller
 
             // Pagination untuk performa
             $attendances = $attendancesQuery->orderBy('date', 'desc')
-                                          ->orderBy('created_at', 'desc')
-                                          ->paginate($perPage);
+                ->orderBy('created_at', 'desc')
+                ->paginate($perPage);
 
             // Transform data untuk frontend
             $transformedData = $attendances->getCollection()->map(function ($attendance) {
@@ -495,7 +495,7 @@ class GaDashboardController extends Controller
                     'name' => $attendance->employee ? $attendance->employee->nama_lengkap : 'Karyawan Tidak Ditemukan',
                     'position' => $attendance->employee ? $attendance->employee->jabatan_saat_ini : '-',
                     'date' => $attendance->date->format('Y-m-d'),
-                    'attendance_time' => $attendance->join_time ? 
+                    'attendance_time' => $attendance->join_time ?
                         $attendance->join_time->format('H:i') : '-',
                     'status' => $this->mapAttendanceStatus($attendance->status),
                     'status_label' => $this->getStatusLabel($this->mapAttendanceStatus($attendance->status)),
@@ -537,7 +537,7 @@ class GaDashboardController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat mengambil data absensi seluruh periode: ' . $e->getMessage()
@@ -589,10 +589,10 @@ class GaDashboardController extends Controller
                     'employee_id' => $request->employee_id,
                     'employee' => [
                         'id' => $request->employee_id,
-                        'nama_lengkap' => $request->employee_name ?? 
-                                        ($request->employee->nama_lengkap ?? 'Unknown Employee'),
-                        'jabatan_saat_ini' => $request->employee_position ?? 
-                                            ($request->employee->jabatan_saat_ini ?? '-')
+                        'nama_lengkap' => $request->employee_name ??
+                            ($request->employee->nama_lengkap ?? 'Unknown Employee'),
+                        'jabatan_saat_ini' => $request->employee_position ??
+                            ($request->employee->jabatan_saat_ini ?? '-')
                     ],
                     'leave_type' => $request->leave_type,
                     'start_date' => $start->format('Y-m-d'),
@@ -626,7 +626,7 @@ class GaDashboardController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat mengambil data cuti: ' . $e->getMessage()
@@ -641,9 +641,9 @@ class GaDashboardController extends Controller
     {
         try {
             $dateFilter = $request->date ?? Carbon::today()->toDateString();
-            
+
             $query = MorningReflectionAttendance::whereDate('date', $dateFilter);
-            
+
             $total = $query->count();
             $present = $query->clone()->where('status', 'present')->count();
             $late = $query->clone()->where('status', 'late')->count();
@@ -668,7 +668,7 @@ class GaDashboardController extends Controller
             Log::error('GA Dashboard: Error getting worship statistics', [
                 'error' => $e->getMessage()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat mengambil statistik'
@@ -683,7 +683,7 @@ class GaDashboardController extends Controller
     {
         try {
             $query = LeaveRequest::query();
-            
+
             $total = $query->count();
             $pending = $query->where('overall_status', 'pending')->count();
             $approved = $query->where('overall_status', 'approved')->count();
@@ -705,7 +705,7 @@ class GaDashboardController extends Controller
             Log::error('GA Dashboard: Error getting leave statistics', [
                 'error' => $e->getMessage()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat mengambil statistik cuti'
@@ -725,7 +725,7 @@ class GaDashboardController extends Controller
             $year = $request->get('year', date('Y'));
             $allData = $request->get('all', false);
             $date = $request->get('date', null);
-            
+
             Log::info('GA Dashboard: Exporting worship attendance data', [
                 'year' => $year,
                 'all_data' => $allData,
@@ -740,56 +740,56 @@ class GaDashboardController extends Controller
 
             // Ambil semua employee
             $employees = Employee::orderBy('nama_lengkap')->get();
-            
+
             // Generate semua tanggal Senin-Jumat untuk tahun tersebut
             $workDays = $this->generateWorkDays($year);
-            
+
             // Ambil data absensi ibadah (Senin, Rabu, Jumat)
             $worshipData = $this->getWorshipAttendanceData($year, $allData);
-            
+
             // Ambil data absensi kantor (Selasa, Kamis)
             $officeData = $this->getOfficeAttendanceData($year, $allData);
-            
+
             // Ambil data cuti
             $leaveData = $this->getLeaveData($year, $allData);
-            
+
             // Gabungkan semua data
             $combinedData = $this->combineAttendanceData($employees, $workDays, $worshipData, $officeData, $leaveData);
-            
+
             // Buat HTML Excel file
             $htmlContent = $this->createWorshipAttendanceHTML($combinedData, $year);
-            
+
             // Generate filename
             $filename = "Data_Absensi_Ibadah_{$year}_Hope_Channel_Indonesia.xls";
-            
+
             // Save file
             $filePath = storage_path('app/public/exports/' . $filename);
-            
+
             // Create directory if not exists
             if (!file_exists(dirname($filePath))) {
                 mkdir(dirname($filePath), 0755, true);
             }
-            
+
             file_put_contents($filePath, $htmlContent);
-            
+
             Log::info('GA Dashboard: Worship attendance export completed', [
                 'filename' => $filename,
                 'total_employees' => $employees->count(),
                 'total_days' => count($workDays)
             ]);
-            
+
             // Return file download response
             return response()->download($filePath, $filename, [
                 'Content-Type' => 'application/vnd.ms-excel',
                 'Content-Disposition' => 'attachment; filename="' . $filename . '"'
             ]);
-            
+
         } catch (Exception $e) {
             Log::error('GA Dashboard: Error exporting worship attendance', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat export data: ' . $e->getMessage()
@@ -805,9 +805,9 @@ class GaDashboardController extends Controller
         $workDays = [];
         $startDate = Carbon::createFromDate($year, 1, 1);
         $endDate = Carbon::createFromDate($year, 12, 31);
-        
+
         $currentDate = $startDate->copy();
-        
+
         while ($currentDate <= $endDate) {
             // Senin = 1, Selasa = 2, Rabu = 3, Kamis = 4, Jumat = 5
             if ($currentDate->dayOfWeek >= 1 && $currentDate->dayOfWeek <= 5) {
@@ -815,7 +815,7 @@ class GaDashboardController extends Controller
             }
             $currentDate->addDay();
         }
-        
+
         return $workDays;
     }
 
@@ -826,18 +826,18 @@ class GaDashboardController extends Controller
     {
         $query = MorningReflectionAttendance::with('employee')
             ->whereYear('date', $year);
-            
+
         if (!$allData) {
             $query->where('testing_mode', false);
         }
-        
+
         $data = $query->get();
-        
+
         $result = [];
         foreach ($data as $attendance) {
             $date = $attendance->date->format('Y-m-d');
             $dayOfWeek = $attendance->date->dayOfWeek;
-            
+
             // Hanya ambil Senin (1), Rabu (3), Jumat (5)
             if (in_array($dayOfWeek, [1, 3, 5])) {
                 $result[$attendance->employee_id][$date] = [
@@ -847,7 +847,7 @@ class GaDashboardController extends Controller
                 ];
             }
         }
-        
+
         return $result;
     }
 
@@ -858,22 +858,22 @@ class GaDashboardController extends Controller
     {
         $query = Attendance::with('employee')
             ->whereYear('date', $year);
-            
+
         if (!$allData) {
             // Filter untuk data non-testing jika diperlukan
         }
-        
+
         $data = $query->get();
-        
+
         $result = [];
         foreach ($data as $attendance) {
             $date = $attendance->date->format('Y-m-d');
             $dayOfWeek = $attendance->date->dayOfWeek;
-            
+
             // Hanya ambil Selasa (2), Kamis (4)
             if (in_array($dayOfWeek, [2, 4])) {
                 $status = $this->determineOfficeAttendanceStatus($attendance);
-                
+
                 $result[$attendance->employee_id][$date] = [
                     'status' => $status,
                     'check_in' => $attendance->check_in,
@@ -881,7 +881,7 @@ class GaDashboardController extends Controller
                 ];
             }
         }
-        
+
         return $result;
     }
 
@@ -893,12 +893,12 @@ class GaDashboardController extends Controller
         if (!$attendance->check_in) {
             return 'Absen';
         }
-        
+
         $checkInTime = Carbon::parse($attendance->check_in);
         $eightOClock = Carbon::parse('08:00:00');
         $eightFive = Carbon::parse('08:05:00');
         $eightTen = Carbon::parse('08:10:00');
-        
+
         if ($checkInTime <= $eightOClock) {
             return 'Hadir';
         } elseif ($checkInTime <= $eightFive) {
@@ -918,19 +918,19 @@ class GaDashboardController extends Controller
         $query = LeaveRequest::with('employee')
             ->where('overall_status', 'approved')
             ->whereYear('start_date', $year);
-            
+
         $data = $query->get();
-        
+
         $result = [];
         foreach ($data as $leave) {
             $startDate = Carbon::parse($leave->start_date);
             $endDate = Carbon::parse($leave->end_date);
-            
+
             $currentDate = $startDate->copy();
             while ($currentDate <= $endDate) {
                 $date = $currentDate->format('Y-m-d');
                 $dayOfWeek = $currentDate->dayOfWeek;
-                
+
                 // Hanya untuk hari kerja (Senin-Jumat)
                 if ($dayOfWeek >= 1 && $dayOfWeek <= 5) {
                     $result[$leave->employee_id][$date] = [
@@ -940,11 +940,11 @@ class GaDashboardController extends Controller
                         'source' => 'leave'
                     ];
                 }
-                
+
                 $currentDate->addDay();
             }
         }
-        
+
         return $result;
     }
 
@@ -954,20 +954,20 @@ class GaDashboardController extends Controller
     private function combineAttendanceData($employees, $workDays, $worshipData, $officeData, $leaveData)
     {
         $combined = [];
-        
+
         foreach ($employees as $employee) {
             $employeeData = [
                 'employee_id' => $employee->id,
                 'employee_name' => $employee->nama_lengkap,
                 'attendance' => []
             ];
-            
+
             foreach ($workDays as $date) {
                 $dayOfWeek = Carbon::parse($date)->dayOfWeek;
                 $status = 'Absen';
                 $source = 'none';
                 $leaveInfo = null;
-                
+
                 // Cek data cuti terlebih dahulu
                 if (isset($leaveData[$employee->id][$date])) {
                     $status = 'Cuti';
@@ -984,17 +984,17 @@ class GaDashboardController extends Controller
                     $status = $officeData[$employee->id][$date]['status'];
                     $source = 'office';
                 }
-                
+
                 $employeeData['attendance'][$date] = [
                     'status' => $status,
                     'source' => $source,
                     'leave_info' => $leaveInfo
                 ];
             }
-            
+
             $combined[] = $employeeData;
         }
-        
+
         return $combined;
     }
 
@@ -1023,17 +1023,17 @@ class GaDashboardController extends Controller
         $html .= '</style>';
         $html .= '</head>';
         $html .= '<body>';
-        
+
         // Title
         $html .= '<div class="title">📊 DATA ABSENSI IBADAH ' . $year . '</div>';
         $html .= '<div class="subtitle">Hope Channel Indonesia</div>';
         $html .= '<div class="subtitle">📅 Hari Kerja (Senin-Jumat)</div>';
         $html .= '<br>';
-        
+
         // Table
         $html .= '<table>';
         $html .= '<thead><tr><th>No</th><th>👤 Nama Karyawan</th>';
-        
+
         // Generate header tanggal
         $workDays = $this->generateWorkDays($year);
         foreach ($workDays as $date) {
@@ -1043,51 +1043,51 @@ class GaDashboardController extends Controller
         }
         $html .= '</tr></thead>';
         $html .= '<tbody>';
-        
+
         $leaveReasons = [];
         $reasonCounter = 1;
-        
+
         foreach ($data as $index => $employeeData) {
             $html .= '<tr>';
             $html .= '<td>' . ($index + 1) . '</td>';
             $html .= '<td class="nama">' . htmlspecialchars($employeeData['employee_name']) . '</td>';
-            
+
             foreach ($workDays as $date) {
                 $attendance = $employeeData['attendance'][$date];
                 $cellClass = '';
                 $cellContent = '';
-                
+
                 if ($attendance['status'] === 'Cuti') {
                     // Untuk cuti, buat kode referensi
                     $leaveCode = 'C' . $reasonCounter;
                     $cellClass = 'cuti';
                     $cellContent = $leaveCode;
-                    
+
                     // Simpan alasan cuti
                     $leaveReasons[$leaveCode] = $attendance['leave_info']['reason'];
                     $reasonCounter++;
-                    
+
                 } elseif ($attendance['status'] === 'Hadir') {
                     $cellClass = 'hadir';
                     $cellContent = '✓';
-                    
+
                 } elseif ($attendance['status'] === 'Terlambat') {
                     $cellClass = 'terlambat';
                     $cellContent = '✓';
-                    
+
                 } else {
                     // Absen
                     $cellClass = 'absen';
                     $cellContent = '';
                 }
-                
+
                 $html .= '<td class="' . $cellClass . '">' . $cellContent . '</td>';
             }
             $html .= '</tr>';
         }
-        
+
         $html .= '</tbody></table>';
-        
+
         // Legend
         $html .= '<div class="legend">';
         $html .= '<h3>📋 Keterangan Warna:</h3>';
@@ -1096,7 +1096,7 @@ class GaDashboardController extends Controller
         $html .= '<div><span style="display: inline-block; width: 20px; height: 20px; background-color: #FFA500; margin-right: 10px; border-radius: 3px;"></span><strong>Orange:</strong> Cuti</div>';
         $html .= '<div><span style="display: inline-block; width: 20px; height: 20px; background-color: #FF6B6B; margin-right: 10px; border-radius: 3px;"></span><strong>Merah:</strong> Tidak Hadir</div>';
         $html .= '</div>';
-        
+
         // Alasan cuti
         if (!empty($leaveReasons)) {
             $html .= '<div class="legend">';
@@ -1106,9 +1106,9 @@ class GaDashboardController extends Controller
             }
             $html .= '</div>';
         }
-        
+
         $html .= '</body></html>';
-        
+
         return $html;
     }
 
@@ -1119,12 +1119,12 @@ class GaDashboardController extends Controller
     {
         $days = [
             1 => 'Sen',
-            2 => 'Sel', 
+            2 => 'Sel',
             3 => 'Rab',
             4 => 'Kam',
             5 => 'Jum'
         ];
-        
+
         return $days[$dayOfWeek] ?? '';
     }
 
@@ -1136,7 +1136,7 @@ class GaDashboardController extends Controller
         try {
             $year = $request->get('year', date('Y'));
             $allData = $request->get('all', false);
-            
+
             Log::info('GA Dashboard: Exporting leave requests data', [
                 'year' => $year,
                 'all_data' => $allData,
@@ -1146,46 +1146,46 @@ class GaDashboardController extends Controller
             // Ambil semua data cuti
             $query = LeaveRequest::with(['employee', 'approvedBy.user'])
                 ->whereYear('start_date', $year);
-                
+
             if (!$allData) {
                 // Filter untuk data non-testing jika diperlukan
             }
-            
+
             $leaveRequests = $query->orderBy('created_at', 'desc')->get();
-            
+
             // Buat HTML Excel file
             $htmlContent = $this->createLeaveRequestsHTML($leaveRequests, $year);
-            
+
             // Generate filename
             $filename = "Data_Cuti_{$year}_Hope_Channel_Indonesia.xls";
-            
+
             // Save file
             $filePath = storage_path('app/public/exports/' . $filename);
-            
+
             // Create directory if not exists
             if (!file_exists(dirname($filePath))) {
                 mkdir(dirname($filePath), 0755, true);
             }
-            
+
             file_put_contents($filePath, $htmlContent);
-            
+
             Log::info('GA Dashboard: Leave requests export completed', [
                 'filename' => $filename,
                 'total_records' => $leaveRequests->count()
             ]);
-            
+
             // Return file download response
             return response()->download($filePath, $filename, [
                 'Content-Type' => 'application/vnd.ms-excel',
                 'Content-Disposition' => 'attachment; filename="' . $filename . '"'
             ]);
-            
+
         } catch (Exception $e) {
             Log::error('GA Dashboard: Error exporting leave requests', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat export data cuti: ' . $e->getMessage()
@@ -1218,12 +1218,12 @@ class GaDashboardController extends Controller
         $html .= '</style>';
         $html .= '</head>';
         $html .= '<body>';
-        
+
         // Title
         $html .= '<div class="title">📋 DATA CUTI ' . $year . '</div>';
         $html .= '<div class="subtitle">Hope Channel Indonesia</div>';
         $html .= '<br>';
-        
+
         // Table
         $html .= '<table>';
         $html .= '<thead><tr>';
@@ -1240,7 +1240,7 @@ class GaDashboardController extends Controller
         $html .= '<th>📝 Catatan</th>';
         $html .= '</tr></thead>';
         $html .= '<tbody>';
-        
+
         foreach ($leaveRequests as $index => $leave) {
             // Tentukan class CSS berdasarkan status
             $rowClass = '';
@@ -1258,7 +1258,7 @@ class GaDashboardController extends Controller
                     $rowClass = 'pending';
                     break;
             }
-            
+
             $html .= '<tr class="' . $rowClass . '">';
             $html .= '<td>' . ($index + 1) . '</td>';
             $html .= '<td class="nama">' . htmlspecialchars($leave->employee ? $leave->employee->nama_lengkap : 'Karyawan Tidak Ditemukan') . '</td>';
@@ -1273,9 +1273,9 @@ class GaDashboardController extends Controller
             $html .= '<td>' . htmlspecialchars($leave->notes ?? '-') . '</td>';
             $html .= '</tr>';
         }
-        
+
         $html .= '</tbody></table>';
-        
+
         // Legend
         $html .= '<div class="legend">';
         $html .= '<h3>📋 Keterangan Warna:</h3>';
@@ -1284,9 +1284,9 @@ class GaDashboardController extends Controller
         $html .= '<div><span style="display: inline-block; width: 20px; height: 20px; background-color: #D3D3D3; margin-right: 10px; border-radius: 3px;"></span><strong>Abu-abu:</strong> Kadaluarsa</div>';
         $html .= '<div><span style="display: inline-block; width: 20px; height: 20px; background-color: #FFFF00; margin-right: 10px; border-radius: 3px;"></span><strong>Kuning:</strong> Menunggu</div>';
         $html .= '</div>';
-        
+
         $html .= '</body></html>';
-        
+
         return $html;
     }
 
@@ -1304,7 +1304,7 @@ class GaDashboardController extends Controller
             'marriage' => 'Cuti Menikah',
             'bereavement' => 'Cuti Duka'
         ];
-        
+
         return $labels[$leaveType] ?? $leaveType;
     }
 
@@ -1330,7 +1330,7 @@ class GaDashboardController extends Controller
                 'not_worship_day' => 'Bukan Jadwal'
             ];
         }
-        
+
         return $labels[$status] ?? $status;
     }
 
@@ -1349,18 +1349,18 @@ class GaDashboardController extends Controller
         foreach ($attendances as $attendance) {
             $date = Carbon::parse($attendance->date);
             $dateString = $date->toDateString();
-            
+
             // Skip jika bukan hari renungan (Senin=1, Jumat=5)
             if (!$this->isReflectionDay($date)) {
                 continue;
             }
-            
+
             $employee = $allEmployees->get($attendance->employee_id);
             $employeeName = $employee ? $employee->nama_lengkap : 'Karyawan Tidak Ditemukan';
             $employeePosition = $employee ? $employee->jabatan_saat_ini : '-';
-            
+
             $processedDates[] = $dateString . '_' . $attendance->employee_id;
-            
+
             $combinedData[] = [
                 'id' => $attendance->id,
                 'employee_id' => (int) $attendance->employee_id,
@@ -1381,27 +1381,27 @@ class GaDashboardController extends Controller
         foreach ($leaves as $leave) {
             $startLeaveDate = Carbon::parse($leave->start_date);
             $endLeaveDate = Carbon::parse($leave->end_date);
-            
+
             // Iterasi setiap hari dalam rentang cuti
             for ($date = $startLeaveDate->copy(); $date->lte($endLeaveDate); $date->addDay()) {
                 $dateString = $date->toDateString();
-                
+
                 // Skip jika bukan hari renungan (Senin-Jumat)
                 if (!$this->isReflectionDay($date)) {
                     continue;
                 }
-                
+
                 // Skip jika tanggal sudah ada di data absensi (prioritas absensi)
                 if (in_array($dateString . '_' . $leave->employee_id, $processedDates)) {
                     continue;
                 }
-                
+
                 $employee = $allEmployees->get($leave->employee_id);
                 $employeeName = $employee ? $employee->nama_lengkap : 'Karyawan Tidak Ditemukan';
                 $employeePosition = $employee ? $employee->jabatan_saat_ini : '-';
-                
+
                 $processedDates[] = $dateString . '_' . $leave->employee_id;
-                
+
                 $combinedData[] = [
                     'id' => null, // Tidak ada ID untuk data cuti
                     'employee_id' => (int) $leave->employee_id,
@@ -1423,7 +1423,7 @@ class GaDashboardController extends Controller
         $combinedData = $this->fillMissingReflectionDaysForAll($combinedData, $allEmployees, $startDate, $endDate);
 
         // Urutkan berdasarkan tanggal (terbaru dulu), lalu berdasarkan nama employee
-        usort($combinedData, function($a, $b) {
+        usort($combinedData, function ($a, $b) {
             $dateCompare = strcmp($b['date'], $a['date']);
             if ($dateCompare !== 0) {
                 return $dateCompare;
@@ -1445,28 +1445,28 @@ class GaDashboardController extends Controller
             $key = $record['date'] . '_' . $record['employee_id'];
             $existingDates[$key] = true;
         }
-        
+
         // Generate semua hari renungan dalam rentang tanggal
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
-        
+
         for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
             // Skip jika bukan hari renungan (Senin-Jumat)
             if (!$this->isReflectionDay($date)) {
                 continue;
             }
-            
+
             $dateString = $date->toDateString();
-            
+
             // Cek untuk setiap employee
             foreach ($allEmployees as $employee) {
                 $key = $dateString . '_' . $employee->id;
-                
+
                 // Skip jika tanggal sudah ada data
                 if (isset($existingDates[$key])) {
                     continue;
                 }
-                
+
                 // Tambahkan data absent untuk hari renungan yang tidak ada data
                 $combinedData[] = [
                     'id' => null,
@@ -1482,7 +1482,7 @@ class GaDashboardController extends Controller
                 ];
             }
         }
-        
+
         return $combinedData;
     }
 
@@ -1494,7 +1494,7 @@ class GaDashboardController extends Controller
         // 1 = Senin, 2 = Selasa, 3 = Rabu, 4 = Kamis, 5 = Jumat
         // 6 = Sabtu, 7 = Minggu
         $dayOfWeek = $date->dayOfWeek;
-        
+
         // Renungan pagi hanya Senin-Jumat (1-5)
         return $dayOfWeek >= 1 && $dayOfWeek <= 5;
     }
@@ -1545,13 +1545,13 @@ class GaDashboardController extends Controller
             // Fetch approved leaves overlapping month
             $leaves = LeaveRequest::select('employee_id', 'start_date', 'end_date')
                 ->where('overall_status', 'approved')
-                ->where(function($q) use ($startOfMonth, $endOfMonth) {
+                ->where(function ($q) use ($startOfMonth, $endOfMonth) {
                     $q->whereBetween('start_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
-                      ->orWhereBetween('end_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
-                      ->orWhere(function($qq) use ($startOfMonth, $endOfMonth) {
-                          $qq->where('start_date', '<=', $startOfMonth->toDateString())
-                             ->where('end_date', '>=', $endOfMonth->toDateString());
-                      });
+                        ->orWhereBetween('end_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                        ->orWhere(function ($qq) use ($startOfMonth, $endOfMonth) {
+                            $qq->where('start_date', '<=', $startOfMonth->toDateString())
+                                ->where('end_date', '>=', $endOfMonth->toDateString());
+                        });
                 })->get();
 
             // Build status grid per employee per date with priority
@@ -1565,7 +1565,8 @@ class GaDashboardController extends Controller
                 $date = Carbon::parse($row->date)->format('Y-m-d');
                 $status = strtolower($row->status);
                 $status = $this->normalizeStatus($status);
-                if (!in_array($date, $workDaysList, true)) continue; // weekdays only
+                if (!in_array($date, $workDaysList, true))
+                    continue; // weekdays only
                 $current = $grid[$row->employee_id][$date] ?? 'absent';
                 if ($this->statusPriority($status) > $this->statusPriority($current)) {
                     $grid[$row->employee_id][$date] = $status;
@@ -1576,7 +1577,8 @@ class GaDashboardController extends Controller
             foreach ($leaves as $leave) {
                 for ($d = Carbon::parse($leave->start_date); $d->lte(Carbon::parse($leave->end_date)); $d->addDay()) {
                     $dateStr = $d->format('Y-m-d');
-                    if (!in_array($dateStr, $workDaysList, true)) continue;
+                    if (!in_array($dateStr, $workDaysList, true))
+                        continue;
                     $current = $grid[$leave->employee_id][$dateStr] ?? 'absent';
                     if ($this->statusPriority('leave') > $this->statusPriority($current)) {
                         $grid[$leave->employee_id][$dateStr] = 'leave';
@@ -1604,11 +1606,21 @@ class GaDashboardController extends Controller
                 foreach ($workDaysList as $date) {
                     $rowAttendance[$date] = ['status' => $grid[$emp->id][$date]];
                     switch ($grid[$emp->id][$date]) {
-                        case 'present': $global['H']++; break;
-                        case 'late': $global['T']++; break;
-                        case 'leave': $global['C']++; break;
-                        case 'izin': $global['I']++; break;
-                        default: $global['A']++; break;
+                        case 'present':
+                            $global['H']++;
+                            break;
+                        case 'late':
+                            $global['T']++;
+                            break;
+                        case 'leave':
+                            $global['C']++;
+                            break;
+                        case 'izin':
+                            $global['I']++;
+                            break;
+                        default:
+                            $global['A']++;
+                            break;
                     }
                 }
 
@@ -1692,22 +1704,25 @@ class GaDashboardController extends Controller
             // Fetch approved leaves overlapping week
             $leaves = LeaveRequest::select('employee_id', 'start_date', 'end_date')
                 ->where('overall_status', 'approved')
-                ->where(function($q) use ($weekStart, $weekEnd) {
+                ->where(function ($q) use ($weekStart, $weekEnd) {
                     $q->whereBetween('start_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
-                      ->orWhereBetween('end_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
-                      ->orWhere(function($qq) use ($weekStart, $weekEnd) {
-                          $qq->where('start_date', '<=', $weekStart->toDateString())
-                             ->where('end_date', '>=', $weekEnd->toDateString());
-                      });
+                        ->orWhereBetween('end_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+                        ->orWhere(function ($qq) use ($weekStart, $weekEnd) {
+                            $qq->where('start_date', '<=', $weekStart->toDateString())
+                                ->where('end_date', '>=', $weekEnd->toDateString());
+                        });
                 })->get();
 
             // Build grid with priority
             $grid = [];
-            foreach ($employees as $emp) { $grid[$emp->id] = []; }
+            foreach ($employees as $emp) {
+                $grid[$emp->id] = [];
+            }
 
             foreach ($attendances as $row) {
                 $date = Carbon::parse($row->date)->format('Y-m-d');
-                if (!in_array($date, $workDaysList, true)) continue;
+                if (!in_array($date, $workDaysList, true))
+                    continue;
                 $status = $this->normalizeStatus(strtolower($row->status));
                 $current = $grid[$row->employee_id][$date] ?? 'absent';
                 if ($this->statusPriority($status) > $this->statusPriority($current)) {
@@ -1718,7 +1733,8 @@ class GaDashboardController extends Controller
             foreach ($leaves as $leave) {
                 for ($d = Carbon::parse($leave->start_date); $d->lte(Carbon::parse($leave->end_date)); $d->addDay()) {
                     $dateStr = $d->format('Y-m-d');
-                    if (!in_array($dateStr, $workDaysList, true)) continue;
+                    if (!in_array($dateStr, $workDaysList, true))
+                        continue;
                     $current = $grid[$leave->employee_id][$dateStr] ?? 'absent';
                     if ($this->statusPriority('leave') > $this->statusPriority($current)) {
                         $grid[$leave->employee_id][$dateStr] = 'leave';
@@ -1728,7 +1744,9 @@ class GaDashboardController extends Controller
 
             foreach ($employees as $emp) {
                 foreach ($workDaysList as $date) {
-                    if (!isset($grid[$emp->id][$date])) { $grid[$emp->id][$date] = 'absent'; }
+                    if (!isset($grid[$emp->id][$date])) {
+                        $grid[$emp->id][$date] = 'absent';
+                    }
                 }
                 ksort($grid[$emp->id]);
             }
@@ -1743,11 +1761,21 @@ class GaDashboardController extends Controller
                 foreach ($workDaysList as $date) {
                     $rowAttendance[$date] = ['status' => $grid[$emp->id][$date]];
                     switch ($grid[$emp->id][$date]) {
-                        case 'present': $global['H']++; break;
-                        case 'late': $global['T']++; break;
-                        case 'leave': $global['C']++; break;
-                        case 'izin': $global['I']++; break;
-                        default: $global['A']++; break;
+                        case 'present':
+                            $global['H']++;
+                            break;
+                        case 'late':
+                            $global['T']++;
+                            break;
+                        case 'leave':
+                            $global['C']++;
+                            break;
+                        case 'izin':
+                            $global['I']++;
+                            break;
+                        default:
+                            $global['A']++;
+                            break;
                     }
                 }
                 $attendanceData[] = [
@@ -1839,10 +1867,20 @@ class GaDashboardController extends Controller
     private function formatMonthYearIndo(Carbon $date): string
     {
         $months = [
-            1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April', 5 => 'Mei', 6 => 'Juni',
-            7 => 'Juli', 8 => 'Agustus', 9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember'
+            1 => 'Januari',
+            2 => 'Februari',
+            3 => 'Maret',
+            4 => 'April',
+            5 => 'Mei',
+            6 => 'Juni',
+            7 => 'Juli',
+            8 => 'Agustus',
+            9 => 'September',
+            10 => 'Oktober',
+            11 => 'November',
+            12 => 'Desember'
         ];
-        $monthName = $months[(int)$date->format('n')] ?? $date->format('F');
+        $monthName = $months[(int) $date->format('n')] ?? $date->format('F');
         return $monthName . ' ' . $date->format('Y');
     }
 
@@ -1852,10 +1890,20 @@ class GaDashboardController extends Controller
     private function formatDayMonthIndo(Carbon $date): string
     {
         $monthsShort = [
-            1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'Mei', 6 => 'Jun',
-            7 => 'Jul', 8 => 'Agu', 9 => 'Sep', 10 => 'Okt', 11 => 'Nov', 12 => 'Des'
+            1 => 'Jan',
+            2 => 'Feb',
+            3 => 'Mar',
+            4 => 'Apr',
+            5 => 'Mei',
+            6 => 'Jun',
+            7 => 'Jul',
+            8 => 'Agu',
+            9 => 'Sep',
+            10 => 'Okt',
+            11 => 'Nov',
+            12 => 'Des'
         ];
-        $month = $monthsShort[(int)$date->format('n')] ?? $date->format('M');
+        $month = $monthsShort[(int) $date->format('n')] ?? $date->format('M');
         return $date->format('d') . ' ' . $month;
     }
 }

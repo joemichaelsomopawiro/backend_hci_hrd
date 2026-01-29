@@ -10,9 +10,19 @@ use App\Models\User;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 use App\Constants\Role;
+use App\Services\PrActivityLogService;
+use App\Services\PrWorkflowService;
 
 class PrProgramCrewController extends Controller
 {
+    protected $activityLogService;
+    protected $workflowService;
+
+    public function __construct(PrActivityLogService $activityLogService, PrWorkflowService $workflowService)
+    {
+        $this->activityLogService = $activityLogService;
+        $this->workflowService = $workflowService;
+    }
     /**
      * Get list of crew members for a program
      */
@@ -64,13 +74,15 @@ class PrProgramCrewController extends Controller
 
         // Support both single entry (legacy) and bulk (new)
         $members = $request->input('members');
-        
+
         // If 'members' is not present, assume single entry and normalize to array
         if (!$members) {
-            $members = [[
-                'user_id' => $request->user_id,
-                'role' => $request->role
-            ]];
+            $members = [
+                [
+                    'user_id' => $request->user_id,
+                    'role' => $request->role
+                ]
+            ];
         }
 
         $addedMembers = [];
@@ -136,6 +148,14 @@ class PrProgramCrewController extends Controller
 
                 $addedMembers[] = $crew;
 
+                // Log Activity
+                $this->activityLogService->logProgramActivity(
+                    $program,
+                    'assign_crew',
+                    "Assigned user {$crew->user->name} as {$memberData['role']}",
+                    ['user_id' => $memberData['user_id'], 'role' => $memberData['role']]
+                );
+
             } catch (\Exception $e) {
                 $errors[] = [
                     'index' => $index,
@@ -153,10 +173,64 @@ class PrProgramCrewController extends Controller
             ], 422);
         }
 
+        // Check for workflow auto-completion (Step 1: Program Created & Team Formed)
+        $stepCompleted = false;
+
+        // Define all required roles for Step 1 completion
+        $requiredRoles = [
+            'Producer',
+            'Kreatif',
+            'Produksi',
+            'Editor',
+            'Editor Promosi',
+            'Design Grafis',
+            'Art & Set Design',
+            'Manager Distribusi',
+            'QC',
+            'Broadcasting',
+            'Promosi'
+        ];
+
+        // Get unique filled roles for this program
+        $filledRoles = PrProgramCrew::where('program_id', $programId)
+            ->distinct()
+            ->pluck('role')
+            ->toArray();
+
+        // Check if all required roles are present
+        $missingRoles = array_diff($requiredRoles, $filledRoles);
+
+        // If no missing roles, we can complete Step 1
+        if (empty($missingRoles)) {
+            try {
+                // Get all episodes for this program
+                $episodes = \App\Models\PrEpisode::where('program_id', $programId)->get();
+                foreach ($episodes as $episode) {
+                    try {
+                        // Attempt to complete Step 1 (Create Program & Team)
+                        // This will throw exception if already completed, which we catch and ignore
+                        $this->workflowService->completeStep($episode->id, 1, 'Auto-completed: All required team roles assigned');
+
+                        // If we get here, it means completion was successful (status changed)
+                        $stepCompleted = true;
+                    } catch (\Exception $e) {
+                        // Ignore if already completed
+                    }
+                }
+            } catch (\Exception $e) {
+                // Log but don't fail the request
+                \Illuminate\Support\Facades\Log::warning('Failed to auto-complete workflow step 1', [
+                    'program_id' => $programId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Berhasil menambahkan ' . count($addedMembers) . ' anggota tim',
             'data' => $addedMembers,
+            'workflow_step_completed' => $stepCompleted,
             'partial_errors' => count($errors) > 0 ? $errors : null
         ], 201);
     }
@@ -179,8 +253,22 @@ class PrProgramCrewController extends Controller
             ], 404);
         }
 
+        // Eager load user for logging name before delete
+        $crew->load('user');
+        $program = PrProgram::find($programId);
+
         try {
             $crew->delete();
+
+            // Log Activity
+            if ($program) {
+                $this->activityLogService->logProgramActivity(
+                    $program,
+                    'remove_crew',
+                    "Removed user {$crew->user->name} from role {$crew->role}",
+                    ['user_id' => $crew->user_id, 'role' => $crew->role]
+                );
+            }
 
             return response()->json([
                 'success' => true,

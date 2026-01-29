@@ -1,0 +1,417 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\PrEpisode;
+use App\Models\PrEpisodeWorkflowProgress;
+use App\Models\User;
+use App\Constants\WorkflowStep;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
+class PrWorkflowService
+{
+    /**
+     * Initialize workflow untuk episode baru
+     * Membuat 10 workflow steps dengan status pending
+     */
+    public function initializeWorkflow(PrEpisode $episode): void
+    {
+        DB::transaction(function () use ($episode) {
+            $steps = WorkflowStep::getAllSteps();
+
+            foreach ($steps as $stepNumber => $stepInfo) {
+                PrEpisodeWorkflowProgress::create([
+                    'episode_id' => $episode->id,
+                    'workflow_step' => $stepNumber,
+                    'step_name' => $stepInfo['name'],
+                    'responsible_role' => $stepInfo['role'],
+                    'status' => WorkflowStep::STATUS_PENDING,
+                ]);
+            }
+
+            Log::info('Workflow initialized for episode', [
+                'episode_id' => $episode->id,
+                'program_id' => $episode->program_id,
+                'total_steps' => count($steps)
+            ]);
+        });
+    }
+
+    /**
+     * Start a workflow step
+     */
+    public function startStep(int $episodeId, int $stepNumber, ?int $userId = null): PrEpisodeWorkflowProgress
+    {
+        $progress = PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+            ->where('workflow_step', $stepNumber)
+            ->firstOrFail();
+
+        if ($progress->status === WorkflowStep::STATUS_COMPLETED) {
+            throw new \Exception('Step sudah completed, tidak bisa diubah ke in_progress');
+        }
+
+        $progress->update([
+            'status' => WorkflowStep::STATUS_IN_PROGRESS,
+            'started_at' => now(),
+            'assigned_user_id' => $userId
+        ]);
+
+        // Log activity
+        app(\App\Services\PrActivityLogService::class)->logEpisodeActivity(
+            $progress->episode,
+            'start_step',
+            "Started workflow step {$stepNumber}: {$progress->step_name}",
+            ['step' => $stepNumber, 'status' => 'in_progress'],
+            $userId
+        );
+
+        Log::info('Workflow step started', [
+            'episode_id' => $episodeId,
+            'step_number' => $stepNumber,
+            'user_id' => $userId
+        ]);
+
+        return $progress->fresh(['assignedUser', 'episode']);
+    }
+
+    /**
+     * Complete a workflow step
+     */
+    public function completeStep(int $episodeId, int $stepNumber, ?string $notes = null): PrEpisodeWorkflowProgress
+    {
+        $progress = PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+            ->where('workflow_step', $stepNumber)
+            ->firstOrFail();
+
+        if ($progress->status === WorkflowStep::STATUS_COMPLETED) {
+            throw new \Exception('Step sudah completed');
+        }
+
+        $updateData = [
+            'status' => WorkflowStep::STATUS_COMPLETED,
+            'completed_at' => now()
+        ];
+
+        if ($notes) {
+            $updateData['notes'] = $notes;
+        }
+
+        // If step was not started before, set started_at to now as well
+        if (!$progress->started_at) {
+            $updateData['started_at'] = now();
+        }
+
+        $progress->update($updateData);
+
+        // Log activity
+        app(\App\Services\PrActivityLogService::class)->logEpisodeActivity(
+            $progress->episode,
+            'complete_step',
+            "Completed workflow step {$stepNumber}: {$progress->step_name}",
+            ['step' => $stepNumber, 'status' => 'completed'],
+            null
+        );
+
+        Log::info('Workflow step completed', [
+            'episode_id' => $episodeId,
+            'step_number' => $stepNumber,
+            'duration_hours' => $progress->duration
+        ]);
+
+        // Auto-start next step if exists
+        $this->autoStartNextStep($episodeId, $stepNumber);
+
+        return $progress->fresh(['assignedUser', 'episode']);
+    }
+
+    /**
+     * Assign user to a workflow step
+     */
+    public function assignUser(int $episodeId, int $stepNumber, int $userId): PrEpisodeWorkflowProgress
+    {
+        $progress = PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+            ->where('workflow_step', $stepNumber)
+            ->firstOrFail();
+
+        $user = User::findOrFail($userId);
+
+        $progress->update([
+            'assigned_user_id' => $userId
+        ]);
+
+        // Log activity
+        app(\App\Services\PrActivityLogService::class)->logEpisodeActivity(
+            $progress->episode,
+            'assign_user',
+            "Assigned user {$user->name} to step {$stepNumber}: {$progress->step_name}",
+            ['step' => $stepNumber, 'assigned_user_id' => $userId],
+            null
+        );
+
+        Log::info('User assigned to workflow step', [
+            'episode_id' => $episodeId,
+            'step_number' => $stepNumber,
+            'user_id' => $userId,
+            'user_name' => $user->name
+        ]);
+
+        return $progress->fresh(['assignedUser', 'episode']);
+    }
+
+    /**
+     * Get workflow visualization data
+     */
+    /**
+     * Get workflow visualization data
+     */
+    public function getWorkflowVisualization(int $episodeId): array
+    {
+        $episode = PrEpisode::with([
+            'workflowProgress.assignedUser',
+            'program.managerProgram',
+            'program.crews.user' // Eager load crew and their user details
+        ])->findOrFail($episodeId);
+
+        $steps = $episode->workflowProgress->map(function ($progress) use ($episode) {
+            // Determine the "assigned user" to display based on Role Logic
+            $displayUser = null;
+
+            if ($progress->responsible_role === 'Program Manager') {
+                // For Program Manager steps, always show the Program Manager
+                $displayUser = [
+                    'id' => $episode->program->managerProgram->id,
+                    'name' => $episode->program->managerProgram->name,
+                    'role' => 'Program Manager' // Force display role
+                ];
+            } else {
+                // For other roles, look for the specific crew member assigned to this role in this program
+                // Note: responsible_role in workflow might match the role in PrProgramCrew
+                $crewMember = $episode->program->crews->first(function ($crew) use ($progress) {
+                    return $crew->role === $progress->responsible_role;
+                });
+
+                if ($crewMember && $crewMember->user) {
+                    $displayUser = [
+                        'id' => $crewMember->user->id,
+                        'name' => $crewMember->user->name,
+                        'role' => $crewMember->role
+                    ];
+                } else {
+                    // Fallback to manually assigned user if no crew found (legacy support)
+                    if ($progress->assignedUser) {
+                        $displayUser = [
+                            'id' => $progress->assignedUser->id,
+                            'name' => $progress->assignedUser->name,
+                            'role' => $progress->assignedUser->role
+                        ];
+                    }
+                }
+            }
+
+            return [
+                'step_number' => $progress->workflow_step,
+                'step_name' => $progress->step_name,
+                'responsible_role' => $progress->responsible_role,
+                'responsible_roles' => $progress->responsible_roles, // Array of roles
+                'status' => $progress->status,
+                'color' => WorkflowStep::getStatusColor($progress->status),
+                'assigned_user' => $displayUser,
+                'started_at' => $progress->started_at?->toIso8601String(),
+                'completed_at' => $progress->completed_at?->toIso8601String(),
+                'duration_hours' => $progress->duration,
+                'notes' => $progress->notes
+            ];
+        });
+
+        // SELF-HEALING: Check for Step 3 (Kreatif) inconsistency
+        // If Creative Work is submitted/approved but Step 3 is not completed, fix it.
+        $step3 = $episode->workflowProgress->firstWhere('workflow_step', 3);
+        if ($step3 && $step3->status !== 'completed') {
+            $creativeWork = \App\Models\PrCreativeWork::where('pr_episode_id', $episodeId)->first();
+            // Check if work exists and is in a "submitted" or further state
+            // Statuses: 'draft', 'in_progress', 'submitted', 'revised', 'approved', 'rejected'
+            // We consider 'submitted' and 'approved' as completed for the workflow step purpose
+            if ($creativeWork && in_array($creativeWork->status, ['submitted', 'approved'])) {
+                $step3->update([
+                    'status' => 'completed',
+                    'completed_at' => $creativeWork->reviewed_at ?? $creativeWork->updated_at ?? now(),
+                    'notes' => 'Auto-completed by system (Self-Healing)'
+                ]);
+
+                // Refresh the steps collection to reflect the change
+                $episode->load('workflowProgress');
+                // Re-map steps
+                $steps = $episode->workflowProgress->map(function ($progress) use ($episode) {
+                    // Determine the "assigned user" to display based on Role Logic
+                    $displayUser = null;
+
+                    if ($progress->responsible_role === 'Program Manager') {
+                        // For Program Manager steps, always show the Program Manager
+                        $displayUser = [
+                            'id' => $episode->program->managerProgram->id,
+                            'name' => $episode->program->managerProgram->name,
+                            'role' => 'Program Manager' // Force display role
+                        ];
+                    } else {
+                        // For other roles, look for the specific crew member assigned to this role in this program
+                        // Note: responsible_role in workflow might match the role in PrProgramCrew
+                        $crewMember = $episode->program->crews->first(function ($crew) use ($progress) {
+                            return $crew->role === $progress->responsible_role;
+                        });
+
+                        if ($crewMember && $crewMember->user) {
+                            $displayUser = [
+                                'id' => $crewMember->user->id,
+                                'name' => $crewMember->user->name,
+                                'role' => $crewMember->role
+                            ];
+                        } else {
+                            // Fallback to manually assigned user if no crew found (legacy support)
+                            if ($progress->assignedUser) {
+                                $displayUser = [
+                                    'id' => $progress->assignedUser->id,
+                                    'name' => $progress->assignedUser->name,
+                                    'role' => $progress->assignedUser->role
+                                ];
+                            }
+                        }
+                    }
+
+                    return [
+                        'step_number' => $progress->workflow_step,
+                        'step_name' => $progress->step_name,
+                        'responsible_role' => $progress->responsible_role,
+                        'responsible_roles' => $progress->responsible_roles, // Array of roles
+                        'status' => $progress->status,
+                        'color' => WorkflowStep::getStatusColor($progress->status),
+                        'assigned_user' => $displayUser,
+                        'started_at' => $progress->started_at?->toIso8601String(),
+                        'completed_at' => $progress->completed_at?->toIso8601String(),
+                        'duration_hours' => $progress->duration,
+                        'notes' => $progress->notes
+                    ];
+                });
+            }
+        }
+
+        return [
+            'episode' => [
+                'id' => $episode->id,
+                'episode_number' => $episode->episode_number,
+                'title' => $episode->title,
+                'program_name' => $episode->program->name
+            ],
+            'workflow' => [
+                'total_steps' => WorkflowStep::getTotalSteps(),
+                'completion_percentage' => $episode->workflow_completion,
+                'current_step' => $episode->currentWorkflowStep()?->workflow_step,
+                'steps' => $steps
+            ]
+        ];
+    }
+
+    /**
+     * Get workflow history
+     */
+    public function getWorkflowHistory(int $episodeId): array
+    {
+        $episode = PrEpisode::with(['workflowProgress.assignedUser'])->findOrFail($episodeId);
+
+        $history = $episode->workflowProgress
+            ->filter(fn($p) => $p->started_at !== null)
+            ->sortByDesc('updated_at')
+            ->map(function ($progress) {
+                return [
+                    'step_number' => $progress->workflow_step,
+                    'step_name' => $progress->step_name,
+                    'status' => $progress->status,
+                    'assigned_user' => $progress->assignedUser?->name,
+                    'started_at' => $progress->started_at?->toIso8601String(),
+                    'completed_at' => $progress->completed_at?->toIso8601String(),
+                    'duration_hours' => $progress->duration,
+                    'notes' => $progress->notes
+                ];
+            })
+            ->values();
+
+        return [
+            'episode_id' => $episodeId,
+            'history' => $history
+        ];
+    }
+
+    /**
+     * Check if user can access a step (based on role)
+     */
+    public function canUserAccessStep(User $user, int $stepNumber): bool
+    {
+        return WorkflowStep::canRoleAccessStep($user->role, $stepNumber);
+    }
+
+    /**
+     * Update step notes
+     */
+    public function updateStepNotes(int $episodeId, int $stepNumber, string $notes): PrEpisodeWorkflowProgress
+    {
+        $progress = PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+            ->where('workflow_step', $stepNumber)
+            ->firstOrFail();
+
+        $progress->update(['notes' => $notes]);
+
+        return $progress->fresh(['assignedUser', 'episode']);
+    }
+
+    /**
+     * Auto-start next step (set to pending, not in_progress)
+     * This is just to prepare the next step
+     */
+    protected function autoStartNextStep(int $episodeId, int $currentStep): void
+    {
+        $nextStepNumber = $currentStep + 1;
+
+        if (!WorkflowStep::isValidStep($nextStepNumber)) {
+            Log::info('Workflow completed for episode', ['episode_id' => $episodeId]);
+            return;
+        }
+
+        $nextStep = PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+            ->where('workflow_step', $nextStepNumber)
+            ->first();
+
+        if ($nextStep && $nextStep->status === WorkflowStep::STATUS_PENDING) {
+            Log::info('Next workflow step ready', [
+                'episode_id' => $episodeId,
+                'next_step' => $nextStepNumber,
+                'step_name' => $nextStep->step_name
+            ]);
+        }
+    }
+
+    /**
+     * Reset a step (back to pending)
+     * Only for Manager Program role
+     */
+    public function resetStep(int $episodeId, int $stepNumber): PrEpisodeWorkflowProgress
+    {
+        $progress = PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+            ->where('workflow_step', $stepNumber)
+            ->firstOrFail();
+
+        $progress->update([
+            'status' => WorkflowStep::STATUS_PENDING,
+            'started_at' => null,
+            'completed_at' => null,
+            'assigned_user_id' => null,
+            'notes' => null
+        ]);
+
+        Log::info('Workflow step reset', [
+            'episode_id' => $episodeId,
+            'step_number' => $stepNumber
+        ]);
+
+        return $progress->fresh(['assignedUser', 'episode']);
+    }
+}

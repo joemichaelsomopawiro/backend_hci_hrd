@@ -42,6 +42,14 @@ class PrEpisode extends Model
     }
 
     /**
+     * Relationship dengan Creative Work
+     */
+    public function creativeWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrCreativeWork::class, 'pr_episode_id');
+    }
+
+    /**
      * Relationship dengan Production Schedules
      */
     public function productionSchedules(): HasMany
@@ -71,6 +79,39 @@ class PrEpisode extends Model
     public function distributionReports(): HasMany
     {
         return $this->hasMany(PrDistributionReport::class, 'episode_id');
+    }
+
+    /**
+     * Relationship dengan Workflow Progress
+     */
+    public function workflowProgress(): HasMany
+    {
+        return $this->hasMany(PrEpisodeWorkflowProgress::class, 'episode_id')->orderBy('workflow_step');
+    }
+
+    /**
+     * Get current workflow step
+     */
+    public function currentWorkflowStep()
+    {
+        return $this->workflowProgress()
+            ->where('status', '!=', 'completed')
+            ->orderBy('workflow_step')
+            ->first();
+    }
+
+    /**
+     * Get workflow completion percentage
+     */
+    public function getWorkflowCompletionAttribute(): float
+    {
+        $total = $this->workflowProgress()->count();
+        if ($total === 0) {
+            return 0;
+        }
+
+        $completed = $this->workflowProgress()->where('status', 'completed')->count();
+        return round(($completed / $total) * 100, 2);
     }
 
     /**

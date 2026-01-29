@@ -37,6 +37,15 @@ class PrProgramService
             // Auto-generate 53 episodes
             $program->generateEpisodes();
 
+            // Log activity
+            app(\App\Services\PrActivityLogService::class)->logProgramActivity(
+                $program,
+                'create',
+                'Program created successfully',
+                null,
+                $managerProgramId
+            );
+
             return $program;
         });
     }
@@ -46,6 +55,7 @@ class PrProgramService
      */
     public function updateStatus(PrProgram $program, string $status, ?int $userId = null): PrProgram
     {
+        $oldStatus = $program->status;
         $updateData = ['status' => $status];
 
         // Set producer_id jika status production_scheduled
@@ -59,7 +69,18 @@ class PrProgramService
         }
 
         $program->update($updateData);
-        return $program->fresh();
+        $program = $program->fresh();
+
+        // Log activity
+        app(\App\Services\PrActivityLogService::class)->logProgramActivity(
+            $program,
+            'update_status',
+            "Status updated from {$oldStatus} to {$status}",
+            ['from' => $oldStatus, 'to' => $status],
+            $userId
+        );
+
+        return $program;
     }
 
     /**
@@ -74,11 +95,12 @@ class PrProgramService
             // Generate episodes untuk tahun baru
             $startDate = Carbon::create($newYear, 1, 1);
             $airTime = Carbon::parse($program->air_time)->format('H:i:s');
+            $workflowService = app(\App\Services\PrWorkflowService::class);
 
             for ($i = 1; $i <= 53; $i++) {
                 $airDate = $startDate->copy()->addWeeks($i - 1);
 
-                $program->episodes()->create([
+                $episode = $program->episodes()->create([
                     'episode_number' => $i,
                     'title' => "Episode {$i} - {$newYear}",
                     'description' => "Episode {$i} dari program {$program->name} tahun {$newYear}",
@@ -86,6 +108,9 @@ class PrProgramService
                     'air_time' => $airTime,
                     'status' => 'scheduled'
                 ]);
+
+                // Initialize workflow untuk episode
+                $workflowService->initializeWorkflow($episode);
             }
         });
     }

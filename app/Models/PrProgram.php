@@ -145,11 +145,12 @@ class PrProgram extends Model
     {
         $startDate = Carbon::parse($this->start_date);
         $airTime = Carbon::parse($this->air_time)->format('H:i:s');
+        $workflowService = app(\App\Services\PrWorkflowService::class);
 
         for ($i = 1; $i <= 53; $i++) {
             $airDate = $startDate->copy()->addWeeks($i - 1);
 
-            $this->episodes()->create([
+            $episode = $this->episodes()->create([
                 'episode_number' => $i,
                 'title' => "Episode {$i}",
                 'description' => "Episode {$i} dari program {$this->name}",
@@ -157,6 +158,9 @@ class PrProgram extends Model
                 'air_time' => $airTime,
                 'status' => 'scheduled'
             ]);
+
+            // Initialize workflow untuk episode
+            $workflowService->initializeWorkflow($episode);
         }
     }
 

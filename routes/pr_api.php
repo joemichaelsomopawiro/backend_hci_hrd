@@ -24,12 +24,14 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
     // ==================== CREATIVE ROUTES ====================
     // Step 3: Menulis Script & Mengatur Syuting
     Route::prefix('creative')->group(function () {
+        Route::get('/episodes/available', [PrCreativeController::class, 'getAvailableEpisodes']);
         Route::get('/works', [PrCreativeController::class, 'index']);
         Route::post('/works', [PrCreativeController::class, 'store']);
         Route::get('/works/{id}', [PrCreativeController::class, 'show']);
         Route::post('/works/{id}/accept-work', [PrCreativeController::class, 'acceptWork']);
         Route::put('/works/{id}', [PrCreativeController::class, 'update']);
         Route::post('/works/{id}/submit', [PrCreativeController::class, 'submit']);
+        Route::post('/episodes/{id}/files', [PrCreativeController::class, 'uploadFile']);
     });
 
     // ==================== PRODUCER ROUTES ====================

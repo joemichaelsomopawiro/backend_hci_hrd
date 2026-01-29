@@ -34,6 +34,8 @@ use App\Http\Controllers\Api\PrProgramCrewController;
 use App\Http\Controllers\Api\PrRoleFilterController;
 use App\Http\Controllers\Api\TaskVisibilityController;
 use App\Http\Controllers\Api\TaskReassignmentController;
+use App\Http\Controllers\Api\Pr\PrCreativeController;
+use App\Http\Controllers\Api\Pr\PrTalentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -731,6 +733,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
     Route::prefix('producer')->group(function () {
         Route::get('/programs', [PrProducerController::class, 'listPrograms']); // List programs assigned to Producer
         Route::get('/dashboard/stats', [PrProducerController::class, 'getDashboardStats']); // Dashboard statistics
+        Route::get('/episodes/review', [PrProducerController::class, 'getEpisodesForReview']); // NEW: Review Episodes list
         Route::post('/programs/{id}/mark-as-read', [PrProducerController::class, 'markProgramAsRead']); // Mark program as read
         Route::get('/concepts', [PrProducerController::class, 'listConceptsForApproval']); // List konsep untuk approval
         Route::post('/concepts/{id}/approve', [PrProducerController::class, 'approveConcept']); // Approve konsep (DEPRECATED)
@@ -747,6 +750,17 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::get('/programs/{id}/distribution-schedules', [PrProducerController::class, 'viewDistributionSchedules']); // View jadwal tayang
         Route::get('/programs/{id}/distribution-reports', [PrProducerController::class, 'viewDistributionReports']); // View laporan distribusi
         Route::get('/programs/{id}/revision-history', [PrProducerController::class, 'viewRevisionHistory']); // View revision history
+
+        // Creative Work Approval
+        Route::post('/creative-works/{id}/approve-script', [PrProducerController::class, 'approveCreativeWorkScript']);
+        Route::post('/creative-works/{id}/approve-budget', [PrProducerController::class, 'approveCreativeWorkBudget']);
+        Route::post('/creative-works/{id}/reject', [PrProducerController::class, 'rejectCreativeWork']);
+
+        // Episode Crew & Final Review
+        Route::get('/episodes/{id}/crews', [PrProducerController::class, 'getEpisodeCrews']);
+        Route::post('/episodes/{id}/crews', [PrProducerController::class, 'addEpisodeCrew']);
+        Route::delete('/episodes/{id}/crews/{crewId}', [PrProducerController::class, 'removeEpisodeCrew']);
+        Route::post('/episodes/{id}/approve', [PrProducerController::class, 'approveEpisode']);
     });
 
     // Manager Distribusi Routes
@@ -774,6 +788,38 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::get('/programs/{id}/history', [PrRevisionController::class, 'getRevisionHistory']); // History revisi
         Route::post('/{id}/approve', [PrRevisionController::class, 'approveRevision']); // Approve revisi (hanya Manager Program)
         Route::post('/{id}/reject', [PrRevisionController::class, 'rejectRevision']); // Reject revisi (hanya Manager Program)
+    });
+
+
+    // Creative Routes
+    Route::prefix('creative')->group(function () {
+        Route::get('/episodes/available', [PrCreativeController::class, 'getAvailableEpisodes']);
+        Route::get('/works', [PrCreativeController::class, 'index']);
+        Route::get('/works/{id}', [PrCreativeController::class, 'show']);
+        Route::post('/works', [PrCreativeController::class, 'store']);
+        Route::put('/works/{id}', [PrCreativeController::class, 'update']);
+        Route::post('/works/{id}/submit', [PrCreativeController::class, 'submit']);
+        Route::post('/episodes/{id}/files', [PrCreativeController::class, 'uploadFile']);
+        Route::get('/episodes/{id}/files', [PrCreativeController::class, 'getFiles']);
+        Route::delete('/episodes/{id}/files/{fileId}', [PrCreativeController::class, 'deleteFile']);
+    });
+
+    // Talent Routes
+    Route::get('/talents', [PrTalentController::class, 'index']);
+    Route::post('/talents', [PrTalentController::class, 'store']);
+
+    // Program History
+    Route::get('/{program}/history', [\App\Http\Controllers\Api\PrHistoryController::class, 'getProgramHistory']);
+
+    // Episode Workflow Routes (All roles can view, specific roles can update)
+    Route::prefix('episodes/{episode}')->group(function () {
+        Route::get('/workflow', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'getWorkflow']); // Get workflow visualization
+        Route::post('/workflow/start-step', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'startStep']); // Start a workflow step
+        Route::post('/workflow/complete-step', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'completeStep']); // Complete a workflow step
+        Route::get('/workflow/history', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'getHistory']); // Get workflow history
+        Route::post('/workflow/assign', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'assignUser']); // Assign user to step (Manager Program only)
+        Route::put('/workflow/notes', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'updateNotes']); // Update step notes
+        Route::post('/workflow/reset-step', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'resetStep']); // Reset step (Manager Program only)
     });
 });
 

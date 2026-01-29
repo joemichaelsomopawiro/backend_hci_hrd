@@ -9,6 +9,7 @@ use App\Models\PrEpisode;
 use App\Services\PrProgramService;
 use App\Services\PrConceptService;
 use App\Services\PrNotificationService;
+use App\Services\PrActivityLogService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -21,15 +22,18 @@ class PrManagerProgramController extends Controller
     protected $programService;
     protected $conceptService;
     protected $notificationService;
+    protected $activityLogService;
 
     public function __construct(
         PrProgramService $programService,
         PrConceptService $conceptService,
-        PrNotificationService $notificationService
+        PrNotificationService $notificationService,
+        PrActivityLogService $activityLogService
     ) {
         $this->programService = $programService;
         $this->conceptService = $conceptService;
         $this->notificationService = $notificationService;
+        $this->activityLogService = $activityLogService;
     }
 
     /**
@@ -78,6 +82,14 @@ class PrManagerProgramController extends Controller
             }
 
             $program = $this->programService->createProgram($request->all(), $user->id);
+
+            // Log activity
+            $this->activityLogService->logProgramActivity(
+                $program,
+                'create_program',
+                'Program created: ' . $program->name,
+                $program->toArray()
+            );
 
             return response()->json([
                 'success' => true,
@@ -159,7 +171,7 @@ class PrManagerProgramController extends Controller
                 'producer',
                 'managerDistribusi',
                 'concepts',
-                'episodes',
+                'episodes.creativeWork',
                 'productionSchedules',
                 'distributionSchedules',
                 'distributionReports'
@@ -338,6 +350,14 @@ class PrManagerProgramController extends Controller
             // Send notification
             $this->notificationService->notifyProgramReviewed($program, 'disetujui');
 
+            // Log activity
+            $this->activityLogService->logProgramActivity(
+                $program,
+                'approve_program',
+                'Program approved by Manager: ' . $user->name,
+                ['status' => 'manager_approved', 'notes' => $request->notes]
+            );
+
             return response()->json([
                 'success' => true,
                 'message' => 'Program berhasil disetujui',
@@ -384,6 +404,14 @@ class PrManagerProgramController extends Controller
             // Send notification
             $this->notificationService->notifyProgramReviewed($program, 'ditolak');
 
+            // Log activity
+            $this->activityLogService->logProgramActivity(
+                $program,
+                'reject_program',
+                'Program rejected by Manager: ' . $user->name,
+                ['status' => 'manager_rejected', 'notes' => $request->notes]
+            );
+
             return response()->json([
                 'success' => true,
                 'message' => 'Program ditolak',
@@ -424,6 +452,14 @@ class PrManagerProgramController extends Controller
 
             // Send notification
             $this->notificationService->notifyProgramSubmittedToDistribusi($program);
+
+            // Log activity
+            $this->activityLogService->logProgramActivity(
+                $program,
+                'submit_to_distribusi',
+                'Program submitted to Distribution Manager',
+                ['status' => 'submitted_to_distribusi']
+            );
 
             return response()->json([
                 'success' => true,

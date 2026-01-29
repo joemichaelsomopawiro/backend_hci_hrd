@@ -11,6 +11,8 @@ use App\Models\PrProgramFile;
 use App\Services\PrConceptService;
 use App\Services\PrProductionService;
 use App\Services\PrNotificationService;
+use App\Models\PrEpisodeWorkflowProgress;
+use App\Models\PrEpisodeCrew;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -52,8 +54,14 @@ class PrProducerController extends Controller
 
             $filterByRole = $request->query('filter_by_role');
 
-            // Start query for programs assigned to this Producer
-            $query = PrProgram::where('producer_id', $user->id)
+            // Start query for programs assigned to this Producer (either via producer_id OR via team member role)
+            $query = PrProgram::where(function ($q) use ($user) {
+                $q->where('producer_id', $user->id)
+                    ->orWhereHas('crews', function ($subQ) use ($user) {
+                        $subQ->where('user_id', $user->id)
+                            ->where('role', 'Producer');
+                    });
+            })
                 ->with(['managerProgram', 'producer', 'managerDistribusi', 'episodes']);
 
             // Role-based filtering
@@ -119,8 +127,14 @@ class PrProducerController extends Controller
 
             $filterByRole = $request->query('filter_by_role');
 
-            // Base query for Producer's programs
-            $baseQuery = PrProgram::where('producer_id', $user->id);
+            // Base query for Producer's programs (either via producer_id OR via team member role)
+            $baseQuery = PrProgram::where(function ($q) use ($user) {
+                $q->where('producer_id', $user->id)
+                    ->orWhereHas('crews', function ($subQ) use ($user) {
+                        $subQ->where('user_id', $user->id)
+                            ->where('role', 'Producer');
+                    });
+            });
 
             // Role-based filtering
             if ($filterByRole && $filterByRole !== 'all') {
@@ -136,6 +150,15 @@ class PrProducerController extends Controller
             $stats = [
                 'unread_programs_count' => (clone $baseQuery)->unreadByProducer()->count(),
                 'total_programs_count' => (clone $baseQuery)->count(),
+                'review_episodes_count' => \App\Models\PrEpisode::whereHas('program', function ($q) use ($user) {
+                    $q->where('producer_id', $user->id)
+                        ->orWhereHas('crews', function ($subQ) use ($user) {
+                            $subQ->where('user_id', $user->id)
+                                ->where('role', 'Producer');
+                        });
+                })->whereHas('creativeWork', function ($q) {
+                    $q->where('status', 'submitted');
+                })->count(),
                 'in_production_count' => (clone $baseQuery)->byStatus('in_production')->count(),
                 'in_editing_count' => (clone $baseQuery)->byStatus('editing')->count(),
             ];
@@ -148,6 +171,42 @@ class PrProducerController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve dashboard statistics',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get episodes pending review for Producer
+     * GET /api/program-regular/producer/episodes/review
+     */
+    public function getEpisodesForReview(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $episodes = \App\Models\PrEpisode::whereHas('program', function ($q) use ($user) {
+                $q->where('producer_id', $user->id)
+                    ->orWhereHas('crews', function ($subQ) use ($user) {
+                        $subQ->where('user_id', $user->id)
+                            ->where('role', 'Producer');
+                    });
+            })->whereHas('creativeWork', function ($q) {
+                $q->where('status', 'submitted');
+            })->with(['program', 'creativeWork'])->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $episodes
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve episodes',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -171,8 +230,14 @@ class PrProducerController extends Controller
 
             $program = PrProgram::findOrFail($programId);
 
-            // Check if program is assigned to this Producer
-            if ($program->producer_id !== $user->id) {
+            // Check if program is assigned to this Producer (either via producer_id OR crews)
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if (!$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Program not assigned to you.'
@@ -378,7 +443,14 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($programId);
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            // Check assignment
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -426,9 +498,17 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            $episode = PrEpisode::findOrFail($episodeId);
+            $episode = PrEpisode::with('program')->findOrFail($episodeId);
+            $program = $episode->program;
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            // Check assignment
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -474,9 +554,17 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            $episode = PrEpisode::findOrFail($episodeId);
+            $episode = PrEpisode::with('program')->findOrFail($episodeId);
+            $program = $episode->program;
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            // Check assignment
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -535,7 +623,14 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $program = PrProgram::findOrFail($programId);
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            // Check assignment
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -588,7 +683,22 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $schedule = PrProductionSchedule::findOrFail($scheduleId);
 
-            if (Role::normalize($user->role) !== Role::PRODUCER || $schedule->created_by !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            // For production schedule, we check if user is the creator OR is an assigned producer
+            $program = $schedule->program;
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if ($schedule->created_by !== $user->id && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -639,7 +749,21 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $schedule = PrProductionSchedule::findOrFail($scheduleId);
 
-            if (Role::normalize($user->role) !== Role::PRODUCER || $schedule->created_by !== $user->id) {
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $program = $schedule->program;
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if ($schedule->created_by !== $user->id && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -667,9 +791,17 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            $episode = PrEpisode::findOrFail($episodeId);
+            $episode = PrEpisode::with('program')->findOrFail($episodeId);
+            $program = $episode->program;
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            // Check assignment
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -720,9 +852,17 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            $episode = PrEpisode::findOrFail($episodeId);
+            $episode = PrEpisode::with('program')->findOrFail($episodeId);
+            $program = $episode->program;
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            // Check assignment
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -833,6 +973,30 @@ class PrProducerController extends Controller
                 'script_review_notes' => $request->notes
             ]);
 
+            // Check if both script and budget are approved
+            if ($work->script_approved && $work->budget_approved) {
+                $work->update(['status' => 'approved']);
+
+                // Auto-create PrProduksiWork
+                \App\Models\PrProduksiWork::firstOrCreate(
+                    ['pr_episode_id' => $work->pr_episode_id],
+                    ['pr_creative_work_id' => $work->id, 'status' => 'pending']
+                );
+
+                // Automate Workflow Step 4 Completion: Producer Review
+                $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
+                    ->where('workflow_step', 4)
+                    ->first();
+
+                if ($workflowProgress) {
+                    $workflowProgress->update([
+                        'status' => 'completed',
+                        'completed_at' => now(),
+                        // 'completed_by' => $user->id
+                    ]);
+                }
+            }
+
             // Notify Creative
             \App\Models\Notification::create([
                 'user_id' => $work->created_by,
@@ -884,6 +1048,19 @@ class PrProducerController extends Controller
                     ['pr_episode_id' => $work->pr_episode_id],
                     ['pr_creative_work_id' => $work->id, 'status' => 'pending']
                 );
+
+                // Automate Workflow Step 4 Completion: Producer Review
+                $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
+                    ->where('workflow_step', 4)
+                    ->first();
+
+                if ($workflowProgress) {
+                    $workflowProgress->update([
+                        'status' => 'completed',
+                        'completed_at' => now(),
+                        // 'completed_by' => $user->id
+                    ]);
+                }
             }
 
             // Notify Creative
@@ -946,6 +1123,177 @@ class PrProducerController extends Controller
             ]);
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Creative work rejected']);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+    /**
+     * Get Episode Crews (Shooting & Setting Teams)
+     * GET /api/pr/producer/episodes/{id}/crews
+     */
+    public function getEpisodeCrews($episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $crews = PrEpisodeCrew::where('episode_id', $episodeId)
+                ->with('user')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $crews
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Add Crew to Episode
+     * POST /api/pr/producer/episodes/{id}/crews
+     */
+    public function addEpisodeCrew(Request $request, $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'user_id' => 'required|exists:users,id',
+                'role' => 'required|in:shooting_team,setting_team'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            // Check if already exists
+            $exists = PrEpisodeCrew::where('episode_id', $episodeId)
+                ->where('user_id', $request->user_id)
+                ->where('role', $request->role)
+                ->exists();
+
+            if ($exists) {
+                return response()->json(['success' => false, 'message' => 'User already assigned to this role'], 400);
+            }
+
+            $crew = PrEpisodeCrew::create([
+                'episode_id' => $episodeId,
+                'user_id' => $request->user_id,
+                'role' => $request->role
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Crew added successfully',
+                'data' => $crew->load('user')
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Remove Crew from Episode
+     * DELETE /api/pr/producer/episodes/{id}/crews/{crewId}
+     */
+    public function removeEpisodeCrew($episodeId, $crewId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $crew = PrEpisodeCrew::where('episode_id', $episodeId)->findOrFail($crewId);
+            $crew->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Crew removed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Approve Episode (Final Step 4 Completion)
+     * POST /api/pr/producer/episodes/{id}/approve
+     */
+    public function approveEpisode(Request $request, $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $episode = PrEpisode::findOrFail($episodeId);
+            $work = $episode->creativeWork;
+
+            if (!$work || $work->status !== 'submitted') {
+                // Or should we allow approval if it's already 'approved' but just re-triggering?
+                // Let's be strict: must be submitted or already approved (idempotent)
+                if ($work && $work->status === 'approved') {
+                    return response()->json(['success' => true, 'message' => 'Episode already approved']);
+                }
+                return response()->json(['success' => false, 'message' => 'Creative work not ready for approval'], 400);
+            }
+
+            // 1. Approve Script & Budget if not already
+            $work->update([
+                'script_approved' => true,
+                'script_approved_by' => $user->id,
+                'script_approved_at' => now(),
+                'budget_approved' => true,
+                'budget_approved_by' => $user->id,
+                'budget_approved_at' => now(),
+                'status' => 'approved' // Set main status to approved
+            ]);
+
+            // 2. Auto-create PrProduksiWork
+            \App\Models\PrProduksiWork::firstOrCreate(
+                ['pr_episode_id' => $episode->id],
+                ['pr_creative_work_id' => $work->id, 'status' => 'pending']
+            );
+
+            // 3. Mark Workflow Step 4 as Completed
+            $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $episode->id)
+                ->where('workflow_step', 4)
+                ->first();
+
+            if ($workflowProgress) {
+                $workflowProgress->update([
+                    'status' => 'completed',
+                    'completed_at' => now(),
+                    'assigned_user_id' => $user->id
+                ]);
+            }
+
+            // 4. Notify Creative
+            \App\Models\Notification::create([
+                'user_id' => $work->created_by,
+                'type' => 'pr_episode_approved',
+                'title' => 'Episode Approved',
+                'message' => "Episode {$episode->episode_number} has been fully approved by Producer.",
+                'data' => ['episode_id' => $episode->id]
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Episode berhasil disetujui',
+                'data' => $episode->fresh()
+            ]);
 
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
