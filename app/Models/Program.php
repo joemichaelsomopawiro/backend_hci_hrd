@@ -243,6 +243,104 @@ class Program extends Model
     }
 
     /**
+     * Generate 52 episodes untuk tahun pertama program
+     * Dipanggil saat program pertama kali dibuat
+     * OPTIMIZED: Bulk insert deadlines to avoid N+1 (208 queries → 53 queries)
+     */
+    public function generateYearlyEpisodes()
+    {
+        // Calculate first Saturday from start_date
+        $firstSaturday = Carbon::parse($this->start_date);
+        if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
+            // Jika start_date bukan Sabtu, cari Sabtu berikutnya
+            $firstSaturday->next(Carbon::SATURDAY);
+        }
+        
+        $deadlinesToInsert = [];
+        $currentUserId = auth()->id() ?? 1;
+        
+        // Generate 52 episode (1 tahun = 52 minggu)
+        for ($i = 1; $i <= 52; $i++) {
+            // Episode 1 = Sabtu pertama, Episode 2 = Sabtu berikutnya (7 hari kemudian), dst
+            // Copy dulu, baru add weeks untuk menghindari mutation
+            $airDate = $firstSaturday->copy();
+            if ($i > 1) {
+                $airDate->addWeeks($i - 1);
+            }
+            // Pastikan timezone UTC dan time 00:00:00 untuk konsistensi
+            $airDate->utc()->setTime(0, 0, 0);
+            
+            // Production date = 7 hari sebelum tayang
+            $productionDate = $airDate->copy()->subDays(7);
+            $productionDate->utc()->setTime(0, 0, 0);
+            
+            // Format untuk insert
+            $airDateStr = $airDate->format('Y-m-d H:i:s');
+            $productionDateStr = $productionDate->format('Y-m-d H:i:s');
+            
+            // Insert episode
+            $episodeId = \DB::table('episodes')->insertGetId([
+                'program_id' => $this->id,
+                'episode_number' => $i,
+                'title' => "Episode {$i}",
+                'description' => "Episode {$i} dari program {$this->name}",
+                'air_date' => \DB::raw("'{$airDateStr}'"),
+                'production_date' => \DB::raw("'{$productionDateStr}'"),
+                'status' => 'draft',
+                'current_workflow_state' => 'program_created',
+                'format_type' => 'weekly',
+                'created_at' => now(),
+                'updated_at' => now()
+            ]);
+            
+            // ✅ OPTIMIZED: Collect deadlines for bulk insert instead of calling generateDeadlines()
+            // Deadline 1: Editor (H-7 = 7 hari sebelum tayang)
+            $deadlinesToInsert[] = [
+                'episode_id' => $episodeId,
+                'role' => 'editor',
+                'deadline_date' => $airDate->copy()->subDays(7)->format('Y-m-d H:i:s'),
+                'description' => 'Deadline editing episode',
+                'auto_generated' => true,
+                'created_by' => $currentUserId,
+                'created_at' => now(),
+                'updated_at' => now()
+            ];
+            
+            // Deadline 2: Creative (H-9 = 9 hari sebelum tayang)
+            $deadlinesToInsert[] = [
+                'episode_id' => $episodeId,
+                'role' => 'kreatif',
+                'deadline_date' => $airDate->copy()->subDays(9)->format('Y-m-d H:i:s'),
+                'description' => 'Deadline creative work episode',
+                'auto_generated' => true,
+                'created_by' => $currentUserId,
+                'created_at' => now(),
+                'updated_at' => now()
+            ];
+            
+            // Deadline 3: Produksi (H-9 = 9 hari sebelum tayang)
+            $deadlinesToInsert[] = [
+                'episode_id' => $episodeId,
+                'role' => 'produksi',
+                'deadline_date' => $airDate->copy()->subDays(9)->format('Y-m-d H:i:s'),
+                'description' => 'Deadline production episode',
+                'auto_generated' => true,
+                'created_by' => $currentUserId,
+                'created_at' => now(),
+                'updated_at' => now()
+            ];
+        }
+        
+        // ✅ BULK INSERT: Insert all 156 deadlines (52 episodes × 3 deadlines each) in one query
+        if (!empty($deadlinesToInsert)) {
+            \DB::table('deadlines')->insert($deadlinesToInsert);
+        }
+        
+        // Note: Deadline notifications will be sent separately if needed
+        // to avoid N+1 in notification creation as well
+    }
+
+    /**
      * Generate 52 episodes untuk tahun tertentu
      * Episode number RESET ke 1 setiap tahun baru (seperti jatah cuti)
      * @param int $year Tahun yang akan di-generate

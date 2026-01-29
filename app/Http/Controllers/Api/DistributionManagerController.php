@@ -394,14 +394,17 @@ class DistributionManagerController extends Controller
 
             // Create work assignments
             $assignments = [];
+            $notifications = [];
+            $now = now();
+
             foreach ($request->user_ids as $userId) {
-                // Create notification for assigned user
-                \App\Models\Notification::create([
+                // Prepare notification
+                $notifications[] = [
                     'user_id' => $userId,
                     'type' => 'work_assigned',
                     'title' => 'Pekerjaan Ditugaskan',
                     'message' => "Anda ditugaskan untuk {$request->work_type} untuk Episode {$episode->episode_number} - {$episode->title}",
-                    'data' => [
+                    'data' => json_encode([
                         'episode_id' => $episodeId,
                         'program_id' => $episode->program_id,
                         'work_type' => $request->work_type,
@@ -409,14 +412,20 @@ class DistributionManagerController extends Controller
                         'assigned_by' => $user->id,
                         'deadline' => $request->deadline,
                         'notes' => $request->notes
-                    ]
-                ]);
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
 
                 $assignments[] = [
                     'user_id' => $userId,
                     'role' => $request->role,
                     'work_type' => $request->work_type
                 ];
+            }
+
+            if (!empty($notifications)) {
+                \App\Models\Notification::insert($notifications);
             }
 
             return response()->json([
@@ -489,6 +498,267 @@ class DistributionManagerController extends Controller
                 'success' => false,
                 'message' => 'Error retrieving workers',
                 'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all schedule options submitted by Manager Program (Program Musik)
+     * Distribution Manager can view all pending/reviewed schedule options
+     */
+    public function getScheduleOptions(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Distribution Manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. Only Distribution Manager can view schedule options.'
+                ], 403);
+            }
+
+            // ✅ Eager loading to avoid N+1
+            $query = \App\Models\ProgramScheduleOption::with(['program', 'episode', 'submittedBy', 'reviewedBy'])
+                ->orderBy('created_at', 'desc');
+
+            // Filter by status if provided
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+
+            // Filter by program if provided
+            if ($request->has('program_id')) {
+                $query->where('program_id', $request->program_id);
+            }
+
+            $options = $query->paginate(15);
+
+            return response()->json([
+                'success' => true,
+                'data' => $options,
+                'message' => 'Schedule options retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving schedule options: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Approve schedule option with selected schedule
+     * Distribution Manager approves one of the submitted schedule options
+     */
+    public function approveScheduleOption(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Distribution Manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. Only Distribution Manager can approve schedules.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'selected_option_index' => 'required|integer|min:0',
+                'review_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $scheduleOption = \App\Models\ProgramScheduleOption::with(['program', 'submittedBy'])->findOrFail($id);
+
+            if ($scheduleOption->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only pending schedule options can be approved'
+                ], 400);
+            }
+
+            // Validate selected index
+            $selectedIndex = $request->selected_option_index;
+            if (!isset($scheduleOption->schedule_options[$selectedIndex])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid option index selected'
+                ], 400);
+            }
+
+            // Mark as approved
+            $scheduleOption->markAsApproved($selectedIndex, $request->review_notes);
+
+            // ✅ Notify Manager Program (who submitted)
+            \App\Models\Notification::create([
+                'user_id' => $scheduleOption->submitted_by,
+                'type' => 'schedule_approved',
+                'title' => 'Jadwal Tayang Disetujui',
+                'message' => "Distribution Manager menyetujui jadwal tayang untuk program '{$scheduleOption->program->name}'. Jadwal terpilih: {$scheduleOption->approved_schedule['formatted']}",
+                'data' => [
+                    'schedule_option_id' => $scheduleOption->id,
+                    'program_id' => $scheduleOption->program_id,
+                    'episode_id' => $scheduleOption->episode_id,
+                    'approved_schedule' => $scheduleOption->approved_schedule,
+                    'review_notes' => $request->review_notes
+                ]
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $scheduleOption->fresh(['program', 'episode', 'submittedBy', 'reviewedBy']),
+                'message' => 'Schedule approved successfully. Manager Program has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error approving schedule: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Revise schedule option (request changes)
+     * Distribution Manager requests revision from Manager Program
+     */
+    public function reviseScheduleOption(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Distribution Manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. Only Distribution Manager can request revisions.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'revision_notes' => 'required|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $scheduleOption = \App\Models\ProgramScheduleOption::with(['program', 'submittedBy'])->findOrFail($id);
+
+            if ($scheduleOption->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only pending schedule options can be revised'
+                ], 400);
+            }
+
+            // Mark as revised
+            $scheduleOption->markAsRevised($request->revision_notes);
+
+            // ✅ Notify Manager Program
+            \App\Models\Notification::create([
+                'user_id' => $scheduleOption->submitted_by,
+                'type' => 'schedule_revision_requested',
+                'title' => 'Jadwal Tayang Perlu Revisi',
+                'message' => "Distribution Manager meminta revisi jadwal tayang untuk program '{$scheduleOption->program->name}'. Catatan: {$request->revision_notes}",
+                'data' => [
+                    'schedule_option_id' => $scheduleOption->id,
+                    'program_id' => $scheduleOption->program_id,
+                    'episode_id' => $scheduleOption->episode_id,
+                    'revision_notes' => $request->revision_notes
+                ]
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $scheduleOption->fresh(['program', 'episode', 'submittedBy', 'reviewedBy']),
+                'message' => 'Revision requested successfully. Manager Program has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error requesting revision: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reject schedule option
+     * Distribution Manager rejects schedule options
+     */
+    public function rejectScheduleOption(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Distribution Manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. Only Distribution Manager can reject schedules.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'rejection_reason' => 'required|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $scheduleOption = \App\Models\ProgramScheduleOption::with(['program', 'submittedBy'])->findOrFail($id);
+
+            if ($scheduleOption->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only pending schedule options can be rejected'
+                ], 400);
+            }
+
+            // Mark as rejected
+            $scheduleOption->markAsRejected($request->rejection_reason);
+
+            // ✅ Notify Manager Program
+            \App\Models\Notification::create([
+                'user_id' => $scheduleOption->submitted_by,
+                'type' => 'schedule_rejected',
+                'title' => 'Jadwal Tayang Ditolak',
+                'message' => "Distribution Manager menolak jadwal tayang untuk program '{$scheduleOption->program->name}'. Alasan: {$request->rejection_reason}",
+                'data' => [
+                    'schedule_option_id' => $scheduleOption->id,
+                    'program_id' => $scheduleOption->program_id,
+                    'episode_id' => $scheduleOption->episode_id,
+                    'rejection_reason' => $request->rejection_reason
+                ]
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $scheduleOption->fresh(['program', 'episode', 'submittedBy', 'reviewedBy']),
+                'message' => 'Schedule rejected successfully. Manager Program has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error rejecting schedule: ' . $e->getMessage()
             ], 500);
         }
     }

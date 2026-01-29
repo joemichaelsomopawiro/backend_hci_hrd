@@ -251,9 +251,20 @@ class EditorPromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'files' => 'required|array|min:1',
-                'files.*' => 'required|file|mimes:mp4,avi,mov,jpg,jpeg,png,gif|max:1024000' // 1GB max
+                'files' => 'nullable|array',
+                'files.*' => 'nullable|file|mimes:mp4,avi,mov,jpg,jpeg,png,gif|max:1024000', // 1GB max
+                'file_links' => 'nullable|array',
+                'file_links.*' => 'nullable|url|max:2048' // Each link must be valid URL
             ]);
+            
+            // Require either files or file_links
+            if ((!$request->hasFile('files') || empty($request->file('files'))) && 
+                (!$request->has('file_links') || empty($request->file_links))) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Either files or file_links array is required.'
+                ], 422);
+            }
 
             if ($validator->fails()) {
                 return response()->json([
@@ -264,9 +275,10 @@ class EditorPromosiController extends Controller
             }
 
             $uploadedFiles = [];
-            $filePaths = [];
+            $filePaths = $work->file_paths ?? [];
 
-            foreach ($request->file('files') as $file) {
+            if ($request->hasFile('files')) {
+                foreach ($request->file('files') as $file) {
                 $fileName = time() . '_' . $file->getClientOriginalName();
                 $filePath = $file->storeAs("editor_promosi/{$work->id}", $fileName, 'public');
                 
@@ -296,11 +308,26 @@ class EditorPromosiController extends Controller
                         'original_name' => $file->getClientOriginalName()
                     ]
                 ]);
+                ]);
+                }
             }
 
-            // Update work with file paths
+            // Handle file_links (new: external storage links)
+            $fileLinks = $work->file_links ?? [];
+            if ($request->has('file_links') && is_array($request->file_links)) {
+                foreach ($request->file_links as $link) {
+                    $fileLinks[] = [
+                        'file_link' => $link,
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id
+                    ];
+                }
+            }
+
+            // Update work with file paths and links
             $work->update([
                 'file_paths' => $filePaths,
+                'file_links' => $fileLinks,
                 'status' => 'completed'
             ]);
 
@@ -699,10 +726,10 @@ class EditorPromosiController extends Controller
                 ], 403);
             }
 
-            if (!$work->file_paths || empty($work->file_paths)) {
+            if ((!$work->file_paths || empty($work->file_paths)) && (!$work->file_links || empty($work->file_links))) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Please upload files before submitting to QC'
+                    'message' => 'Please upload files or provide links before submitting to QC'
                 ], 400);
             }
 
@@ -727,6 +754,8 @@ class EditorPromosiController extends Controller
 
             // Prepare file locations with promotion_work_id
             $fileLocations = [];
+            
+            // Process file_paths (physical files)
             if (is_array($work->file_paths)) {
                 foreach ($work->file_paths as $file) {
                     if (is_array($file) && isset($file['file_path'])) {
@@ -747,6 +776,35 @@ class EditorPromosiController extends Controller
                             'file_name' => basename($file),
                             'work_type' => $work->work_type,
                             'source' => 'editor_promosi',
+                            'submitted_at' => now()->toDateTimeString()
+                        ];
+                    }
+                }
+            }
+            
+            // Process file_links (external links)
+            if (is_array($work->file_links)) {
+                foreach ($work->file_links as $link) {
+                    if (is_array($link) && isset($link['file_link'])) {
+                        $fileLocations[] = [
+                            'promotion_work_id' => $work->id,
+                            'file_link' => $link['file_link'],
+                            'file_path' => $link['file_link'], // Store link in file_path for QC access
+                            'file_name' => 'Visual Link',
+                            'work_type' => $work->work_type,
+                            'source' => 'editor_promosi',
+                            'is_link' => true,
+                            'submitted_at' => now()->toDateTimeString()
+                        ];
+                    } elseif (is_string($link)) {
+                        $fileLocations[] = [
+                            'promotion_work_id' => $work->id,
+                            'file_link' => $link,
+                            'file_path' => $link,
+                            'file_name' => 'Visual Link',
+                            'work_type' => $work->work_type,
+                            'source' => 'editor_promosi',
+                            'is_link' => true,
                             'submitted_at' => now()->toDateTimeString()
                         ];
                     }

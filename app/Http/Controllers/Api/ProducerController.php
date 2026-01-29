@@ -2043,22 +2043,32 @@ class ProducerController extends Controller
                 $assignments['recording_team'] = $recordingAssignment;
             }
 
-            // Notify team members
+            // Notify team members - BULK INSERT to avoid N+1
+            $notificationsToInsert = [];
+            $now = now();
+            
             foreach ($assignments as $assignment) {
                     $loadedAssignment = \App\Models\ProductionTeamAssignment::with('members.user', 'episode')->find($assignment->id);
                 foreach ($loadedAssignment->members as $member) {
-                        Notification::create([
+                        $notificationsToInsert[] = [
                         'user_id' => $member->user_id,
                         'type' => 'team_assigned',
                             'title' => 'Ditugaskan ke Tim ' . ucfirst($loadedAssignment->team_type),
                             'message' => "Anda telah ditugaskan ke tim {$loadedAssignment->team_name} untuk Episode {$loadedAssignment->episode->episode_number}.",
-                        'data' => [
+                        'data' => json_encode([
                             'assignment_id' => $loadedAssignment->id,
                                 'episode_id' => $loadedAssignment->episode_id,
                             'team_type' => $loadedAssignment->team_type
-                        ]
-                    ]);
+                        ]),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
                 }
+            }
+            
+            // Bulk insert all notifications at once (1 query instead of N)
+            if (!empty($notificationsToInsert)) {
+                DB::table('notifications')->insert($notificationsToInsert);
             }
 
                 DB::commit();
@@ -2196,22 +2206,34 @@ class ProducerController extends Controller
         // Notify team members assigned to this schedule
         $teamAssignments = \App\Models\ProductionTeamAssignment::where('schedule_id', $schedule->id)
             ->whereIn('status', ['assigned', 'confirmed'])
+            ->with('members')  // Eager load to avoid N+1
             ->get();
 
+        // BULK INSERT to avoid N+1
+        $notificationsToInsert = [];
+        $now = now();
+        
         foreach ($teamAssignments as $assignment) {
             foreach ($assignment->members as $member) {
-                \App\Models\Notification::create([
+                $notificationsToInsert[] = [
                     'title' => 'Jadwal Dibatalkan',
                     'message' => "Jadwal {$schedule->getScheduleTypeLabel()} untuk Episode telah dibatalkan. Alasan: {$reason}",
                     'type' => 'schedule_cancelled',
                     'user_id' => $member->user_id,
-                    'data' => [
+                    'data' => json_encode([
                         'schedule_id' => $schedule->id,
                         'schedule_type' => $schedule->schedule_type,
                         'reason' => $reason
-                    ]
-                ]);
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
             }
+        }
+        
+        // Bulk insert all notifications at once (1 query instead of N*M)
+        if (!empty($notificationsToInsert)) {
+            DB::table('notifications')->insert($notificationsToInsert);
         }
     }
 
@@ -2224,19 +2246,30 @@ class ProducerController extends Controller
             ? "Anda ditugaskan secara darurat untuk jadwal {$schedule->getScheduleTypeLabel()}. Alasan: {$reason}"
             : "Anda telah digantikan dari jadwal {$schedule->getScheduleTypeLabel()}. Alasan: {$reason}";
 
+        // BULK INSERT to avoid N+1
+        $notificationsToInsert = [];
+        $now = now();
+        
         foreach ($memberIds as $userId) {
-            \App\Models\Notification::create([
+            $notificationsToInsert[] = [
                 'title' => $action === 'assigned' ? 'Ditugaskan Darurat' : 'Tim Diganti',
                 'message' => $message,
                 'type' => 'team_emergency_reassigned',
                 'user_id' => $userId,
-                'data' => [
+                'data' => json_encode([
                     'schedule_id' => $schedule->id,
                     'schedule_type' => $schedule->schedule_type,
                     'action' => $action,
                     'reason' => $reason
-                ]
-            ]);
+                ]),
+                'created_at' => $now,
+                'updated_at' => $now
+            ];
+        }
+        
+        // Bulk insert all notifications at once (1 query instead of N)
+        if (!empty($notificationsToInsert)) {
+            DB::table('notifications')->insert($notificationsToInsert);
         }
     }
 
@@ -2738,9 +2771,12 @@ class ProducerController extends Controller
                 ], 404);
             }
 
-            $sentCount = 0;
+            // BULK INSERT to avoid N+1
+            $notificationsToInsert = [];
+            $now = now();
+            
             foreach ($crewMembers as $crewMember) {
-                Notification::create([
+                $notificationsToInsert[] = [
                     'user_id' => $crewMember->id,
                     'type' => 'producer_reminder',
                     'title' => 'Reminder dari Producer',
@@ -2748,14 +2784,22 @@ class ProducerController extends Controller
                     'episode_id' => $episode->id,
                     'program_id' => $episode->program_id,
                     'priority' => $request->priority ?? 'normal',
-                    'data' => [
+                    'data' => json_encode([
                         'episode_number' => $episode->episode_number,
                         'episode_title' => $episode->title,
                         'reminder_from' => $user->name,
                         'reminder_from_role' => 'Producer'
-                    ]
-                ]);
-                $sentCount++;
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+            
+            // Bulk insert all notifications at once (1 query instead of N)
+            $sentCount = 0;
+            if (!empty($notificationsToInsert)) {
+                DB::table('notifications')->insert($notificationsToInsert);
+                $sentCount = count($notificationsToInsert);
             }
 
             return response()->json([
@@ -5254,6 +5298,130 @@ class ProducerController extends Controller
                      }
                 }
              }
+        }
+    }
+
+    /**
+     * Producer Edit Creative Work Directly (Bypass Rejection)
+     * POST /api/live-tv/producer/creative-works/{id}/edit-directly
+     */
+    public function editCreativeDirectly(Request $request, int $creativeWorkId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $creativeWork = CreativeWork::with(['episode.program.productionTeam.members', 'createdBy'])->findOrFail($creativeWorkId);
+
+            // Basic validation: User should be part of the production team (simplified check)
+            // if we had program_id available easily we would check, but relying on role + find for now
+            
+            $producerModifiedData = [
+                'original_script_content' => $creativeWork->script_content,
+                'modified_script_content' => $request->script_content,
+                'modified_at' => now(),
+                'modified_by' => $user->id
+            ];
+
+            // Update fields
+            $creativeWork->update([
+                'script_content' => $request->script_content ?? $creativeWork->script_content,
+                'storyboard_data' => $request->storyboard_data ?? $creativeWork->storyboard_data,
+                // Recording schedule logic
+                'recording_schedule' => $request->recording_schedule ?? $creativeWork->recording_schedule,
+                'shooting_schedule' => $request->shooting_schedule ?? $creativeWork->shooting_schedule,
+                'shooting_location' => $request->shooting_location ?? $creativeWork->shooting_location,
+                'budget_data' => $request->budget_data ?? $creativeWork->budget_data,
+                // Status update
+                'status' => 'approved',
+                'reviewed_by' => $user->id,
+                'reviewed_at' => now(),
+                'review_notes' => ($creativeWork->review_notes ? $creativeWork->review_notes . "\n" : "") . "Edited & Approved by Producer: " . ($request->notes ?? 'Direct edit'),
+                'producer_modified_data' => $producerModifiedData
+            ]);
+
+            // Notify Creative - SINGLE INSERT
+            Notification::create([
+                'user_id' => $creativeWork->created_by,
+                'type' => 'creative_work_edited',
+                'title' => 'Creative Work Diedit & Disetujui',
+                'message' => "Creative work Anda untuk Episode {$creativeWork->episode->episode_number} telah diedit dan langsung disetujui oleh Producer.",
+                'data' => ['creative_work_id' => $creativeWork->id]
+            ]);
+
+            return response()->json([
+                'success' => true, 
+                'data' => $creativeWork->fresh(['episode.program']), 
+                'message' => 'Creative work edited and approved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Producer Request Special Budget
+     * POST /api/live-tv/producer/creative-works/{id}/request-special-budget
+     */
+    public function requestSpecialBudget(Request $request, int $creativeWorkId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $creativeWork = CreativeWork::with('episode.program')->findOrFail($creativeWorkId);
+
+            // Create ProgramApproval
+            $approval = ProgramApproval::create([
+                'approvable_type' => CreativeWork::class,
+                'approvable_id' => $creativeWork->id,
+                'approval_type' => 'special_budget',
+                'requested_by' => $user->id,
+                'request_data' => $request->budget_data, // The specific special budget item/reason
+                'status' => 'pending',
+                'requested_at' => now(),
+                'request_notes' => $request->reason ?? 'Special Budget Request'
+            ]);
+
+            $creativeWork->update([
+                'special_budget_approval_id' => $approval->id,
+                'requires_special_budget_approval' => true,
+                'special_budget_reason' => $request->reason
+            ]);
+
+            // Notify Manager Program - Find user with role 'Manager Program'
+            $managers = \App\Models\User::where('role', 'Manager Program')->get();
+            $notifications = [];
+            $now = now();
+            
+            foreach ($managers as $manager) {
+                $notifications[] = [
+                    'user_id' => $manager->id,
+                    'type' => 'special_budget_request',
+                    'title' => 'Pengajuan Budget Khusus',
+                    'message' => "Producer {$user->name} mengajukan budget khusus untuk Creative Work Episode {$creativeWork->episode->episode_number}.",
+                    'data' => json_encode(['approval_id' => $approval->id, 'program_id' => $creativeWork->episode->program_id]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+            
+            if (!empty($notifications)) {
+                DB::table('notifications')->insert($notifications);
+            }
+
+            return response()->json([
+                'success' => true, 
+                'data' => $approval, 
+                'message' => 'Special budget requested successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 

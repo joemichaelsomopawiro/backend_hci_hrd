@@ -638,13 +638,18 @@ class PromosiController extends Controller
             }
 
             // Validate: BTS video and talent photos must be uploaded (check both file_paths and file_links)
+            // Only strictly enforce for bts_video and bts_photo work types
+            $isBTSWork = in_array($work->work_type, ['bts_video', 'bts_photo']);
+            
             $filePaths = $work->file_paths ?? [];
             $fileLinks = $work->file_links ?? [];
             $hasBTSVideo = false;
             $hasTalentPhotos = false;
+            $hasAnyFile = false;
 
             // Check file_paths (backward compatibility)
             foreach ($filePaths as $file) {
+                $hasAnyFile = true;
                 if (isset($file['type']) && $file['type'] === 'bts_video') {
                     $hasBTSVideo = true;
                 }
@@ -655,6 +660,7 @@ class PromosiController extends Controller
             
             // Check file_links (new: external storage links)
             foreach ($fileLinks as $link) {
+                $hasAnyFile = true;
                 if (isset($link['type']) && $link['type'] === 'bts_video') {
                     $hasBTSVideo = true;
                 }
@@ -663,15 +669,25 @@ class PromosiController extends Controller
                 }
             }
 
-            if (!$hasBTSVideo || !$hasTalentPhotos) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Please upload both BTS video and talent photos before completing work.',
-                    'missing' => [
-                        'bts_video' => !$hasBTSVideo,
-                        'talent_photos' => !$hasTalentPhotos
-                    ]
-                ], 400);
+            if ($isBTSWork) {
+                if (!$hasBTSVideo || !$hasTalentPhotos) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Please upload both BTS video and talent photos before completing work.',
+                        'missing' => [
+                            'bts_video' => !$hasBTSVideo,
+                            'talent_photos' => !$hasTalentPhotos
+                        ]
+                    ], 400);
+                }
+            } else {
+                // For other works (sharing, story, etc), require at least one proof (file or link)
+                if (!$hasAnyFile && empty($request->completion_notes)) {
+                     return response()->json([
+                        'success' => false,
+                        'message' => 'Please provide proof (upload file/link) or completion notes before completing work.'
+                    ], 400);
+                }
             }
 
             $oldData = $work->toArray();
@@ -770,20 +786,29 @@ class PromosiController extends Controller
 
                 // Notify Design Grafis
                 $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
+                $notificationsToInsert = [];
+                $now = now();
+
                 foreach ($designGrafisUsers as $designUser) {
-                    Notification::create([
+                    $notificationsToInsert[] = [
                         'user_id' => $designUser->id,
                         'type' => 'promosi_files_available_for_design',
                         'title' => 'File Promosi Tersedia untuk Design BTS',
                         'message' => "Promosi telah mengupload foto talent untuk Episode {$episode->episode_number}. Design Grafis work untuk Thumbnail BTS sudah dibuat.",
-                        'data' => [
+                        'data' => json_encode([ // Encode data to JSON
                             'promotion_work_id' => $work->id,
                             'design_grafis_work_id' => $designGrafisWork->id,
                             'episode_id' => $work->episode_id,
                             'talent_photos_count' => count($finalTalentPhotos),
                             'bts_video_available' => !empty($finalBTSVideo)
-                        ]
-                    ]);
+                        ]),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
+                }
+
+                if (!empty($notificationsToInsert)) {
+                    Notification::insert($notificationsToInsert);
                 }
             } elseif ($existingThumbnailBTS && !empty($finalTalentPhotos)) {
                 // Update existing DesignGrafisWork dengan file terbaru dari Promosi
@@ -804,19 +829,28 @@ class PromosiController extends Controller
 
                 // Notify Design Grafis
                 $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
+                $notificationsToInsert = [];
+                $now = now();
+                
                 foreach ($designGrafisUsers as $designUser) {
-                    Notification::create([
+                    $notificationsToInsert[] = [
                         'user_id' => $designUser->id,
                         'type' => 'promosi_files_updated_for_design',
                         'title' => 'File Promosi Diperbarui untuk Design BTS',
                         'message' => "Promosi telah mengupdate foto talent untuk Episode {$episode->episode_number}. Design Grafis work untuk Thumbnail BTS telah diperbarui.",
-                        'data' => [
+                        'data' => json_encode([
                             'promotion_work_id' => $work->id,
                             'design_grafis_work_id' => $existingThumbnailBTS->id,
                             'episode_id' => $work->episode_id,
                             'talent_photos_count' => count($finalTalentPhotos)
-                        ]
-                    ]);
+                        ]),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
+                }
+
+                if (!empty($notificationsToInsert)) {
+                    \App\Models\Notification::insert($notificationsToInsert);
                 }
             }
 
@@ -935,18 +969,21 @@ class PromosiController extends Controller
 
             // Notify Editor Promosi - File dari Promosi sudah tersedia
             $editorPromosiUsers = \App\Models\User::where('role', 'Editor Promotion')->get();
+            $notificationsToInsert = [];
+            $now = now();
+            
             foreach ($editorPromosiUsers as $editorPromosiUser) {
-                Notification::create([
+                $notificationsToInsert[] = [
                     'user_id' => $editorPromosiUser->id,
                     'type' => 'promosi_bts_files_available',
                     'title' => 'File BTS dari Promosi Tersedia',
                     'message' => "Promosi telah mengupload BTS video dan foto talent untuk Episode {$episode->episode_number}. PromotionWork untuk edit BTS, Highlight, dan Iklan TV sudah dibuat.",
-                    'data' => [
+                    'data' => json_encode([
                         'promotion_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
                         'bts_files_available' => !empty($btsFiles) || !empty($btsFileLinks),
                         'bts_video_available' => !empty($finalBTSVideo),
-                            'talent_photos_count' => count($finalTalentPhotos),
+                        'talent_photos_count' => count($finalTalentPhotos),
                         'promotion_works' => array_map(function($pw) {
                             return [
                                 'id' => $pw->id,
@@ -954,8 +991,14 @@ class PromosiController extends Controller
                                 'title' => $pw->title
                             ];
                         }, $createdPromotionWorks)
-                    ]
-                ]);
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+
+            if (!empty($notificationsToInsert)) {
+                \App\Models\Notification::insert($notificationsToInsert);
             }
 
             // Audit logging

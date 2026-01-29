@@ -249,18 +249,27 @@ class ProduksiController extends Controller
             // Notify Art & Set Properti
             $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
             $equipmentCount = count($request->equipment_list);
+            $notificationsToInsert = [];
+            $now = now();
+
             foreach ($artSetUsers as $artSetUser) {
-                Notification::create([
+                $notificationsToInsert[] = [
                     'user_id' => $artSetUser->id,
                     'type' => 'equipment_request_created',
                     'title' => 'Permintaan Alat Baru',
                     'message' => "Produksi meminta {$equipmentCount} item equipment untuk Episode {$work->episode->episode_number}.",
-                    'data' => [
+                    'data' => json_encode([
                         'equipment_request_ids' => $equipmentRequests,
                         'episode_id' => $work->episode_id,
                         'produksi_work_id' => $work->id
-                    ]
-                ]);
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+
+            if (!empty($notificationsToInsert)) {
+                Notification::insert($notificationsToInsert);
             }
 
             // Audit logging
@@ -710,18 +719,27 @@ class ProduksiController extends Controller
 
             // Notify Editor
             $editorUsers = \App\Models\User::where('role', 'Editor')->get();
+            $editorNotifications = [];
+            $now = now();
+
             foreach ($editorUsers as $editorUser) {
-                Notification::create([
+                $editorNotifications[] = [
                     'user_id' => $editorUser->id,
                     'type' => 'produksi_shooting_completed',
                     'title' => 'Hasil Syuting Tersedia',
                     'message' => "Produksi telah mengupload hasil syuting untuk Episode {$work->episode->episode_number}. Siap untuk editing.",
-                    'data' => [
+                    'data' => json_encode([
                         'produksi_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
                         'editor_work_id' => $editorWork->id
-                    ]
-                ]);
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+
+            if (!empty($editorNotifications)) {
+                Notification::insert($editorNotifications);
             }
 
             // Auto-create DesignGrafisWork untuk Thumbnail YouTube dan BTS
@@ -773,13 +791,15 @@ class ProduksiController extends Controller
 
             // Notify Design Grafis - File dari Produksi sudah tersedia dan work sudah dibuat
             $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
+            $designNotifications = [];
+
             foreach ($designGrafisUsers as $designUser) {
-                Notification::create([
+                $designNotifications[] = [
                     'user_id' => $designUser->id,
                     'type' => 'produksi_files_available',
                     'title' => 'File Produksi Tersedia',
                     'message' => "Produksi telah mengupload file hasil syuting untuk Episode {$work->episode->episode_number}. Design Grafis work untuk Thumbnail YouTube dan BTS sudah dibuat.",
-                    'data' => [
+                    'data' => json_encode([
                         'produksi_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
                         'file_count' => count($uploadedFiles),
@@ -790,8 +810,14 @@ class ProduksiController extends Controller
                                 'title' => $dgWork->title
                             ];
                         }, $createdDesignGrafisWorks)
-                    ]
-                ]);
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+
+            if (!empty($designNotifications)) {
+                Notification::insert($designNotifications);
             }
 
             return response()->json([

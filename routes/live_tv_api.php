@@ -454,17 +454,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/works/{id}/complete-work', [DesignGrafisController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesai pekerjaan
         Route::post('/works/{id}/submit-to-qc', [DesignGrafisController::class, 'submitToQC'])->middleware('throttle:sensitive'); // Submit ke QC (optional)
         Route::get('/statistics', [DesignGrafisController::class, 'statistics'])->middleware('throttle:60,1');
-        Route::get('/works', [DesignGrafisController::class, 'index'])->middleware('throttle:60,1');
-        Route::post('/works', [DesignGrafisController::class, 'store'])->middleware('throttle:sensitive');
-        Route::get('/works/{id}', [DesignGrafisController::class, 'show'])->middleware('throttle:60,1');
-        Route::put('/works/{id}', [DesignGrafisController::class, 'update'])->middleware('throttle:sensitive');
-        Route::post('/works/{id}/accept-work', [DesignGrafisController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima Pekerjaan
-        Route::get('/shared-files', [DesignGrafisController::class, 'getSharedFiles'])->middleware('throttle:60,1'); // Terima lokasi file dari produksi & promosi
-        Route::post('/works/{id}/upload-thumbnail-youtube', [DesignGrafisController::class, 'uploadThumbnailYouTube'])->middleware('throttle:uploads'); // Buat Thumbnail YouTube
-        Route::post('/works/{id}/upload-thumbnail-bts', [DesignGrafisController::class, 'uploadThumbnailBTS'])->middleware('throttle:uploads'); // Buat Thumbnail BTS
-        Route::post('/works/{id}/upload-files', [DesignGrafisController::class, 'uploadFiles'])->middleware('throttle:uploads'); // Upload files generic
-        Route::post('/works/{id}/complete-work', [DesignGrafisController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesai pekerjaan
-        Route::get('/statistics', [DesignGrafisController::class, 'statistics'])->middleware('throttle:60,1');
+
         Route::post('/works/{id}/submit-to-qc', [DesignGrafisController::class, 'submitToQC'])->middleware('throttle:sensitive'); // Ajukan ke QC (optional)
     });
 
@@ -511,25 +501,30 @@ Route::prefix('roles')->group(function () {
         Route::post('/works/{id}/finalize', [QualityControlController::class, 'finalize'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan (approve/reject)
     });
 
-    // Broadcasting Routes
-    Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
-        Route::get('/schedules', [BroadcastingController::class, 'index'])->middleware('throttle:60,1');
-        Route::post('/schedules', [BroadcastingController::class, 'store'])->middleware('throttle:sensitive');
-        Route::get('/schedules/{id}', [BroadcastingController::class, 'show'])->middleware('throttle:60,1');
-        Route::put('/schedules/{id}', [BroadcastingController::class, 'update'])->middleware('throttle:sensitive');
-        Route::post('/schedules/{id}/upload', [BroadcastingController::class, 'upload'])->middleware('throttle:uploads');
-        Route::post('/schedules/{id}/publish', [BroadcastingController::class, 'publish'])->middleware('throttle:sensitive');
-        Route::post('/schedules/{id}/schedule-playlist', [BroadcastingController::class, 'schedulePlaylist'])->middleware('throttle:sensitive');
-        Route::get('/statistics', [BroadcastingController::class, 'statistics'])->middleware('throttle:60,1');
-        
-        // New workflow methods
-        Route::get('/works', [BroadcastingController::class, 'index'])->middleware('throttle:60,1'); // Get broadcasting works
-        Route::post('/works/{id}/accept-work', [BroadcastingController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima pekerjaan
-        Route::post('/works/{id}/upload-youtube', [BroadcastingController::class, 'uploadYouTube'])->middleware('throttle:uploads'); // Upload ke YouTube dengan SEO
-        Route::post('/works/{id}/upload-website', [BroadcastingController::class, 'uploadWebsite'])->middleware('throttle:uploads'); // Upload ke website
-        Route::post('/works/{id}/input-youtube-link', [BroadcastingController::class, 'inputYouTubeLink'])->middleware('throttle:sensitive'); // Input link YT ke sistem
-        Route::post('/works/{id}/schedule-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive'); // Schedule playlist untuk work
+    
+// Broadcasting Routes
+Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    // Broadcasting Schedules
+    Route::get('/schedules', [BroadcastingController::class, 'getAllSchedules'])->middleware('throttle:60,1');
+    Route::get('/schedules/{id}', [BroadcastingController::class, 'getSchedule'])->middleware('throttle:60,1');
+    Route::get('/schedules/episode/{episodeId}', [BroadcastingController::class, 'getSchedulesForEpisode'])->middleware('throttle:60,1');
+    Route::post('/schedules', [BroadcastingController::class, 'createSchedule'])->middleware('throttle:sensitive');
+    Route::post('/schedules/{id}/upload-youtube', [BroadcastingController::class, 'uploadYouTube'])->middleware('throttle:sensitive');
+    Route::post('/schedules/{id}/upload-website', [BroadcastingController::class, 'uploadWebsite'])->middleware('throttle:sensitive');
+    Route::post('/schedules/{id}/input-youtube-link', [BroadcastingController::class, 'inputYouTubeLink'])->middleware('throttle:sensitive');
+    Route::post('/schedules/{id}/schedule-work-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive');
+    Route::post('/schedules/{id}/complete', [BroadcastingController::class, 'completeWork'])->middleware('throttle:sensitive');
+    Route::post('/works/{id}/schedule-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive'); // Schedule playlist untuk work
         Route::post('/works/{id}/complete-work', [BroadcastingController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
+    });
+
+    // Distribution Manager Routes (Program Musik Schedule Approval)
+    Route::prefix('distribution-manager')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+        // Schedule Options Review (Program Musik Phase 1)
+        Route::get('/schedule-options', [DistributionManagerController::class, 'getScheduleOptions'])->middleware('throttle:60,1');
+        Route::post('/schedule-options/{id}/approve', [DistributionManagerController::class, 'approveScheduleOption'])->middleware('throttle:sensitive');
+        Route::post('/schedule-options/{id}/revise', [DistributionManagerController::class, 'reviseScheduleOption'])->middleware('throttle:sensitive');
+        Route::post('/schedule-options/{id}/reject', [DistributionManagerController::class, 'rejectScheduleOption'])->middleware('throttle:sensitive');
     });
 
     // Art & Set Properti Routes
@@ -730,6 +725,18 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     Route::post('/episodes/{episodeId}/copy-team-assignment', [ProducerController::class, 'copyTeamAssignment'])->middleware('throttle:sensitive'); // Copy/reuse team assignment dari episode lain
     Route::get('/editor-missing-files', [ProducerController::class, 'getEditorMissingFiles'])->middleware('throttle:60,1'); // Get Editor missing files reports
     Route::post('/request-produksi-action', [ProducerController::class, 'requestProduksiAction'])->middleware('throttle:sensitive'); // Request Produksi action (reshoot/complete files/fix)
+    
+    // Phase 3: Creative Work - Edit Directly & Special Budget
+    Route::post('/creative-works/{id}/edit-directly', [ProducerController::class, 'editCreativeDirectly'])->middleware('throttle:sensitive');
+    Route::post('/creative-works/{id}/request-special-budget', [ProducerController::class, 'requestSpecialBudget'])->middleware('throttle:sensitive');
+});
+
+// Manager Program Routes
+Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    // Special Budget Decision
+    Route::post('/special-budgets/{id}/approve', [ManagerProgramController::class, 'handleSpecialBudgetDecision'])->middleware('throttle:sensitive');
+    Route::post('/special-budgets/{id}/edit', [ManagerProgramController::class, 'handleSpecialBudgetDecision'])->middleware('throttle:sensitive');
+    Route::post('/special-budgets/{id}/reject', [ManagerProgramController::class, 'handleSpecialBudgetDecision'])->middleware('throttle:sensitive');
 });
 
 // Production Routes (Alias untuk shooting schedules)

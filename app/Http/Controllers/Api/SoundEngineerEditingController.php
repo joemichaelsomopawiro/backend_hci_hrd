@@ -453,19 +453,27 @@ class SoundEngineerEditingController extends Controller
     private function notifyProducer($work)
     {
         $producers = User::where('role', 'Producer')->get();
+        $notifications = [];
+        $now = now();
         
         foreach ($producers as $producer) {
-            Notification::create([
+            $notifications[] = [
                 'user_id' => $producer->id,
                 'type' => 'sound_engineer_editing_created',
                 'title' => 'Sound Engineer Editing Work Created',
                 'message' => "New sound engineer editing work created for episode: {$work->episode->title}",
-                'data' => [
+                'data' => json_encode([ // Encode data to JSON
                     'work_id' => $work->id,
                     'episode_id' => $work->episode_id,
                     'episode_title' => $work->episode->title
-                ]
-            ]);
+                ]),
+                'created_at' => $now,
+                'updated_at' => $now
+            ];
+        }
+
+        if (!empty($notifications)) {
+            Notification::insert($notifications);
         }
     }
 
@@ -475,19 +483,27 @@ class SoundEngineerEditingController extends Controller
     private function notifyProducerForQC($work)
     {
         $producers = User::where('role', 'Producer')->get();
+        $notifications = [];
+        $now = now();
         
         foreach ($producers as $producer) {
-            Notification::create([
+            $notifications[] = [
                 'user_id' => $producer->id,
                 'type' => 'sound_engineer_editing_submitted',
                 'title' => 'Sound Engineer Editing Submitted for QC',
                 'message' => "Sound engineer editing work submitted for QC: {$work->episode->title}",
-                'data' => [
+                'data' => json_encode([ // Encode data to JSON
                     'work_id' => $work->id,
                     'episode_id' => $work->episode_id,
                     'episode_title' => $work->episode->title
-                ]
-            ]);
+                ]),
+                'created_at' => $now,
+                'updated_at' => $now
+            ];
+        }
+
+        if (!empty($notifications)) {
+            Notification::insert($notifications);
         }
     }
 }

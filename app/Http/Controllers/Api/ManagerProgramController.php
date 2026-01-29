@@ -337,21 +337,27 @@ class ManagerProgramController extends Controller
             // Reload dengan episodes
             $program->load('episodes.deadlines');
             
-            // Notify production team if exists
+            // ✅ OPTIMIZED: Notify production team if exists (bulk insert to avoid N+1)
             if ($program->productionTeam) {
                 $teamMembers = $program->productionTeam->members()->where('is_active', true)->get();
                 
-                foreach ($teamMembers as $member) {
-                    \App\Models\Notification::create([
-                        'user_id' => $member->user_id,
-                        'type' => 'episodes_generated',
-                        'title' => 'Episode Program Dibuat',
-                        'message' => "$numberOfEpisodes episode untuk program '{$program->name}' telah dibuat dengan deadline otomatis",
-                        'data' => [
-                            'program_id' => $program->id,
-                            'total_episodes' => $numberOfEpisodes
-                        ]
-                    ]);
+                if ($teamMembers->isNotEmpty()) {
+                    $notifications = $teamMembers->map(function($member) use ($numberOfEpisodes, $program) {
+                        return [
+                            'user_id' => $member->user_id,
+                            'type' => 'episodes_generated',
+                            'title' => 'Episode Program Dibuat',
+                            'message' => "$numberOfEpisodes episode untuk program '{$program->name}' telah dibuat dengan deadline otomatis",
+                            'data' => json_encode([
+                                'program_id' => $program->id,
+                                'total_episodes' => $numberOfEpisodes
+                            ]),
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ];
+                    })->toArray();
+                    
+                    \DB::table('notifications')->insert($notifications);
                 }
             }
             
@@ -422,24 +428,31 @@ class ManagerProgramController extends Controller
                 ], 400);
             }
             
-            // Notifikasi ke production team
+            // ✅ OPTIMIZED: Notifikasi ke production team (bulk insert to avoid N+1)
             if ($program->productionTeam) {
                 $teamMembers = $program->productionTeam->members()->where('is_active', true)->get();
-                foreach ($teamMembers as $member) {
-                    Notification::create([
-                        'user_id' => $member->user_id,
-                        'type' => 'episodes_generated',
-                        'title' => 'Episode Tahun Berikutnya Dibuat',
-                        'message' => "52 episode untuk tahun {$result['year']} dari program '{$program->name}' telah dibuat otomatis",
-                        'data' => [
+                
+                if ($teamMembers->isNotEmpty()) {
+                    $notifications = $teamMembers->map(function($member) use ($program, $result) {
+                        return [
+                            'user_id' => $member->user_id,
+                            'type' => 'episodes_generated',
+                            'title' => 'Episode Tahun Berikutnya Dibuat',
+                            'message' => "52 episode untuk tahun {$result['year']} dari program '{$program->name}' telah dibuat otomatis",
+                            'data' => json_encode([
+                                'program_id' => $program->id,
+                                'year' => $result['year'],
+                                'total_episodes' => $result['generated_count'],
+                                'start_episode_number' => $result['start_episode_number'],
+                                'end_episode_number' => $result['end_episode_number']
+                            ]),
                             'program_id' => $program->id,
-                            'year' => $result['year'],
-                            'total_episodes' => $result['generated_count'],
-                            'start_episode_number' => $result['start_episode_number'],
-                            'end_episode_number' => $result['end_episode_number']
-                        ],
-                        'program_id' => $program->id
-                    ]);
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ];
+                    })->toArray();
+                    
+                    \DB::table('notifications')->insert($notifications);
                 }
             }
             
@@ -1599,10 +1612,15 @@ class ManagerProgramController extends Controller
 
     /**
      * Notify Manager Broadcasting about schedule options
+     * OPTIMIZED: Bulk insert to avoid N+1 query problem
      */
     private function notifyManagerBroadcasting($scheduleOption, $program): void
     {
         $managerBroadcastingUsers = \App\Models\User::where('role', 'Distribution Manager')->get();
+        
+        if ($managerBroadcastingUsers->isEmpty()) {
+            return; // No Distribution Managers to notify
+        }
         
         $episodeInfo = $scheduleOption->episode 
             ? "Episode {$scheduleOption->episode->episode_number}" 
@@ -1616,21 +1634,26 @@ class ManagerProgramController extends Controller
 
         $optionsCount = is_array($scheduleOption->schedule_options) ? count($scheduleOption->schedule_options) : 0;
         
-        foreach ($managerBroadcastingUsers as $managerUser) {
-            \App\Models\Notification::create([
+        // ✅ OPTIMIZED: Bulk insert notifications instead of loop
+        $notifications = $managerBroadcastingUsers->map(function($managerUser) use ($optionsCount, $program, $episodeInfo, $optionsText, $scheduleOption) {
+            return [
+                'user_id' => $managerUser->id,
                 'title' => 'Opsi Jadwal Tayang Baru',
                 'message' => "Manager Program mengirim {$optionsCount} opsi jadwal tayang untuk program '{$program->name}' - {$episodeInfo}.\n\nOpsi:\n{$optionsText}",
                 'type' => 'schedule_options_submitted',
-                'user_id' => $managerUser->id,
-                'data' => [
+                'data' => json_encode([
                     'schedule_option_id' => $scheduleOption->id,
                     'program_id' => $program->id,
                     'episode_id' => $scheduleOption->episode_id,
                     'platform' => $scheduleOption->platform,
                     'options_count' => $optionsCount
-                ]
-            ]);
-        }
+                ]),
+                'created_at' => now(),
+                'updated_at' => now()
+            ];
+        })->toArray();
+        
+        \DB::table('notifications')->insert($notifications);
     }
 
     /**
@@ -3509,4 +3532,134 @@ class ManagerProgramController extends Controller
         ]);
     }
 
+    /**
+     * Get All Schedules (for Manager Program monitoring)
+     * Endpoint: GET /api/live-tv/manager-program/schedules
+     */
+    public function getAllSchedules(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can view all schedules'
+            ], 403);
+        }
+        
+        try {
+            // Get optional status filter from query params
+            $statusFilter = $request->query('status');
+            $statuses = $statusFilter ? explode(',', $statusFilter) : null;
+            
+            // Get all music schedules with related data
+            $query = MusicSchedule::with([
+                'episode.program',
+                'creativeWork'
+            ])->orderBy('scheduled_date', 'asc');
+            
+            // Apply status filter if provided
+            if ($statuses) {
+                $query->whereIn('status', $statuses);
+            }
+            
+            $schedules = $query->get();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'schedules' => $schedules,
+                    'total' => $schedules->count()
+                ],
+                'message' => 'Schedules retrieved successfully'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve schedules',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    }
 
+    /**
+     * Handle Special Budget Decision (Approve/Edit/Reject)
+     */
+    public function handleSpecialBudgetDecision(Request $request, int $approvalId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            if ($user->role !== 'Manager Program') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $approval = \App\Models\ProgramApproval::with('approvable.episode.program')->findOrFail($approvalId);
+            
+            // Determine action
+            $action = 'approve';
+            if ($request->is('*/edit')) {
+                $action = 'edit';
+            } elseif ($request->is('*/reject')) {
+                $action = 'reject';
+            }
+
+            // Logic
+            if ($action === 'edit') {
+                 // Update approved amount
+                 $requestData = $approval->request_data ?? [];
+                 $requestData['approved_amount'] = $request->approved_amount;
+                 
+                 $approval->update([
+                     'status' => 'approved',
+                     'approved_by' => $user->id,
+                     'approved_at' => now(),
+                     'approval_notes' => $request->notes,
+                     'request_data' => $requestData // Store approved amount in JSON
+                 ]);
+            } elseif ($action === 'reject') {
+                $approval->update([
+                    'status' => 'rejected',
+                    'approved_by' => $user->id, // Use approved_by for rejecter too in this schema if no rejected_by column
+                    'approved_at' => now(), 
+                    'approval_notes' => $request->reason
+                ]);
+            } else { // Approve
+                 $requestData = $approval->request_data ?? [];
+                 // Default approved amount = requested amount if not set
+                 if (!isset($requestData['approved_amount']) && isset($requestData['amount'])) {
+                    $requestData['approved_amount'] = $requestData['amount'];
+                 }
+                 
+                 $approval->update([
+                     'status' => 'approved',
+                     'approved_by' => $user->id,
+                     'approved_at' => now(),
+                     'approval_notes' => $request->notes,
+                     'request_data' => $requestData
+                 ]);
+            }
+            
+            // Notify Producer - SINGLE INSERT
+            if ($approval->requested_by) {
+                \App\Models\Notification::create([
+                    'user_id' => $approval->requested_by,
+                    'type' => 'special_budget_decision',
+                    'title' => 'Keputusan Budget Khusus',
+                    'message' => "Pengajuan budget khusus Anda telah di-" . ucfirst($approval->status) . ".",
+                    'data' => ['approval_id' => $approval->id]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true, 
+                'data' => $approval, 
+                'message' => "Budget request $action successful"
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+}

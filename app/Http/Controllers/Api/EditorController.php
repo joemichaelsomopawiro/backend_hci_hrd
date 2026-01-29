@@ -948,13 +948,17 @@ class EditorController extends Controller
 
             // Notify Editor Promosi - File dari Editor sudah tersedia
             $editorPromosiUsers = \App\Models\User::where('role', 'Editor Promotion')->get();
+            $editorPromosiUsers = \App\Models\User::where('role', 'Editor Promotion')->get();
+            $promosiNotifications = [];
+            $now = now();
+
             foreach ($editorPromosiUsers as $editorPromosiUser) {
-                Notification::create([
+                $promosiNotifications[] = [
                     'user_id' => $editorPromosiUser->id,
                     'type' => 'editor_files_available',
                     'title' => 'File Editor Tersedia',
                     'message' => "Editor telah submit hasil editing untuk Episode {$episode->episode_number}. PromotionWork untuk BTS, Highlight, dan Iklan TV sudah dibuat.",
-                    'data' => [
+                    'data' => json_encode([
                         'editor_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
                         'editor_file_path' => $work->file_path, // Backward compatibility
@@ -966,8 +970,14 @@ class EditorController extends Controller
                                 'title' => $pw->title
                             ];
                         }, $createdPromotionWorks)
-                    ]
-                ]);
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+
+            if (!empty($promosiNotifications)) {
+                Notification::insert($promosiNotifications);
             }
 
             // Auto-create QualityControlWork untuk QC
@@ -999,20 +1009,29 @@ class EditorController extends Controller
 
                 // Notify Quality Control
                 $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                $qcNotifications = [];
+                $now = now();
+
                 foreach ($qcUsers as $qcUser) {
-                    Notification::create([
+                    $qcNotifications[] = [
                         'user_id' => $qcUser->id,
                         'type' => 'qc_work_assigned',
                         'title' => 'Tugas QC Baru',
                         'message' => "Editor telah mengajukan file untuk QC Episode {$episode->episode_number}.",
-                        'data' => [
+                        'data' => json_encode([
                             'qc_work_id' => $qcWork->id,
                             'episode_id' => $work->episode_id,
                             'editor_work_id' => $work->id,
                             'file_path' => $work->file_path, // Backward compatibility
                             'file_link' => $work->file_link // New: External storage link
-                        ]
-                    ]);
+                        ]),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
+                }
+
+                if (!empty($qcNotifications)) {
+                    Notification::insert($qcNotifications);
                 }
             } else {
                 // Update existing QCWork dengan file terbaru dari Editor
@@ -1032,18 +1051,27 @@ class EditorController extends Controller
                 // Notify QC jika status masih pending
                 if ($existingQCWork->status === 'pending') {
                     $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                    $qcNotifications = [];
+                    $now = now();
+
                     foreach ($qcUsers as $qcUser) {
-                        Notification::create([
+                        $qcNotifications[] = [
                             'user_id' => $qcUser->id,
                             'type' => 'qc_work_updated',
                             'title' => 'QC Work Diperbarui',
                             'message' => "Editor telah mengupdate file untuk QC Episode {$episode->episode_number}.",
-                            'data' => [
+                            'data' => json_encode([
                                 'qc_work_id' => $existingQCWork->id,
                                 'episode_id' => $work->episode_id,
                                 'editor_work_id' => $work->id
-                            ]
-                        ]);
+                            ]),
+                            'created_at' => $now,
+                            'updated_at' => $now
+                        ];
+                    }
+
+                    if (!empty($qcNotifications)) {
+                        Notification::insert($qcNotifications);
                     }
                 }
             }

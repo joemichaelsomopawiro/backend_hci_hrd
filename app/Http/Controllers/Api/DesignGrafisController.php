@@ -338,7 +338,8 @@ class DesignGrafisController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'file' => 'required|file|mimes:jpg,jpeg,png,webp|max:10240', // Max 10MB
+                'file' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:10240', // Max 10MB
+                'file_link' => 'nullable|url',
                 'design_notes' => 'nullable|string|max:5000'
             ]);
 
@@ -347,6 +348,15 @@ class DesignGrafisController extends Controller
                     'success' => false,
                     'message' => 'Validation failed',
                     'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Ensure either file or file_link is provided
+            if (!$request->hasFile('file') && !$request->file_link) {
+                 return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => ['file' => ['Please provide either a file upload or a file link.']]
                 ], 422);
             }
 
@@ -373,38 +383,53 @@ class DesignGrafisController extends Controller
                 ], 400);
             }
 
-            // Upload file
-            $uploadedFile = FileUploadHelper::validateImageFile($request->file('file'), 10); // Max 10MB
+            $uploadedFile = null;
 
-            // Delete old file if exists
+            // Upload file if exists
+            if ($request->hasFile('file')) {
+                $uploadedFile = FileUploadHelper::validateImageFile($request->file('file'), 10); // Max 10MB
+            } elseif ($request->file_link) {
+                // Use input link
+                $uploadedFile = [
+                    'file_path' => $request->file_link,
+                    'file_name' => 'External Link',
+                    'file_size' => 0,
+                    'mime_type' => 'url',
+                    'original_name' => 'External Link'
+                ];
+            }
+
+            // Delete old file if exists (and is not a link/URL)
             if ($work->file_path && Storage::disk('public')->exists($work->file_path)) {
                 Storage::disk('public')->delete($work->file_path);
             }
 
             // Update file paths (support multiple files)
             $filePaths = $work->file_paths ?? [];
-            $filePaths[] = array_merge($uploadedFile, [
-                'type' => 'thumbnail_youtube',
-                'uploaded_at' => now()->toDateTimeString(),
-                'uploaded_by' => $user->id
-            ]);
+            if ($uploadedFile) {
+                $filePaths[] = array_merge($uploadedFile, [
+                    'type' => 'thumbnail_youtube',
+                    'uploaded_at' => now()->toDateTimeString(),
+                    'uploaded_by' => $user->id
+                ]);
 
-            $work->update([
-                'file_path' => $uploadedFile['file_path'], // Main file path
-                'file_name' => $uploadedFile['file_name'],
-                'file_size' => $uploadedFile['file_size'],
-                'mime_type' => $uploadedFile['mime_type'],
-                'file_paths' => $filePaths,
-                'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') . 
-                    "[YouTube Thumbnail Uploaded - " . now()->format('Y-m-d H:i:s') . "]\n" .
-                    ($request->design_notes ?? '')
-            ]);
+                $work->update([
+                    'file_path' => $uploadedFile['file_path'], // Main file path
+                    'file_name' => $uploadedFile['file_name'],
+                    'file_size' => $uploadedFile['file_size'],
+                    'mime_type' => $uploadedFile['mime_type'],
+                    'file_paths' => $filePaths,
+                    'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') . 
+                        "[YouTube Thumbnail Uploaded/Linked - " . now()->format('Y-m-d H:i:s') . "]\n" .
+                        ($request->design_notes ?? '')
+                ]);
+            }
 
             // Audit logging
             ControllerSecurityHelper::logFileOperation(
                 'upload',
                 $uploadedFile['mime_type'],
-                $uploadedFile['original_name'],
+                $uploadedFile['original_name'] ?? 'External Link',
                 $uploadedFile['file_size'],
                 $work,
                 $request
@@ -444,7 +469,8 @@ class DesignGrafisController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'file' => 'required|file|mimes:jpg,jpeg,png,webp|max:10240', // Max 10MB
+                'file' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:10240', // Max 10MB
+                'file_link' => 'nullable|url',
                 'design_notes' => 'nullable|string|max:5000'
             ]);
 
@@ -455,6 +481,15 @@ class DesignGrafisController extends Controller
                     'errors' => $validator->errors()
                 ], 422);
             }
+
+             // Ensure either file or file_link is provided
+             if (!$request->hasFile('file') && !$request->file_link) {
+                return response()->json([
+                   'success' => false,
+                   'message' => 'Validation failed',
+                   'errors' => ['file' => ['Please provide either a file upload or a file link.']]
+               ], 422);
+           }
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
@@ -479,8 +514,21 @@ class DesignGrafisController extends Controller
                 ], 400);
             }
 
+            $uploadedFile = null;
+
             // Upload file
-            $uploadedFile = FileUploadHelper::validateImageFile($request->file('file'), 10); // Max 10MB
+            if ($request->hasFile('file')) {
+                $uploadedFile = FileUploadHelper::validateImageFile($request->file('file'), 10); // Max 10MB
+            } elseif ($request->file_link) {
+                 // Use input link
+                 $uploadedFile = [
+                    'file_path' => $request->file_link,
+                    'file_name' => 'External Link',
+                    'file_size' => 0,
+                    'mime_type' => 'url',
+                    'original_name' => 'External Link'
+                ];
+            }
 
             // Delete old file if exists
             if ($work->file_path && Storage::disk('public')->exists($work->file_path)) {
@@ -489,28 +537,30 @@ class DesignGrafisController extends Controller
 
             // Update file paths (support multiple files)
             $filePaths = $work->file_paths ?? [];
-            $filePaths[] = array_merge($uploadedFile, [
-                'type' => 'thumbnail_bts',
-                'uploaded_at' => now()->toDateTimeString(),
-                'uploaded_by' => $user->id
-            ]);
+            if ($uploadedFile) {
+                $filePaths[] = array_merge($uploadedFile, [
+                    'type' => 'thumbnail_bts',
+                    'uploaded_at' => now()->toDateTimeString(),
+                    'uploaded_by' => $user->id
+                ]);
 
-            $work->update([
-                'file_path' => $uploadedFile['file_path'], // Main file path
-                'file_name' => $uploadedFile['file_name'],
-                'file_size' => $uploadedFile['file_size'],
-                'mime_type' => $uploadedFile['mime_type'],
-                'file_paths' => $filePaths,
-                'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') . 
-                    "[BTS Thumbnail Uploaded - " . now()->format('Y-m-d H:i:s') . "]\n" .
-                    ($request->design_notes ?? '')
-            ]);
+                $work->update([
+                    'file_path' => $uploadedFile['file_path'], // Main file path
+                    'file_name' => $uploadedFile['file_name'],
+                    'file_size' => $uploadedFile['file_size'],
+                    'mime_type' => $uploadedFile['mime_type'],
+                    'file_paths' => $filePaths,
+                    'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') . 
+                        "[BTS Thumbnail Uploaded/Linked - " . now()->format('Y-m-d H:i:s') . "]\n" .
+                        ($request->design_notes ?? '')
+                ]);
+            }
 
             // Audit logging
             ControllerSecurityHelper::logFileOperation(
                 'upload',
                 $uploadedFile['mime_type'],
-                $uploadedFile['original_name'],
+                $uploadedFile['original_name'] ?? 'External Link',
                 $uploadedFile['file_size'],
                 $work,
                 $request
@@ -735,8 +785,10 @@ class DesignGrafisController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'files' => 'required|array|min:1',
-                'files.*' => 'required|file|mimes:jpg,jpeg,png,webp,psd,ai|max:10240', // Max 10MB per file
+                'files' => 'nullable|array|min:1',
+                'files.*' => 'required_with:files|file|mimes:jpg,jpeg,png,webp,psd,ai|max:10240', // Max 10MB per file
+                'file_links' => 'nullable|array|min:1',
+                'file_links.*' => 'required_with:file_links|url',
                 'design_notes' => 'nullable|string|max:5000'
             ]);
 
@@ -745,6 +797,14 @@ class DesignGrafisController extends Controller
                     'success' => false,
                     'message' => 'Validation failed',
                     'errors' => $validator->errors()
+                ], 422);
+            }
+
+            if (!$request->hasFile('files') && !$request->file_links) {
+                 return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => ['files' => ['Please provide either file uploads or file links.']]
                 ], 422);
             }
 
@@ -760,14 +820,35 @@ class DesignGrafisController extends Controller
             $uploadedFiles = [];
             $filePaths = $work->file_paths ?? [];
 
-            foreach ($request->file('files') as $file) {
-                $uploadedFile = FileUploadHelper::validateImageFile($file, 10); // Max 10MB
-                $filePaths[] = array_merge($uploadedFile, [
-                    'type' => $work->work_type,
-                    'uploaded_at' => now()->toDateTimeString(),
-                    'uploaded_by' => $user->id
-                ]);
-                $uploadedFiles[] = $uploadedFile;
+            // Process file uploads
+            if ($request->hasFile('files')) {
+                foreach ($request->file('files') as $file) {
+                    $uploadedFile = FileUploadHelper::validateImageFile($file, 10); // Max 10MB
+                    $filePaths[] = array_merge($uploadedFile, [
+                        'type' => $work->work_type,
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id
+                    ]);
+                    $uploadedFiles[] = $uploadedFile;
+                }
+            }
+
+            // Process file links
+            if ($request->file_links) {
+                foreach ($request->file_links as $link) {
+                    $linkData = [
+                        'file_path' => $link,
+                        'file_name' => 'External Link',
+                        'file_size' => 0,
+                        'mime_type' => 'url',
+                        'original_name' => 'External Link',
+                        'type' => $work->work_type,
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id
+                    ];
+                    $filePaths[] = $linkData;
+                    $uploadedFiles[] = $linkData;
+                }
             }
 
             // Update main file path if empty or set to first uploaded file
@@ -783,17 +864,29 @@ class DesignGrafisController extends Controller
             $work->update([
                 'file_paths' => $filePaths,
                 'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') .
-                    "[Files Uploaded - " . now()->format('Y-m-d H:i:s') . "]\n" .
+                    "[Files Uploaded/Linked - " . now()->format('Y-m-d H:i:s') . "]\n" .
                     ($request->design_notes ?? '')
             ]);
 
             // Audit logging
-            foreach ($request->file('files') as $file) {
-                ControllerSecurityHelper::logFileOperation(
+            if ($request->hasFile('files')) {
+                foreach ($request->file('files') as $file) {
+                    ControllerSecurityHelper::logFileOperation(
+                        'upload',
+                        $file->getMimeType(),
+                        $file->getClientOriginalName(),
+                        $file->getSize(),
+                        $work,
+                        $request
+                    );
+                }
+            }
+            if ($request->file_links) {
+                  ControllerSecurityHelper::logFileOperation(
                     'upload',
-                    $file->getMimeType(),
-                    $file->getClientOriginalName(),
-                    $file->getSize(),
+                    'url',
+                    'External links (' . count($request->file_links) . ')',
+                    0,
                     $work,
                     $request
                 );
@@ -888,20 +981,29 @@ class DesignGrafisController extends Controller
                     ]);
 
                     // Notify QC users
+                    // Notify QC users
+                    $notifications = [];
+                    $now = now();
                     foreach ($qcUsers as $qcUser) {
-                        Notification::create([
+                        $notifications[] = [
                             'user_id' => $qcUser->id,
                             'type' => 'design_grafis_submitted_to_qc',
                             'title' => 'Design Grafis Work Submitted to QC',
                             'message' => "Design Grafis telah mengajukan {$work->work_type} untuk QC Episode {$work->episode->episode_number}.",
-                            'data' => [
+                            'data' => json_encode([
                                 'design_grafis_work_id' => $work->id,
                                 'qc_work_id' => $qcWork->id,
                                 'episode_id' => $work->episode_id,
                                 'work_type' => $work->work_type,
                                 'qc_type' => $qcType
-                            ]
-                        ]);
+                            ]),
+                            'created_at' => $now,
+                            'updated_at' => $now
+                        ];
+                    }
+
+                    if (!empty($notifications)) {
+                        Notification::insert($notifications);
                     }
                 }
             } else {
@@ -923,19 +1025,28 @@ class DesignGrafisController extends Controller
 
                 // Notify QC users
                 $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                $notifications = [];
+                $now = now();
+
                 foreach ($qcUsers as $qcUser) {
-                    Notification::create([
+                    $notifications[] = [
                         'user_id' => $qcUser->id,
                         'type' => 'design_grafis_resubmitted_to_qc',
                         'title' => 'Design Grafis Work Resubmitted to QC',
                         'message' => "Design Grafis telah mengajukan ulang {$work->work_type} untuk QC Episode {$work->episode->episode_number}.",
-                        'data' => [
+                        'data' => json_encode([
                             'design_grafis_work_id' => $work->id,
                             'qc_work_id' => $existingQCWork->id,
                             'episode_id' => $work->episode_id,
                             'work_type' => $work->work_type
-                        ]
-                    ]);
+                        ]),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
+                }
+
+                if (!empty($notifications)) {
+                    Notification::insert($notifications);
                 }
             }
 

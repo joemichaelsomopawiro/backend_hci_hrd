@@ -853,20 +853,29 @@ class QualityControlController extends Controller
             ]);
 
             // Notify Broadcasting
+            // Notify Broadcasting
+            $broadcastingNotifications = [];
+            $now = now();
             foreach ($broadcastingUsers as $broadcastingUser) {
-                Notification::create([
+                $broadcastingNotifications[] = [
                     'user_id' => $broadcastingUser->id,
                     'type' => 'broadcasting_work_assigned',
                     'title' => 'Tugas Broadcasting Baru',
                     'message' => "QC telah menyetujui materi untuk Episode {$qcWork->episode->episode_number}. Silakan proses upload ke YouTube dan website.",
-                    'data' => [
+                    'data' => json_encode([
                         'broadcasting_work_id' => $broadcastingWork->id,
                         'episode_id' => $qcWork->episode_id,
                         'qc_work_id' => $qcWork->id,
                         'video_file_path' => $editorFile['file_path'] ?? null,
                         'thumbnail_path' => $thumbnailPath
-                    ]
-                ]);
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+
+            if (!empty($broadcastingNotifications)) {
+                Notification::insert($broadcastingNotifications);
             }
         }
     }
@@ -989,43 +998,52 @@ class QualityControlController extends Controller
                     ]);
 
                     // Notify Broadcasting
+                    // Notify Broadcasting
+                    $broadcastMessage = "QC telah menyetujui materi untuk Episode {$episode->episode_number}.";
+                    $broadcastData = [
+                        'broadcasting_work_id' => $broadcastingWork->id,
+                        'episode_id' => $work->episode_id,
+                        'qc_work_id' => $work->id,
+                        'has_editor_files' => $hasEditorFiles,
+                        'has_design_grafis_files' => $hasDesignGrafisFiles,
+                        'has_editor_promosi_files' => $hasEditorPromosiFiles
+                    ];
+                    
+                    if ($hasEditorFiles) {
+                        $broadcastMessage .= " File materi dari Editor sudah tersedia.";
+                        $broadcastData['video_file_path'] = $videoFilePath;
+                    }
+                    
+                    if ($hasDesignGrafisFiles) {
+                        $broadcastMessage .= " Thumbnail dari Design Grafis sudah tersedia.";
+                        $broadcastData['thumbnail_path'] = $thumbnailPath;
+                    }
+                    
+                    if ($hasEditorPromosiFiles) {
+                        $broadcastMessage .= " File dari Editor Promosi (BTS, Highlight, Iklan TV) juga sudah tersedia untuk referensi.";
+                        $broadcastData['editor_promosi_work_types'] = array_unique(array_map(function($file) {
+                            return $file['work_type'] ?? null;
+                        }, $work->editor_promosi_file_locations));
+                    }
+                    
+                    $broadcastMessage .= " Silakan proses upload ke YouTube dan website.";
+
+                    $broadcastingNotifications = [];
+                    $now = now();
                     foreach ($broadcastingUsers as $broadcastingUser) {
-                        $broadcastMessage = "QC telah menyetujui materi untuk Episode {$episode->episode_number}.";
-                        $broadcastData = [
-                            'broadcasting_work_id' => $broadcastingWork->id,
-                            'episode_id' => $work->episode_id,
-                            'qc_work_id' => $work->id,
-                            'has_editor_files' => $hasEditorFiles,
-                            'has_design_grafis_files' => $hasDesignGrafisFiles,
-                            'has_editor_promosi_files' => $hasEditorPromosiFiles
-                        ];
-                        
-                        if ($hasEditorFiles) {
-                            $broadcastMessage .= " File materi dari Editor sudah tersedia.";
-                            $broadcastData['video_file_path'] = $videoFilePath;
-                        }
-                        
-                        if ($hasDesignGrafisFiles) {
-                            $broadcastMessage .= " Thumbnail dari Design Grafis sudah tersedia.";
-                            $broadcastData['thumbnail_path'] = $thumbnailPath;
-                        }
-                        
-                        if ($hasEditorPromosiFiles) {
-                            $broadcastMessage .= " File dari Editor Promosi (BTS, Highlight, Iklan TV) juga sudah tersedia untuk referensi.";
-                            $broadcastData['editor_promosi_work_types'] = array_unique(array_map(function($file) {
-                                return $file['work_type'] ?? null;
-                            }, $work->editor_promosi_file_locations));
-                        }
-                        
-                        $broadcastMessage .= " Silakan proses upload ke YouTube dan website.";
-                        
-                        Notification::create([
+                        $broadcastingNotifications[] = [
                             'user_id' => $broadcastingUser->id,
                             'type' => 'broadcasting_work_assigned',
                             'title' => 'Tugas Broadcasting Baru',
                             'message' => $broadcastMessage,
-                            'data' => $broadcastData
-                        ]);
+                            'data' => json_encode($broadcastData),
+                            'created_at' => $now,
+                            'updated_at' => $now
+                        ];
+                    }
+
+                    if (!empty($broadcastingNotifications)) {
+                        Notification::insert($broadcastingNotifications);
                     }
 
                     // Notify Promosi untuk sharing (setelah Broadcasting upload)
@@ -1036,39 +1054,56 @@ class QualityControlController extends Controller
                 // Notify Promosi jika ada Editor Promosi files (untuk info saja, bukan untuk sharing langsung)
                 if ($hasEditorPromosiFiles && ($broadcastingUsers->isNotEmpty() || $hasEditorFiles || $hasDesignGrafisFiles)) {
                     $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
+                    $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
+                    $promosiNotifications = [];
+                    $now = now();
                     foreach ($promosiUsers as $promosiUser) {
-                        Notification::create([
+                        $promosiNotifications[] = [
                             'user_id' => $promosiUser->id,
                             'type' => 'qc_approved_editor_promosi_ready',
                             'title' => 'QC Approved - Editor Promosi Files Ready',
                             'message' => "QC telah menyetujui file dari Editor Promosi untuk Episode {$episode->episode_number}. Broadcasting akan upload ke YouTube dan website. Setelah Broadcasting selesai, file ini siap untuk sharing.",
-                            'data' => [
+                            'data' => json_encode([
                                 'episode_id' => $work->episode_id,
                                 'qc_work_id' => $work->id,
                                 'broadcasting_work_id' => $broadcastingWork->id ?? null,
                                 'editor_promosi_work_types' => array_unique(array_filter(array_map(function($file) {
                                     return $file['work_type'] ?? null;
                                 }, $work->editor_promosi_file_locations)))
-                            ]
-                        ]);
+                            ]),
+                            'created_at' => $now,
+                            'updated_at' => $now
+                        ];
+                    }
+
+                    if (!empty($promosiNotifications)) {
+                        Notification::insert($promosiNotifications);
                     }
                 }
 
                 // Notify Produksi - Baca Hasil QC
                 $produksiUsers = \App\Models\User::where('role', 'Production')->get();
+                $produksiNotifications = [];
+                $now = now();
                 foreach ($produksiUsers as $produksiUser) {
-                    Notification::create([
+                    $produksiNotifications[] = [
                         'user_id' => $produksiUser->id,
                         'type' => 'qc_approved_produksi_notification',
                         'title' => 'QC Disetujui - Hasil QC Tersedia',
                         'message' => "QC telah menyetujui materi untuk Episode {$work->episode->episode_number}. Silakan baca hasil QC.",
-                        'data' => [
+                        'data' => json_encode([
                             'episode_id' => $work->episode_id,
                             'qc_work_id' => $work->id,
                             'quality_score' => $work->quality_score ?? null,
                             'qc_notes' => $work->qc_notes ?? null
-                        ]
-                    ]);
+                        ]),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
+                }
+
+                if (!empty($produksiNotifications)) {
+                    Notification::insert($produksiNotifications);
                 }
 
             } else {
@@ -1102,21 +1137,29 @@ class QualityControlController extends Controller
                     }
 
                     $editorUsers = \App\Models\User::where('role', 'Editor')->get();
+                    $editorNotifications = [];
+                    $now = now();
                     foreach ($editorUsers as $editorUser) {
-                        Notification::create([
+                        $editorNotifications[] = [
                             'user_id' => $editorUser->id,
                             'type' => 'qc_rejected_revision_needed',
                             'title' => 'QC Ditolak - Perlu Revisi',
                             'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
-                            'data' => [
+                            'data' => json_encode([
                                 'episode_id' => $work->episode_id,
                                 'qc_work_id' => $work->id,
                                 'editor_work_id' => $editorFile['editor_work_id'] ?? null,
                                 'revision_notes' => $request->notes,
                                 'qc_notes' => $work->qc_notes ?? null,
                                 'source' => 'editor'
-                            ]
-                        ]);
+                            ]),
+                            'created_at' => $now,
+                            'updated_at' => $now
+                        ];
+                    }
+
+                    if (!empty($editorNotifications)) {
+                        Notification::insert($editorNotifications);
                     }
                 }
 
@@ -1138,13 +1181,15 @@ class QualityControlController extends Controller
                     }
 
                     $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
+                    $designNotifications = [];
+                    $now = now();
                     foreach ($designGrafisUsers as $designUser) {
-                        Notification::create([
+                        $designNotifications[] = [
                             'user_id' => $designUser->id,
                             'type' => 'qc_rejected_revision_needed',
                             'title' => 'QC Ditolak - Perlu Revisi',
                             'message' => "QC telah menolak thumbnail untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}. Silakan perbaiki dan ajukan kembali ke QC.",
-                            'data' => [
+                            'data' => json_encode([
                                 'episode_id' => $work->episode_id,
                                 'qc_work_id' => $work->id,
                                 'revision_notes' => $request->notes,
@@ -1152,8 +1197,14 @@ class QualityControlController extends Controller
                                 'design_grafis_work_ids' => array_map(function($file) {
                                     return $file['design_grafis_work_id'] ?? null;
                                 }, $work->design_grafis_file_locations)
-                            ]
-                        ]);
+                            ]),
+                            'created_at' => $now,
+                            'updated_at' => $now
+                        ];
+                    }
+
+                    if (!empty($designNotifications)) {
+                        Notification::insert($designNotifications);
                     }
                 }
 
@@ -1175,13 +1226,15 @@ class QualityControlController extends Controller
                     }
 
                     $editorPromosiUsers = \App\Models\User::where('role', 'Editor Promotion')->get();
+                    $promosiNotifications = [];
+                    $now = now();
                     foreach ($editorPromosiUsers as $editorUser) {
-                        Notification::create([
+                        $promosiNotifications[] = [
                             'user_id' => $editorUser->id,
                             'type' => 'qc_rejected_revision_needed',
                             'title' => 'QC Ditolak - Perlu Revisi',
                             'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}. Silakan perbaiki dan ajukan kembali ke QC.",
-                            'data' => [
+                            'data' => json_encode([
                                 'episode_id' => $work->episode_id,
                                 'qc_work_id' => $work->id,
                                 'revision_notes' => $request->notes,
@@ -1189,8 +1242,14 @@ class QualityControlController extends Controller
                                 'promotion_work_ids' => array_map(function($file) {
                                     return $file['promotion_work_id'] ?? null;
                                 }, $work->editor_promosi_file_locations)
-                            ]
-                        ]);
+                            ]),
+                            'created_at' => $now,
+                            'updated_at' => $now
+                        ];
+                    }
+
+                    if (!empty($promosiNotifications)) {
+                        Notification::insert($promosiNotifications);
                     }
                 }
 
@@ -1267,26 +1326,43 @@ class QualityControlController extends Controller
 
         // Notify Producer
         $producers = \App\Models\User::where('role', 'Producer')->get();
+        $producerNotifications = [];
+        $now = now();
         foreach ($producers as $producer) {
-            Notification::create([
+            $producerNotifications[] = [
                 'title' => 'Quality Control ' . ucfirst($action),
                 'message' => $messages[$action] ?? "QC {$action}",
                 'type' => 'quality_control_' . $action,
                 'user_id' => $producer->id,
-                'episode_id' => $control->episode_id
-            ]);
+                'episode_id' => $control->episode_id,
+                'created_at' => $now,
+                'updated_at' => $now,
+                'data' => json_encode(['episode_id' => $control->episode_id, 'action' => $action]) // Minimal data
+            ];
+        }
+
+        if (!empty($producerNotifications)) {
+            Notification::insert($producerNotifications);
         }
 
         // Notify Broadcasting
         $broadcastingUsers = \App\Models\User::where('role', 'Broadcasting')->get();
+        $broadcastingNotifications = [];
         foreach ($broadcastingUsers as $user) {
-            Notification::create([
+            $broadcastingNotifications[] = [
                 'title' => 'Quality Control ' . ucfirst($action),
                 'message' => $messages[$action] ?? "QC {$action}",
                 'type' => 'quality_control_' . $action,
                 'user_id' => $user->id,
-                'episode_id' => $control->episode_id
-            ]);
+                'episode_id' => $control->episode_id,
+                'created_at' => $now,
+                'updated_at' => $now,
+                'data' => json_encode(['episode_id' => $control->episode_id, 'action' => $action])
+            ];
+        }
+
+        if (!empty($broadcastingNotifications)) {
+            Notification::insert($broadcastingNotifications);
         }
     }
 }

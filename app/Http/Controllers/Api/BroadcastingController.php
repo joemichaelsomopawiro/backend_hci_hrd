@@ -922,13 +922,15 @@ class BroadcastingController extends Controller
                     });
 
                 // Notify Promosi dengan YouTube URL dan Website URL untuk sharing
+                $notifications = [];
+                $now = now();
                 foreach ($promosiUsers as $promosiUser) {
-                    Notification::create([
+                    $notifications[] = [
                         'user_id' => $promosiUser->id,
                         'type' => 'broadcasting_published_promosi_sharing',
                         'title' => 'Video Dipublikasikan - Siap untuk Sharing',
                         'message' => "Broadcasting telah mempublikasikan Episode {$episode->episode_number}. YouTube URL dan Website URL sudah tersedia. PromotionWork untuk Share Facebook dan Share WA Group sudah dibuat. Silakan share ke Facebook, Story IG, Reels Facebook, dan grup Promosi WA.",
-                        'data' => [
+                        'data' => json_encode([
                             'broadcasting_work_id' => $work->id,
                             'episode_id' => $episode->id,
                             'youtube_url' => $work->youtube_url,
@@ -938,8 +940,14 @@ class BroadcastingController extends Controller
                             'description' => $work->description,
                             'share_facebook_work_id' => $shareFacebookWork->id,
                             'share_wa_group_work_id' => $shareWAGroupWork->id
-                        ]
-                    ]);
+                        ]),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
+                }
+
+                if (!empty($notifications)) {
+                    \App\Models\Notification::insert($notifications);
                 }
             }
 
