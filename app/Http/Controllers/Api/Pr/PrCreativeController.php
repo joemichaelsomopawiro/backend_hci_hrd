@@ -318,7 +318,7 @@ class PrCreativeController extends Controller
                 'storyboard_data' => 'nullable|array',
                 'budget_data' => 'nullable|array',
                 'recording_schedule' => 'nullable|date',
-                'shooting_schedule' => 'nullable|date|after_or_equal:today',
+                'shooting_schedule' => 'nullable|date',
                 'shooting_location' => 'nullable|string|max:500',
                 'setup_schedule' => 'nullable|date',
                 'talent_data' => 'nullable|array',

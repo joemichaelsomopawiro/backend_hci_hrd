@@ -135,6 +135,14 @@ class PrEpisode extends Model
     }
 
     /**
+     * Relationship dengan Episode Crews
+     */
+    public function crews(): HasMany
+    {
+        return $this->hasMany(PrEpisodeCrew::class, 'episode_id');
+    }
+
+    /**
      * Check if episode is approved by manager
      */
     public function isManagerApproved(): bool

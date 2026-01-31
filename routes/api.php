@@ -706,6 +706,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
 
     // Manager Program Routes
     Route::prefix('manager-program')->group(function () {
+        Route::get('/budget-approvals', [PrManagerProgramController::class, 'getPendingBudgetApprovals']); // Get pending budget approvals
         Route::post('/programs', [PrManagerProgramController::class, 'createProgram']); // Create program (hanya Manager Program)
         Route::get('/programs', [PrManagerProgramController::class, 'listPrograms']); // List semua program (semua bisa lihat)
         Route::get('/programs/{id}', [PrManagerProgramController::class, 'showProgram']); // Detail program
@@ -722,6 +723,8 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::get('/programs/{id}/revision-history', [PrManagerProgramController::class, 'viewRevisionHistory']); // View revision history
         Route::put('/episodes/{id}', [PrManagerProgramController::class, 'updateEpisode']); // Update episode
         Route::delete('/episodes/{id}', [PrManagerProgramController::class, 'deleteEpisode']); // Delete episode
+        Route::post('/episodes/{id}/approve-budget', [PrManagerProgramController::class, 'approveBudget']); // Approve special budget
+        Route::post('/episodes/{id}/reject-budget', [PrManagerProgramController::class, 'rejectBudget']); // Reject special budget
 
         // Team Members Management
         Route::get('/programs/{id}/team-members', [PrProgramCrewController::class, 'index']); // List team
@@ -755,6 +758,8 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/creative-works/{id}/approve-script', [PrProducerController::class, 'approveCreativeWorkScript']);
         Route::post('/creative-works/{id}/approve-budget', [PrProducerController::class, 'approveCreativeWorkBudget']);
         Route::post('/creative-works/{id}/reject', [PrProducerController::class, 'rejectCreativeWork']);
+        // Special Budget Request
+        Route::post('/episodes/{id}/request-budget-approval', [PrProducerController::class, 'requestBudgetApproval']);
 
         // Episode Crew & Final Review
         Route::get('/episodes/{id}/crews', [PrProducerController::class, 'getEpisodeCrews']);
