@@ -156,6 +156,27 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     Route::get('/revised-schedules', [ManagerProgramController::class, 'getRevisedSchedules'])->middleware('throttle:60,1');
 });
 
+// Distribution Manager Routes
+Route::prefix('distribution-manager')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    // Dashboard
+    Route::get('/dashboard', [DistributionManagerController::class, 'dashboard'])->middleware('throttle:60,1');
+    Route::get('/schedules', [DistributionManagerController::class, 'index'])->middleware('throttle:60,1');
+    
+    // Schedule Options Management - Receive from Manager Program
+    Route::get('/schedule-options', [DistributionManagerController::class, 'getScheduleOptions'])->middleware('throttle:60,1');
+    Route::post('/schedule-options/{id}/approve', [DistributionManagerController::class, 'approveScheduleOption'])->middleware('throttle:sensitive');
+    Route::post('/schedule-options/{id}/revise', [DistributionManagerController::class, 'reviseScheduleOption'])->middleware('throttle:sensitive');
+    Route::post('/schedule-options/{id}/reject', [DistributionManagerController::class, 'rejectScheduleOption'])->middleware('throttle:sensitive');
+    
+    // Work Assignment - Divide Distribution Work
+    Route::post('/episodes/{episodeId}/assign-work', [DistributionManagerController::class, 'assignWork'])->middleware('throttle:sensitive');
+    Route::get('/workers/{role}', [DistributionManagerController::class, 'getAvailableWorkers'])->middleware('throttle:60,1');
+    
+    // Statistics & Monitoring - Target Achievements
+    Route::get('/statistics', [DistributionManagerController::class, 'statistics'])->middleware('throttle:60,1');
+});
+
+
 // Episode Management Routes
 Route::prefix('episodes')->middleware('auth:sanctum')->group(function () {
     Route::get('/', [EpisodeController::class, 'index']);
@@ -387,7 +408,7 @@ Route::prefix('roles')->group(function () {
         Route::post('/works/{id}/submit', [CreativeController::class, 'submit'])->middleware('throttle:sensitive');
         Route::post('/works/{id}/accept-work', [CreativeController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima pekerjaan
         Route::post('/works/{id}/complete-work', [CreativeController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
-        Route::post('/works/{id}/upload-storyboard', [CreativeController::class, 'uploadStoryboard'])->middleware('throttle:uploads'); // Upload storyboard
+        Route::put('/works/{id}/update-link', [CreativeController::class, 'updateLink'])->middleware('throttle:sensitive'); // Input link (Script/Storyboard)
         Route::put('/works/{id}/revise', [CreativeController::class, 'reviseCreativeWork'])->middleware('throttle:sensitive'); // Revisi setelah budget ditolak
         Route::post('/works/{id}/resubmit', [CreativeController::class, 'resubmitCreativeWork'])->middleware('throttle:sensitive'); // Resubmit setelah revisi
     });

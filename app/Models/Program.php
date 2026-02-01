@@ -124,6 +124,16 @@ class Program extends Model
     }
 
     /**
+     * Scope: Filter by Music Programs only
+     * Usage: Program::musik()->get()
+     */
+    public function scopeMusik($query)
+    {
+        return $query->where('category', 'musik');
+    }
+
+
+    /**
      * Boot method untuk handle soft delete cascade
      */
     protected static function boot()
@@ -584,14 +594,6 @@ class Program extends Model
     public function scopeByCategory($query, $category)
     {
         return $query->where('category', $category);
-    }
-
-    /**
-     * Scope untuk program musik
-     */
-    public function scopeMusik($query)
-    {
-        return $query->where('category', 'musik');
     }
 
     /**

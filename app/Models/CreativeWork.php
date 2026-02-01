@@ -14,7 +14,9 @@ class CreativeWork extends Model
     protected $fillable = [
         'episode_id',
         'script_content',
+        'script_link',
         'storyboard_data',
+        'storyboard_link',
         'budget_data',
         'recording_schedule',
         'shooting_schedule',

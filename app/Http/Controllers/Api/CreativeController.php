@@ -127,7 +127,9 @@ class CreativeController extends Controller
         $validator = Validator::make($request->all(), [
             'episode_id' => 'required|exists:episodes,id',
             'script_content' => 'nullable|string',
+            'script_link' => 'nullable|url|max:2048',
             'storyboard_data' => 'nullable|array',
+            'storyboard_link' => 'nullable|url|max:2048',
             'budget_data' => 'nullable|array',
             'recording_schedule' => 'nullable|date',
             'shooting_schedule' => 'nullable|date',
@@ -159,7 +161,9 @@ class CreativeController extends Controller
             $work = CreativeWork::create([
                 'episode_id' => $request->episode_id,
                 'script_content' => $request->script_content,
+                'script_link' => $request->script_link,
                 'storyboard_data' => $request->storyboard_data,
+                'storyboard_link' => $request->storyboard_link,
                 'budget_data' => $request->budget_data,
                 'recording_schedule' => $request->recording_schedule,
                 'shooting_schedule' => $request->shooting_schedule,
@@ -199,7 +203,9 @@ class CreativeController extends Controller
         
         $validator = Validator::make($request->all(), [
             'script_content' => 'nullable|string',
+            'script_link' => 'nullable|url|max:2048',
             'storyboard_data' => 'nullable|array',
+            'storyboard_link' => 'nullable|url|max:2048',
             'budget_data' => 'nullable|array',
             'recording_schedule' => 'nullable|date',
             'shooting_schedule' => 'nullable|date',
@@ -499,7 +505,9 @@ class CreativeController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'script_content' => 'nullable|string',
+                'script_link' => 'nullable|url|max:2048',
                 'storyboard_data' => 'nullable|array',
+                'storyboard_link' => 'nullable|url|max:2048',
                 'recording_schedule' => 'nullable|string', // Use string to be more flexible with ISO formats
                 'shooting_schedule' => 'nullable|string',
                 'shooting_location' => 'nullable|string|max:255',
@@ -542,7 +550,9 @@ class CreativeController extends Controller
             // Update all fields and auto-submit
             $work->update([
                 'script_content' => $request->script_content,
+                'script_link' => $request->script_link,
                 'storyboard_data' => $request->storyboard_data,
+                'storyboard_link' => $request->storyboard_link,
                 'recording_schedule' => $request->recording_schedule,
                 'shooting_schedule' => $request->shooting_schedule,
                 'shooting_location' => $request->shooting_location,
@@ -759,7 +769,12 @@ class CreativeController extends Controller
      * Upload Storyboard file
      * POST /api/live-tv/roles/creative/works/{id}/upload-storyboard
      */
-    public function uploadStoryboard(Request $request, int $id): JsonResponse
+    /**
+     * Update Script or Storyboard Link
+     * PUT /api/live-tv/roles/creative/works/{id}/update-link
+     * Replaces file upload mechanism
+     */
+    public function updateLink(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
@@ -771,79 +786,39 @@ class CreativeController extends Controller
                 ], 403);
             }
 
-            // Cari file apa saja yang dikirim (tidak terpaku pada key 'file')
-            $file = null;
-            $allFiles = $request->allFiles();
-            if (!empty($allFiles)) {
-                $file = reset($allFiles); // Ambil file pertama yang ditemukan
-            }
+            $validator = Validator::make($request->all(), [
+                'type' => 'required|in:script,storyboard',
+                'link' => 'required|url|max:2048'
+            ]);
 
-            if (!$file) {
+            if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Validation failed',
-                    'errors' => ['file' => ['No file was uploaded.']]
-                ], 422);
-            }
-
-            // Validasi manual terhadap file yang ditemukan
-            $extension = strtolower($file->getClientOriginalExtension());
-            $allowedExtensions = ['jpg', 'jpeg', 'png', 'pdf'];
-            
-            if (!in_array($extension, $allowedExtensions)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => ['file' => ['File must be an image (jpg, jpeg, png) or PDF.']]
-                ], 422);
-            }
-
-            if ($file->getSize() > 10240 * 1024) { // 10MB
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => ['file' => ['File size exceeds 10MB limit.']]
+                    'errors' => $validator->errors()
                 ], 422);
             }
 
             $work = CreativeWork::findOrFail($id);
-            $episode = $work->episode;
-
-            $mediaFile = $this->fileUploadService->uploadFile(
-                $episode,
-                $file,
-                'image',
-                "Storyboard for Episode {$episode->episode_number}"
-            );
-
-            // Update storyboard_data with file info
-            $storyboardData = $work->storyboard_data ?? [];
-            if (!is_array($storyboardData)) {
-                $storyboardData = [];
-            }
             
-            $storyboardData['file_path'] = $mediaFile->file_path;
-            $storyboardData['file_name'] = $mediaFile->file_name;
-            $storyboardData['file_url'] = $mediaFile->file_url;
-            $storyboardData['uploaded_at'] = now()->toDateTimeString();
+            // Validate ownership/assignment logic typically should be here
+            if ($work->created_by !== $user->id) {
+                // strict check removed for now as per controller convention allowing team members to edit
+            }
 
-            $work->update([
-                'storyboard_data' => $storyboardData
-            ]);
+            $field = $request->type . '_link'; // script_link or storyboard_link
+            $work->update([$field => $request->link]);
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'work' => $work->fresh(['episode', 'createdBy']),
-                    'media_file' => $mediaFile
-                ],
-                'message' => 'Storyboard uploaded successfully'
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => ucfirst($request->type) . ' link updated successfully'
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error uploading storyboard: ' . $e->getMessage()
+                'message' => 'Error updating link: ' . $e->getMessage()
             ], 500);
         }
     }

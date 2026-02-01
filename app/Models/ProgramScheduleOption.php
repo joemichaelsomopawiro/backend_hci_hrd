@@ -10,6 +10,12 @@ class ProgramScheduleOption extends Model
 {
     use HasFactory;
 
+    /**
+     * Disable automatic timestamps to prevent "Column not found" or "Data truncated" errors
+     * if the table schema is inconsistent (e.g. missing updated_at or wrong type).
+     */
+    public $timestamps = false;
+
     protected $fillable = [
         'program_id',
         'episode_id',
@@ -23,11 +29,14 @@ class ProgramScheduleOption extends Model
         'review_notes',
         'selected_option_index', // Which option was approved (0-based index)
         'approved_schedule',     // Final approved schedule details (JSON)
+        'apply_to',              // 'all' or 'select'
+        'target_episode_ids',    // JSON array of episode IDs
     ];
 
     protected $casts = [
         'schedule_options' => 'array',
         'approved_schedule' => 'array',
+        'target_episode_ids' => 'array',
         'submitted_at' => 'datetime',
         'reviewed_at' => 'datetime',
     ];

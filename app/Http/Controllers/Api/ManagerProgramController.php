@@ -29,6 +29,73 @@ use Illuminate\Support\Facades\Log;
 class ManagerProgramController extends Controller
 {
     /**
+     * Get Dashboard Statistics
+     * GET /api/live-tv/manager-program/dashboard
+     */
+    public function getDashboard(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!$user) {
+             return response()->json(['success' => false, 'message' => 'Authentication required'], 401);
+        }
+
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized access'
+            ], 403);
+        }
+
+        try {
+            // Stats basics
+            $activePrograms = Program::where('status', 'active')->count();
+            $totalEpisodes = Episode::count(); // Optimize if needed
+            $pendingApprovals = ProgramApproval::where('status', 'pending')->count();
+            
+            // Upcoming deadlines (next 7 days)
+            $upcomingDeadlines = Deadline::where('deadline_date', '>=', now())
+                ->where('deadline_date', '<=', now()->addDays(7))
+                ->count();
+                
+            // Recent activities (Mock or Real) - For now fetching recent approvals
+            $recentActivities = ProgramApproval::with('approvable.program')
+                ->latest()
+                ->take(5)
+                ->get()
+                ->map(function($approval) {
+                    return [
+                        'id' => $approval->id,
+                        'type' => $approval->approval_type,
+                        'program_name' => $approval->approvable->program->name ?? 'Unknown',
+                        'status' => $approval->status,
+                        'created_at' => $approval->created_at
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'active_programs' => $activePrograms,
+                    'total_episodes' => $totalEpisodes,
+                    'pending_approvals' => $pendingApprovals,
+                    'upcoming_deadlines' => $upcomingDeadlines,
+                    'recent_activities' => $recentActivities,
+                    'budget_requests' => ProgramApproval::where('approval_type', 'special_budget')->where('status', 'pending')->count()
+                ],
+                'message' => 'Dashboard data retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Dashboard Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load dashboard',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    /**
      * Assign/Change production team untuk episode tertentu (with program context)
      */
     public function assignTeam(Request $request, int $programId, int $episodeId): JsonResponse
@@ -744,6 +811,13 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Authentication required'
+            ], 401);
+        }
+        
         if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
             return response()->json([
                 'success' => false,
@@ -768,7 +842,7 @@ class ManagerProgramController extends Controller
                         $q->whereNull('deleted_at');
                     })
                     ->count(),
-                'pending_approvals' => \App\Models\ProgramProposal::where('status', 'submitted')->count(),
+                'pending_approvals' => ProgramApproval::where('status', 'pending')->count(),
                 'budget_requests' => Program::where('budget_approved', false)
                     ->whereNotNull('budget_amount')
                     ->count()
@@ -1500,17 +1574,38 @@ class ManagerProgramController extends Controller
             ], 403);
         }
 
+        // LOGGING & NORMALIZATION
+        \Illuminate\Support\Facades\Log::info('SubmitScheduleOptions Request:', $request->all());
+
+        $episodeIds = $request->input('episode_ids');
+        if (is_array($episodeIds) && !empty($episodeIds)) {
+            $firstItem = reset($episodeIds);
+            if (is_array($firstItem) || is_object($firstItem)) {
+                $ids = [];
+                foreach ($episodeIds as $item) {
+                     if (is_array($item)) $ids[] = $item['id'] ?? null;
+                     elseif (is_object($item)) $ids[] = $item->id ?? null;
+                }
+                $ids = array_values(array_filter($ids));
+                $request->merge(['episode_ids' => $ids]);
+                \Illuminate\Support\Facades\Log::info('Normalized episode_ids:', $ids);
+            }
+        }
+
         $validator = Validator::make($request->all(), [
             'schedule_options' => 'required|array|min:1',
             'schedule_options.*.date' => 'required|date|after:now',
             'schedule_options.*.time' => 'required|date_format:H:i',
             'schedule_options.*.notes' => 'nullable|string|max:500',
-            'episode_id' => 'nullable|exists:episodes,id',
             'platform' => 'nullable|in:tv,youtube,website,all',
-            'submission_notes' => 'nullable|string|max:1000'
+            'submission_notes' => 'nullable|string|max:1000',
+            'apply_to' => 'required|in:all,select',
+            'episode_ids' => 'required_if:apply_to,select|array',
+            'episode_ids.*' => 'exists:episodes,id'
         ]);
 
         if ($validator->fails()) {
+            \Illuminate\Support\Facades\Log::error('SubmitScheduleValidation Failed:', $validator->errors()->toArray());
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
@@ -1539,12 +1634,14 @@ class ManagerProgramController extends Controller
             // Create schedule option
             $scheduleOption = \App\Models\ProgramScheduleOption::create([
                 'program_id' => $programId,
-                'episode_id' => $request->episode_id,
                 'submitted_by' => $user->id,
                 'schedule_options' => $scheduleOptions,
                 'platform' => $request->platform ?? 'all',
                 'status' => 'pending',
-                'submission_notes' => $request->submission_notes
+                'submission_notes' => $request->submission_notes,
+                'apply_to' => $request->apply_to,
+                'target_episode_ids' => $request->apply_to === 'select' ? $request->episode_ids : null,
+                'episode_id' => ($request->apply_to === 'select' && !empty($request->episode_ids)) ? $request->episode_ids[0] : null
             ]);
 
             // Notify Manager Broadcasting
@@ -2865,312 +2962,10 @@ class ManagerProgramController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
-    }
+    } 
 
-    /**
-     * Approve Special Budget (dengan atau tanpa edit amount)
-     * POST /api/live-tv/manager-program/special-budget-approvals/{id}/approve
-     */
-    public function approveSpecialBudget(Request $request, int $id): JsonResponse
-    {
-        try {
-            $user = auth()->user();
-            
-            if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
-            }
 
-            $validator = Validator::make($request->all(), [
-                'approved_amount' => 'nullable|numeric|min:0', // Jika tidak diisi, approve dengan amount yang diminta
-                'approval_notes' => 'nullable|string|max:2000'
-            ]);
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-
-            $approval = ProgramApproval::with(['approvable.episode.program.productionTeam'])->findOrFail($id);
-
-            if ($approval->approval_type !== 'special_budget') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This is not a special budget approval'
-                ], 400);
-            }
-
-            if ($approval->status !== 'pending') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This approval has already been processed'
-                ], 400);
-            }
-
-            $requestedAmount = $approval->request_data['special_budget_amount'] ?? 0;
-            $approvedAmount = $request->approved_amount ?? $requestedAmount;
-
-            // Update approval dengan approved_amount di approval_notes dan request_data
-            $approvalNotes = $request->approval_notes ?? "Budget khusus disetujui sebesar Rp " . number_format($approvedAmount, 0, ',', '.');
-            
-            // Update request_data dengan approved_amount untuk tracking
-            $requestData = $approval->request_data ?? [];
-            $requestData['approved_amount'] = $approvedAmount;
-            $requestData['is_revised'] = $approvedAmount != $requestedAmount;
-            
-            // Approve dengan amount yang disetujui
-            $approval->update([
-                'status' => 'approved',
-                'approved_by' => $user->id,
-                'approved_at' => now(),
-                'approval_notes' => $approvalNotes,
-                'request_data' => $requestData // Update request_data dengan approved_amount
-            ]);
-
-            // Update Creative Work
-            $creativeWork = $approval->approvable; // CreativeWork
-            if ($creativeWork) {
-                // Update budget_data dengan menambahkan atau mengupdate special budget
-                $budgetData = $creativeWork->budget_data ?? [];
-                
-                // Cek apakah sudah ada special budget di budget_data (jika sudah pernah di-approve sebelumnya)
-                $specialBudgetIndex = null;
-                foreach ($budgetData as $index => $item) {
-                    if (is_array($item) && isset($item['category']) && $item['category'] === 'Special Budget') {
-                        $specialBudgetIndex = $index;
-                        break;
-                    }
-                }
-                
-                // Jika sudah ada, update yang sudah ada. Jika belum, tambahkan yang baru
-                $specialBudgetItem = [
-                    'category' => 'Special Budget',
-                    'description' => $creativeWork->special_budget_reason ?? 'Budget khusus yang disetujui Manager Program',
-                    'amount' => $approvedAmount, // Gunakan approved_amount yang sudah di-edit
-                    'raw_amount' => $approvedAmount, // Untuk perhitungan di frontend
-                    'currency' => 'IDR',
-                    'is_special_budget' => true, // Flag penting untuk frontend bisa memisahkan
-                    'approved_by_manager' => true,
-                    'approved_amount' => $approvedAmount,
-                    'requested_amount' => $requestedAmount,
-                    'approved_at' => now()->toDateTimeString(),
-                    'is_revised' => $approvedAmount != $requestedAmount,
-                    'approved_by' => $user->name ?? 'Manager Program'
-                ];
-                
-                if ($specialBudgetIndex !== null) {
-                    // Update special budget yang sudah ada
-                    $budgetData[$specialBudgetIndex] = $specialBudgetItem;
-                } else {
-                    // Tambahkan special budget baru
-                    $budgetData[] = $specialBudgetItem;
-                }
-
-                $creativeWork->update([
-                    'budget_data' => $budgetData,
-                    'requires_special_budget_approval' => false, // Sudah disetujui
-                    'budget_approved' => true, // Budget sudah disetujui
-                    'special_budget_reason' => $creativeWork->special_budget_reason, // Keep existing reason
-                ]);
-                
-                Log::info('CreativeWork budget updated after special budget approval', [
-                    'creative_work_id' => $creativeWork->id,
-                    'requested_amount' => $requestedAmount,
-                    'approved_amount' => $approvedAmount,
-                    'is_revised' => $approvedAmount != $requestedAmount,
-                    'total_budget' => $creativeWork->total_budget
-                ]);
-
-                // Notify Producer
-                $producer = $creativeWork->episode->program->productionTeam->producer;
-                if ($producer) {
-                    $message = $approvedAmount != $requestedAmount 
-                        ? "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah disetujui dengan revisi. Diminta: Rp " . number_format($requestedAmount, 0, ',', '.') . ", Disetujui: Rp " . number_format($approvedAmount, 0, ',', '.')
-                        : "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah disetujui sebesar Rp " . number_format($approvedAmount, 0, ',', '.');
-
-                    Notification::create([
-                        'user_id' => $producer->id,
-                        'type' => 'special_budget_approved',
-                        'title' => 'Budget Khusus Disetujui',
-                        'message' => $message,
-                        'data' => [
-                            'approval_id' => $approval->id,
-                            'creative_work_id' => $creativeWork->id,
-                            'episode_id' => $creativeWork->episode_id,
-                            'requested_amount' => $requestedAmount,
-                            'approved_amount' => $approvedAmount,
-                            'is_revised' => $approvedAmount != $requestedAmount
-                        ]
-                    ]);
-                }
-
-                // Notify Creative
-                Notification::create([
-                    'user_id' => $creativeWork->created_by,
-                    'type' => 'special_budget_approved',
-                    'title' => 'Budget Khusus Disetujui',
-                    'message' => $message,
-                    'data' => [
-                        'approval_id' => $approval->id,
-                        'creative_work_id' => $creativeWork->id,
-                        'episode_id' => $creativeWork->episode_id,
-                        'approved_amount' => $approvedAmount
-                    ]
-                ]);
-            }
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'approval' => $approval->fresh(['approvable', 'approvedBy']),
-                    'creative_work' => $creativeWork->fresh(['episode', 'specialBudgetApproval'])
-                ],
-                'message' => $approvedAmount != $requestedAmount 
-                    ? 'Special budget approved with revised amount. Producer and Creative have been notified.'
-                    : 'Special budget approved successfully. Producer and Creative have been notified.'
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to approve special budget',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * Reject Special Budget
-     * POST /api/live-tv/manager-program/special-budget-approvals/{id}/reject
-     */
-    public function rejectSpecialBudget(Request $request, int $id): JsonResponse
-    {
-        try {
-            $user = auth()->user();
-            
-            if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
-            }
-
-            $validator = Validator::make($request->all(), [
-                'rejection_notes' => 'required|string|max:2000'
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-
-            $approval = ProgramApproval::with(['approvable.episode.program.productionTeam'])->findOrFail($id);
-
-            if ($approval->approval_type !== 'special_budget') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This is not a special budget approval'
-                ], 400);
-            }
-
-            if ($approval->status !== 'pending') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This approval has already been processed'
-                ], 400);
-            }
-
-            // Reject approval
-            $approval->reject($user->id, $request->rejection_notes);
-
-            // Update Creative Work
-            $creativeWork = $approval->approvable; // CreativeWork
-            if ($creativeWork) {
-                // ✅ PENTING: Hapus special budget item dari budget_data jika ada
-                $budgetData = $creativeWork->budget_data ?? [];
-                
-                // Filter: hapus item dengan category 'Special Budget' atau is_special_budget = true
-                $budgetData = array_values(array_filter($budgetData, function($item) {
-                    if (is_array($item)) {
-                        // Hapus jika category adalah 'Special Budget' atau is_special_budget = true
-                        return !(
-                            (isset($item['category']) && $item['category'] === 'Special Budget') ||
-                            (isset($item['is_special_budget']) && $item['is_special_budget'] === true)
-                        );
-                    }
-                    return true; // Keep non-array items
-                }));
-                
-                $creativeWork->update([
-                    'budget_data' => $budgetData, // Update budget_data tanpa special budget
-                    'requires_special_budget_approval' => false, // Sudah diproses
-                    'budget_approved' => false, // Budget ditolak
-                    'special_budget_reason' => null // Reset reason
-                ]);
-                
-                Log::info('CreativeWork budget updated after special budget rejection', [
-                    'creative_work_id' => $creativeWork->id,
-                    'budget_data_count' => count($budgetData),
-                    'total_budget' => $creativeWork->total_budget
-                ]);
-
-                // Notify Producer
-                $producer = $creativeWork->episode->program->productionTeam->producer;
-                if ($producer) {
-                    Notification::create([
-                        'user_id' => $producer->id,
-                        'type' => 'special_budget_rejected',
-                        'title' => 'Budget Khusus Ditolak',
-                        'message' => "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah ditolak oleh Manager Program. Alasan: {$request->rejection_notes}. Anda dapat mengedit creative work untuk perbaikan.",
-                        'data' => [
-                            'approval_id' => $approval->id,
-                            'creative_work_id' => $creativeWork->id,
-                            'episode_id' => $creativeWork->episode_id,
-                            'rejection_notes' => $request->rejection_notes
-                        ]
-                    ]);
-                }
-
-                // Notify Creative
-                Notification::create([
-                    'user_id' => $creativeWork->created_by,
-                    'type' => 'special_budget_rejected',
-                    'title' => 'Budget Khusus Ditolak',
-                    'message' => "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah ditolak oleh Manager Program. Alasan: {$request->rejection_notes}. Silakan perbaiki budget dan ajukan kembali.",
-                    'data' => [
-                        'approval_id' => $approval->id,
-                        'creative_work_id' => $creativeWork->id,
-                        'episode_id' => $creativeWork->episode_id,
-                        'rejection_notes' => $request->rejection_notes
-                    ]
-                ]);
-            }
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'approval' => $approval->fresh(['approvable', 'rejectedBy']),
-                    'creative_work' => $creativeWork->fresh(['episode', 'specialBudgetApproval'])
-                ],
-                'message' => 'Special budget rejected. Producer and Creative have been notified.'
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to reject special budget',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
 
     /**
      * Get revised schedules for Manager Program
@@ -3414,252 +3209,310 @@ class ManagerProgramController extends Controller
             ], 500);
         }
     }
-    }
+
+
+
+
+
 
     /**
-     * Approve Special Budget Request
-     * Manager Program approves budget -> Status becomes 'pending' (for General Affairs)
+     * Approve Special Budget (dengan atau tanpa edit amount)
+     * POST /api/live-tv/manager-program/special-budget-approvals/{id}/approve
      */
     public function approveSpecialBudget(Request $request, int $id): JsonResponse
     {
-        $user = auth()->user();
-        
-        if (!in_array(strtolower($user->role), ['manager program', 'program manager', 'managerprogram'])) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Only Manager Program can approve special budgets'
-            ], 403);
-        }
-        
-        $budgetRequest = \App\Models\BudgetRequest::findOrFail($id);
-        
-        // Ensure it is a pending manager request
-        if ($budgetRequest->status !== 'pending_manager_approval') {
-            return response()->json([
-                'success' => false,
-                'message' => 'This request is not pending Manager Program approval'
-            ], 400);
-        }
-        
         try {
-            DB::transaction(function () use ($budgetRequest, $request, $user) {
-                // Update amount if edited
-                if ($request->has('approved_amount')) {
-                    $budgetRequest->approved_amount = $request->approved_amount;
-                } else {
-                    $budgetRequest->approved_amount = $budgetRequest->requested_amount;
+            $user = auth()->user();
+            
+            if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'approved_amount' => 'nullable|numeric|min:0', // Jika tidak diisi, approve dengan amount yang diminta
+                'approval_notes' => 'nullable|string|max:2000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $approval = ProgramApproval::with(['approvable.episode.program.productionTeam'])->findOrFail($id);
+
+            if ($approval->approval_type !== 'special_budget') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This is not a special budget approval'
+                ], 400);
+            }
+
+            if ($approval->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This approval has already been processed'
+                ], 400);
+            }
+
+            $requestedAmount = $approval->request_data['special_budget_amount'] ?? 0;
+            $approvedAmount = $request->approved_amount ?? $requestedAmount;
+
+            // Update approval dengan approved_amount di approval_notes dan request_data
+            $approvalNotes = $request->approval_notes ?? "Budget khusus disetujui sebesar Rp " . number_format($approvedAmount, 0, ',', '.');
+            
+            // Update request_data dengan approved_amount untuk tracking
+            $requestData = $approval->request_data ?? [];
+            $requestData['approved_amount'] = $approvedAmount;
+            $requestData['is_revised'] = $approvedAmount != $requestedAmount;
+            
+            // Approve dengan amount yang disetujui
+            $approval->update([
+                'status' => 'approved',
+                'approved_by' => $user->id,
+                'approved_at' => now(),
+                'approval_notes' => $approvalNotes,
+                'request_data' => $requestData // Update request_data dengan approved_amount
+            ]);
+
+            // Update Creative Work
+            $creativeWork = $approval->approvable; // CreativeWork
+            if ($creativeWork) {
+                // Update budget_data dengan menambahkan atau mengupdate special budget
+                $budgetData = $creativeWork->budget_data ?? [];
+                
+                // Cek apakah sudah ada special budget di budget_data (jika sudah pernah di-approve sebelumnya)
+                $specialBudgetIndex = null;
+                foreach ($budgetData as $index => $item) {
+                    if (is_array($item) && isset($item['category']) && $item['category'] === 'Special Budget') {
+                        $specialBudgetIndex = $index;
+                        break;
+                    }
                 }
                 
-                $budgetRequest->status = 'pending'; // Move to General Affairs inbox
-                $budgetRequest->approved_by = $user->id;
-                $budgetRequest->approved_at = now();
-                $budgetRequest->approval_notes = $request->notes;
-                $budgetRequest->save();
+                // Jika sudah ada, update yang sudah ada. Jika belum, tambahkan yang baru
+                $specialBudgetItem = [
+                    'category' => 'Special Budget',
+                    'description' => $creativeWork->special_budget_reason ?? 'Budget khusus yang disetujui Manager Program',
+                    'amount' => $approvedAmount, // Gunakan approved_amount yang sudah di-edit
+                    'raw_amount' => $approvedAmount, // Untuk perhitungan di frontend
+                    'currency' => 'IDR',
+                    'is_special_budget' => true, // Flag penting untuk frontend bisa memisahkan
+                    'approved_by_manager' => true,
+                    'approved_amount' => $approvedAmount,
+                    'requested_amount' => $requestedAmount,
+                    'approved_at' => now()->toDateTimeString(),
+                    'is_revised' => $approvedAmount != $requestedAmount,
+                    'approved_by' => $user->name ?? 'Manager Program'
+                ];
                 
-                // Notify Producer (Success)
-                Notification::create([
-                    'user_id' => $budgetRequest->requested_by,
-                    'type' => 'special_budget_approved',
-                    'title' => 'Special Budget Disetujui',
-                    'message' => "Special Budget untuk '{$budgetRequest->title}' telah disetujui oleh Manager Program. Sekarang diproses oleh General Affairs.",
-                    'data' => ['budget_request_id' => $budgetRequest->id]
+                if ($specialBudgetIndex !== null) {
+                    // Update special budget yang sudah ada
+                    $budgetData[$specialBudgetIndex] = $specialBudgetItem;
+                } else {
+                    // Tambahkan special budget baru
+                    $budgetData[] = $specialBudgetItem;
+                }
+
+                $creativeWork->update([
+                    'budget_data' => $budgetData,
+                    'requires_special_budget_approval' => false, // Sudah disetujui
+                    'budget_approved' => true, // Budget sudah disetujui
+                    'special_budget_reason' => $creativeWork->special_budget_reason, // Keep existing reason
                 ]);
                 
-                // Notify General Affairs
-                $gaUsers = \App\Models\User::where('role', 'General Affairs')->get();
-                foreach ($gaUsers as $gaUser) {
+                Log::info('CreativeWork budget updated after special budget approval', [
+                    'creative_work_id' => $creativeWork->id,
+                    'requested_amount' => $requestedAmount,
+                    'approved_amount' => $approvedAmount,
+                    'is_revised' => $approvedAmount != $requestedAmount,
+                    'total_budget' => $creativeWork->total_budget
+                ]);
+
+                // Notify Producer
+                $producer = $creativeWork->episode->program->productionTeam->producer;
+                if ($producer) {
+                    $message = $approvedAmount != $requestedAmount 
+                        ? "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah disetujui dengan revisi. Diminta: Rp " . number_format($requestedAmount, 0, ',', '.') . ", Disetujui: Rp " . number_format($approvedAmount, 0, ',', '.')
+                        : "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah disetujui sebesar Rp " . number_format($approvedAmount, 0, ',', '.');
+
                     Notification::create([
-                        'user_id' => $gaUser->id,
-                        'type' => 'budget_request_created', // Treat as new request for GA
-                        'title' => 'Permohonan Dana Baru (Approved by Manager)',
-                        'message' => "Permohonan dana (Special Budget) telah disetujui Manager Program. Harap diproses.",
+                        'user_id' => $producer->id,
+                        'type' => 'special_budget_approved',
+                        'title' => 'Budget Khusus Disetujui',
+                        'message' => $message,
                         'data' => [
-                            'budget_request_id' => $budgetRequest->id,
-                            'program_id' => $budgetRequest->program_id
+                            'approval_id' => $approval->id,
+                            'creative_work_id' => $creativeWork->id,
+                            'episode_id' => $creativeWork->episode_id,
+                            'requested_amount' => $requestedAmount,
+                            'approved_amount' => $approvedAmount,
+                            'is_revised' => $approvedAmount != $requestedAmount
                         ]
                     ]);
                 }
-            });
-            
-            return response()->json([
-                'success' => true,
-                'data' => $budgetRequest,
-                'message' => 'Special budget approved and forwarded to General Affairs'
-            ]);
-            
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
-        }
-    }
 
-    /**
-     * Reject Special Budget Request
-     */
-    public function rejectSpecialBudget(Request $request, int $id): JsonResponse
-    {
-        $user = auth()->user();
-        
-        if (!in_array(strtolower($user->role), ['manager program', 'program manager', 'managerprogram'])) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-        
-        $budgetRequest = \App\Models\BudgetRequest::findOrFail($id);
-        
-        if ($budgetRequest->status !== 'pending_manager_approval') {
-            return response()->json(['message' => 'Invalid status'], 400);
-        }
-        
-        $budgetRequest->update([
-            'status' => 'rejected',
-            'rejected_by' => $user->id,
-            'rejected_at' => now(),
-            'rejection_reason' => $request->reason
-        ]);
-        
-        // Notify Producer
-        Notification::create([
-            'user_id' => $budgetRequest->requested_by,
-            'type' => 'special_budget_rejected',
-            'title' => 'Special Budget Ditolak',
-            'message' => "Special Budget ditolak oleh Manager Program. Alasan: {$request->reason}",
-            'data' => ['budget_request_id' => $budgetRequest->id]
-        ]);
-        
-        return response()->json([
-            'success' => true,
-            'data' => $budgetRequest,
-            'message' => 'Special budget rejected'
-        ]);
-    }
-
-    /**
-     * Get All Schedules (for Manager Program monitoring)
-     * Endpoint: GET /api/live-tv/manager-program/schedules
-     */
-    public function getAllSchedules(Request $request): JsonResponse
-    {
-        $user = auth()->user();
-        
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Only Manager Program can view all schedules'
-            ], 403);
-        }
-        
-        try {
-            // Get optional status filter from query params
-            $statusFilter = $request->query('status');
-            $statuses = $statusFilter ? explode(',', $statusFilter) : null;
-            
-            // Get all music schedules with related data
-            $query = MusicSchedule::with([
-                'episode.program',
-                'creativeWork'
-            ])->orderBy('scheduled_date', 'asc');
-            
-            // Apply status filter if provided
-            if ($statuses) {
-                $query->whereIn('status', $statuses);
-            }
-            
-            $schedules = $query->get();
-            
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'schedules' => $schedules,
-                    'total' => $schedules->count()
-                ],
-                'message' => 'Schedules retrieved successfully'
-            ]);
-            
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve schedules',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
-    }
-
-    /**
-     * Handle Special Budget Decision (Approve/Edit/Reject)
-     */
-    public function handleSpecialBudgetDecision(Request $request, int $approvalId): JsonResponse
-    {
-        try {
-            $user = auth()->user();
-            if ($user->role !== 'Manager Program') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
-            }
-
-            $approval = \App\Models\ProgramApproval::with('approvable.episode.program')->findOrFail($approvalId);
-            
-            // Determine action
-            $action = 'approve';
-            if ($request->is('*/edit')) {
-                $action = 'edit';
-            } elseif ($request->is('*/reject')) {
-                $action = 'reject';
-            }
-
-            // Logic
-            if ($action === 'edit') {
-                 // Update approved amount
-                 $requestData = $approval->request_data ?? [];
-                 $requestData['approved_amount'] = $request->approved_amount;
-                 
-                 $approval->update([
-                     'status' => 'approved',
-                     'approved_by' => $user->id,
-                     'approved_at' => now(),
-                     'approval_notes' => $request->notes,
-                     'request_data' => $requestData // Store approved amount in JSON
-                 ]);
-            } elseif ($action === 'reject') {
-                $approval->update([
-                    'status' => 'rejected',
-                    'approved_by' => $user->id, // Use approved_by for rejecter too in this schema if no rejected_by column
-                    'approved_at' => now(), 
-                    'approval_notes' => $request->reason
-                ]);
-            } else { // Approve
-                 $requestData = $approval->request_data ?? [];
-                 // Default approved amount = requested amount if not set
-                 if (!isset($requestData['approved_amount']) && isset($requestData['amount'])) {
-                    $requestData['approved_amount'] = $requestData['amount'];
-                 }
-                 
-                 $approval->update([
-                     'status' => 'approved',
-                     'approved_by' => $user->id,
-                     'approved_at' => now(),
-                     'approval_notes' => $request->notes,
-                     'request_data' => $requestData
-                 ]);
-            }
-            
-            // Notify Producer - SINGLE INSERT
-            if ($approval->requested_by) {
-                \App\Models\Notification::create([
-                    'user_id' => $approval->requested_by,
-                    'type' => 'special_budget_decision',
-                    'title' => 'Keputusan Budget Khusus',
-                    'message' => "Pengajuan budget khusus Anda telah di-" . ucfirst($approval->status) . ".",
-                    'data' => ['approval_id' => $approval->id]
+                // Notify Creative
+                Notification::create([
+                    'user_id' => $creativeWork->created_by,
+                    'type' => 'special_budget_approved',
+                    'title' => 'Budget Khusus Disetujui',
+                    'message' => $message,
+                    'data' => [
+                        'approval_id' => $approval->id,
+                        'creative_work_id' => $creativeWork->id,
+                        'episode_id' => $creativeWork->episode_id,
+                        'approved_amount' => $approvedAmount
+                    ]
                 ]);
             }
 
             return response()->json([
                 'success' => true, 
                 'data' => $approval, 
-                'message' => "Budget request $action successful"
+                'message' => 'Special budget approved successfully'
             ]);
 
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+            Log::error('Error approving special budget: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to approve special budget',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reject Special Budget
+     * POST /api/live-tv/manager-program/special-budget-approvals/{id}/reject
+     */
+    public function rejectSpecialBudget(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'rejection_notes' => 'required|string|max:2000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $approval = ProgramApproval::with(['approvable.episode.program.productionTeam'])->findOrFail($id);
+
+            if ($approval->approval_type !== 'special_budget') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This is not a special budget approval'
+                ], 400);
+            }
+
+            if ($approval->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This approval has already been processed'
+                ], 400);
+            }
+
+            // Reject approval
+            $approval->reject($user->id, $request->rejection_notes);
+
+            // Update Creative Work
+            $creativeWork = $approval->approvable; // CreativeWork
+            if ($creativeWork) {
+                // ✅ PENTING: Hapus special budget item dari budget_data jika ada
+                $budgetData = $creativeWork->budget_data ?? [];
+                
+                // Filter: hapus item dengan category 'Special Budget' atau is_special_budget = true
+                $budgetData = array_values(array_filter($budgetData, function($item) {
+                    if (is_array($item)) {
+                        // Hapus jika category adalah 'Special Budget' atau is_special_budget = true
+                        return !(
+                            (isset($item['category']) && $item['category'] === 'Special Budget') ||
+                            (isset($item['is_special_budget']) && $item['is_special_budget'] === true)
+                        );
+                    }
+                    return true; // Keep non-array items
+                }));
+                
+                $creativeWork->update([
+                    'budget_data' => $budgetData, // Update budget_data tanpa special budget
+                    'requires_special_budget_approval' => false, // Sudah diproses
+                    'budget_approved' => false, // Budget ditolak
+                    'special_budget_reason' => null // Reset reason
+                ]);
+                
+                Log::info('CreativeWork budget updated after special budget rejection', [
+                    'creative_work_id' => $creativeWork->id,
+                    'budget_data_count' => count($budgetData),
+                    'total_budget' => $creativeWork->total_budget
+                ]);
+
+                // Notify Producer
+                $producer = $creativeWork->episode->program->productionTeam->producer;
+                if ($producer) {
+                    Notification::create([
+                        'user_id' => $producer->id,
+                        'type' => 'special_budget_rejected',
+                        'title' => 'Budget Khusus Ditolak',
+                        'message' => "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah ditolak oleh Manager Program. Alasan: {$request->rejection_notes}. Anda dapat mengedit creative work untuk perbaikan.",
+                        'data' => [
+                            'approval_id' => $approval->id,
+                            'creative_work_id' => $creativeWork->id,
+                            'episode_id' => $creativeWork->episode_id,
+                            'rejection_notes' => $request->rejection_notes
+                        ]
+                    ]);
+                }
+
+                // Notify Creative
+                Notification::create([
+                    'user_id' => $creativeWork->created_by,
+                    'type' => 'special_budget_rejected',
+                    'title' => 'Budget Khusus Ditolak',
+                    'message' => "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah ditolak oleh Manager Program. Alasan: {$request->rejection_notes}. Silakan perbaiki budget dan ajukan kembali.",
+                    'data' => [
+                        'approval_id' => $approval->id,
+                        'creative_work_id' => $creativeWork->id,
+                        'episode_id' => $creativeWork->episode_id,
+                        'rejection_notes' => $request->rejection_notes
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'approval' => $approval->fresh(['approvable', 'rejectedBy']),
+                    'creative_work' => $creativeWork->fresh(['episode', 'specialBudgetApproval'])
+                ],
+                'message' => 'Special budget rejected. Producer and Creative have been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to reject special budget',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 }

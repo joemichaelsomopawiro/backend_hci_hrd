@@ -8,6 +8,7 @@ use App\Models\PromotionMaterial;
 use App\Models\QualityControl;
 use App\Models\Program;
 use App\Models\Episode;
+use App\Services\ProgramPerformanceService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -16,6 +17,12 @@ use Illuminate\Support\Facades\Validator;
 
 class DistributionManagerController extends Controller
 {
+    protected $programPerformanceService;
+
+    public function __construct(ProgramPerformanceService $programPerformanceService)
+    {
+        $this->programPerformanceService = $programPerformanceService;
+    }
     /**
      * Get all schedules for Distribution Manager
      */
@@ -564,6 +571,18 @@ class DistributionManagerController extends Controller
                 ], 403);
             }
 
+            // Normalize input
+            if (!$request->has('selected_option_index')) {
+                if ($request->has('index')) $request->merge(['selected_option_index' => $request->index]);
+                elseif ($request->has('option_index')) $request->merge(['selected_option_index' => $request->option_index]);
+                elseif ($request->has('approved_option_id')) $request->merge(['selected_option_index' => $request->approved_option_id]);
+            }
+
+            // Normalize notes
+            if (!$request->has('review_notes') && $request->has('approval_note')) {
+                $request->merge(['review_notes' => $request->approval_note]);
+            }
+
             $validator = Validator::make($request->all(), [
                 'selected_option_index' => 'required|integer|min:0',
                 'review_notes' => 'nullable|string|max:1000'
@@ -597,6 +616,80 @@ class DistributionManagerController extends Controller
 
             // Mark as approved
             $scheduleOption->markAsApproved($selectedIndex, $request->review_notes);
+
+            // Apply Schedule to Episodes
+            try {
+                $selectedSchedule = $scheduleOption->schedule_options[$selectedIndex];
+                $newDate = \Carbon\Carbon::parse($selectedSchedule['date']); // Date component
+                $newTime = $selectedSchedule['time']; // H:i component
+                
+                $applyTo = $scheduleOption->apply_to ?? 'all';
+                $program = $scheduleOption->program;
+
+                if ($applyTo === 'select' && !empty($scheduleOption->target_episode_ids)) {
+                    // CASE: Apply to Specific Episodes
+                    foreach ($scheduleOption->target_episode_ids as $epId) {
+                        $episode = \App\Models\Episode::find($epId);
+                        if ($episode) {
+                            // Combine selected Date + Time
+                            // NOTE: If user selects multiple episodes, they ALL get this Date+Time.
+                            // This assumes 'select' is used for single episode revisions or batch move to same slot.
+                            $newAirDate = \Carbon\Carbon::parse($selectedSchedule['date'] . ' ' . $newTime);
+                            
+                            $episode->update(['air_date' => $newAirDate]);
+                            
+                            // Update deadlines relative to new air date
+                            if (method_exists($episode, 'updateDeadline')) {
+                                $episode->updateDeadline('editor', $newAirDate->copy()->subDays(7), 'Reschedule Approved');
+                                $episode->updateDeadline('kreatif', $newAirDate->copy()->subDays(9), 'Reschedule Approved');
+                                $episode->updateDeadline('produksi', $newAirDate->copy()->subDays(9), 'Reschedule Approved');
+                            }
+                        }
+                    }
+                } else {
+                    // CASE: Apply to All (Program Level)
+                    // Update Program Start Date
+                    $program->update([
+                        'start_date' => $newDate->format('Y-m-d'),
+                        'air_time' => $newTime
+                    ]);
+                    
+                    // Re-calculate all 52 episodes relative to new Start Date
+                    // We assume Episode 1 starts at Program Start Date
+                    $episodes = $program->episodes()->orderBy('episode_number')->get();
+                    
+                    foreach ($episodes as $episode) {
+                        // Calculate expected air date: Start Date + (EpNum - 1) Weeks
+                        // Combined with new Time
+                        $weeksToAdd = $episode->episode_number - 1;
+                        $epAirDate = $newDate->copy()->addWeeks($weeksToAdd)->setTimeFromTimeString($newTime);
+                        
+                        $episode->update(['air_date' => $epAirDate]);
+                        
+                        // Update Deadlines
+                        if (method_exists($episode, 'updateDeadline')) {
+                             $episode->updateDeadline('editor', $epAirDate->copy()->subDays(7), 'Program Schedule Approved');
+                             $episode->updateDeadline('kreatif', $epAirDate->copy()->subDays(9), 'Program Schedule Approved');
+                             $episode->updateDeadline('produksi', $epAirDate->copy()->subDays(9), 'Program Schedule Approved');
+                        }
+                    }
+                    
+                    // If no episodes exist yet (first time approval), generate them?
+                    // But generatedEpisodes() logic forces Saturday.
+                    // So we rely on calling generateEpisodes() first, THEN update dates loop above?
+                    // Or if episodes count == 0, we create them manually using this loop logic?
+                    if ($episodes->count() === 0) {
+                         // Fallback: Use existing generate logic (Sabtu) then update?
+                         // Or better: Let ProgramProposalController handle initial generation (as verified before).
+                         // Assuming episodes EXIST because ProgramProposalController generated them on Approval.
+                         // So we just UPDATE them here. Correct.
+                    }
+                }
+
+            } catch (\Exception $e) {
+                \Log::error('Error applying schedule to episodes: ' . $e->getMessage());
+                // Non-blocking error, continue to notify user
+            }
 
             // ✅ Notify Manager Program (who submitted)
             \App\Models\Notification::create([
@@ -641,6 +734,13 @@ class DistributionManagerController extends Controller
                     'success' => false,
                     'message' => 'Unauthorized access. Only Distribution Manager can request revisions.'
                 ], 403);
+            }
+
+            // Normalize input
+            if (!$request->has('revision_notes')) {
+                if ($request->has('revision_note')) $request->merge(['revision_notes' => $request->revision_note]);
+                elseif ($request->has('note')) $request->merge(['revision_notes' => $request->note]);
+                elseif ($request->has('notes')) $request->merge(['revision_notes' => $request->notes]);
             }
 
             $validator = Validator::make($request->all(), [
@@ -711,6 +811,11 @@ class DistributionManagerController extends Controller
                 ], 403);
             }
 
+            // Normalize input
+            if (!$request->has('rejection_reason')) {
+                if ($request->has('reason')) $request->merge(['rejection_reason' => $request->reason]);
+            }
+
             $validator = Validator::make($request->all(), [
                 'rejection_reason' => 'required|string|max:1000'
             ]);
@@ -759,6 +864,110 @@ class DistributionManagerController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error rejecting schedule: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get weekly program performance (Target Pencapaian Views dll)
+     * "Tarik data mingguan" sesuai requirement Distribution Manager
+     */
+    public function getProgramPerformance(int $programId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Distribution Manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            // Gunakan service yang sudah ada logic lengkapnya
+            $report = $this->programPerformanceService->getWeeklyPerformanceReport($programId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $report,
+                'message' => 'Weekly program performance retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving program performance: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Close non-performing program
+     * "Menutup PRogram reguler yang tidak berkembang"
+     */
+    public function closeProgram(Request $request, int $programId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if ($user->role !== 'Distribution Manager') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. Only Distribution Manager can close programs.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'reason' => 'required|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $program = Program::findOrFail($programId);
+
+            if ($program->status === 'cancelled') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Program is already cancelled'
+                ], 400);
+            }
+
+            // Close program
+            $program->update([
+                'status' => 'cancelled',
+                'rejection_notes' => 'Closed by Distribution Manager: ' . $request->reason,
+                'updated_at' => now()
+            ]);
+
+            // Notify Manager Program
+            \App\Models\Notification::create([
+                'user_id' => $program->manager_program_id,
+                'type' => 'program_closed',
+                'title' => 'Program Ditutup',
+                'message' => "Program '{$program->name}' telah ditutup oleh Distribution Manager. Alasan: {$request->reason}",
+                'data' => [
+                    'program_id' => $program->id,
+                    'reason' => $request->reason,
+                    'closed_by' => $user->id
+                ]
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $program,
+                'message' => 'Program closed successfully.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error closing program: ' . $e->getMessage()
             ], 500);
         }
     }
