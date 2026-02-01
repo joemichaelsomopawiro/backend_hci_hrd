@@ -100,6 +100,24 @@ class PrCreativeWork extends Model
     }
 
     // Helper Methods
+    // Attributes
+    protected $appends = [
+        'total_budget'
+    ];
+
+    public function getTotalBudgetAttribute(): int
+    {
+        $budget = $this->budget_data ?? [];
+
+        $host = $budget['talent']['host'] ?? 0;
+        $guest = $budget['talent']['guest'] ?? 0;
+        $location = $budget['logistik']['location'] ?? 0;
+        $konsumsi = $budget['logistik']['konsumsi'] ?? 0;
+        $operasional = $budget['operasional'] ?? 0;
+
+        return (int) ($host + $guest + $location + $konsumsi + $operasional);
+    }
+
     public function isFullyApproved(): bool
     {
         $scriptOk = $this->script_approved === true;
