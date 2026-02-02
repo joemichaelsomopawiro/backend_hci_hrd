@@ -1492,6 +1492,8 @@ class ManagerProgramController extends Controller
         }
     }
     
+
+
     /**
      * Manually close program
      */
@@ -3516,3 +3518,4 @@ class ManagerProgramController extends Controller
         }
     }
 }
+

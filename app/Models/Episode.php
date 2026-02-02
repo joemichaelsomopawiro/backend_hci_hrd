@@ -267,6 +267,16 @@ class Episode extends Model
     }
 
     /**
+     * Relationship dengan Produksi Works
+     */
+    public function produksiWorks(): HasMany
+    {
+        return $this->hasMany(ProduksiWork::class);
+    }
+
+
+
+    /**
      * Relationship dengan Sound Engineer Recordings
      */
     public function soundEngineerRecordings(): HasMany

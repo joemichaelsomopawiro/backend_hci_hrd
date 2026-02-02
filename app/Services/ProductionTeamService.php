@@ -218,9 +218,9 @@ class ProductionTeamService
      */
     public function getAvailableUsersForRole(string $role): array
     {
-        // Special logic for Tim Syuting (production) and Tim Setting (art_set_design)
+        // Special logic for Tim Syuting (production), Tim Setting (art_set_design), and Tim Vocal (sound_eng)
         // Producer can select ANY user (except Managers) for these roles
-        if (in_array($role, ['production', 'art_set_design'])) {
+        if (in_array($role, ['production', 'art_set_design', 'sound_eng'])) {
              $users = User::whereNotIn('role', ['Manager Program', 'Program Manager', 'General Manager', 'Administrator'])
                 ->where('is_active', true)
                 ->get();

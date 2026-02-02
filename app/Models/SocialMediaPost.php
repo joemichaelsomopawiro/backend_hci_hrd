@@ -33,6 +33,7 @@ class SocialMediaPost extends Model
         'engagement_metrics',
         'notes',
         'proof_file_path',
+        'proof_file_link', // New: External link for proof
         'proof_file_name',
         'proof_type',
         'proof_notes',

@@ -27,6 +27,7 @@ use Illuminate\Support\Facades\DB;
 
 class ProducerController extends Controller
 {
+
     /**
      * Get approvals pending
      */
@@ -117,23 +118,17 @@ class ProducerController extends Controller
                 })->toArray()
             ]);
             
-            // Hanya include arrangement yang benar-benar siap untuk di-review oleh Producer:
             // 1. Status arrangement_submitted atau submitted (arrangement file yang sudah di-submit)
-            // 2. Status arrangement_in_progress yang sudah punya file (fallback jika auto-submit belum jalan)
-            // 3. Status song_approved yang sudah punya file (fallback jika auto-submit belum jalan)
-            // TIDAK include arrangement_in_progress yang belum punya file (itu hanya info, bukan pending approval)
+            // 2. Status arrangement_in_progress yang sudah punya file atau link (fallback jika auto-submit belum jalan)
+            // 3. Status song_approved yang sudah punya file atau link (fallback jika auto-submit belum jalan)
             $allMusicArrangements = MusicArrangement::where(function ($q) {
                     $q->whereIn('status', ['submitted', 'arrangement_submitted'])
                       ->orWhere(function ($subQ) {
-                          // Include arrangement_in_progress yang sudah punya file (fallback)
-                          // Jika belum punya file, berarti Music Arranger masih mengerjakan, bukan pending approval
-                          $subQ->where('status', 'arrangement_in_progress')
-                               ->whereNotNull('file_path');
-                      })
-                      ->orWhere(function ($subQ) {
-                          // Include song_approved yang sudah punya file (fallback)
-                          $subQ->where('status', 'song_approved')
-                               ->whereNotNull('file_path');
+                          $subQ->whereIn('status', ['arrangement_in_progress', 'song_approved'])
+                               ->where(function($f) {
+                                   $f->whereNotNull('file_path')
+                                     ->orWhereNotNull('file_link');
+                               });
                       });
                 })
                 ->with([
@@ -260,7 +255,7 @@ class ProducerController extends Controller
                     return [
                         'id' => $arr->id,
                         'status' => $arr->status,
-                        'has_file' => !empty($arr->file_path),
+                        'has_file' => !empty($arr->file_path) || !empty($arr->file_link),
                         'episode_id' => $arr->episode_id,
                         'episode_production_team_id' => $episode->production_team_id ?? null,
                         'program_production_team_id' => $program->production_team_id ?? null,
@@ -285,19 +280,43 @@ class ProducerController extends Controller
             // Creative works pending approval
             $creativeWorks = CreativeWork::where('status', 'submitted')
                 ->with(['episode', 'createdBy', 'specialBudgetApproval'])
+                ->where(function ($q) use ($user) {
+                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    })
+                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    });
+                })
                 ->get();
             
             // Equipment requests pending approval
             $equipmentRequests = ProductionEquipment::where('status', 'pending')
                 ->with(['episode', 'requestedBy'])
+                ->where(function ($q) use ($user) {
+                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    })
+                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    });
+                })
                 ->get();
             
             // Budget requests pending approval
             $budgetRequests = Budget::where('status', 'submitted')
                 ->with(['episode', 'requestedBy'])
+                ->where(function ($q) use ($user) {
+                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    })
+                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    });
+                })
                 ->get();
 
-            // Sound Engineer Recordings pending QC (completed recordings yang belum direview)
+            // Sound Engineer Recordings pending QC
             $soundEngineerRecordings = SoundEngineerRecording::where('status', 'completed')
                 ->whereNull('reviewed_by')
                 ->with(['episode.productionTeam', 'episode.program.productionTeam', 'musicArrangement', 'createdBy'])
@@ -341,8 +360,8 @@ class ProducerController extends Controller
             $musicArrangementsArray = $musicArrangements->toArray();
             
             $approvals = [
-                'song_proposals' => $songProposals, // New: Song proposals (lagu & penyanyi)
-                'music_arrangements' => $musicArrangementsArray, // Arrangement files (converted to array)
+                'song_proposals' => $songProposals,
+                'music_arrangements' => $musicArrangementsArray,
                 'creative_works' => $creativeWorks,
                 'equipment_requests' => $equipmentRequests,
                 'budget_requests' => $budgetRequests,
@@ -1881,12 +1900,13 @@ class ProducerController extends Controller
             }
 
             // ENHANCED: Allow Producer to select ANY active user (not restricted to production team)
-            // Get all active users in the system
+            // BUT EXCLUDE MANAGERS as per business rule ("kecuali manager gabisa yah")
             $allActiveUsers = \App\Models\User::where('is_active', true)
+                ->where('role', 'not like', '%Manager%') // Exclude Manager Program, Manager Broadcasting, Distribution Manager, etc.
                 ->pluck('id')
                 ->toArray();
 
-            // Validate all selected team members are valid active users
+            // Validate all selected team members are valid active users (and NOT managers)
             $allTeamMemberIds = array_merge(
                 $request->shooting_team_ids ?? [],
                 $request->setting_team_ids ?? [],
@@ -4498,16 +4518,7 @@ class ProducerController extends Controller
                     'tasks_created' => array_keys($createdTasks)
                 ], $request);
 
-                return response()->json([
-                    'success' => true,
-                    'data' => $creativeWork->fresh(['episode', 'specialBudgetApproval']),
-                    'message' => 'Creative work approved successfully. ' . count($rolesToNotify) . ' team roles notified simultaneously.' . ($recordingId ? ' Sound Engineer also notified for vocal recording.' : '')
-                                    ]
-                                ]);
-                            }
-                        }
-                    }
-                }
+
 
                 // Update workflow state
                 if ($creativeWork->episode->current_workflow_state === 'creative_work') {
@@ -5342,6 +5353,9 @@ class ProducerController extends Controller
                 'producer_modified_data' => $producerModifiedData
             ]);
 
+            // Trigger post approval actions (Budget, etc.)
+            $this->triggerPostCreativeApproval($creativeWork, $user);
+
             // Notify Creative - SINGLE INSERT
             Notification::create([
                 'user_id' => $creativeWork->created_by,
@@ -5366,62 +5380,7 @@ class ProducerController extends Controller
      * Producer Request Special Budget
      * POST /api/live-tv/producer/creative-works/{id}/request-special-budget
      */
-    public function requestSpecialBudget(Request $request, int $creativeWorkId): JsonResponse
-    {
-        try {
-            $user = auth()->user();
-            if (!$user || $user->role !== 'Producer') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
-            }
 
-            $creativeWork = CreativeWork::with('episode.program')->findOrFail($creativeWorkId);
 
-            // Create ProgramApproval
-            $approval = ProgramApproval::create([
-                'approvable_type' => CreativeWork::class,
-                'approvable_id' => $creativeWork->id,
-                'approval_type' => 'special_budget',
-                'requested_by' => $user->id,
-                'request_data' => $request->budget_data, // The specific special budget item/reason
-                'status' => 'pending',
-                'requested_at' => now(),
-                'request_notes' => $request->reason ?? 'Special Budget Request'
-            ]);
 
-            $creativeWork->update([
-                'special_budget_approval_id' => $approval->id,
-                'requires_special_budget_approval' => true,
-                'special_budget_reason' => $request->reason
-            ]);
-
-            // Notify Manager Program - Find user with role 'Manager Program'
-            $managers = \App\Models\User::where('role', 'Manager Program')->get();
-            $notifications = [];
-            $now = now();
-            
-            foreach ($managers as $manager) {
-                $notifications[] = [
-                    'user_id' => $manager->id,
-                    'type' => 'special_budget_request',
-                    'title' => 'Pengajuan Budget Khusus',
-                    'message' => "Producer {$user->name} mengajukan budget khusus untuk Creative Work Episode {$creativeWork->episode->episode_number}.",
-                    'data' => json_encode(['approval_id' => $approval->id, 'program_id' => $creativeWork->episode->program_id]),
-                    'created_at' => $now,
-                    'updated_at' => $now
-                ];
-            }
-            
-            if (!empty($notifications)) {
-                DB::table('notifications')->insert($notifications);
-            }
-
-            return response()->json([
-                'success' => true, 
-                'data' => $approval, 
-                'message' => 'Special budget requested successfully'
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
-        }
-    }
-
+}
