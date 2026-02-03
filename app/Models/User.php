@@ -57,6 +57,14 @@ class User extends Authenticatable
         return $this->hasMany(Team::class, 'team_lead_id');
     }
 
+    /**
+     * Relationship dengan Production Team Members
+     */
+    public function productionTeamMembers()
+    {
+        return $this->hasMany(ProductionTeamMember::class, 'user_id');
+    }
+
     public function getProfilePictureUrlAttribute()
     {
         if ($this->profile_picture) {

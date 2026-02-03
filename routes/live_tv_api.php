@@ -191,6 +191,7 @@ Route::prefix('episodes')->middleware('auth:sanctum')->group(function () {
     Route::get('/{id}/workflow-history', [EpisodeController::class, 'workflowHistory']);
     Route::get('/{id}/current-workflow-state', [EpisodeController::class, 'currentWorkflowState']);
     Route::get('/{id}/progress', [EpisodeController::class, 'progress']);
+    Route::get('/{id}/monitor-workflow', [EpisodeController::class, 'monitorWorkflow']);
     Route::get('/{id}/deadlines', [EpisodeController::class, 'deadlines']);
     Route::get('/{id}/media-files', [EpisodeController::class, 'mediaFiles']);
     

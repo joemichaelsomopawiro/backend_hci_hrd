@@ -43,7 +43,8 @@ return new class extends Migration
                 'passed',           // Lulus QC
                 'failed',           // Gagal QC
                 'revision_needed',  // Perlu revisi
-                'approved'          // Disetujui
+                'approved',         // Disetujui
+                'completed'         // Selesai QC
             ])->default('pending');
             $table->foreignId('reviewed_by')->nullable()->constrained('users')->onDelete('set null');
             $table->timestamp('reviewed_at')->nullable();

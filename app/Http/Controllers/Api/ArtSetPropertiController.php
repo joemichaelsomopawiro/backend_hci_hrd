@@ -528,7 +528,7 @@ class ArtSetPropertiController extends Controller
     private function notifyEquipmentApproved($equipment): void
     {
         Notification::create([
-            'user_id' => $equipment->created_by,
+            'user_id' => $equipment->requested_by,
             'type' => 'equipment_approved',
             'title' => 'Equipment Request Approved',
             'message' => "Your equipment request for episode {$equipment->episode->episode_number} has been approved.",

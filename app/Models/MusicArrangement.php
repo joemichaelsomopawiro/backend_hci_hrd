@@ -39,6 +39,7 @@ class MusicArrangement extends Model
         'sound_engineer_helper_id',
         'sound_engineer_help_notes',
         'sound_engineer_help_at',
+        'sound_engineer_help_file_link', // New: Link for help file from SE
         'needs_sound_engineer_help'
     ];
 

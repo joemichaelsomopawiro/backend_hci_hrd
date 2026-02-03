@@ -960,7 +960,7 @@ class DesignGrafisController extends Controller
 
             if (!$existingQCWork) {
                 // Auto-create QualityControlWork
-                $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
                 if ($qcUsers->isNotEmpty()) {
                     $qcWork = \App\Models\QualityControlWork::create([
                         'episode_id' => $work->episode_id,
@@ -980,8 +980,7 @@ class DesignGrafisController extends Controller
                         'created_by' => $qcUsers->first()->id
                     ]);
 
-                    // Notify QC users
-                    // Notify QC users
+                    // Notify QC users and related managers
                     $notifications = [];
                     $now = now();
                     foreach ($qcUsers as $qcUser) {
@@ -1023,8 +1022,8 @@ class DesignGrafisController extends Controller
                     'status' => 'pending' // Reset to pending for re-review
                 ]);
 
-                // Notify QC users
-                $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                // Notify QC users and related managers
+                $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
                 $notifications = [];
                 $now = now();
 
@@ -1159,33 +1158,45 @@ class DesignGrafisController extends Controller
         }
 
         // Get files from Promosi (talent photos)
-        $promotionWork = PromotionWork::where('episode_id', $episodeId)
-            ->whereIn('status', ['editing', 'review', 'approved', 'published'])
-            ->first();
+    $promotionWork = PromotionWork::where('episode_id', $episodeId)
+        ->whereIn('status', ['editing', 'review', 'approved', 'published'])
+        ->first();
 
-        if ($promotionWork && !empty($promotionWork->file_paths)) {
-            // Filter hanya talent photos
+    if ($promotionWork) {
+        $talentPhotos = [];
+        
+        // Check file_links (new strategy)
+        if (!empty($promotionWork->file_links)) {
+            $talentPhotos = array_filter($promotionWork->file_links, function($file) {
+                return isset($file['type']) && $file['type'] === 'talent_photo';
+            });
+        }
+        
+        // fallback to file_paths (old strategy)
+        if (empty($talentPhotos) && !empty($promotionWork->file_paths)) {
             $talentPhotos = array_filter($promotionWork->file_paths, function($file) {
                 return isset($file['type']) && $file['type'] === 'talent_photo';
             });
+        }
 
-            if (!empty($talentPhotos)) {
-                $sourceFiles['promosi_files'] = [
-                    'promotion_work_id' => $promotionWork->id,
-                    'talent_photos' => array_values($talentPhotos),
-                    'available' => true
-                ];
-            } else {
-                $sourceFiles['promosi_files'] = [
-                    'available' => false,
-                    'message' => 'Talent photos not available yet'
-                ];
-            }
+        if (!empty($talentPhotos)) {
+            $sourceFiles['promosi_files'] = [
+                'promotion_work_id' => $promotionWork->id,
+                'talent_photos' => array_values($talentPhotos),
+                'available' => true
+            ];
         } else {
             $sourceFiles['promosi_files'] = [
                 'available' => false,
-                'message' => 'Promotion work not completed yet'
+                'message' => 'Talent photos not available yet or no links found'
             ];
+        }
+    } else {
+        $sourceFiles['promosi_files'] = [
+            'available' => false,
+            'message' => 'Promotion work not found or not in progress'
+        ];
+    }
         }
 
         return $sourceFiles;

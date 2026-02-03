@@ -167,54 +167,33 @@ class MusicArrangerController extends Controller
             $songTitle = $request->song_title;
             $songId = $request->song_id;
             
-            // Jika pilih dari database, ambil song_title
-            if ($songId && !$songTitle) {
+            // Auto-save Song to master data
+            if ($songTitle && (!$songId || $request->has('song_title'))) {
+                $song = \App\Models\Song::firstOrCreate(
+                    ['title' => $songTitle],
+                    ['status' => 'available', 'created_by' => $user->id]
+                );
+                $songId = $song->id;
+                $songTitle = $song->title;
+            } elseif ($songId && !$songTitle) {
                 $song = \App\Models\Song::find($songId);
                 if ($song) $songTitle = $song->title;
-            }
-            
-            // Jika input manual song_title, auto-save ke database jika belum ada
-            if ($songTitle && !$songId) {
-                $existingSong = \App\Models\Song::where('title', $songTitle)->first();
-                if ($existingSong) {
-                    // Jika sudah ada, gunakan yang sudah ada
-                    $songId = $existingSong->id;
-                    $songTitle = $existingSong->title;
-                } else {
-                    // Jika belum ada, create song baru ke database
-                    $newSong = \App\Models\Song::create([
-                        'title' => $songTitle,
-                        'status' => 'available',
-                        'created_by' => $user->id
-                    ]);
-                    $songId = $newSong->id;
-                }
             }
 
             $singerName = $request->singer_name;
             $singerId = $request->singer_id;
             
-            // Jika pilih dari database, ambil singer_name
-            if ($singerId && !$singerName) {
+            // Auto-save Singer to master data
+            if ($singerName && (!$singerId || $request->has('singer_name'))) {
+                $singer = \App\Models\Singer::firstOrCreate(
+                    ['name' => $singerName],
+                    ['is_active' => true]
+                );
+                $singerId = $singer->id;
+                $singerName = $singer->name;
+            } elseif ($singerId && !$singerName) {
                 $singer = \App\Models\Singer::find($singerId);
                 if ($singer) $singerName = $singer->name;
-            }
-            
-            // Jika input manual singer_name, auto-save ke singers table (master data)
-            if ($singerName && !$singerId) {
-                $existingSinger = \App\Models\Singer::where('name', $singerName)->first();
-                if ($existingSinger) {
-                    // Jika sudah ada, gunakan yang sudah ada
-                    $singerId = $existingSinger->id;
-                    $singerName = $existingSinger->name;
-                } else {
-                    // Jika belum ada, create singer baru ke singers table (BUKAN User table!)
-                    $newSinger = \App\Models\Singer::create([
-                        'name' => $singerName,
-                        'is_active' => true
-                    ]);
-                    $singerId = $newSinger->id;
-                }
             }
 
 
@@ -293,10 +272,104 @@ class MusicArrangerController extends Controller
         }
     }
 
+    /**
+     * Update Music Arrangement / Song Proposal
+     */
     public function update(Request $request, $id): JsonResponse
     {
-        // ... (Logika update yang sudah ada tetap sama)
-        return $this->uploadFile($request, $id); 
+        try {
+            $user = Auth::user();
+            $arrangement = MusicArrangement::findOrFail($id);
+
+            // Validate Music Arranger is the creator
+            if ($arrangement->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You can only update your own arrangements.'
+                ], 403);
+            }
+
+            // Allow modification if status is draft, song_proposal, or song_rejected
+            $allowedStatuses = ['draft', 'song_proposal', 'song_rejected', 'arrangement_in_progress', 'arrangement_rejected'];
+            if (!in_array($arrangement->status, $allowedStatuses)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Cannot update arrangement with status '{$arrangement->status}'."
+                ], 400);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'song_id' => 'nullable|exists:songs,id',
+                'song_title' => 'nullable|string|max:255',
+                'singer_id' => 'nullable|exists:singers,id',
+                'singer_name' => 'nullable|string|max:255',
+                'arrangement_notes' => 'nullable|string',
+                'file_link' => 'nullable|url|max:2048',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $songTitle = $request->song_title ?? $arrangement->song_title;
+            $songId = $request->song_id ?? $arrangement->song_id;
+            
+            // Auto-save Song to master data
+            if ($songTitle && ($request->has('song_title') || !$songId)) {
+                $song = \App\Models\Song::firstOrCreate(
+                    ['title' => $songTitle],
+                    ['status' => 'available', 'created_by' => $user->id]
+                );
+                $songId = $song->id;
+                $songTitle = $song->title;
+            }
+
+            $singerName = $request->singer_name ?? $arrangement->singer_name;
+            $singerId = $request->singer_id ?? $arrangement->singer_id;
+
+            // Auto-save Singer to master data
+            if ($singerName && ($request->has('singer_name') || !$singerId)) {
+                $singer = \App\Models\Singer::firstOrCreate(
+                    ['name' => $singerName],
+                    ['is_active' => true]
+                );
+                $singerId = $singer->id;
+                $singerName = $singer->name;
+            }
+
+            $updateData = [
+                'song_id' => $songId,
+                'song_title' => $songTitle,
+                'singer_id' => $singerId,
+                'singer_name' => $singerName,
+                'arrangement_notes' => $request->arrangement_notes ?? $arrangement->arrangement_notes,
+                'file_link' => $request->file_link ?? $arrangement->file_link,
+            ];
+
+            // If it was rejected, reset to appropriate submission status
+            if ($arrangement->status === 'song_rejected') {
+                $updateData['status'] = 'song_proposal';
+                $updateData['submitted_at'] = now();
+            }
+
+            $arrangement->update($updateData);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Arrangement updated successfully.',
+                'data' => $arrangement->fresh()
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error updating arrangement: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function uploadFile(Request $request, $id): JsonResponse

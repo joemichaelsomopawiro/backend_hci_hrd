@@ -896,6 +896,23 @@ class EditorController extends Controller
                 ]);
             }
 
+            // Notify Manager Broadcasting and Distribution Manager for QC
+            $qcManagers = \App\Models\User::whereIn('role', ['Manager Broadcasting', 'Distribution Manager'])->get();
+            foreach ($qcManagers as $qcManager) {
+                Notification::create([
+                    'user_id' => $qcManager->id,
+                    'type' => 'editor_work_submitted_to_qc',
+                    'title' => 'Materi Episode Siap QC',
+                    'message' => "Editor {$user->name} telah submit hasil editing untuk Episode {$episode->episode_number}. Produk siap untuk dilakukan Quality Control.",
+                    'data' => [
+                        'editor_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
+                        'file_link' => $work->file_link,
+                        'submission_notes' => $request->submission_notes
+                    ]
+                ]);
+            }
+
             // Auto-create PromotionWork for Editor Promosi (multiple work types)
             $editorPromosiWorkTypes = [
                 'bts_video' => 'Edit Video BTS',
@@ -1007,8 +1024,8 @@ class EditorController extends Controller
                     'created_by' => $user->id // Assign ke Editor yang submit (akan diganti saat QC accept)
                 ]);
 
-                // Notify Quality Control
-                $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                // Notify Quality Control and related managers
+                $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
                 $qcNotifications = [];
                 $now = now();
 

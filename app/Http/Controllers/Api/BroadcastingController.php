@@ -811,7 +811,9 @@ class BroadcastingController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'completion_notes' => 'nullable|string|max:1000'
+                'completion_notes' => 'nullable|string|max:1000',
+                'youtube_url' => 'nullable|url',
+                'website_url' => 'nullable|url'
             ]);
 
             if ($validator->fails()) {
@@ -829,6 +831,15 @@ class BroadcastingController extends Controller
                     'success' => false,
                     'message' => 'Unauthorized to complete this work.'
                 ], 403);
+            }
+
+            // Update URLs if provided in the request
+            if ($request->has('youtube_url')) {
+                $work->youtube_url = $request->youtube_url;
+                $work->youtube_video_id = $this->extractYouTubeVideoId($request->youtube_url);
+            }
+            if ($request->has('website_url')) {
+                $work->website_url = $request->website_url;
             }
 
             // Validate that YouTube or Website URL is set

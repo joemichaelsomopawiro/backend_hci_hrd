@@ -437,23 +437,54 @@ class ProduksiController extends Controller
             // Clear cache
             QueryOptimizer::clearAllIndexCaches();
 
-            // Notify Producer
-            $episode = $work->episode;
-            $productionTeam = $episode->program->productionTeam;
-            $producer = $productionTeam ? $productionTeam->producer : null;
-            
-            if ($producer) {
-                Notification::create([
-                    'user_id' => $producer->id,
-                    'type' => 'produksi_work_completed',
-                    'title' => 'Produksi Work Selesai',
-                    'message' => "Produksi telah menyelesaikan pekerjaan untuk Episode {$episode->episode_number}.",
-                    'data' => [
-                        'produksi_work_id' => $work->id,
-                        'episode_id' => $work->episode_id
-                    ]
-                ]);
-            }
+            // Notify related roles
+        $episode = $work->episode;
+        $productionTeam = $episode->program->productionTeam;
+        
+        // 1. Notify Producer
+        $producer = $productionTeam ? $productionTeam->producer : null;
+        if ($producer) {
+            Notification::create([
+                'user_id' => $producer->id,
+                'type' => 'produksi_work_completed',
+                'title' => 'Produksi Work Selesai',
+                'message' => "Produksi telah menyelesaikan pekerjaan untuk Episode {$episode->episode_number}.",
+                'data' => [
+                    'produksi_work_id' => $work->id,
+                    'episode_id' => $work->episode_id
+                ]
+            ]);
+        }
+
+        // 2. Notify Editor
+        $editors = \App\Models\User::where('role', 'Editor')->get();
+        foreach ($editors as $editor) {
+            Notification::create([
+                'user_id' => $editor->id,
+                'type' => 'shooting_finished_editor',
+                'title' => 'Selesai Syuting - File Siap Dicek',
+                'message' => "Proses syuting Episode {$episode->episode_number} telah selesai. Silakan cek kelengkapan file.",
+                'data' => [
+                    'produksi_work_id' => $work->id,
+                    'episode_id' => $work->episode_id
+                ]
+            ]);
+        }
+
+        // 3. Notify Design Grafis
+        $designers = \App\Models\User::where('role', 'Graphic Design')->get();
+        foreach ($designers as $designer) {
+            Notification::create([
+                'user_id' => $designer->id,
+                'type' => 'shooting_finished_design',
+                'title' => 'Selesai Syuting - Buat Thumbnail',
+                'message' => "Proses syuting Episode {$episode->episode_number} telah selesai. Silakan ambil file untuk pembuatan thumbnail.",
+                'data' => [
+                    'produksi_work_id' => $work->id,
+                    'episode_id' => $work->episode_id
+                ]
+            ]);
+        }    
 
             return response()->json([
                 'success' => true,
@@ -1144,10 +1175,188 @@ class ProduksiController extends Controller
                 'message' => 'Producer request ' . ($request->action === 'accept' ? 'accepted' : 'rejected') . ' successfully. Producer has been notified.'
             ]);
 
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to process producer request: ' . $e->getMessage()
+                ], 500);
+            }
+        }
+    /**
+     * Return Equipment to Art & Set Properti
+     * POST /api/live-tv/roles/produksi/works/{id}/return-equipment
+     */
+    public function returnEquipment(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            // Only accept 'Production' role (English)
+            if (!$user || $user->role !== 'Production') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'equipment_request_ids' => 'required|array|min:1',
+                'equipment_request_ids.*' => 'required|integer|exists:production_equipment,id',
+                'return_condition' => 'required|array|min:1',
+                'return_condition.*.equipment_request_id' => 'required|integer',
+                'return_condition.*.condition' => 'required|in:good,damaged,lost',
+                'return_condition.*.notes' => 'nullable|string|max:1000',
+                'return_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = ProduksiWork::with(['episode'])->findOrFail($id);
+
+            // Check if user has access
+            if ($work->created_by !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This work is not assigned to you.'
+                ], 403);
+            }
+
+            $equipmentRequestIds = $request->equipment_request_ids;
+            $returnConditions = collect($request->return_condition)->keyBy('equipment_request_id');
+            
+            $returnedEquipment = [];
+            $failedEquipment = [];
+
+            foreach ($equipmentRequestIds as $equipmentRequestId) {
+                $equipment = ProductionEquipment::find($equipmentRequestId);
+                
+                if (!$equipment) {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => 'Equipment request not found'
+                    ];
+                    continue;
+                }
+
+                // Verify equipment belongs to this work's episode
+                if ($equipment->episode_id !== $work->episode_id) {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => 'Equipment request does not belong to this episode'
+                    ];
+                    continue;
+                }
+
+                // Verify equipment was requested by this user (or for this work)
+                if ($equipment->requested_by !== $user->id) {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => 'Equipment request was not created by you'
+                    ];
+                    continue;
+                }
+
+                // Verify equipment is approved or in_use
+                if ($equipment->status !== 'approved' && $equipment->status !== 'in_use') {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => "Equipment is not in approved or in_use status (current: {$equipment->status})"
+                    ];
+                    continue;
+                }
+
+                // Get return condition
+                $conditionData = $returnConditions->get($equipmentRequestId);
+                if (!$conditionData) {
+                    $failedEquipment[] = [
+                        'equipment_request_id' => $equipmentRequestId,
+                        'reason' => 'Return condition not provided'
+                    ];
+                    continue;
+                }
+
+                // Update equipment status to returned
+                $equipment->update([
+                    'status' => 'returned',
+                    'return_condition' => $conditionData['condition'],
+                    'return_notes' => ($conditionData['notes'] ?? '') . ($request->return_notes ? "\n" . $request->return_notes : ''),
+                    'returned_at' => now()
+                ]);
+
+                // Update EquipmentInventory if exists
+                if ($equipment->equipment_id) {
+                    $inventory = EquipmentInventory::find($equipment->equipment_id);
+                    if ($inventory) {
+                        $inventory->update(['status' => 'available']);
+                    }
+                }
+
+                $returnedEquipment[] = $equipment->fresh();
+            }
+
+            // Notify Art & Set Properti
+            if (!empty($returnedEquipment)) {
+                $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
+                $equipmentNames = collect($returnedEquipment)->map(function($eq) {
+                    return is_array($eq->equipment_list) ? implode(', ', $eq->equipment_list) : ($eq->equipment_list ?? 'N/A');
+                })->implode('; ');
+
+                foreach ($artSetUsers as $artSetUser) {
+                    Notification::create([
+                        'user_id' => $artSetUser->id,
+                        'type' => 'equipment_returned',
+                        'title' => 'Alat Dikembalikan oleh Produksi',
+                        'message' => "Tim Produksi {$user->name} telah mengembalikan alat untuk Episode {$work->episode->episode_number}. Alat: {$equipmentNames}",
+                        'data' => [
+                            'produksi_work_id' => $work->id,
+                            'episode_id' => $work->episode_id,
+                            'equipment_request_ids' => collect($returnedEquipment)->pluck('id')->toArray(),
+                            'equipment_list' => $equipmentNames,
+                            'returned_by' => $user->id
+                        ]
+                    ]);
+                }
+
+                // Audit logging
+                ControllerSecurityHelper::logCrud('produksi_equipment_returned', $work, [
+                    'equipment_count' => count($returnedEquipment),
+                    'equipment_request_ids' => collect($returnedEquipment)->pluck('id')->toArray(),
+                    'failed_count' => count($failedEquipment)
+                ], $request);
+            }
+
+            if (!empty($failedEquipment)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'work' => $work->fresh(['episode']),
+                        'returned_equipment' => $returnedEquipment,
+                        'failed_equipment' => $failedEquipment
+                    ],
+                    'message' => count($returnedEquipment) . ' equipment returned successfully. ' . count($failedEquipment) . ' equipment failed to return.',
+                    'warnings' => $failedEquipment
+                ], 207);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'work' => $work->fresh(['episode']),
+                    'returned_equipment' => $returnedEquipment
+                ],
+                'message' => 'Equipment returned successfully. Art & Set Properti has been notified.'
+            ]);
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error accepting producer request: ' . $e->getMessage()
+                'message' => 'Error returning equipment: ' . $e->getMessage()
             ], 500);
         }
     }

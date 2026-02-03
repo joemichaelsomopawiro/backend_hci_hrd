@@ -385,7 +385,7 @@ class SoundEngineerController extends Controller
     /**
      * Complete recording
      */
-    public function completeRecording(int $id): JsonResponse
+    public function completeRecording(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
@@ -424,8 +424,27 @@ class SoundEngineerController extends Controller
                     'message' => 'Only active recordings can be completed'
                 ], 400);
             }
+
+            $validator = Validator::make($request->all(), [
+                'vocal_file_link' => 'required|url|max:2048',
+                'recording_notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
             
-            $recording->completeRecording();
+            // Update recording with link and status
+            $recording->update([
+                'status' => 'completed',
+                'recording_completed_at' => now(),
+                'file_link' => $request->vocal_file_link,
+                'recording_notes' => $request->recording_notes ?? $recording->recording_notes
+            ]);
             
             // Auto-create Sound Engineer Editing task
             $existingEditing = \App\Models\SoundEngineerEditing::where('episode_id', $recording->episode_id)
@@ -438,8 +457,8 @@ class SoundEngineerController extends Controller
                     'sound_engineer_recording_id' => $recording->id,
                     'sound_engineer_id' => $user->id,
                     'vocal_file_path' => $recording->file_path ?? null, // Copy recording file path (backward compatibility)
-                    'vocal_file_link' => $recording->file_link ?? null, // Copy recording file link (new)
-                    'editing_notes' => "Editing task created automatically from completed recording. Recording notes: " . ($recording->recording_notes ?? 'N/A'),
+                    'vocal_file_link' => $request->vocal_file_link, // Use the new link
+                    'editing_notes' => "Editing task created automatically from completed recording. Recording notes: " . ($request->recording_notes ?? 'N/A'),
                     'status' => 'in_progress',
                     'created_by' => $user->id
                 ]);
@@ -463,7 +482,7 @@ class SoundEngineerController extends Controller
                 }
                 
                 // Update workflow state to sound_engineering if needed
-                if ($episode->current_workflow_state === 'production' || $episode->current_workflow_state === 'production_planning') {
+                if ($episode->current_workflow_state === 'production' || $episode->current_workflow_state === 'production_planning' || $episode->current_workflow_state === 'shooting_recording') {
                     $workflowService = app(\App\Services\WorkflowStateService::class);
                     $workflowService->updateWorkflowState(
                         $episode,
@@ -478,7 +497,7 @@ class SoundEngineerController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $recording->load(['episode', 'musicArrangement', 'createdBy']),
-                'message' => 'Recording completed successfully. Editing task created automatically.'
+                'message' => 'Recording completed successfully. Vocal file link saved and editing task created automatically.'
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -1295,6 +1314,7 @@ class SoundEngineerController extends Controller
                 'help_notes' => 'required|string|max:2000',
                 'suggested_fixes' => 'nullable|string|max:2000',
                 'file' => 'nullable|file|mimes:mp3,wav,midi|max:102400', // Optional: upload fixed arrangement file (100MB max)
+                'help_file_link' => 'nullable|url|max:2048', // Optional: link to fixed arrangement
             ]);
 
             if ($validator->fails()) {
@@ -1340,37 +1360,43 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            // Request help (mark arrangement as needing help and assign Sound Engineer)
-            $arrangement->requestSoundEngineerHelp($user->id, $request->help_notes);
-
             // Prepare update data
-            $updateData = [];
+            // Mark help as provided
+            $updateData = [
+                'needs_sound_engineer_help' => false,
+                'sound_engineer_helper_id' => $user->id,
+                'sound_engineer_help_at' => now(),
+                'sound_engineer_help_notes' => $request->help_notes
+            ];
 
             // Update arrangement with suggested fixes if provided
             if ($request->has('suggested_fixes')) {
                 $updateData['arrangement_notes'] = ($arrangement->arrangement_notes ?? '') . "\n\n[Sound Engineer Help] " . $request->suggested_fixes;
             }
 
+            // Handle Help File Link
+            if ($request->has('help_file_link')) {
+                $updateData['sound_engineer_help_file_link'] = $request->help_file_link;
+            }
+
             // Handle file upload if provided
+            $fileUploaded = false;
             if ($request->hasFile('file')) {
                 try {
-                    // Delete old file if exists
-                    if ($arrangement->file_path && Storage::disk('public')->exists($arrangement->file_path)) {
-                        Storage::disk('public')->delete($arrangement->file_path);
-                    }
-
+                    // Start saving file logic
                     $file = $request->file('file');
                     $filePath = $file->store('music-arrangements', 'public');
+                    
+                    // We save the file info but we DO NOT submit it as the "main" file yet.
+                    // Or do we? The requirement is "Submit Link to Arranger".
+                    // If we overwrite file_path, the Arranger sees it. 
+                    // Let's overwrite file_path so Arranger can download it, BUT do NOT change status to submitted.
                     
                     $updateData['file_path'] = $filePath;
                     $updateData['file_name'] = $file->getClientOriginalName();
                     $updateData['file_size'] = $file->getSize();
                     $updateData['mime_type'] = $file->getMimeType();
-                    
-                    // Jika Sound Engineer upload file, auto-submit ke Producer (sama seperti Music Arranger)
-                    // Status berubah ke arrangement_submitted agar Producer bisa review
-                    $updateData['status'] = 'arrangement_submitted';
-                    $updateData['submitted_at'] = now();
+                    $fileUploaded = true;
 
                     // Log file upload
                     \App\Helpers\AuditLogger::logFileUpload('audio', $file->getClientOriginalName(), $file->getSize(), null, $request);
@@ -1382,85 +1408,60 @@ class SoundEngineerController extends Controller
                 }
             }
 
-            // Update arrangement if there's data to update
-            if (!empty($updateData)) {
-                $arrangement->update($updateData);
-            }
+            // Update arrangement
+            $arrangement->update($updateData);
 
             // Prepare notification message
-            $hasFile = $request->hasFile('file');
-            $fileMessage = $hasFile ? " dan telah mengupload file arrangement yang sudah diperbaiki" : "";
+            $helpType = "";
+            if ($request->has('help_file_link')) {
+                $helpType = "link file";
+            } elseif ($fileUploaded) {
+                $helpType = "file upload";
+            }
+            
+            $fileMessage = $helpType ? " dan menyertakan {$helpType}" : "";
             
             // Notify Music Arranger
             Notification::create([
                 'user_id' => $arrangement->created_by,
                 'type' => 'sound_engineer_helping_arrangement',
                 'title' => 'Sound Engineer Membantu Perbaikan Arrangement',
-                'message' => "Sound Engineer {$user->name} telah membantu perbaikan arrangement '{$arrangement->song_title}' yang ditolak{$fileMessage}. Catatan: {$request->help_notes}",
+                'message' => "Sound Engineer {$user->name} telah memberikan bantuan perbaikan untuk arrangement '{$arrangement->song_title}'{$fileMessage}. Silakan review dan submit ulang ke Producer. Catatan: {$request->help_notes}",
                 'data' => [
                     'arrangement_id' => $arrangement->id,
                     'episode_id' => $arrangement->episode_id,
                     'sound_engineer_id' => $user->id,
                     'help_notes' => $request->help_notes,
                     'suggested_fixes' => $request->suggested_fixes,
-                    'file_uploaded' => $hasFile,
-                    'file_name' => $hasFile ? $arrangement->fresh()->file_name : null
+                    'file_uploaded' => $fileUploaded,
+                    'help_file_link' => $request->help_file_link
                 ]
             ]);
 
-            // Notify Producer
+            // Notify Producer (Info Only - Not Submission)
             // Support episode.productionTeam langsung atau episode.program.productionTeam
             $episode = $arrangement->episode;
             $productionTeam = $episode->productionTeam ?? $episode->program->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
             
             if ($producer) {
-                // Jika Sound Engineer upload file, notifikasi bahwa arrangement sudah di-submit untuk review
-                if ($hasFile && $arrangement->status === 'arrangement_submitted') {
-                    Notification::create([
-                        'user_id' => $producer->id,
-                        'type' => 'music_arrangement_submitted',
-                        'title' => 'Arrangement Diperbaiki oleh Sound Engineer',
-                        'message' => "Sound Engineer {$user->name} telah memperbaiki dan mengupload file arrangement '{$arrangement->song_title}' yang ditolak. File sudah di-submit untuk review.",
-                        'data' => [
-                            'arrangement_id' => $arrangement->id,
-                            'episode_id' => $arrangement->episode_id,
-                            'sound_engineer_id' => $user->id,
-                            'file_uploaded' => true,
-                            'file_name' => $arrangement->file_name,
-                            'help_notes' => $request->help_notes
-                        ]
-                    ]);
-                } else {
-                    // Jika hanya memberikan help notes tanpa upload file
-                    Notification::create([
-                        'user_id' => $producer->id,
-                        'type' => 'sound_engineer_helping_arrangement',
-                        'title' => 'Sound Engineer Membantu Perbaikan Arrangement',
-                        'message' => "Sound Engineer {$user->name} telah membantu perbaikan arrangement '{$arrangement->song_title}' yang ditolak{$fileMessage}.",
-                        'data' => [
-                            'arrangement_id' => $arrangement->id,
-                            'episode_id' => $arrangement->episode_id,
-                            'sound_engineer_id' => $user->id,
-                            'file_uploaded' => $hasFile
-                        ]
-                    ]);
-                }
-            }
-
-            $responseMessage = 'Arrangement help provided successfully. Music Arranger and Producer have been notified.';
-            if ($hasFile) {
-                if ($arrangement->status === 'arrangement_submitted') {
-                    $responseMessage .= ' File arrangement yang sudah diperbaiki telah diupload dan di-submit ke Producer untuk review.';
-                } else {
-                    $responseMessage .= ' File arrangement yang sudah diperbaiki telah diupload.';
-                }
+                 Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'sound_engineer_helping_arrangement',
+                    'title' => 'Sound Engineer Membantu Perbaikan Arrangement',
+                    'message' => "Sound Engineer {$user->name} telah memberikan bantuan perbaikan ke Arranger untuk '{$arrangement->song_title}'.",
+                    'data' => [
+                        'arrangement_id' => $arrangement->id,
+                        'episode_id' => $arrangement->episode_id,
+                        'sound_engineer_id' => $user->id
+                    ]
+                ]);
             }
 
             return response()->json([
                 'success' => true,
                 'data' => $arrangement->fresh(['soundEngineerHelper', 'createdBy']),
-                'message' => $responseMessage
+                'message' => 'Help provided successfully. Link/File sent to Music Arranger for review and final submission.'
             ]);
 
         } catch (\Exception $e) {

@@ -442,6 +442,49 @@ class ManagerBroadcastingController extends Controller
                         'description' => $request->review_notes ?? "Jadwal dipilih dari opsi Manager Program"
                     ]
                 );
+            } else {
+                // AUTO-GENERATE EPISODES if Program Schedule (not specific episode)
+                // Logic: If schedule approved for Program, and no episodes exist, generate 52 episodes for that year.
+                $program = $scheduleOption->program;
+                if ($program) {
+                     $selectedDate = Carbon::parse($selectedOption['datetime']);
+                     $selectedYear = $selectedDate->year;
+                     
+                     // Check existing episodes for this year
+                     $yearStart = Carbon::createFromDate($selectedYear, 1, 1, 'UTC')->setTime(0, 0, 0);
+                     $yearEnd = Carbon::createFromDate($selectedYear, 12, 31, 'UTC')->setTime(23, 59, 59);
+                     
+                     $existingCount = Episode::where('program_id', $program->id)
+                        ->whereBetween('air_date', [$yearStart, $yearEnd])
+                        ->whereNull('deleted_at')
+                        ->count();
+                        
+                     if ($existingCount === 0) {
+                         // Generate 52 Weeks
+                         $genResult = $program->generateEpisodesForYear($selectedYear, $selectedDate->dayOfWeek);
+                         
+                         if ($genResult['success']) {
+                             // Log or Notify
+                             Notification::create([
+                                'title' => 'Episodes Auto-Generated',
+                                'message' => "Automatic 52 episodes generated for Program '{$program->name}' upon schedule approval.",
+                                'type' => 'system_notification',
+                                'user_id' => $user->id, // Distribution Manager gets info
+                                'data' => ['year' => $selectedYear, 'count' => 52]
+                             ]);
+                             // Notify Program Manager too
+                             if ($program->manager_program_id) {
+                                  Notification::create([
+                                    'title' => 'Episodes Auto-Generated',
+                                    'message' => "Jadwal disetujui, sistem otomatis membuat 52 episode untuk tahun {$selectedYear}.",
+                                    'type' => 'system_notification',
+                                    'user_id' => $program->manager_program_id,
+                                    'data' => ['year' => $selectedYear, 'count' => 52]
+                                 ]);
+                             }
+                         }
+                     }
+                }
             }
 
             // Notify Manager Program

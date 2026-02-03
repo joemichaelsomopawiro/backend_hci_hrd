@@ -4,6 +4,7 @@ namespace App\Observers;
 
 use App\Models\MusicArrangement;
 use App\Models\CreativeWork;
+use App\Models\Deadline;
 use App\Models\Notification;
 use Illuminate\Support\Facades\Log;
 
@@ -143,6 +144,23 @@ class MusicArrangementObserver
                     $creativeUser,
                     'Music arrangement approved, proceeding to creative work'
                 );
+            }
+
+            // Mark music arrangement deadline as completed for progress tracking
+            $deadline = Deadline::where('episode_id', $episode->id)
+                ->where('role', 'musik_arr')
+                ->first();
+            
+            if ($deadline && !$deadline->is_completed) {
+                $deadline->markAsCompleted(
+                    $arrangement->reviewed_by ?? auth()->id() ?? $arrangement->created_by,
+                    'Arrangement approved by Producer'
+                );
+                Log::info('MusicArrangementObserver - Deadline marked as completed', [
+                    'deadline_id' => $deadline->id,
+                    'episode_id' => $episode->id,
+                    'role' => 'musik_arr'
+                ]);
             }
         }
     }

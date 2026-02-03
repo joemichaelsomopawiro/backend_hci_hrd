@@ -819,7 +819,7 @@ class EditorPromosiController extends Controller
 
             if (!$existingQCWork) {
                 // Create new QualityControlWork
-                $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
                 $qcWork = \App\Models\QualityControlWork::create([
                     'episode_id' => $work->episode_id,
                     'qc_type' => $qcType,
@@ -830,7 +830,7 @@ class EditorPromosiController extends Controller
                     'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
                 ]);
 
-                // Notify Quality Control
+                // Notify Quality Control and related managers
                 foreach ($qcUsers as $qcUser) {
                     Notification::create([
                         'user_id' => $qcUser->id,

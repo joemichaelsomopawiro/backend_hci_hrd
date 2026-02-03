@@ -24,7 +24,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -96,7 +96,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -147,7 +147,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -217,7 +217,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -272,7 +272,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -385,7 +385,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -522,7 +522,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -574,7 +574,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -626,7 +626,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -668,7 +668,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -746,7 +746,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -791,15 +791,8 @@ class QualityControlController extends Controller
 
             // Jika tidak ada revisi, auto-approve
             if ($request->no_revision_needed === true) {
-                $work->markAsApproved();
-                $work->update([
-                    'review_notes' => $request->qc_notes,
-                    'reviewed_at' => now(),
-                    'reviewed_by' => $user->id
-                ]);
-
-                // Auto-create BroadcastingWork
-                $this->createBroadcastingWork($work);
+                // Auto-approve logic
+                $this->performQCApproval($work, $user, $request->qc_notes);
 
                 return response()->json([
                     'success' => true,
@@ -823,37 +816,137 @@ class QualityControlController extends Controller
     }
 
     /**
-     * Helper method untuk create BroadcastingWork
+     * Helper method to perform all actions associated with QC approval
      */
-    private function createBroadcastingWork(QualityControlWork $qcWork): void
+    private function performQCApproval(QualityControlWork $work, $user, ?string $notes): void
     {
+        $work->markAsApproved();
+        $work->update([
+            'review_notes' => $notes ?? 'QC Approved',
+            'reviewed_at' => now(),
+            'reviewed_by' => $user->id
+        ]);
+
+        $episode = $work->episode;
+        $hasEditorFiles = !empty($work->files_to_check);
+        $hasDesignGrafisFiles = !empty($work->design_grafis_file_locations);
+        $hasEditorPromosiFiles = !empty($work->editor_promosi_file_locations);
+
+        // Update DesignGrafisWork status menjadi approved
+        if ($hasDesignGrafisFiles) {
+            foreach ($work->design_grafis_file_locations as $designFile) {
+                if (isset($designFile['design_grafis_work_id'])) {
+                    $designGrafisWork = \App\Models\DesignGrafisWork::find($designFile['design_grafis_work_id']);
+                    if ($designGrafisWork) {
+                        $designGrafisWork->update([
+                            'status' => 'approved',
+                            'reviewed_by' => $user->id,
+                            'reviewed_at' => now()
+                        ]);
+                    }
+                }
+            }
+        }
+
+        // Update Editor Promosi PromotionWork status menjadi approved
+        if ($hasEditorPromosiFiles) {
+            foreach ($work->editor_promosi_file_locations as $editorPromosiFile) {
+                if (isset($editorPromosiFile['promotion_work_id'])) {
+                    $promotionWork = \App\Models\PromotionWork::find($editorPromosiFile['promotion_work_id']);
+                    if ($promotionWork) {
+                        $promotionWork->update([
+                            'status' => 'approved',
+                            'reviewed_by' => $user->id,
+                            'reviewed_at' => now()
+                        ]);
+                    }
+                }
+            }
+        }
+
+        // Update EditorWork status (main editor)
+        if ($hasEditorFiles) {
+            foreach ($work->files_to_check as $editorFile) {
+                if (isset($editorFile['editor_work_id'])) {
+                    $editorWork = \App\Models\EditorWork::find($editorFile['editor_work_id']);
+                    if ($editorWork) {
+                        $editorWork->update([
+                            'status' => 'approved',
+                            'reviewed_by' => $user->id,
+                            'reviewed_at' => now()
+                        ]);
+                    }
+                }
+            }
+        }
+
+        // Auto-create BroadcastingWork (hanya jika ada file dari Editor atau Design Grafis)
         $broadcastingUsers = \App\Models\User::where('role', 'Broadcasting')->get();
-        if ($broadcastingUsers->isNotEmpty()) {
-            // Get file dari Editor
-            $editorFile = null;
-            if (!empty($qcWork->files_to_check)) {
-                $editorFile = $qcWork->files_to_check[0] ?? null;
+        $broadcastingWork = null;
+
+        if ($broadcastingUsers->isNotEmpty() && ($hasEditorFiles || $hasDesignGrafisFiles)) {
+            // Get video file dari Editor
+            $videoFilePath = null;
+            if ($hasEditorFiles && isset($work->files_to_check[0]['file_path'])) {
+                $videoFilePath = $work->files_to_check[0]['file_path'];
             }
 
-            // Get thumbnail dari Design Grafis
+            // Get thumbnail dari Design Grafis (prioritaskan thumbnail_youtube)
             $thumbnailPath = null;
-            if (!empty($qcWork->design_grafis_file_locations)) {
-                $thumbnailPath = $qcWork->design_grafis_file_locations[0]['file_path'] ?? null;
+            if ($hasDesignGrafisFiles) {
+                foreach ($work->design_grafis_file_locations as $designFile) {
+                    if (isset($designFile['work_type']) && $designFile['work_type'] === 'thumbnail_youtube') {
+                        $thumbnailPath = $designFile['file_path'] ?? null;
+                        break;
+                    }
+                }
+                // Fallback ke design file pertama jika tidak ada thumbnail_youtube
+                if (!$thumbnailPath && isset($work->design_grafis_file_locations[0]['file_path'])) {
+                    $thumbnailPath = $work->design_grafis_file_locations[0]['file_path'];
+                }
             }
 
             $broadcastingWork = \App\Models\BroadcastingWork::create([
-                'episode_id' => $qcWork->episode_id,
+                'episode_id' => $work->episode_id,
                 'work_type' => 'main_episode',
-                'title' => "Broadcasting Work - Episode {$qcWork->episode->episode_number}",
+                'title' => "Broadcasting Work - Episode {$episode->episode_number}",
                 'description' => "File materi dari QC yang telah disetujui",
-                'video_file_path' => $editorFile['file_path'] ?? null,
+                'video_file_path' => $videoFilePath,
                 'thumbnail_path' => $thumbnailPath,
                 'status' => 'preparing',
                 'created_by' => $broadcastingUsers->first()->id
             ]);
 
             // Notify Broadcasting
-            // Notify Broadcasting
+            $broadcastMessage = "QC telah menyetujui materi untuk Episode {$episode->episode_number}.";
+            $broadcastData = [
+                'broadcasting_work_id' => $broadcastingWork->id,
+                'episode_id' => $work->episode_id,
+                'qc_work_id' => $work->id,
+                'has_editor_files' => $hasEditorFiles,
+                'has_design_grafis_files' => $hasDesignGrafisFiles,
+                'has_editor_promosi_files' => $hasEditorPromosiFiles
+            ];
+            
+            if ($hasEditorFiles) {
+                $broadcastMessage .= " File materi dari Editor sudah tersedia.";
+                $broadcastData['video_file_path'] = $videoFilePath;
+            }
+            
+            if ($hasDesignGrafisFiles) {
+                $broadcastMessage .= " Thumbnail dari Design Grafis sudah tersedia.";
+                $broadcastData['thumbnail_path'] = $thumbnailPath;
+            }
+            
+            if ($hasEditorPromosiFiles) {
+                $broadcastMessage .= " File dari Editor Promosi (BTS, Highlight, Iklan TV) juga sudah tersedia untuk referensi.";
+                $broadcastData['editor_promosi_work_types'] = array_unique(array_map(function($file) {
+                    return $file['work_type'] ?? null;
+                }, $work->editor_promosi_file_locations));
+            }
+            
+            $broadcastMessage .= " Silakan proses upload ke YouTube dan website.";
+
             $broadcastingNotifications = [];
             $now = now();
             foreach ($broadcastingUsers as $broadcastingUser) {
@@ -861,14 +954,8 @@ class QualityControlController extends Controller
                     'user_id' => $broadcastingUser->id,
                     'type' => 'broadcasting_work_assigned',
                     'title' => 'Tugas Broadcasting Baru',
-                    'message' => "QC telah menyetujui materi untuk Episode {$qcWork->episode->episode_number}. Silakan proses upload ke YouTube dan website.",
-                    'data' => json_encode([
-                        'broadcasting_work_id' => $broadcastingWork->id,
-                        'episode_id' => $qcWork->episode_id,
-                        'qc_work_id' => $qcWork->id,
-                        'video_file_path' => $editorFile['file_path'] ?? null,
-                        'thumbnail_path' => $thumbnailPath
-                    ]),
+                    'message' => $broadcastMessage,
+                    'data' => json_encode($broadcastData),
                     'created_at' => $now,
                     'updated_at' => $now
                 ];
@@ -877,6 +964,60 @@ class QualityControlController extends Controller
             if (!empty($broadcastingNotifications)) {
                 Notification::insert($broadcastingNotifications);
             }
+        }
+
+        // Notify Promosi jika ada Editor Promosi files
+        if ($hasEditorPromosiFiles) {
+            $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
+            $promosiNotifications = [];
+            $now = now();
+            foreach ($promosiUsers as $promosiUser) {
+                $promosiNotifications[] = [
+                    'user_id' => $promosiUser->id,
+                    'type' => 'qc_approved_editor_promosi_ready',
+                    'title' => 'QC Approved - Editor Promosi Files Ready',
+                    'message' => "QC telah menyetujui file dari Editor Promosi untuk Episode {$episode->episode_number}. Setelah Broadcasting selesai upload, file ini siap untuk sharing.",
+                    'data' => json_encode([
+                        'episode_id' => $work->episode_id,
+                        'qc_work_id' => $work->id,
+                        'broadcasting_work_id' => $broadcastingWork->id ?? null,
+                        'editor_promosi_work_types' => array_unique(array_filter(array_map(function($file) {
+                            return $file['work_type'] ?? null;
+                        }, $work->editor_promosi_file_locations)))
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ];
+            }
+
+            if (!empty($promosiNotifications)) {
+                Notification::insert($promosiNotifications);
+            }
+        }
+
+        // Notify Produksi - Baca Hasil QC
+        $produksiUsers = \App\Models\User::where('role', 'Production')->get();
+        $produksiNotifications = [];
+        $now = now();
+        foreach ($produksiUsers as $produksiUser) {
+            $produksiNotifications[] = [
+                'user_id' => $produksiUser->id,
+                'type' => 'qc_approved_produksi_notification',
+                'title' => 'QC Disetujui - Hasil QC Tersedia',
+                'message' => "QC telah menyetujui materi untuk Episode {$episode->episode_number}. Silakan baca hasil QC.",
+                'data' => json_encode([
+                    'episode_id' => $work->episode_id,
+                    'qc_work_id' => $work->id,
+                    'quality_score' => $work->quality_score ?? null,
+                    'qc_notes' => $work->qc_notes ?? null
+                ]),
+                'created_at' => $now,
+                'updated_at' => $now
+            ];
+        }
+
+        if (!empty($produksiNotifications)) {
+            Notification::insert($produksiNotifications);
         }
     }
 
@@ -889,7 +1030,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -919,193 +1060,7 @@ class QualityControlController extends Controller
             }
 
             if ($request->action === 'approve') {
-                $work->markAsApproved();
-                $work->update([
-                    'review_notes' => $request->notes ?? 'QC Approved',
-                    'reviewed_at' => now()
-                ]);
-
-                $episode = $work->episode;
-                $hasEditorFiles = !empty($work->files_to_check);
-                $hasDesignGrafisFiles = !empty($work->design_grafis_file_locations);
-                $hasEditorPromosiFiles = !empty($work->editor_promosi_file_locations);
-
-                // Update DesignGrafisWork status menjadi approved
-                if ($hasDesignGrafisFiles) {
-                    foreach ($work->design_grafis_file_locations as $designFile) {
-                        if (isset($designFile['design_grafis_work_id'])) {
-                            $designGrafisWork = \App\Models\DesignGrafisWork::find($designFile['design_grafis_work_id']);
-                            if ($designGrafisWork) {
-                                $designGrafisWork->update([
-                                    'status' => 'approved',
-                                    'reviewed_by' => $user->id,
-                                    'reviewed_at' => now()
-                                ]);
-                            }
-                        }
-                    }
-                }
-
-                // Update Editor Promosi PromotionWork status menjadi approved
-                if ($hasEditorPromosiFiles) {
-                    foreach ($work->editor_promosi_file_locations as $editorPromosiFile) {
-                        if (isset($editorPromosiFile['promotion_work_id'])) {
-                            $promotionWork = \App\Models\PromotionWork::find($editorPromosiFile['promotion_work_id']);
-                            if ($promotionWork) {
-                                $promotionWork->update([
-                                    'status' => 'approved',
-                                    'reviewed_by' => $user->id,
-                                    'reviewed_at' => now()
-                                ]);
-                            }
-                        }
-                    }
-                }
-
-                // Auto-create BroadcastingWork (hanya jika ada file dari Editor atau Design Grafis)
-                $broadcastingUsers = \App\Models\User::where('role', 'Broadcasting')->get();
-                if ($broadcastingUsers->isNotEmpty() && ($hasEditorFiles || $hasDesignGrafisFiles)) {
-                    // Get video file dari Editor
-                    $videoFilePath = null;
-                    if ($hasEditorFiles && isset($work->files_to_check[0]['file_path'])) {
-                        $videoFilePath = $work->files_to_check[0]['file_path'];
-                    }
-
-                    // Get thumbnail dari Design Grafis (prioritaskan thumbnail_youtube)
-                    $thumbnailPath = null;
-                    if ($hasDesignGrafisFiles) {
-                        foreach ($work->design_grafis_file_locations as $designFile) {
-                            if (isset($designFile['work_type']) && $designFile['work_type'] === 'thumbnail_youtube') {
-                                $thumbnailPath = $designFile['file_path'] ?? null;
-                                break;
-                            }
-                        }
-                        // Fallback ke design file pertama jika tidak ada thumbnail_youtube
-                        if (!$thumbnailPath && isset($work->design_grafis_file_locations[0]['file_path'])) {
-                            $thumbnailPath = $work->design_grafis_file_locations[0]['file_path'];
-                        }
-                    }
-
-                    $broadcastingWork = \App\Models\BroadcastingWork::create([
-                        'episode_id' => $work->episode_id,
-                        'work_type' => 'main_episode',
-                        'title' => "Broadcasting Work - Episode {$episode->episode_number}",
-                        'description' => "File materi dari QC yang telah disetujui",
-                        'video_file_path' => $videoFilePath,
-                        'thumbnail_path' => $thumbnailPath,
-                        'status' => 'preparing',
-                        'created_by' => $broadcastingUsers->first()->id
-                    ]);
-
-                    // Notify Broadcasting
-                    // Notify Broadcasting
-                    $broadcastMessage = "QC telah menyetujui materi untuk Episode {$episode->episode_number}.";
-                    $broadcastData = [
-                        'broadcasting_work_id' => $broadcastingWork->id,
-                        'episode_id' => $work->episode_id,
-                        'qc_work_id' => $work->id,
-                        'has_editor_files' => $hasEditorFiles,
-                        'has_design_grafis_files' => $hasDesignGrafisFiles,
-                        'has_editor_promosi_files' => $hasEditorPromosiFiles
-                    ];
-                    
-                    if ($hasEditorFiles) {
-                        $broadcastMessage .= " File materi dari Editor sudah tersedia.";
-                        $broadcastData['video_file_path'] = $videoFilePath;
-                    }
-                    
-                    if ($hasDesignGrafisFiles) {
-                        $broadcastMessage .= " Thumbnail dari Design Grafis sudah tersedia.";
-                        $broadcastData['thumbnail_path'] = $thumbnailPath;
-                    }
-                    
-                    if ($hasEditorPromosiFiles) {
-                        $broadcastMessage .= " File dari Editor Promosi (BTS, Highlight, Iklan TV) juga sudah tersedia untuk referensi.";
-                        $broadcastData['editor_promosi_work_types'] = array_unique(array_map(function($file) {
-                            return $file['work_type'] ?? null;
-                        }, $work->editor_promosi_file_locations));
-                    }
-                    
-                    $broadcastMessage .= " Silakan proses upload ke YouTube dan website.";
-
-                    $broadcastingNotifications = [];
-                    $now = now();
-                    foreach ($broadcastingUsers as $broadcastingUser) {
-                        $broadcastingNotifications[] = [
-                            'user_id' => $broadcastingUser->id,
-                            'type' => 'broadcasting_work_assigned',
-                            'title' => 'Tugas Broadcasting Baru',
-                            'message' => $broadcastMessage,
-                            'data' => json_encode($broadcastData),
-                            'created_at' => $now,
-                            'updated_at' => $now
-                        ];
-                    }
-
-                    if (!empty($broadcastingNotifications)) {
-                        Notification::insert($broadcastingNotifications);
-                    }
-
-                    // Notify Promosi untuk sharing (setelah Broadcasting upload)
-                    // Notifikasi ini akan dikirim saat Broadcasting complete work
-                    // Tidak perlu di sini karena Broadcasting complete sudah auto-create PromotionWork untuk sharing
-                }
-
-                // Notify Promosi jika ada Editor Promosi files (untuk info saja, bukan untuk sharing langsung)
-                if ($hasEditorPromosiFiles && ($broadcastingUsers->isNotEmpty() || $hasEditorFiles || $hasDesignGrafisFiles)) {
-                    $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
-                    $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
-                    $promosiNotifications = [];
-                    $now = now();
-                    foreach ($promosiUsers as $promosiUser) {
-                        $promosiNotifications[] = [
-                            'user_id' => $promosiUser->id,
-                            'type' => 'qc_approved_editor_promosi_ready',
-                            'title' => 'QC Approved - Editor Promosi Files Ready',
-                            'message' => "QC telah menyetujui file dari Editor Promosi untuk Episode {$episode->episode_number}. Broadcasting akan upload ke YouTube dan website. Setelah Broadcasting selesai, file ini siap untuk sharing.",
-                            'data' => json_encode([
-                                'episode_id' => $work->episode_id,
-                                'qc_work_id' => $work->id,
-                                'broadcasting_work_id' => $broadcastingWork->id ?? null,
-                                'editor_promosi_work_types' => array_unique(array_filter(array_map(function($file) {
-                                    return $file['work_type'] ?? null;
-                                }, $work->editor_promosi_file_locations)))
-                            ]),
-                            'created_at' => $now,
-                            'updated_at' => $now
-                        ];
-                    }
-
-                    if (!empty($promosiNotifications)) {
-                        Notification::insert($promosiNotifications);
-                    }
-                }
-
-                // Notify Produksi - Baca Hasil QC
-                $produksiUsers = \App\Models\User::where('role', 'Production')->get();
-                $produksiNotifications = [];
-                $now = now();
-                foreach ($produksiUsers as $produksiUser) {
-                    $produksiNotifications[] = [
-                        'user_id' => $produksiUser->id,
-                        'type' => 'qc_approved_produksi_notification',
-                        'title' => 'QC Disetujui - Hasil QC Tersedia',
-                        'message' => "QC telah menyetujui materi untuk Episode {$work->episode->episode_number}. Silakan baca hasil QC.",
-                        'data' => json_encode([
-                            'episode_id' => $work->episode_id,
-                            'qc_work_id' => $work->id,
-                            'quality_score' => $work->quality_score ?? null,
-                            'qc_notes' => $work->qc_notes ?? null
-                        ]),
-                        'created_at' => $now,
-                        'updated_at' => $now
-                    ];
-                }
-
-                if (!empty($produksiNotifications)) {
-                    Notification::insert($produksiNotifications);
-                }
-
+                $this->performQCApproval($work, $user, $request->notes);
             } else {
                 // Reject - kembali ke role yang sesuai berdasarkan source file
                 $work->markAsFailed();
