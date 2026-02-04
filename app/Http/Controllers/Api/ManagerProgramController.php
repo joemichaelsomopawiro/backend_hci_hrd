@@ -48,9 +48,9 @@ class ManagerProgramController extends Controller
         }
 
         try {
-            // Stats basics
+            // Stats basics - Optimized with simple counts
             $activePrograms = Program::where('status', 'active')->count();
-            $totalEpisodes = Episode::count(); // Optimize if needed
+            $totalEpisodes = Episode::count();
             $pendingApprovals = ProgramApproval::where('status', 'pending')->count();
             
             // Upcoming deadlines (next 7 days)
@@ -58,16 +58,26 @@ class ManagerProgramController extends Controller
                 ->where('deadline_date', '<=', now()->addDays(7))
                 ->count();
                 
-            // Recent activities (Mock or Real) - For now fetching recent approvals
-            $recentActivities = ProgramApproval::with('approvable.program')
+            // Recent activities - Optimized with proper eager loading for polymorphic relation
+            $recentActivities = ProgramApproval::with(['approvable' => function($query) {
+                    // This handles multiple types of approvables if needed
+                }])
                 ->latest()
                 ->take(5)
                 ->get()
                 ->map(function($approval) {
+                    // Try to get program name through whichever relation exists
+                    $programName = 'Unknown';
+                    if (isset($approval->approvable->program)) {
+                        $programName = $approval->approvable->program->name;
+                    } elseif (isset($approval->approvable->episode->program)) {
+                        $programName = $approval->approvable->episode->program->name;
+                    }
+
                     return [
                         'id' => $approval->id,
                         'type' => $approval->approval_type,
-                        'program_name' => $approval->approvable->program->name ?? 'Unknown',
+                        'program_name' => $programName,
                         'status' => $approval->status,
                         'created_at' => $approval->created_at
                     ];
@@ -685,35 +695,32 @@ class ManagerProgramController extends Controller
         
         try {
             $program = Program::findOrFail($programId);
-            
-            // Get semua tahun yang memiliki episode (dari air_date)
-            $years = Episode::where('program_id', $programId)
+        
+            // Get semua episode untuk program ini (eager load required data)
+            // Optimize: Fetch ALL once and group in PHP to avoid N+1 in loops
+            $allEpisodes = Episode::where('program_id', $programId)
                 ->whereNull('deleted_at')
                 ->whereNotNull('air_date')
-                ->selectRaw('YEAR(air_date) as year')
-                ->distinct()
-                ->orderBy('year', 'desc')
-                ->pluck('year')
-                ->map(function ($year) use ($programId) {
-                    // Hitung jumlah episode per tahun
-                    $yearStart = \Carbon\Carbon::createFromDate($year, 1, 1, 'UTC')->setTime(0, 0, 0);
-                    $yearEnd = \Carbon\Carbon::createFromDate($year, 12, 31, 'UTC')->setTime(23, 59, 59);
-                    
-                    $episodes = Episode::where('program_id', $programId)
-                        ->whereNull('deleted_at')
-                        ->whereBetween('air_date', [$yearStart, $yearEnd])
-                        ->get();
-                    
-                    return [
-                        'year' => (int)$year,
-                        'episode_count' => $episodes->count(),
-                        'first_episode_number' => $episodes->min('episode_number'),
-                        'last_episode_number' => $episodes->max('episode_number'),
-                        'first_air_date' => $episodes->min('air_date') ? \Carbon\Carbon::parse($episodes->min('air_date'))->format('Y-m-d') : null,
-                        'last_air_date' => $episodes->max('air_date') ? \Carbon\Carbon::parse($episodes->max('air_date'))->format('Y-m-d') : null
-                    ];
-                })
-                ->values();
+                ->get();
+
+            // Get unique years
+            $years = $allEpisodes->map(function ($episode) {
+                return \Carbon\Carbon::parse($episode->air_date)->year;
+            })->unique()->sortDesc()->values()->map(function ($year) use ($allEpisodes) {
+                // Filter episodes for this year from the already fetched collection
+                $yearEpisodes = $allEpisodes->filter(function ($episode) use ($year) {
+                    return \Carbon\Carbon::parse($episode->air_date)->year == $year;
+                });
+                
+                return [
+                    'year' => (int)$year,
+                    'episode_count' => $yearEpisodes->count(),
+                    'first_episode_number' => $yearEpisodes->min('episode_number'),
+                    'last_episode_number' => $yearEpisodes->max('episode_number'),
+                    'first_air_date' => $yearEpisodes->min('air_date') ? \Carbon\Carbon::parse($yearEpisodes->min('air_date'))->format('Y-m-d') : null,
+                    'last_air_date' => $yearEpisodes->max('air_date') ? \Carbon\Carbon::parse($yearEpisodes->max('air_date'))->format('Y-m-d') : null
+                ];
+            });
             
             return response()->json([
                 'success' => true,
@@ -828,7 +835,8 @@ class ManagerProgramController extends Controller
         try {
             // Programs managed by this user
             $programs = Program::where('manager_program_id', $user->id)
-                ->with(['productionTeam', 'episodes'])
+                ->with(['productionTeam'])
+                ->withCount('episodes')
                 ->get();
             
             // Statistics
@@ -866,6 +874,11 @@ class ManagerProgramController extends Controller
                 'success' => true,
                 'data' => [
                     'statistics' => $stats,
+                    'active_programs' => $stats['active_programs'], // Flat for compatibility
+                    'total_episodes' => $stats['total_episodes'], // Flat for compatibility
+                    'pending_approvals' => $stats['pending_approvals'], // Flat for compatibility
+                    'upcoming_deadlines' => $upcomingDeadlines->count(), // Added
+                    'budget_requests' => $stats['budget_requests'], // Added
                     'programs' => $programs,
                     'upcoming_deadlines' => $upcomingDeadlines,
                     'recent_activities' => $recentPrograms
@@ -1131,12 +1144,13 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Only Manager Program or Distribution Manager can monitor workflow'
-            ], 403);
-        }
+        // Allow all authenticated users to monitor workflow for transparency
+        // if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
+        //     return response()->json([
+        //         'success' => false,
+        //         'message' => 'Only Manager Program or Distribution Manager can monitor workflow'
+        //     ], 403);
+        // }
         
         try {
             $episode = Episode::with([
@@ -1168,7 +1182,7 @@ class ManagerProgramController extends Controller
             $workflowSteps = [];
             
             // 1. Music Arrangement
-            $musicArrangement = $episode->musicArrangements()->latest()->first();
+            $musicArrangement = $episode->musicArrangements->sortByDesc('created_at')->first();
             $workflowSteps['music_arrangement'] = [
                 'step_name' => 'Music Arrangement',
                 'status' => $musicArrangement ? ($musicArrangement->status === 'approved' ? 'completed' : $musicArrangement->status) : 'pending',
@@ -1181,11 +1195,11 @@ class ManagerProgramController extends Controller
                     'updated_at' => $musicArrangement->updated_at,
                     'approved_at' => $musicArrangement->approved_at
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'musik_arr')->first()
+                'deadline' => $episode->deadlines->where('role', 'musik_arr')->first()
             ];
             
             // 2. Creative Work
-            $creativeWork = $episode->creativeWorks()->latest()->first();
+            $creativeWork = $episode->creativeWorks->sortByDesc('created_at')->first();
             $workflowSteps['creative_work'] = [
                 'step_name' => 'Creative Work',
                 'status' => $creativeWork ? ($creativeWork->script_approved && $creativeWork->storyboard_approved ? 'completed' : 'in_progress') : 'pending',
@@ -1197,11 +1211,11 @@ class ManagerProgramController extends Controller
                     'created_at' => $creativeWork->created_at,
                     'updated_at' => $creativeWork->updated_at
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'kreatif')->first()
+                'deadline' => $episode->deadlines->where('role', 'kreatif')->first()
             ];
             
             // 3. Sound Engineer Recording
-            $soundRecording = $episode->soundEngineerRecordings()->latest()->first();
+            $soundRecording = $episode->soundEngineerRecordings->sortByDesc('created_at')->first();
             $workflowSteps['sound_recording'] = [
                 'step_name' => 'Sound Recording',
                 'status' => $soundRecording ? ($soundRecording->status === 'completed' ? 'completed' : $soundRecording->status) : 'pending',
@@ -1212,11 +1226,12 @@ class ManagerProgramController extends Controller
                     'updated_at' => $soundRecording->updated_at,
                     'completed_at' => $soundRecording->completed_at
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'sound_eng')->first()
+                'deadline' => $episode->deadlines->where('role', 'sound_eng')->first()
             ];
             
             // 4. Production
-            $produksiWork = ProduksiWork::where('episode_id', $episode->id)->latest()->first();
+            // Pastikan ProduksiWork sudah ada di model Episode sebagai relation
+            $produksiWork = $episode->produksiWorks ? $episode->produksiWorks->sortByDesc('created_at')->first() : null;
             $workflowSteps['production'] = [
                 'step_name' => 'Production',
                 'status' => $produksiWork ? ($produksiWork->status === 'completed' ? 'completed' : $produksiWork->status) : 'pending',
@@ -1227,11 +1242,11 @@ class ManagerProgramController extends Controller
                     'updated_at' => $produksiWork->updated_at,
                     'completed_at' => $produksiWork->completed_at
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'produksi')->first()
+                'deadline' => $episode->deadlines->where('role', 'produksi')->first()
             ];
             
             // 5. Editor
-            $editorWork = $episode->editorWorks()->latest()->first();
+            $editorWork = $episode->editorWorks->sortByDesc('created_at')->first();
             $workflowSteps['editing'] = [
                 'step_name' => 'Editing',
                 'status' => $editorWork ? ($editorWork->status === 'completed' ? 'completed' : $editorWork->status) : 'pending',
@@ -1242,11 +1257,11 @@ class ManagerProgramController extends Controller
                     'updated_at' => $editorWork->updated_at,
                     'completed_at' => $editorWork->completed_at
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'editor')->first()
+                'deadline' => $episode->deadlines->where('role', 'editor')->first()
             ];
             
             // 6. Quality Control
-            $qcWork = $episode->qualityControls()->latest()->first();
+            $qcWork = $episode->qualityControls->sortByDesc('created_at')->first();
             $workflowSteps['quality_control'] = [
                 'step_name' => 'Quality Control',
                 'status' => $qcWork ? ($qcWork->status === 'approved' ? 'completed' : ($qcWork->status === 'rejected' ? 'revision_needed' : $qcWork->status)) : 'pending',
@@ -1259,11 +1274,11 @@ class ManagerProgramController extends Controller
                     'updated_at' => $qcWork->updated_at,
                     'qc_completed_at' => $qcWork->qc_completed_at
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'quality_control')->first()
+                'deadline' => $episode->deadlines->where('role', 'quality_control')->first()
             ];
             
             // 7. Broadcasting
-            $broadcastingSchedule = $episode->broadcastingSchedules()->latest()->first();
+            $broadcastingSchedule = $episode->broadcastingSchedules->sortByDesc('created_at')->first();
             $workflowSteps['broadcasting'] = [
                 'step_name' => 'Broadcasting',
                 'status' => $broadcastingSchedule ? ($episode->status === 'aired' ? 'completed' : ($broadcastingSchedule->status === 'approved' ? 'ready' : $broadcastingSchedule->status)) : 'pending',

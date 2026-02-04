@@ -37,7 +37,7 @@ class EditorController extends Controller
                 ], 403);
             }
 
-            $query = EditorWork::with(['episode', 'createdBy', 'reviewedBy']);
+            $query = EditorWork::with(['episode.program', 'createdBy', 'reviewedBy']);
 
             // Filter by status
             if ($request->has('status')) {

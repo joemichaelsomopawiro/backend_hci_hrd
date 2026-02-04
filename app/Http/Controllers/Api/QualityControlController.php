@@ -346,13 +346,17 @@ class QualityControlController extends Controller
                 ], 403);
             }
 
+            $statusStats = QualityControl::selectRaw('status, count(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
             $stats = [
-                'total_qc' => QualityControl::count(),
-                'pending_qc' => QualityControl::where('status', 'pending')->count(),
-                'in_progress_qc' => QualityControl::where('status', 'in_progress')->count(),
-                'completed_qc' => QualityControl::where('status', 'completed')->count(),
-                'approved_qc' => QualityControl::where('status', 'approved')->count(),
-                'rejected_qc' => QualityControl::where('status', 'rejected')->count(),
+                'total_qc' => $statusStats->sum(),
+                'pending_qc' => $statusStats->get('pending', 0),
+                'in_progress_qc' => $statusStats->get('in_progress', 0),
+                'completed_qc' => $statusStats->get('completed', 0),
+                'approved_qc' => $statusStats->get('approved', 0),
+                'rejected_qc' => $statusStats->get('rejected', 0),
                 'qc_by_type' => QualityControl::selectRaw('qc_type, count(*) as count')
                     ->groupBy('qc_type')
                     ->get(),

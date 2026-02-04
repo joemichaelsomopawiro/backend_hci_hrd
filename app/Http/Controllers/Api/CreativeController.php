@@ -40,15 +40,11 @@ class CreativeController extends Controller
             }
 
             $query = CreativeWork::with([
-                'episode.program', 
-                'episode.musicArrangements' => function($q) {
-                    $q->whereIn('status', ['arrangement_approved', 'approved'])
-                      ->orderBy('reviewed_at', 'desc')
-                      ->limit(1);
-                },
-                'createdBy', 
-                'reviewedBy'
-            ]);
+            'episode.program', 
+            'latestApprovedMusicArrangement',
+            'createdBy', 
+            'reviewedBy'
+        ]);
             
             // Filter by episode
             if ($request->has('episode_id')) {
@@ -99,16 +95,12 @@ class CreativeController extends Controller
             300, // 5 minutes
             function () use ($id) {
                 return CreativeWork::with([
-                    'episode.program.managerProgram',
-                    'episode.program.productionTeam.members.user',
-                    'episode.musicArrangements' => function($q) {
-                        $q->whereIn('status', ['arrangement_approved', 'approved'])
-                          ->orderBy('reviewed_at', 'desc')
-                          ->limit(1);
-                    },
-                    'createdBy',
-                    'reviewedBy'
-                ])->findOrFail($id);
+                'episode.program.managerProgram',
+                'episode.program.productionTeam.members.user',
+                'latestApprovedMusicArrangement',
+                'createdBy',
+                'reviewedBy'
+            ])->findOrFail($id);
             }
         );
         

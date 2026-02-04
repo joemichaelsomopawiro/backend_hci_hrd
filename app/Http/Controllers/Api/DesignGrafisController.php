@@ -36,7 +36,7 @@ class DesignGrafisController extends Controller
                 ], 403);
             }
 
-            $query = DesignGrafisWork::with(['episode', 'createdBy', 'reviewedBy']);
+            $query = DesignGrafisWork::with(['episode.program', 'createdBy', 'reviewedBy']);
 
             // Filter by status
             if ($request->has('status')) {
@@ -1088,21 +1088,31 @@ class DesignGrafisController extends Controller
 
             $userId = $request->get('user_id', $user->id);
 
-            $stats = [
-                'total_works' => DesignGrafisWork::where('created_by', $userId)->count(),
-                'draft' => DesignGrafisWork::where('created_by', $userId)->where('status', 'draft')->count(),
-                'in_progress' => DesignGrafisWork::where('created_by', $userId)->where('status', 'in_progress')->count(),
-                'completed' => DesignGrafisWork::where('created_by', $userId)->where('status', 'completed')->count(),
-                'reviewed' => DesignGrafisWork::where('created_by', $userId)->where('status', 'reviewed')->count(),
-                'approved' => DesignGrafisWork::where('created_by', $userId)->where('status', 'approved')->count(),
-                'by_work_type' => [
-                    'thumbnail_youtube' => DesignGrafisWork::where('created_by', $userId)->where('work_type', 'thumbnail_youtube')->count(),
-                    'thumbnail_bts' => DesignGrafisWork::where('created_by', $userId)->where('work_type', 'thumbnail_bts')->count(),
-                    'graphics_ig' => DesignGrafisWork::where('created_by', $userId)->where('work_type', 'graphics_ig')->count(),
-                    'graphics_facebook' => DesignGrafisWork::where('created_by', $userId)->where('work_type', 'graphics_facebook')->count(),
-                    'banner_website' => DesignGrafisWork::where('created_by', $userId)->where('work_type', 'banner_website')->count()
-                ]
-            ];
+        $statusStats = DesignGrafisWork::where('created_by', $userId)
+            ->selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $typeStats = DesignGrafisWork::where('created_by', $userId)
+            ->selectRaw('work_type, count(*) as count')
+            ->groupBy('work_type')
+            ->pluck('count', 'work_type');
+
+        $stats = [
+            'total_works' => $statusStats->sum(),
+            'draft' => $statusStats->get('draft', 0),
+            'in_progress' => $statusStats->get('in_progress', 0),
+            'completed' => $statusStats->get('completed', 0),
+            'reviewed' => $statusStats->get('reviewed', 0),
+            'approved' => $statusStats->get('approved', 0),
+            'by_work_type' => [
+                'thumbnail_youtube' => $typeStats->get('thumbnail_youtube', 0),
+                'thumbnail_bts' => $typeStats->get('thumbnail_bts', 0),
+                'graphics_ig' => $typeStats->get('graphics_ig', 0),
+                'graphics_facebook' => $typeStats->get('graphics_facebook', 0),
+                'banner_website' => $typeStats->get('banner_website', 0)
+            ]
+        ];
 
             return response()->json([
                 'success' => true,

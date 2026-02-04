@@ -33,8 +33,8 @@ class BroadcastingController extends Controller
 
             // Optimize query with eager loading
             $query = BroadcastingWork::with([
-                'episode.program',
-                'episode.program.productionTeam',
+                'episode.program.managerProgram',
+                'episode.program.productionTeam.members.user',
                 'createdBy'
             ]);
 
@@ -66,6 +66,160 @@ class BroadcastingController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error retrieving broadcasting works: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all broadcasting schedules
+     * GET /api/live-tv/broadcasting/schedules
+     */
+    public function getAllSchedules(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $query = \App\Models\BroadcastingSchedule::with([
+                'episode.program.managerProgram',
+                'episode.program.productionTeam',
+                'createdBy',
+                'uploadedBy'
+            ]);
+
+            // Filter by status
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+
+            // Filter by platform
+            if ($request->has('platform')) {
+                $query->where('platform', $request->platform);
+            }
+
+            // Filter by date
+            if ($request->has('date')) {
+                $query->whereDate('schedule_date', $request->date);
+            }
+
+            $schedules = $query->orderBy('schedule_date', 'desc')->paginate(15);
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedules,
+                'message' => 'Broadcasting schedules retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving broadcasting schedules: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get single broadcasting schedule
+     * GET /api/live-tv/broadcasting/schedules/{id}
+     */
+    public function getSchedule(Request $request, int $id): JsonResponse
+    {
+        try {
+            $schedule = \App\Models\BroadcastingSchedule::with([
+                'episode.program.managerProgram',
+                'episode.program.productionTeam.members.user',
+                'createdBy',
+                'uploadedBy'
+            ])->findOrFail($id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedule,
+                'message' => 'Broadcasting schedule retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Broadcasting schedule not found: ' . $e->getMessage()
+            ], 404);
+        }
+    }
+
+    /**
+     * Get schedules for a specific episode
+     * GET /api/live-tv/broadcasting/schedules/episode/{episodeId}
+     */
+    public function getSchedulesForEpisode(Request $request, int $episodeId): JsonResponse
+    {
+        try {
+            $schedules = \App\Models\BroadcastingSchedule::where('episode_id', $episodeId)
+                ->with(['createdBy', 'uploadedBy'])
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedules,
+                'message' => 'Broadcasting schedules for episode retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving schedules for episode: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Create new broadcasting schedule
+     * POST /api/live-tv/broadcasting/schedules
+     */
+    public function createSchedule(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Broadcasting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'episode_id' => 'required|exists:episodes,id',
+                'platform' => 'required|string',
+                'schedule_date' => 'required|date',
+                'title' => 'required|string|max:255',
+                'description' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $schedule = \App\Models\BroadcastingSchedule::create(array_merge($request->all(), [
+                'created_by' => $user->id,
+                'status' => 'pending'
+            ]));
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedule,
+                'message' => 'Broadcasting schedule created successfully'
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error creating broadcasting schedule: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -373,21 +527,25 @@ class BroadcastingController extends Controller
                 ], 403);
             }
 
+            $statusStats = BroadcastingWork::where('created_by', $user->id)
+                ->selectRaw('status, count(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
+            $preparingCount = BroadcastingWork::where('status', 'preparing')->count();
+
             $stats = [
-                'total_works' => BroadcastingWork::where('created_by', $user->id)->count(),
-                'published_works' => BroadcastingWork::where('created_by', $user->id)
-                    ->where('status', 'published')->count(),
-                'uploading_works' => BroadcastingWork::where('created_by', $user->id)
-                    ->where('status', 'uploading')->count(),
-                'scheduled_works' => BroadcastingWork::where('created_by', $user->id)
-                    ->where('status', 'scheduled')->count(),
-                'preparing_works' => BroadcastingWork::where('status', 'preparing')->count(),
+                'total_works' => $statusStats->sum(),
+                'published_works' => $statusStats->get('published', 0),
+                'uploading_works' => $statusStats->get('uploading', 0),
+                'scheduled_works' => $statusStats->get('scheduled', 0),
+                'preparing_works' => $preparingCount,
                 'works_by_type' => BroadcastingWork::where('created_by', $user->id)
                     ->selectRaw('work_type, count(*) as count')
                     ->groupBy('work_type')
                     ->get(),
                 'recent_works' => BroadcastingWork::where('created_by', $user->id)
-                    ->with(['episode'])
+                    ->with(['episode.program'])
                     ->orderBy('created_at', 'desc')
                     ->limit(5)
                     ->get()

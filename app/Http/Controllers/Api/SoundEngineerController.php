@@ -107,18 +107,24 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            $recording = SoundEngineerRecording::with(['episode', 'musicArrangement', 'createdBy', 'reviewedBy'])->findOrFail($id);
-            
-            // Check if user has access to this recording (must be creator or in same production team)
-            if ($recording->created_by !== $user->id) {
-                // Check if user is in the same production team
-                $episode = $recording->episode;
-                if ($episode && $episode->program && $episode->program->productionTeam) {
-                    $hasAccess = $episode->program->productionTeam->members()
-                        ->where('user_id', $user->id)
-                        ->where('role', 'sound_eng')
-                        ->where('is_active', true)
-                        ->exists();
+            $recording = SoundEngineerRecording::with([
+            'episode.program.productionTeam.members',
+            'musicArrangement',
+            'createdBy',
+            'reviewedBy'
+        ])->findOrFail($id);
+        
+        // Check if user has access to this recording (must be creator or in same production team)
+        if ($recording->created_by !== $user->id) {
+            // Check if user is in the same production team
+            $productionTeam = $recording->episode?->program?->productionTeam;
+            if ($productionTeam) {
+                // Access members from eager-loaded collection
+                $hasAccess = $productionTeam->members
+                    ->where('user_id', $user->id)
+                    ->where('role', 'sound_eng')
+                    ->where('is_active', true)
+                    ->count() > 0;
                     
                     if (!$hasAccess) {
                         return response()->json([
@@ -257,17 +263,17 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            $recording = SoundEngineerRecording::with(['episode.program.productionTeam'])->findOrFail($id);
+            $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
             // Check if user has access (must be creator or in same production team)
             if ($recording->created_by !== $user->id) {
-                $episode = $recording->episode;
-                if ($episode && $episode->program && $episode->program->productionTeam) {
-                    $hasAccess = $episode->program->productionTeam->members()
+                $productionTeam = $recording->episode?->program?->productionTeam;
+                if ($productionTeam) {
+                    $hasAccess = $productionTeam->members
                         ->where('user_id', $user->id)
                         ->where('role', 'sound_eng')
                         ->where('is_active', true)
-                        ->exists();
+                        ->count() > 0;
                     
                     if (!$hasAccess) {
                         return response()->json([
@@ -338,17 +344,17 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            $recording = SoundEngineerRecording::with(['episode.program.productionTeam'])->findOrFail($id);
+            $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
             // Check if user has access
             if ($recording->created_by !== $user->id) {
-                $episode = $recording->episode;
-                if ($episode && $episode->program && $episode->program->productionTeam) {
-                    $hasAccess = $episode->program->productionTeam->members()
+                $productionTeam = $recording->episode?->program?->productionTeam;
+                if ($productionTeam) {
+                    $hasAccess = $productionTeam->members
                         ->where('user_id', $user->id)
                         ->where('role', 'sound_eng')
                         ->where('is_active', true)
-                        ->exists();
+                        ->count() > 0;
                     
                     if (!$hasAccess) {
                         return response()->json([
@@ -397,17 +403,17 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            $recording = SoundEngineerRecording::with(['episode.program.productionTeam'])->findOrFail($id);
+            $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
             // Check if user has access
             if ($recording->created_by !== $user->id) {
-                $episode = $recording->episode;
-                if ($episode && $episode->program && $episode->program->productionTeam) {
-                    $hasAccess = $episode->program->productionTeam->members()
+                $productionTeam = $recording->episode?->program?->productionTeam;
+                if ($productionTeam) {
+                    $hasAccess = $productionTeam->members
                         ->where('user_id', $user->id)
                         ->where('role', 'sound_eng')
                         ->where('is_active', true)
-                        ->exists();
+                        ->count() > 0;
                     
                     if (!$hasAccess) {
                         return response()->json([
@@ -523,17 +529,17 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            $recording = SoundEngineerRecording::with(['episode.program.productionTeam'])->findOrFail($id);
+            $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
             // Check if user has access
             if ($recording->created_by !== $user->id) {
-                $episode = $recording->episode;
-                if ($episode && $episode->program && $episode->program->productionTeam) {
-                    $hasAccess = $episode->program->productionTeam->members()
+                $productionTeam = $recording->episode?->program?->productionTeam;
+                if ($productionTeam) {
+                    $hasAccess = $productionTeam->members
                         ->where('user_id', $user->id)
                         ->where('role', 'sound_eng')
                         ->where('is_active', true)
-                        ->exists();
+                        ->count() > 0;
                     
                     if (!$hasAccess) {
                         return response()->json([
@@ -594,17 +600,17 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            $recording = SoundEngineerRecording::with(['episode.program.productionTeam'])->findOrFail($id);
+            $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
             // Check if user has access
             if ($recording->created_by !== $user->id) {
-                $episode = $recording->episode;
-                if ($episode && $episode->program && $episode->program->productionTeam) {
-                    $hasAccess = $episode->program->productionTeam->members()
+                $productionTeam = $recording->episode?->program?->productionTeam;
+                if ($productionTeam) {
+                    $hasAccess = $productionTeam->members
                         ->where('user_id', $user->id)
                         ->where('role', 'sound_eng')
                         ->where('is_active', true)
-                        ->exists();
+                        ->count() > 0;
                     
                     if (!$hasAccess) {
                         return response()->json([
@@ -747,12 +753,12 @@ class SoundEngineerController extends Controller
             }
 
             // Get approved arrangements from episodes of programs in user's production teams
-            // Include both 'approved' and 'arrangement_approved' status
-            $query = MusicArrangement::whereIn('status', ['approved', 'arrangement_approved'])
-                ->with(['episode.program.productionTeam', 'createdBy', 'episode', 'soundEngineerHelper'])
-                ->whereHas('episode.program', function ($q) use ($productionTeamIds) {
-                    $q->whereIn('production_team_id', $productionTeamIds);
-                });
+        // Include both 'approved' and 'arrangement_approved' status
+        $query = MusicArrangement::whereIn('status', ['approved', 'arrangement_approved'])
+            ->with(['episode.program.productionTeam', 'createdBy', 'soundEngineerHelper'])
+            ->whereHas('episode.program', function ($q) use ($productionTeamIds) {
+                $q->whereIn('production_team_id', $productionTeamIds);
+            });
 
             // Filter by episode_id if provided
             if ($request->has('episode_id')) {

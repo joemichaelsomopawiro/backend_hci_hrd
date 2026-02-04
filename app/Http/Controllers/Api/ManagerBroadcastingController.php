@@ -37,7 +37,11 @@ class ManagerBroadcastingController extends Controller
                 ], 403);
             }
 
-            $query = BroadcastingSchedule::with(['episode', 'createdBy']);
+            $query = BroadcastingSchedule::with([
+            'episode.program.productionTeam',
+            'createdBy',
+            'uploadedBy'
+        ]);
 
             // Filter by status
             if ($request->has('status')) {
@@ -87,7 +91,10 @@ class ManagerBroadcastingController extends Controller
                 ], 403);
             }
 
-            $query = BroadcastingWork::with(['episode', 'createdBy']);
+            $query = BroadcastingWork::with([
+            'episode.program.productionTeam',
+            'createdBy'
+        ]);
 
             // Filter by status
             if ($request->has('status')) {

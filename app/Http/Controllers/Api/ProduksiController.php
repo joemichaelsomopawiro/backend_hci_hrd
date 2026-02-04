@@ -53,7 +53,11 @@ class ProduksiController extends Controller
 
             // Use cache with 5 minutes TTL
             $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request) {
-                $query = ProduksiWork::with(['episode', 'creativeWork', 'createdBy']);
+                $query = ProduksiWork::with([
+                    'episode.program.productionTeam', 
+                    'creativeWork.latestApprovedMusicArrangement',
+                    'createdBy'
+                ]);
 
                 // Filter by status
                 if ($request->has('status')) {
@@ -182,30 +186,36 @@ class ProduksiController extends Controller
 
             $equipmentRequests = [];
             $unavailableEquipment = [];
+            
+            // OPTIMIZATION: Bulk fetch availability data to avoid N+1
+            $requestedNames = collect($request->equipment_list)->pluck('equipment_name')->unique()->toArray();
+            $useNewSchema = Schema::hasColumn('equipment_inventory', 'equipment_name');
+            $nameColumn = $useNewSchema ? 'equipment_name' : 'name';
+            
+            // 1. Fetch available counts from inventory
+            $inventoryCounts = EquipmentInventory::whereIn($nameColumn, $requestedNames)
+                ->where('status', 'available')
+                ->select($nameColumn)
+                ->get()
+                ->groupBy($nameColumn)
+                ->map->count();
+            
+            // 2. Fetch in-use equipment requests
+            // We fetch all approved/in_use requests to check against our requested items
+            $inUseRequests = ProductionEquipment::whereIn('status', ['approved', 'in_use'])->get();
 
             // Check each equipment availability
             foreach ($request->equipment_list as $equipment) {
                 $equipmentName = $equipment['equipment_name'];
                 $quantity = $equipment['quantity'];
 
-                // Check if equipment is available (not in_use or assigned)
-                // Use 'name' column (from old migration) - if table has 'equipment_name', it will also work
-                if (Schema::hasColumn('equipment_inventory', 'equipment_name')) {
-                    // New migration structure
-                    $availableCount = EquipmentInventory::where('equipment_name', $equipmentName)
-                        ->whereIn('status', ['available'])
-                        ->count();
-                } else {
-                    // Old migration structure - use 'name' column
-                    $availableCount = EquipmentInventory::where('name', $equipmentName)
-                        ->whereIn('status', ['available'])
-                        ->count();
-                }
-
-                // Also check ProductionEquipment for in_use status
-                $inUseCount = ProductionEquipment::where('equipment_list', 'like', '%' . $equipmentName . '%')
-                    ->whereIn('status', ['approved', 'in_use'])
-                    ->count();
+                $availableCount = $inventoryCounts->get($equipmentName, 0);
+                
+                // Check if equipment is in use in any other production equipment request
+                $inUseCount = $inUseRequests->filter(function($req) use ($equipmentName) {
+                    $list = is_array($req->equipment_list) ? $req->equipment_list : [];
+                    return in_array($equipmentName, $list);
+                })->count();
 
                 if ($availableCount < $quantity || $inUseCount > 0) {
                     $unavailableEquipment[] = [

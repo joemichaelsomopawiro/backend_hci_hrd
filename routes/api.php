@@ -766,6 +766,11 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/episodes/{id}/crews', [PrProducerController::class, 'addEpisodeCrew']);
         Route::delete('/episodes/{id}/crews/{crewId}', [PrProducerController::class, 'removeEpisodeCrew']);
         Route::post('/episodes/{id}/approve', [PrProducerController::class, 'approveEpisode']);
+        
+        // Team Management & Workflow
+        Route::post('/episodes/{id}/copy-team', [PrProducerController::class, 'copyTeamAssignment']);
+        Route::post('/schedules/{id}/emergency-reassign', [PrProducerController::class, 'emergencyReassignTeam']);
+        Route::post('/creative-works/{id}/cancel-shooting', [PrProducerController::class, 'cancelShooting']);
     });
 
     // Manager Distribusi Routes

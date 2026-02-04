@@ -263,7 +263,12 @@ class MusicArrangerController extends Controller
     {
         try {
             $user = Auth::user();
-            $arrangement = MusicArrangement::with(['episode', 'createdBy'])->findOrFail($id);
+            $arrangement = MusicArrangement::with([
+                'episode', 
+                'createdBy', 
+                'reviewedBy', 
+                'soundEngineerHelper'
+            ])->findOrFail($id);
 
             // Access check: creator or team members
             return response()->json(['success' => true, 'data' => $arrangement]);

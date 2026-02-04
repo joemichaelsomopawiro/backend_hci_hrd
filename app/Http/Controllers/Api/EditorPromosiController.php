@@ -40,7 +40,7 @@ class EditorPromosiController extends Controller
             // Get all works that are either:
             // 1. Created by current user, OR
             // 2. In draft/planning status (available for acceptance) for any Editor Promosi user
-            $query = PromotionWork::with(['episode', 'createdBy'])
+            $query = PromotionWork::with(['episode.program', 'createdBy', 'reviewedBy'])
                 ->where(function($q) use ($user) {
                     $q->where('created_by', $user->id)
                       ->orWhereIn('status', ['draft', 'planning']); // Draft/planning works are available for any Editor Promosi to accept
@@ -87,13 +87,6 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Editor Promotion') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
-            }
-
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
                 'work_type' => 'required|in:bts_video,bts_photo,highlight_ig,highlight_facebook,highlight_tv,iklan_episode_tv,story_ig,reels_facebook,tiktok,website_content',
@@ -308,7 +301,6 @@ class EditorPromosiController extends Controller
                         'original_name' => $file->getClientOriginalName()
                     ]
                 ]);
-                ]);
                 }
             }
 
@@ -460,29 +452,33 @@ class EditorPromosiController extends Controller
             
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
+            if ($user->role !== 'Editor Promotion') {
+                return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            $stats = [
-                'total_works' => PromotionWork::where('created_by', $user->id)->count(),
-                'completed_works' => PromotionWork::where('created_by', $user->id)
-                    ->where('status', 'completed')->count(),
-                'in_progress_works' => PromotionWork::where('created_by', $user->id)
-                    ->where('status', 'in_progress')->count(),
-                'pending_works' => PromotionWork::where('created_by', $user->id)
-                    ->where('status', 'draft')->count(),
-                'works_by_type' => PromotionWork::where('created_by', $user->id)
-                    ->selectRaw('work_type, count(*) as count')
-                    ->groupBy('work_type')
-                    ->get(),
-                'recent_works' => PromotionWork::where('created_by', $user->id)
-                    ->with(['episode'])
-                    ->orderBy('created_at', 'desc')
-                    ->limit(5)
-                    ->get()
-            ];
+            $statusStats = PromotionWork::where('created_by', $user->id)
+            ->selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $stats = [
+            'total_works' => $statusStats->sum(),
+            'completed_works' => $statusStats->get('completed', 0),
+            'in_progress_works' => $statusStats->get('in_progress', 0),
+            'pending_works' => $statusStats->get('draft', 0),
+            'works_by_type' => PromotionWork::where('created_by', $user->id)
+                ->selectRaw('work_type, count(*) as count')
+                ->groupBy('work_type')
+                ->get(),
+            'recent_works' => PromotionWork::where('created_by', $user->id)
+                ->with(['episode.program'])
+                ->orderBy('created_at', 'desc')
+                ->limit(5)
+                ->get()
+        ];
 
             return response()->json([
                 'success' => true,

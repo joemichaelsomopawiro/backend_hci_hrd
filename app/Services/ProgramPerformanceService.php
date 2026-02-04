@@ -250,39 +250,49 @@ class ProgramPerformanceService
      */
     public function evaluateAllActivePrograms(): array
     {
-        $programs = Program::whereIn('status', ['active', 'in_production'])
-            ->get();
-        
-        $results = [
-            'total_evaluated' => 0,
+        $programs = Program::whereIn('status', ['active', 'in_production'])->get();
+    
+    $results = [
+        'total_evaluated' => 0,
+        'performance_summary' => [
             'good' => 0,
             'warning' => 0,
-            'poor' => 0,
-            'auto_closed' => 0
-        ];
+            'poor' => 0,            'pending' => 0
+        ],
+        'auto_closed' => 0
+    ];
+
+    // Bulk fetch aired episodes stats for all these programs
+    $programStats = Episode::whereIn('program_id', $programs->pluck('id'))
+        ->where('status', 'aired')
+        ->selectRaw('program_id, SUM(actual_views) as total, AVG(actual_views) as average, COUNT(*) as count')
+        ->groupBy('program_id')
+        ->get()
+        ->keyBy('program_id');
+    
+    foreach ($programs as $program) {
+        $oldStatus = $program->performance_status;
         
-        foreach ($programs as $program) {
-            $oldStatus = $program->performance_status;
-            $this->updateProgramStatistics($program->id);
-            $program->refresh();
-            
-            $results['total_evaluated']++;
-            $results[$program->performance_status]++;
-            
-            if ($program->status === 'cancelled' && $oldStatus !== 'cancelled') {
-                $results['auto_closed']++;
-            }
+        // Use pre-fetched stats if available
+        $stats = $programStats->get($program->id);
+        
+        $program->update([
+            'total_actual_views' => $stats->total ?? 0,
+            'average_views_per_episode' => $stats->average ?? 0,
+            'last_performance_check' => now()
+        ]);
+        
+        // Evaluate performance
+        $this->evaluateProgramPerformance($program);
+        
+        $results['total_evaluated']++;
+        $results['performance_summary'][$program->performance_status] = ($results['performance_summary'][$program->performance_status] ?? 0) + 1;
+        
+        if ($program->status === 'cancelled' && $oldStatus !== 'cancelled') {
+            $results['auto_closed']++;
         }
-        
-        return $results;
+    }
+    
+    return $results;
     }
 }
-
-
-
-
-
-
-
-
-

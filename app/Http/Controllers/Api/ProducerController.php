@@ -1571,27 +1571,44 @@ class ProducerController extends Controller
         try {
             $programId = $request->get('program_id');
             
-            $overview = [
-                'programs' => Program::count(),
-                'episodes' => Episode::count(),
-                'deadlines' => \App\Models\Deadline::count(),
-                'overdue_deadlines' => \App\Models\Deadline::where('status', 'overdue')->count(),
-                'pending_approvals' => $this->getPendingApprovalsCount(),
-                'in_production_episodes' => Episode::where('status', 'in_production')->count(),
-                'completed_episodes' => Episode::where('status', 'aired')->count()
+            $episodeStats = Episode::selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $deadlineStats = \App\Models\Deadline::selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $overview = [
+            'programs' => Program::count(),
+            'episodes' => $episodeStats->sum(),
+            'deadlines' => $deadlineStats->sum(),
+            'overdue_deadlines' => $deadlineStats->get('overdue', 0),
+            'pending_approvals' => $this->getPendingApprovalsCount(),
+            'in_production_episodes' => $episodeStats->get('in_production', 0),
+            'completed_episodes' => $episodeStats->get('aired', 0)
+        ];
+        
+        if ($programId) {
+            $programEpisodeStats = Episode::where('program_id', $programId)
+                ->selectRaw('status, count(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
+            $programDeadlineStats = \App\Models\Deadline::whereHas('episode', function ($q) use ($programId) {
+                    $q->where('program_id', $programId);
+                })
+                ->selectRaw('status, count(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
+            $overview['program_specific'] = [
+                'episodes' => $programEpisodeStats->sum(),
+                'deadlines' => $programDeadlineStats->sum(),
+                'overdue_deadlines' => $programDeadlineStats->get('overdue', 0)
             ];
-            
-            if ($programId) {
-                $overview['program_specific'] = [
-                    'episodes' => Episode::where('program_id', $programId)->count(),
-                    'deadlines' => \App\Models\Deadline::whereHas('episode', function ($q) use ($programId) {
-                        $q->where('program_id', $programId);
-                    })->count(),
-                    'overdue_deadlines' => \App\Models\Deadline::whereHas('episode', function ($q) use ($programId) {
-                        $q->where('program_id', $programId);
-                    })->where('status', 'overdue')->count()
-                ];
-            }
+        }
+    
             
             return response()->json([
                 'success' => true,
@@ -1744,42 +1761,90 @@ class ProducerController extends Controller
             $teamId = $request->get('team_id');
             
             $query = \App\Models\ProductionTeam::with(['members.user']);
+        
+        if ($teamId) {
+            $query->where('id', $teamId);
+        }
+        
+        $teams = $query->get();
+        
+        // Bulk fetch all relevant deadlines for these teams' programs/episodes
+        $allEpisodeIds = [];
+        foreach ($teams as $team) {
+            $allEpisodeIds = array_merge($allEpisodeIds, \App\Models\Episode::whereHas('program', function($q) use ($team) {
+                $q->where('production_team_id', $team->id);
+            })->pluck('id')->toArray());
+        }
+        $allEpisodeIds = array_unique($allEpisodeIds);
+
+        // Fetch counts for deadlines grouped by episode and role
+        $deadlineStats = \App\Models\Deadline::whereIn('episode_id', $allEpisodeIds)
+            ->selectRaw('episode_id, role, is_completed, status, count(*) as count')
+            ->groupBy('episode_id', 'role', 'is_completed', 'status')
+            ->get();
+
+        // Fetch workflow tasks grouped by user
+        $workflowStats = \App\Models\WorkflowState::whereIn('assigned_to_user_id', $teams->flatMap->members->pluck('user_id'))
+            ->selectRaw('assigned_to_user_id, current_state, count(*) as count')
+            ->groupBy('assigned_to_user_id', 'current_state')
+            ->get();
+
+        $performance = [];
+        
+        foreach ($teams as $team) {
+            $teamPerformance = [
+                'team_id' => $team->id,
+                'team_name' => $team->name,
+                'members' => [],
+                'total_deadlines' => 0,
+                'completed_deadlines' => 0,
+                'overdue_deadlines' => 0
+            ];
+
+            // Get episodes for this specific team
+            $teamEpisodeIds = \App\Models\Episode::whereHas('program', function($q) use ($team) {
+                $q->where('production_team_id', $team->id);
+            })->when($programId, function($q) use ($programId) {
+                $q->where('program_id', $programId);
+            })->pluck('id')->toArray();
             
-            if ($teamId) {
-                $query->where('id', $teamId);
-            }
-            
-            $teams = $query->get();
-            
-            $performance = [];
-            
-            foreach ($teams as $team) {
-                $teamPerformance = [
-                    'team_id' => $team->id,
-                    'team_name' => $team->name,
-                    'members' => [],
-                    'total_deadlines' => 0,
-                    'completed_deadlines' => 0,
-                    'overdue_deadlines' => 0
+            foreach ($team->members as $member) {
+                // Filter deadline stats for this member's role and team's episodes
+                $memberDeadlines = $deadlineStats->whereIn('episode_id', $teamEpisodeIds)
+                    ->where('role', $member->role);
+                
+                $totalDl = $memberDeadlines->sum('count');
+                $completedDl = $memberDeadlines->where('is_completed', true)->sum('count');
+                $overdueDl = $memberDeadlines->where('status', 'overdue')->sum('count');
+
+                $memberWorkflow = $workflowStats->where('assigned_to_user_id', $member->user_id);
+                
+                $memberPerformance = [
+                    'user_id' => $member->user_id,
+                    'user_name' => $member->user->name ?? 'Unknown',
+                    'role' => $member->role,
+                    'deadlines' => [
+                        'total' => $totalDl,
+                        'completed' => $completedDl,
+                        'overdue' => $overdueDl
+                    ],
+                    'workflow_tasks' => [
+                        'total' => $memberWorkflow->sum('count'),
+                        'by_state' => $memberWorkflow->map(function($stat) {
+                            return ['current_state' => $stat->current_state, 'count' => $stat->count];
+                        })->values()
+                    ]
                 ];
                 
-                foreach ($team->members as $member) {
-                    $memberPerformance = [
-                        'user_id' => $member->user_id,
-                        'user_name' => $member->user->name,
-                        'role' => $member->role,
-                        'deadlines' => $this->getMemberDeadlines($member->user_id, $programId),
-                        'workflow_tasks' => $this->getMemberWorkflowTasks($member->user_id, $programId)
-                    ];
-                    
-                    $teamPerformance['members'][] = $memberPerformance;
-                    $teamPerformance['total_deadlines'] += $memberPerformance['deadlines']['total'];
-                    $teamPerformance['completed_deadlines'] += $memberPerformance['deadlines']['completed'];
-                    $teamPerformance['overdue_deadlines'] += $memberPerformance['deadlines']['overdue'];
-                }
-                
-                $performance[] = $teamPerformance;
+                $teamPerformance['members'][] = $memberPerformance;
+                $teamPerformance['total_deadlines'] += $totalDl;
+                $teamPerformance['completed_deadlines'] += $completedDl;
+                $teamPerformance['overdue_deadlines'] += $overdueDl;
             }
+            
+            $performance[] = $teamPerformance;
+        }
+    
             
             return response()->json([
                 'success' => true,

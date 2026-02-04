@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use App\Models\MusicArrangement;
 
 class CreativeWork extends Model
@@ -93,18 +93,21 @@ class CreativeWork extends Model
     }
 
     /**
+     * Relationship dengan Music Arrangement yang sudah di-approve (Latest)
+     */
+    public function latestApprovedMusicArrangement(): HasOne
+    {
+        return $this->hasOne(MusicArrangement::class, 'episode_id', 'episode_id')
+            ->whereIn('status', ['arrangement_approved', 'approved'])
+            ->latestOfMany('reviewed_at');
+    }
+
+    /**
      * Accessor untuk Music Arrangement (Approved)
      */
     public function getMusicArrangementAttribute(): ?MusicArrangement
     {
-        if ($this->episode && $this->episode->relationLoaded('musicArrangements')) {
-            return $this->episode->musicArrangements->first();
-        }
-        
-        return MusicArrangement::where('episode_id', $this->episode_id)
-            ->whereIn('status', ['arrangement_approved', 'approved'])
-            ->orderBy('reviewed_at', 'desc')
-            ->first();
+        return $this->latestApprovedMusicArrangement;
     }
 
     /**

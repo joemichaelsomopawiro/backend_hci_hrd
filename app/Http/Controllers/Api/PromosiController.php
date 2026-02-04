@@ -50,7 +50,7 @@ class PromosiController extends Controller
 
             // Use cache with 5 minutes TTL
             $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request, $user) {
-                $query = PromotionWork::with(['episode.program', 'createdBy', 'reviewedBy']);
+                $query = PromotionWork::with(['episode.program.productionTeam', 'createdBy', 'reviewedBy']);
 
                 // Filter by user (only works assigned to this user)
                 // PromotionWork bisa di-assign ke user tertentu melalui created_by
@@ -966,16 +966,24 @@ class PromosiController extends Controller
                 ], 403);
             }
 
-            $stats = [
-                'total_works' => PromotionWork::count(),
-                'planning_works' => PromotionWork::where('status', 'planning')->count(),
-                'shooting_works' => PromotionWork::where('status', 'shooting')->count(),
-                'editing_works' => PromotionWork::where('status', 'editing')->count(),
-                'completed_works' => PromotionWork::where('status', 'published')->count(),
-                'my_works' => PromotionWork::where('created_by', $user->id)->count(),
-                'my_completed' => PromotionWork::where('created_by', $user->id)
-                    ->where('status', 'published')->count()
-            ];
+            $statusStats = PromotionWork::selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $myStats = PromotionWork::where('created_by', $user->id)
+            ->selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $stats = [
+            'total_works' => $statusStats->sum(),
+            'planning_works' => $statusStats->get('planning', 0),
+            'shooting_works' => $statusStats->get('shooting', 0),
+            'editing_works' => $statusStats->get('editing', 0),
+            'completed_works' => $statusStats->get('published', 0),
+            'my_works' => $myStats->sum(),
+            'my_completed' => $myStats->get('published', 0)
+        ];
 
             return response()->json([
                 'success' => true,
