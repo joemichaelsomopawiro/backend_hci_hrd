@@ -1422,6 +1422,9 @@ class ManagerProgramController extends Controller
         
         try {
             $query = Program::with(['managerProgram', 'productionTeam'])
+                ->withCount(['episodes', 'episodes as aired_episodes_count' => function ($q) {
+                    $q->where('status', 'aired');
+                }])
                 ->whereIn('status', ['active', 'in_production', 'approved'])
                 ->whereNotNull('target_views_per_episode')
                 ->where('target_views_per_episode', '>', 0);
@@ -1442,7 +1445,7 @@ class ManagerProgramController extends Controller
                 $targetViews = $program->target_views_per_episode ?? 1;
                 $averageViews = $program->average_views_per_episode ?? 0;
                 $achievement = $targetViews > 0 ? ($averageViews / $targetViews) * 100 : 0;
-                $airedEpisodes = $program->episodes()->where('status', 'aired')->count();
+                $airedEpisodes = $program->aired_episodes_count;
                 
                 return [
                     'id' => $program->id,
@@ -3058,65 +3061,27 @@ class ManagerProgramController extends Controller
                 ->when(!$includeCompleted, function($q) {
                     $q->whereIn('status', ['pending', 'reviewed']);
                 })
+                ->whereHasMorph('approvable', [Episode::class], function ($q) use ($programIds) {
+                    $q->whereIn('program_id', $programIds);
+                })
                 ->with(['approvable', 'requestedBy'])
                 ->orderBy('created_at', 'desc')
-                ->get()
-                ->filter(function($approval) use ($user, $programIds) {
-                    try {
-                        // Filter by programs managed by this Manager Program
-                        $approvable = $approval->approvable;
-                        if (!$approvable) return false;
-                        
-                        // Handle different approvable types
-                        if ($approvable instanceof Episode) {
-                            return $programIds->contains($approvable->program_id);
-                        } elseif (method_exists($approvable, 'episode')) {
-                            $episode = $approvable->episode;
-                            if (!$episode) return false;
-                            return $programIds->contains($episode->program_id);
-                        }
-                        
-                        return false;
-                    } catch (\Exception $e) {
-                        Log::warning('Error filtering rundown edit approval', [
-                            'approval_id' => $approval->id,
-                            'error' => $e->getMessage()
-                        ]);
-                        return false;
-                    }
-                });
-
+                ->get();
+                
             // Get special budget approvals
             $specialBudgets = ProgramApproval::where('approval_type', 'special_budget')
                 ->when(!$includeCompleted, function($q) {
                     $q->whereIn('status', ['pending', 'reviewed']);
                 })
-                ->where('approvable_type', 'App\Models\CreativeWork')
-                ->with(['approvable', 'requestedBy'])
+                ->whereHasMorph('approvable', ['App\Models\CreativeWork'], function ($q) use ($programIds) {
+                    // CreativeWork -> Episode -> Program
+                    $q->whereHas('episode', function ($q2) use ($programIds) {
+                        $q2->whereIn('program_id', $programIds);
+                    });
+                })
+                ->with(['approvable.episode.program', 'requestedBy'])
                 ->orderBy('created_at', 'desc')
-                ->get()
-                ->filter(function($approval) use ($user, $programIds) {
-                    try {
-                        // Filter by programs managed by this Manager Program
-                        $approvable = $approval->approvable;
-                        if (!$approvable) return false;
-                        
-                        // CreativeWork has episode relationship
-                        if (method_exists($approvable, 'episode')) {
-                            $episode = $approvable->episode;
-                            if (!$episode) return false;
-                            return $programIds->contains($episode->program_id);
-                        }
-                        
-                        return false;
-                    } catch (\Exception $e) {
-                        Log::warning('Error filtering special budget approval', [
-                            'approval_id' => $approval->id,
-                            'error' => $e->getMessage()
-                        ]);
-                        return false;
-                    }
-                });
+                ->get();
 
             return response()->json([
                 'success' => true,

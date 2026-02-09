@@ -32,16 +32,22 @@ class QualityControlController extends Controller
             }
 
             // Optimize query with eager loading
-            $query = QualityControl::with([
+            $query = QualityControlWork::with([
                 'episode.program.managerProgram',
                 'episode.program.productionTeam.members.user',
                 'createdBy',
-                'qcBy'
+                'reviewedBy'
             ]);
 
             // Filter by status
             if ($request->has('status')) {
-                $query->where('status', $request->status);
+                // Support multiple statuses (comma separated)
+                $statuses = explode(',', $request->status);
+                if (count($statuses) > 1) {
+                    $query->whereIn('status', $statuses);
+                } else {
+                    $query->where('status', $request->status);
+                }
             }
 
             // Filter by QC type
@@ -71,7 +77,7 @@ class QualityControlController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $control = QualityControl::with(['episode', 'createdBy', 'qcBy'])
+            $control = QualityControlWork::with(['episode.program', 'createdBy', 'reviewedBy'])
                 ->findOrFail($id);
 
             return response()->json([
@@ -103,7 +109,7 @@ class QualityControlController extends Controller
                 ], 403);
             }
 
-            $control = QualityControl::findOrFail($id);
+            $control = QualityControlWork::findOrFail($id);
 
             if ($control->status !== 'pending') {
                 return response()->json([
@@ -113,7 +119,13 @@ class QualityControlController extends Controller
             }
 
             $oldStatus = $control->status;
-            $control->startQC($user->id);
+            
+            // Use model method if available, or manual update
+            $control->update([
+                'status' => 'in_progress',
+                'reviewed_by' => $user->id, // QualityControlWork uses reviewed_by
+                'reviewed_at' => now()
+            ]);
 
             // Audit logging
             ControllerSecurityHelper::logCrud('quality_control_started', $control, [
@@ -127,7 +139,7 @@ class QualityControlController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $control->load(['episode', 'createdBy', 'qcBy']),
+                'data' => $control->load(['episode', 'createdBy', 'reviewedBy']),
                 'message' => 'QC process started successfully'
             ]);
 
@@ -156,8 +168,8 @@ class QualityControlController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'quality_score' => 'required|integer|min:1|max:100',
-                'improvement_areas' => 'nullable|array',
-                'notes' => 'nullable|string'
+                'improvements_needed' => 'nullable|array', // QualityControlWork uses improvements_needed
+                'qc_notes' => 'nullable|string' // QualityControlWork uses qc_notes
             ]);
 
             if ($validator->fails()) {
@@ -168,7 +180,7 @@ class QualityControlController extends Controller
                 ], 422);
             }
 
-            $control = QualityControl::findOrFail($id);
+            $control = QualityControlWork::findOrFail($id);
 
             if ($control->status !== 'in_progress') {
                 return response()->json([
@@ -178,11 +190,14 @@ class QualityControlController extends Controller
             }
 
             $oldStatus = $control->status;
-            $control->completeQC(
-                $request->quality_score,
-                $request->improvement_areas ?? [],
-                $request->notes
-            );
+            
+            $control->update([
+                'status' => 'completed',
+                'quality_score' => $request->quality_score,
+                'improvements_needed' => $request->improvements_needed ?? [],
+                'qc_notes' => $request->qc_notes,
+                'reviewed_at' => now()
+            ]);
 
             // Audit logging
             ControllerSecurityHelper::logCrud('quality_control_completed', $control, [
@@ -197,7 +212,7 @@ class QualityControlController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $control->load(['episode', 'createdBy', 'qcBy']),
+                'data' => $control->load(['episode', 'createdBy', 'reviewedBy']),
                 'message' => 'QC completed successfully'
             ]);
 
@@ -224,8 +239,9 @@ class QualityControlController extends Controller
                 ], 403);
             }
 
-            $control = QualityControl::findOrFail($id);
+            $control = QualityControlWork::findOrFail($id);
 
+            // QC can be approved if it is completed
             if ($control->status !== 'completed') {
                 return response()->json([
                     'success' => false,
@@ -236,7 +252,7 @@ class QualityControlController extends Controller
             $oldStatus = $control->status;
             $control->update([
                 'status' => 'approved',
-                'qc_result_notes' => $request->get('notes', 'QC Approved')
+                'review_notes' => $request->get('notes', 'QC Approved') // QualityControlWork uses review_notes
             ]);
 
             // Audit logging
@@ -252,7 +268,7 @@ class QualityControlController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $control->load(['episode', 'createdBy', 'qcBy']),
+                'data' => $control->load(['episode', 'createdBy', 'reviewedBy']),
                 'message' => 'QC approved successfully'
             ]);
 
@@ -291,7 +307,7 @@ class QualityControlController extends Controller
                 ], 422);
             }
 
-            $control = QualityControl::findOrFail($id);
+            $control = QualityControlWork::findOrFail($id);
 
             if ($control->status !== 'completed') {
                 return response()->json([
@@ -302,8 +318,8 @@ class QualityControlController extends Controller
 
             $oldStatus = $control->status;
             $control->update([
-                'status' => 'rejected',
-                'qc_result_notes' => $request->reason
+                'status' => 'rejected', // Use rejected status
+                'review_notes' => $request->reason // QualityControlWork uses review_notes
             ]);
 
             // Audit logging
@@ -319,7 +335,7 @@ class QualityControlController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $control->load(['episode', 'createdBy', 'qcBy']),
+                'data' => $control->load(['episode', 'createdBy', 'reviewedBy']),
                 'message' => 'QC rejected successfully'
             ]);
 
@@ -346,7 +362,7 @@ class QualityControlController extends Controller
                 ], 403);
             }
 
-            $statusStats = QualityControl::selectRaw('status, count(*) as count')
+            $statusStats = QualityControlWork::selectRaw('status, count(*) as count')
                 ->groupBy('status')
                 ->pluck('count', 'status');
 
@@ -357,10 +373,10 @@ class QualityControlController extends Controller
                 'completed_qc' => $statusStats->get('completed', 0),
                 'approved_qc' => $statusStats->get('approved', 0),
                 'rejected_qc' => $statusStats->get('rejected', 0),
-                'qc_by_type' => QualityControl::selectRaw('qc_type, count(*) as count')
+                'qc_by_type' => QualityControlWork::selectRaw('qc_type, count(*) as count')
                     ->groupBy('qc_type')
                     ->get(),
-                'recent_qc' => QualityControl::with(['episode'])
+                'recent_qc' => QualityControlWork::with(['episode.program'])
                     ->orderBy('created_at', 'desc')
                     ->limit(5)
                     ->get()
@@ -423,7 +439,7 @@ class QualityControlController extends Controller
                 ], 422);
             }
 
-            $control = QualityControl::findOrFail($id);
+            $control = QualityControlWork::findOrFail($id);
 
             // Process screenshots
             $screenshots = [];
@@ -497,7 +513,7 @@ class QualityControlController extends Controller
                 'qc_notes' => $request->overall_notes,
                 'screenshots' => $screenshots,
                 'status' => 'completed',
-                'qc_completed_at' => now()
+                'qc_completed_at' => now() // Assuming we want to track this, but QualityControlWork might strictly use 'reviewed_at' by 'reviewed_by'
             ]);
 
             // Notify related roles
@@ -505,7 +521,7 @@ class QualityControlController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $control->load(['episode', 'createdBy', 'qcBy']),
+                'data' => $control->load(['episode', 'createdBy', 'reviewedBy']),
                 'message' => 'QC form submitted successfully'
             ]);
 

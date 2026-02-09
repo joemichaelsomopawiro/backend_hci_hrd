@@ -38,7 +38,8 @@ class ManagerBroadcastingController extends Controller
             }
 
             $query = BroadcastingSchedule::with([
-            'episode.program.productionTeam',
+            'episode.program.managerProgram',
+            'episode.program.productionTeam.members.user',
             'createdBy',
             'uploadedBy'
         ]);
@@ -92,7 +93,8 @@ class ManagerBroadcastingController extends Controller
             }
 
             $query = BroadcastingWork::with([
-            'episode.program.productionTeam',
+            'episode.program.managerProgram',
+            'episode.program.productionTeam.members.user',
             'createdBy'
         ]);
 

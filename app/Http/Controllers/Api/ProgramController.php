@@ -63,8 +63,8 @@ class ProgramController extends Controller
                         'productionTeam.members.user', // Fix N+1 problem
                         'episodes' => function ($q) {
                             $q->select('id', 'program_id', 'episode_number', 'title', 'status')
-                              ->orderBy('episode_number', 'desc')
-                              ->limit(5); // Hanya load 5 episodes terbaru untuk preview
+                              ->orderBy('episode_number', 'desc');
+                              // Removed limit(5) because it limits TOTAL results, not per program
                         }
                     ]);
                 
@@ -228,7 +228,8 @@ class ProgramController extends Controller
             'duration_minutes' => 'nullable|integer|min:1',
             'broadcast_channel' => 'nullable|string|max:255',
             'target_views_per_episode' => 'nullable|integer|min:0',
-            'proposal_file' => 'nullable|file|mimes:pdf,doc,docx|max:10240' // Max 10MB
+            'proposal_file' => 'nullable|file|mimes:pdf,doc,docx|max:10240', // Max 10MB
+            'proposal_file_link' => 'nullable|url|max:2048' // Link to external proposal file
         ]);
         
         if ($validator->fails()) {
@@ -305,6 +306,11 @@ class ProgramController extends Controller
                 if (Schema::hasColumn('programs', 'proposal_file_mime_type')) {
                     $programData['proposal_file_mime_type'] = $proposalFileMimeType;
                 }
+            }
+            
+            // Add proposal file link jika ada (prioritas: link > file upload)
+            if ($request->proposal_file_link && Schema::hasColumn('programs', 'proposal_file_link')) {
+                $programData['proposal_file_link'] = $request->proposal_file_link;
             }
             
             // Set default status jika tidak ada
