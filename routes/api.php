@@ -803,7 +803,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
 
     // Creative Routes
     Route::prefix('creative')->group(function () {
-        Route::get('/highlights', [\App\Http\Controllers\Api\Pr\PrCreativeController::class, 'getHighlights']);
+        Route::get('/highlights', [PrCreativeController::class, 'getHighlights']);
         Route::get('/episodes/available', [PrCreativeController::class, 'getAvailableEpisodes']);
         Route::get('/works', [PrCreativeController::class, 'index']);
         Route::get('/works/{id}', [PrCreativeController::class, 'show']);
@@ -911,14 +911,14 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
 // ===== TASK VISIBILITY & REASSIGNMENT ROUTES =====
 Route::prefix('tasks')->middleware(['auth:sanctum'])->group(function () {
     // Task Visibility Routes (All roles can access)
-    Route::get('/all', [\App\Http\Controllers\Api\TaskVisibilityController::class, 'getAllTasks']); // Get all tasks with filters
-    Route::get('/statistics', [\App\Http\Controllers\Api\TaskVisibilityController::class, 'getTaskStatistics']); // Get task statistics
-    Route::get('/{taskType}/{taskId}', [\App\Http\Controllers\Api\TaskVisibilityController::class, 'getTaskDetail']); // Get task detail
+    Route::get('/all', [TaskVisibilityController::class, 'getAllTasks']); // Get all tasks with filters
+    Route::get('/statistics', [TaskVisibilityController::class, 'getTaskStatistics']); // Get task statistics
+    Route::get('/{taskType}/{taskId}', [TaskVisibilityController::class, 'getTaskDetail']); // Get task detail
 
     // Task Reassignment Routes (Manager Program and Producer only)
-    Route::post('/reassign', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'reassignTask']); // Reassign task
-    Route::get('/{taskType}/{taskId}/reassignment-history', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'getReassignmentHistory']); // Get reassignment history
-    Route::get('/available-users', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'getAvailableUsers']); // Get available users for dropdown
+    Route::post('/reassign', [TaskReassignmentController::class, 'reassignTask']); // Reassign task
+    Route::get('/{taskType}/{taskId}/reassignment-history', [TaskReassignmentController::class, 'getReassignmentHistory']); // Get reassignment history
+    Route::get('/available-users', [TaskReassignmentController::class, 'getAvailableUsers']); // Get available users for dropdown
 });
 
 Route::get('/fix-step-6-sync-dry-run', function () {

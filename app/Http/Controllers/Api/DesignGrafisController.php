@@ -769,7 +769,7 @@ class DesignGrafisController extends Controller
 
             if (isset($qcTypeMap[$work->work_type])) {
                 $qcType = $qcTypeMap[$work->work_type];
-                
+
                 // Check if QC work already exists
                 $existingQCWork = \App\Models\QualityControlWork::where('episode_id', $work->episode_id)
                     ->where('qc_type', $qcType)
@@ -777,7 +777,7 @@ class DesignGrafisController extends Controller
 
                 if (!$existingQCWork) {
                     $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
-                    
+
                     $qcWork = \App\Models\QualityControlWork::create([
                         'episode_id' => $work->episode_id,
                         'qc_type' => $qcType,
@@ -806,17 +806,17 @@ class DesignGrafisController extends Controller
                         ]);
                     }
                 } else {
-                     // Update existing QC work
+                    // Update existing QC work
                     $existingLocations = $existingQCWork->design_grafis_file_locations ?? [];
                     $newLocations = $this->prepareFilesToCheck($work);
-                    
+
                     // Merge and unique based on file_path
                     $existingLocations = array_merge($existingLocations, $newLocations);
-                    
+
                     // Update files_to_check as well
                     $existingFilesToCheck = $existingQCWork->files_to_check ?? [];
                     $existingFilesToCheck = array_merge($existingFilesToCheck, $newLocations);
-                    
+
                     $existingQCWork->update([
                         'design_grafis_file_locations' => $existingLocations,
                         'status' => 'pending'
@@ -1158,31 +1158,31 @@ class DesignGrafisController extends Controller
 
             $userId = $request->get('user_id', $user->id);
 
-        $statusStats = DesignGrafisWork::where('created_by', $userId)
-            ->selectRaw('status, count(*) as count')
-            ->groupBy('status')
-            ->pluck('count', 'status');
+            $statusStats = DesignGrafisWork::where('created_by', $userId)
+                ->selectRaw('status, count(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
 
-        $typeStats = DesignGrafisWork::where('created_by', $userId)
-            ->selectRaw('work_type, count(*) as count')
-            ->groupBy('work_type')
-            ->pluck('count', 'work_type');
+            $typeStats = DesignGrafisWork::where('created_by', $userId)
+                ->selectRaw('work_type, count(*) as count')
+                ->groupBy('work_type')
+                ->pluck('count', 'work_type');
 
-        $stats = [
-            'total_works' => $statusStats->sum(),
-            'draft' => $statusStats->get('draft', 0),
-            'in_progress' => $statusStats->get('designing', 0),
-            'completed' => $statusStats->get('completed', 0),
-            'reviewed' => $statusStats->get('reviewed', 0),
-            'approved' => $statusStats->get('approved', 0),
-            'by_work_type' => [
-                'thumbnail_youtube' => $typeStats->get('thumbnail_youtube', 0),
-                'thumbnail_bts' => $typeStats->get('thumbnail_bts', 0),
-                'graphics_ig' => $typeStats->get('graphics_ig', 0),
-                'graphics_facebook' => $typeStats->get('graphics_facebook', 0),
-                'banner_website' => $typeStats->get('banner_website', 0)
-            ]
-        ];
+            $stats = [
+                'total_works' => $statusStats->sum(),
+                'draft' => $statusStats->get('draft', 0),
+                'in_progress' => $statusStats->get('designing', 0),
+                'completed' => $statusStats->get('completed', 0),
+                'reviewed' => $statusStats->get('reviewed', 0),
+                'approved' => $statusStats->get('approved', 0),
+                'by_work_type' => [
+                    'thumbnail_youtube' => $typeStats->get('thumbnail_youtube', 0),
+                    'thumbnail_bts' => $typeStats->get('thumbnail_bts', 0),
+                    'graphics_ig' => $typeStats->get('graphics_ig', 0),
+                    'graphics_facebook' => $typeStats->get('graphics_facebook', 0),
+                    'banner_website' => $typeStats->get('banner_website', 0)
+                ]
+            ];
 
             return response()->json([
                 'success' => true,
@@ -1277,16 +1277,7 @@ class DesignGrafisController extends Controller
                 'message' => 'Promotion work not found or not in progress'
             ];
         }
-<<<<<<< HEAD
-=======
-        } else {
-            $sourceFiles['promosi_files'] = [
-                'available' => false,
-                'message' => 'Promotion work not found or not in progress'
-            ];
-        }
 
->>>>>>> origin/main
         return $sourceFiles;
     }
 
@@ -1296,7 +1287,7 @@ class DesignGrafisController extends Controller
     private function prepareFilesToCheck($work)
     {
         $files = [];
-        
+
         // Priority 1: Use file_paths array if available (contains multiple files/links)
         if (!empty($work->file_paths) && is_array($work->file_paths)) {
             foreach ($work->file_paths as $file) {
@@ -1317,7 +1308,7 @@ class DesignGrafisController extends Controller
                 }
             }
         }
-        
+
         // Priority 2: Fallback to single file_path if files array is empty but file_path exists
         if (empty($files) && $work->file_path) {
             $files[] = [
@@ -1325,7 +1316,7 @@ class DesignGrafisController extends Controller
                 'file_path' => $work->file_path,
                 'file_name' => $work->file_name,
                 'work_type' => $work->work_type,
-                'is_link' => false, 
+                'is_link' => false,
                 'submitted_at' => now()->toDateTimeString()
             ];
         }
