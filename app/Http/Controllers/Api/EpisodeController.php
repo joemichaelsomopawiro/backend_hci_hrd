@@ -42,9 +42,9 @@ class EpisodeController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            // Get per_page parameter (default: 100 untuk menampilkan semua episodes)
+            // Get per_page parameter (default: 15 untuk performa yang lebih baik)
             // Jika per_page = 0 atau 'all', return semua episodes tanpa pagination
-            $perPage = $request->get('per_page', 100);
+            $perPage = $request->get('per_page', 15);
             $usePagination = !($perPage == 0 || $perPage === 'all');
             
             // Build cache key based on request parameters (include per_page)
@@ -65,8 +65,7 @@ class EpisodeController extends Controller
                     'program', // Pastikan Program ter-load
                     'program.managerProgram',
                     'program.productionTeam.members.user',
-                    'deadlines',
-                    'workflowStates'
+                    'deadlines'
                 ]);
                 
                 // Filter by program

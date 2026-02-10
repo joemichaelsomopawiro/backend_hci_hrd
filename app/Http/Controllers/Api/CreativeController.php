@@ -40,15 +40,11 @@ class CreativeController extends Controller
             }
 
             $query = CreativeWork::with([
-                'episode.program', 
-                'episode.musicArrangements' => function($q) {
-                    $q->whereIn('status', ['arrangement_approved', 'approved'])
-                      ->orderBy('reviewed_at', 'desc')
-                      ->limit(1);
-                },
-                'createdBy', 
-                'reviewedBy'
-            ]);
+            'episode.program', 
+            'latestApprovedMusicArrangement',
+            'createdBy', 
+            'reviewedBy'
+        ]);
             
             // Filter by episode
             if ($request->has('episode_id')) {
@@ -99,16 +95,12 @@ class CreativeController extends Controller
             300, // 5 minutes
             function () use ($id) {
                 return CreativeWork::with([
-                    'episode.program.managerProgram',
-                    'episode.program.productionTeam.members.user',
-                    'episode.musicArrangements' => function($q) {
-                        $q->whereIn('status', ['arrangement_approved', 'approved'])
-                          ->orderBy('reviewed_at', 'desc')
-                          ->limit(1);
-                    },
-                    'createdBy',
-                    'reviewedBy'
-                ])->findOrFail($id);
+                'episode.program.managerProgram',
+                'episode.program.productionTeam.members.user',
+                'latestApprovedMusicArrangement',
+                'createdBy',
+                'reviewedBy'
+            ])->findOrFail($id);
             }
         );
         
@@ -204,11 +196,11 @@ class CreativeController extends Controller
         $validator = Validator::make($request->all(), [
             'script_content' => 'nullable|string',
             'script_link' => 'nullable|url|max:2048',
-            'storyboard_data' => 'nullable|array',
+            'storyboard_data' => 'nullable',
             'storyboard_link' => 'nullable|url|max:2048',
-            'budget_data' => 'nullable|array',
-            'recording_schedule' => 'nullable|date',
-            'shooting_schedule' => 'nullable|date',
+            'budget_data' => 'nullable',
+            'recording_schedule' => 'nullable|string',
+            'shooting_schedule' => 'nullable|string',
             'shooting_location' => 'nullable|string|max:255'
         ]);
         
@@ -221,11 +213,49 @@ class CreativeController extends Controller
         }
         
         try {
-            $work->update($request->all());
+            // Build update data explicitly to handle both form-data and JSON
+            $updateData = [];
+            
+            if ($request->has('script_content')) {
+                $updateData['script_content'] = $request->script_content;
+            }
+            if ($request->has('script_link')) {
+                $updateData['script_link'] = $request->script_link;
+            }
+            if ($request->has('storyboard_link')) {
+                $updateData['storyboard_link'] = $request->storyboard_link;
+            }
+            if ($request->has('storyboard_data')) {
+                // Handle JSON string from form-data
+                $storyboardData = $request->storyboard_data;
+                if (is_string($storyboardData)) {
+                    $storyboardData = json_decode($storyboardData, true);
+                }
+                $updateData['storyboard_data'] = $storyboardData;
+            }
+            if ($request->has('budget_data')) {
+                // Handle JSON string from form-data
+                $budgetData = $request->budget_data;
+                if (is_string($budgetData)) {
+                    $budgetData = json_decode($budgetData, true);
+                }
+                $updateData['budget_data'] = $budgetData;
+            }
+            if ($request->has('recording_schedule')) {
+                $updateData['recording_schedule'] = $request->recording_schedule;
+            }
+            if ($request->has('shooting_schedule')) {
+                $updateData['shooting_schedule'] = $request->shooting_schedule;
+            }
+            if ($request->has('shooting_location')) {
+                $updateData['shooting_location'] = $request->shooting_location;
+            }
+            
+            $work->update($updateData);
             
             return response()->json([
                 'success' => true,
-                'data' => $work,
+                'data' => $work->fresh(['episode.program', 'createdBy']),
                 'message' => 'Creative work updated successfully'
             ]);
         } catch (\Exception $e) {
@@ -547,21 +577,39 @@ class CreativeController extends Controller
                 ], 400);
             }
 
-            // Update all fields and auto-submit
-            $work->update([
-                'script_content' => $request->script_content,
-                'script_link' => $request->script_link,
-                'storyboard_data' => $request->storyboard_data,
-                'storyboard_link' => $request->storyboard_link,
-                'recording_schedule' => $request->recording_schedule,
-                'shooting_schedule' => $request->shooting_schedule,
-                'shooting_location' => $request->shooting_location,
-                'budget_data' => $request->budget_data,
-                'status' => 'submitted', // Auto-submit untuk Producer review
-                'review_notes' => $request->completion_notes ? 
-                    ($work->review_notes ? $work->review_notes . "\n\n" : '') . "Completion notes: " . $request->completion_notes 
-                    : $work->review_notes
-            ]);
+            // Update only fields that are provided in the request
+            // This preserves data that was previously saved via PUT /works/{id}
+            $updateData = ['status' => 'submitted']; // Always set status to submitted
+            
+            if ($request->has('script_content') && $request->script_content !== null) {
+                $updateData['script_content'] = $request->script_content;
+            }
+            if ($request->has('script_link') && $request->script_link !== null) {
+                $updateData['script_link'] = $request->script_link;
+            }
+            if ($request->has('storyboard_data') && $request->storyboard_data !== null) {
+                $updateData['storyboard_data'] = $request->storyboard_data;
+            }
+            if ($request->has('storyboard_link') && $request->storyboard_link !== null) {
+                $updateData['storyboard_link'] = $request->storyboard_link;
+            }
+            if ($request->has('recording_schedule') && $request->recording_schedule !== null) {
+                $updateData['recording_schedule'] = $request->recording_schedule;
+            }
+            if ($request->has('shooting_schedule') && $request->shooting_schedule !== null) {
+                $updateData['shooting_schedule'] = $request->shooting_schedule;
+            }
+            if ($request->has('shooting_location') && $request->shooting_location !== null) {
+                $updateData['shooting_location'] = $request->shooting_location;
+            }
+            if ($request->has('budget_data') && $request->budget_data !== null) {
+                $updateData['budget_data'] = $request->budget_data;
+            }
+            if ($request->completion_notes) {
+                $updateData['review_notes'] = ($work->review_notes ? $work->review_notes . "\n\n" : '') . "Completion notes: " . $request->completion_notes;
+            }
+            
+            $work->update($updateData);
 
             // Notify Producer
             $episode = $work->episode;

@@ -498,14 +498,22 @@ class ArtSetPropertiController extends Controller
                 ], 403);
             }
 
+            $inventoryStats = EquipmentInventory::selectRaw('status, count(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
+            $requestStats = ProductionEquipment::selectRaw('status, count(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
             $stats = [
-                'total_equipment' => EquipmentInventory::count(),
-                'assigned_equipment' => EquipmentInventory::where('status', 'assigned')->count(),
-                'available_equipment' => EquipmentInventory::where('status', 'available')->count(),
-                'returned_equipment' => EquipmentInventory::where('status', 'returned')->count(),
-                'pending_requests' => ProductionEquipment::where('status', 'pending_approval')->count(),
-                'approved_requests' => ProductionEquipment::where('status', 'approved')->count(),
-                'rejected_requests' => ProductionEquipment::where('status', 'rejected')->count()
+                'total_equipment' => $inventoryStats->sum(),
+                'assigned_equipment' => $inventoryStats->get('assigned', 0),
+                'available_equipment' => $inventoryStats->get('available', 0),
+                'returned_equipment' => $inventoryStats->get('returned', 0),
+                'pending_requests' => $requestStats->get('pending_approval', 0),
+                'approved_requests' => $requestStats->get('approved', 0),
+                'rejected_requests' => $requestStats->get('rejected', 0)
             ];
 
             return response()->json([

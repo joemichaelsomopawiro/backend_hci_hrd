@@ -38,7 +38,7 @@ class DistributionManagerController extends Controller
                 ], 403);
             }
 
-            $query = BroadcastingSchedule::with(['episode.program', 'createdBy']);
+            $query = BroadcastingSchedule::with(['episode.program.productionTeam', 'createdBy']);
 
             // Filter by status
             if ($request->has('status')) {
@@ -80,7 +80,7 @@ class DistributionManagerController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $schedule = BroadcastingSchedule::with(['episode.program', 'createdBy'])
+            $schedule = BroadcastingSchedule::with(['episode.program.productionTeam', 'createdBy'])
                 ->findOrFail($id);
 
             return response()->json([
@@ -201,7 +201,7 @@ class DistributionManagerController extends Controller
                 ], 403);
             }
 
-            $query = PromotionMaterial::with(['episode.program', 'createdBy']);
+            $query = PromotionMaterial::with(['episode.program.productionTeam', 'createdBy']);
 
             // Filter by status
             if ($request->has('status')) {
@@ -239,31 +239,43 @@ class DistributionManagerController extends Controller
                 ], 403);
             }
 
-            $stats = [
-                'total_schedules' => BroadcastingSchedule::count(),
-                'pending_schedules' => BroadcastingSchedule::where('status', 'pending')->count(),
-                'scheduled_schedules' => BroadcastingSchedule::where('status', 'scheduled')->count(),
-                'published_schedules' => BroadcastingSchedule::where('status', 'published')->count(),
-                'failed_schedules' => BroadcastingSchedule::where('status', 'failed')->count(),
+            $scheduleStats = BroadcastingSchedule::selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $promotionStats = PromotionMaterial::selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $qcStats = QualityControl::selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $stats = [
+            'total_schedules' => $scheduleStats->sum(),
+            'pending_schedules' => $scheduleStats->get('pending', 0),
+            'scheduled_schedules' => $scheduleStats->get('scheduled', 0),
+            'published_schedules' => $scheduleStats->get('published', 0),
+            'failed_schedules' => $scheduleStats->get('failed', 0),
+            
+            'schedules_by_platform' => BroadcastingSchedule::selectRaw('platform, count(*) as count')
+                ->groupBy('platform')
+                ->get(),
+            
+            'total_promotions' => $promotionStats->sum(),
+            'pending_promotions' => $promotionStats->get('pending', 0),
+            'approved_promotions' => $promotionStats->get('approved', 0),
+            
+            'total_qc' => $qcStats->sum(),
+            'pending_qc' => $qcStats->get('pending', 0),
+            'approved_qc' => $qcStats->get('approved', 0),
+            
+            'recent_schedules' => BroadcastingSchedule::with(['episode.program.productionTeam'])
+                ->orderBy('created_at', 'desc')
+                ->limit(5)
+                ->get(),
                 
-                'schedules_by_platform' => BroadcastingSchedule::selectRaw('platform, count(*) as count')
-                    ->groupBy('platform')
-                    ->get(),
-                
-                'total_promotions' => PromotionMaterial::count(),
-                'pending_promotions' => PromotionMaterial::where('status', 'pending')->count(),
-                'approved_promotions' => PromotionMaterial::where('status', 'approved')->count(),
-                
-                'total_qc' => QualityControl::count(),
-                'pending_qc' => QualityControl::where('status', 'pending')->count(),
-                'approved_qc' => QualityControl::where('status', 'approved')->count(),
-                
-                'recent_schedules' => BroadcastingSchedule::with(['episode.program'])
-                    ->orderBy('created_at', 'desc')
-                    ->limit(5)
-                    ->get(),
-                
-                'upcoming_schedules' => BroadcastingSchedule::with(['episode.program'])
+                'upcoming_schedules' => BroadcastingSchedule::with(['episode.program.productionTeam'])
                     ->where('schedule_date', '>=', now())
                     ->where('status', 'scheduled')
                     ->orderBy('schedule_date', 'asc')
@@ -302,21 +314,24 @@ class DistributionManagerController extends Controller
 
             $dashboard = [
                 'today_schedules' => BroadcastingSchedule::whereDate('schedule_date', today())
-                    ->with(['episode.program'])
+                    ->with(['episode.program.productionTeam'])
+                    ->take(20) // Limit to relevant today
                     ->get(),
                 
                 'pending_approvals' => BroadcastingSchedule::where('status', 'pending')
-                    ->with(['episode.program'])
+                    ->with(['episode.program.productionTeam'])
                     ->orderBy('schedule_date', 'asc')
+                    ->take(15) // Limit pending to most urgent
                     ->get(),
                 
                 'active_programs' => Program::where('status', 'active')
                     ->withCount('episodes')
+                    ->take(10) // Only top active for dashboard
                     ->get(),
                 
-                'recent_activity' => BroadcastingSchedule::with(['episode.program', 'createdBy'])
+                'recent_activity' => BroadcastingSchedule::with(['episode.program.productionTeam', 'createdBy'])
                     ->orderBy('updated_at', 'desc')
-                    ->limit(10)
+                    ->limit(5) // Reduced limit for dashboard
                     ->get()
             ];
 

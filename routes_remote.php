@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -766,7 +766,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/episodes/{id}/crews', [PrProducerController::class, 'addEpisodeCrew']);
         Route::delete('/episodes/{id}/crews/{crewId}', [PrProducerController::class, 'removeEpisodeCrew']);
         Route::post('/episodes/{id}/approve', [PrProducerController::class, 'approveEpisode']);
-
+        
         // Team Management & Workflow
         Route::post('/episodes/{id}/copy-team', [PrProducerController::class, 'copyTeamAssignment']);
         Route::post('/schedules/{id}/emergency-reassign', [PrProducerController::class, 'emergencyReassignTeam']);
@@ -803,7 +803,6 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
 
     // Creative Routes
     Route::prefix('creative')->group(function () {
-        Route::get('/highlights', [\App\Http\Controllers\Api\Pr\PrCreativeController::class, 'getHighlights']);
         Route::get('/episodes/available', [PrCreativeController::class, 'getAvailableEpisodes']);
         Route::get('/works', [PrCreativeController::class, 'index']);
         Route::get('/works/{id}', [PrCreativeController::class, 'show']);
@@ -813,22 +812,6 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/episodes/{id}/files', [PrCreativeController::class, 'uploadFile']);
         Route::get('/episodes/{id}/files', [PrCreativeController::class, 'getFiles']);
         Route::delete('/episodes/{id}/files/{fileId}', [PrCreativeController::class, 'deleteFile']);
-    });
-
-    // Art & Set Property Routes
-    Route::prefix('art')->group(function () {
-        // Inventory Management
-        Route::get('/inventory', [App\Http\Controllers\Api\Pr\ArtInventoryController::class, 'index']);
-        Route::post('/inventory', [App\Http\Controllers\Api\Pr\ArtInventoryController::class, 'store']);
-        Route::put('/inventory/{id}', [App\Http\Controllers\Api\Pr\ArtInventoryController::class, 'update']);
-        Route::delete('/inventory/{id}', [App\Http\Controllers\Api\Pr\ArtInventoryController::class, 'destroy']);
-
-        // Loan Management
-        Route::get('/loans', [App\Http\Controllers\Api\Pr\EquipmentLoanController::class, 'index']); // List loans
-        Route::post('/loans', [App\Http\Controllers\Api\Pr\EquipmentLoanController::class, 'store']); // Create request
-        Route::post('/loans/{id}/respond', [App\Http\Controllers\Api\Pr\EquipmentLoanController::class, 'respond']); // Approve/Reject
-        Route::post('/loans/{id}/pickup', [App\Http\Controllers\Api\Pr\EquipmentLoanController::class, 'pickup']); // Mark as Picked Up
-        Route::post('/loans/{id}/return', [App\Http\Controllers\Api\Pr\EquipmentLoanController::class, 'processReturn']); // Process Return
     });
 
     // Talent Routes
@@ -848,64 +831,6 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::put('/workflow/notes', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'updateNotes']); // Update step notes
         Route::post('/workflow/reset-step', [\App\Http\Controllers\Api\PrEpisodeWorkflowController::class, 'resetStep']); // Reset step (Manager Program only)
     });
-
-    // Produksi Routes
-    Route::prefix('produksi')->group(function () {
-        Route::get('/works', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'index']);
-        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'show']); // Add show method if missing, or use index
-        Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'update']);
-        Route::post('/works/{id}/complete', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'uploadShootingResults']); // Simplify route for complete
-        Route::post('/works/{id}/request-equipment', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'requestEquipment']);
-    });
-
-    // Promosi Routes
-    Route::prefix('promosi')->group(function () {
-        Route::get('/works', [App\Http\Controllers\Api\Pr\PrPromosiController::class, 'index']); // Get all promotion works
-        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrPromosiController::class, 'show']); // Get specific promotion work
-        Route::post('/works', [App\Http\Controllers\Api\Pr\PrPromosiController::class, 'store']); // Create promotion work
-        Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrPromosiController::class, 'update']); // Update promotion work (upload files)
-        Route::post('/works/{id}/complete', [App\Http\Controllers\Api\Pr\PrPromosiController::class, 'complete']); // Mark as complete
-        Route::post('/works/{id}/accept', [App\Http\Controllers\Api\Pr\PrPromosiController::class, 'acceptWork']); // Accept work
-        Route::post('/works/{id}/upload-content', [App\Http\Controllers\Api\Pr\PrPromosiController::class, 'uploadContent']);
-        Route::post('/works/{id}/share-content', [App\Http\Controllers\Api\Pr\PrPromosiController::class, 'shareContent']);
-    });
-
-    // Editor Routes (Step 6)
-    Route::prefix('editor')->group(function () {
-        Route::get('/works', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'index']);
-        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'show']);
-        Route::post('/works/{episodeId}/start', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'start']);
-        Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'update']);
-        Route::put('/works/{id}/file-check', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'updateFileCheck']);
-        Route::post('/works/{id}/revision-notes', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'createRevisionNote']);
-        Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'submit']);
-    });
-
-    // Editor Promosi Routes (Step 6)
-    Route::prefix('editor-promosi')->group(function () {
-        Route::get('/works', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'index']);
-        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'show']);
-        Route::get('/works/check-editor/{episodeId}', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'checkEditorStatus']);
-        Route::post('/works/{episodeId}/start', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'start']);
-        Route::put('/works/{id}/progress', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'updateProgress']);
-        Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'submit']);
-    });
-
-    // Design Grafis Routes (Step 6)
-    Route::prefix('design-grafis')->group(function () {
-        Route::get('/works', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'index']);
-        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'show']);
-        Route::post('/works/{episodeId}/start', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'start']);
-        Route::put('/works/{id}/progress', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'updateProgress']);
-        Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'submit']);
-    });
-
-    // Producer - Revision Approval (Step 6)
-    Route::prefix('producer')->group(function () {
-        Route::get('/revision-requests', [App\Http\Controllers\Api\Pr\PrProducerController::class, 'getRevisionRequests']);
-        Route::post('/revision-requests/{id}/approve', [App\Http\Controllers\Api\Pr\PrProducerController::class, 'approveRevision']);
-        Route::post('/revision-requests/{id}/reject', [App\Http\Controllers\Api\Pr\PrProducerController::class, 'rejectRevision']);
-    });
 });
 
 // ===== TASK VISIBILITY & REASSIGNMENT ROUTES =====
@@ -919,52 +844,4 @@ Route::prefix('tasks')->middleware(['auth:sanctum'])->group(function () {
     Route::post('/reassign', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'reassignTask']); // Reassign task
     Route::get('/{taskType}/{taskId}/reassignment-history', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'getReassignmentHistory']); // Get reassignment history
     Route::get('/available-users', [\App\Http\Controllers\Api\TaskReassignmentController::class, 'getAvailableUsers']); // Get available users for dropdown
-});
-
-Route::get('/fix-step-6-sync-dry-run', function () {
-    $results = [];
-    try {
-        $step5Progress = \App\Models\PrEpisodeWorkflowProgress::where('workflow_step', 5)->where('status', 'completed')->get();
-        $count = 0;
-
-        foreach ($step5Progress as $progress) {
-            $episodeId = $progress->episode_id;
-            $status = [];
-
-            try {
-                $status['editor'] = \App\Models\PrEditorWork::where('pr_episode_id', $episodeId)->exists();
-            } catch (\Exception $e) {
-                $status['editor_error'] = $e->getMessage();
-            }
-
-            try {
-                $status['editor_promosi'] = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)->exists();
-            } catch (\Exception $e) {
-                $status['editor_promosi_error'] = $e->getMessage();
-            }
-
-            try {
-                $status['design_grafis'] = \App\Models\PrDesignGrafisWork::where('pr_episode_id', $episodeId)->exists();
-            } catch (\Exception $e) {
-                $status['design_grafis_error'] = $e->getMessage();
-            }
-
-            if (
-                isset($status['editor']) && !$status['editor'] ||
-                isset($status['editor_promosi']) && !$status['editor_promosi'] ||
-                isset($status['design_grafis']) && !$status['design_grafis']
-            ) {
-                $results[] = ["Episode $episodeId needs fix", $status];
-                $count++;
-            } else if (isset($status['editor_error']) || isset($status['editor_promosi_error']) || isset($status['design_grafis_error'])) {
-                $results[] = ["Episode $episodeId ERROR", $status];
-            } else {
-                $results[] = ["Episode $episodeId OK", $status];
-            }
-        }
-
-        return response()->json(['count' => $count, 'total_step5_completed' => $step5Progress->count()]);
-    } catch (\Exception $e) {
-        return response()->json(['error' => $e->getMessage()]);
-    }
 });

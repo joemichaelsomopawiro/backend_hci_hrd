@@ -7,6 +7,7 @@ use App\Models\PromotionWork;
 use App\Models\Episode;
 use App\Models\MediaFile;
 use App\Models\Notification;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -41,8 +42,13 @@ class EditorPromosiController extends Controller
             // Get all works that are either:
             // 1. Created by current user, OR
             // 2. In draft/planning status (available for acceptance) for any Editor Promosi user
+<<<<<<< HEAD
             $query = PromotionWork::with(['episode', 'createdBy'])
                 ->where(function ($q) use ($user) {
+=======
+            $query = PromotionWork::with(['episode.program', 'createdBy', 'reviewedBy'])
+                ->where(function($q) use ($user) {
+>>>>>>> origin/main
                     $q->where('created_by', $user->id)
                         ->orWhereIn('status', ['draft', 'planning']); // Draft/planning works are available for any Editor Promosi to accept
                 });
@@ -87,6 +93,7 @@ class EditorPromosiController extends Controller
                     'message' => 'User not authenticated.'
                 ], 401);
             }
+<<<<<<< HEAD
 
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
@@ -95,6 +102,9 @@ class EditorPromosiController extends Controller
                 ], 403);
             }
 
+=======
+            
+>>>>>>> origin/main
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
                 'work_type' => 'required|in:bts_video,bts_photo,highlight_ig,highlight_facebook,highlight_tv,iklan_episode_tv,story_ig,reels_facebook,tiktok,website_content',
@@ -319,6 +329,24 @@ class EditorPromosiController extends Controller
                         ]
                     ]);
 
+<<<<<<< HEAD
+=======
+                // Create MediaFile record
+                MediaFile::create([
+                    'episode_id' => $work->episode_id,
+                    'file_name' => $fileName,
+                    'file_path' => $filePath,
+                    'file_size' => $file->getSize(),
+                    'mime_type' => $file->getMimeType(),
+                    'file_type' => 'editor_promosi',
+                    'uploaded_by' => $user->id,
+                    'metadata' => [
+                        'promotion_work_id' => $work->id,
+                        'work_type' => $work->work_type,
+                        'original_name' => $file->getClientOriginalName()
+                    ]
+                ]);
+>>>>>>> origin/main
                 }
             }
 
@@ -467,6 +495,10 @@ class EditorPromosiController extends Controller
                     'message' => 'User not authenticated.'
                 ], 401);
             }
+<<<<<<< HEAD
+=======
+            
+>>>>>>> origin/main
 
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
@@ -475,24 +507,26 @@ class EditorPromosiController extends Controller
                 ], 403);
             }
 
-            $stats = [
-                'total_works' => PromotionWork::where('created_by', $user->id)->count(),
-                'completed_works' => PromotionWork::where('created_by', $user->id)
-                    ->where('status', 'completed')->count(),
-                'in_progress_works' => PromotionWork::where('created_by', $user->id)
-                    ->where('status', 'in_progress')->count(),
-                'pending_works' => PromotionWork::where('created_by', $user->id)
-                    ->where('status', 'draft')->count(),
-                'works_by_type' => PromotionWork::where('created_by', $user->id)
-                    ->selectRaw('work_type, count(*) as count')
-                    ->groupBy('work_type')
-                    ->get(),
-                'recent_works' => PromotionWork::where('created_by', $user->id)
-                    ->with(['episode'])
-                    ->orderBy('created_at', 'desc')
-                    ->limit(5)
-                    ->get()
-            ];
+            $statusStats = PromotionWork::where('created_by', $user->id)
+            ->selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $stats = [
+            'total_works' => $statusStats->sum(),
+            'completed_works' => $statusStats->get('completed', 0),
+            'in_progress_works' => $statusStats->get('in_progress', 0),
+            'pending_works' => $statusStats->get('draft', 0),
+            'works_by_type' => PromotionWork::where('created_by', $user->id)
+                ->selectRaw('work_type, count(*) as count')
+                ->groupBy('work_type')
+                ->get(),
+            'recent_works' => PromotionWork::where('created_by', $user->id)
+                ->with(['episode.program'])
+                ->orderBy('created_at', 'desc')
+                ->limit(5)
+                ->get()
+        ];
 
             return response()->json([
                 'success' => true,
@@ -840,7 +874,8 @@ class EditorPromosiController extends Controller
                     'qc_type' => $qcType,
                     'title' => "QC {$work->title}",
                     'description' => "Quality Control untuk {$work->work_type} dari Editor Promosi",
-                    'editor_promosi_file_locations' => $fileLocations,
+                    'editor_promosi_file_locations' => $fileLocations, // Keep for specific history
+                    'files_to_check' => $fileLocations, // Add for main visibility
                     'status' => 'pending',
                     'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
                 ]);
@@ -865,9 +900,16 @@ class EditorPromosiController extends Controller
                 // Update existing QC work with latest editor promosi files
                 $existingEditorPromosiFiles = $existingQCWork->editor_promosi_file_locations ?? [];
                 $existingEditorPromosiFiles = array_merge($existingEditorPromosiFiles, $fileLocations);
+<<<<<<< HEAD
+=======
+                
+                $existingFilesToCheck = $existingQCWork->files_to_check ?? [];
+                $existingFilesToCheck = array_merge($existingFilesToCheck, $fileLocations);
+>>>>>>> origin/main
 
                 $existingQCWork->update([
                     'editor_promosi_file_locations' => $existingEditorPromosiFiles,
+                    'files_to_check' => $existingFilesToCheck,
                     'status' => 'pending' // Reset to pending for re-review
                 ]);
 

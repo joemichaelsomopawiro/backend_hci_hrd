@@ -12,17 +12,20 @@ class Singer extends Model
 
     protected $fillable = [
         'name',
-        'stage_name',
+        'email',
+        'phone',
+        'profile_picture',
         'bio',
-        'photo_url',
         'genre',
-        'social_media',
-        'is_active'
+        'vocal_range',
+        'specialties',
+        'status',
+        'created_by',
+        'updated_by'
     ];
 
     protected $casts = [
-        'social_media' => 'array',
-        'is_active' => 'boolean'
+        'specialties' => 'array',
     ];
 
     /**
@@ -38,7 +41,7 @@ class Singer extends Model
      */
     public function scopeActive($query)
     {
-        return $query->where('is_active', true);
+        return $query->where('status', 'active');
     }
 
     /**

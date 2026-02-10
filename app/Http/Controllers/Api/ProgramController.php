@@ -57,15 +57,16 @@ class ProgramController extends Controller
             // Use cache with 5 minutes TTL
             $programs = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request, $user) {
                 // Optimize eager loading - jangan load semua episodes, hanya count
-                $query = Program::with([
-                    'managerProgram',
-                    'productionTeam.members.user', // Fix N+1 problem
-                    'episodes' => function ($q) {
-                        $q->select('id', 'program_id', 'episode_number', 'title', 'status')
-                          ->orderBy('episode_number', 'desc')
-                          ->limit(5); // Hanya load 5 episodes terbaru untuk preview
-                    }
-                ]);
+                $query = Program::withCount('episodes')
+                    ->with([
+                        'managerProgram',
+                        'productionTeam.members.user', // Fix N+1 problem
+                        'episodes' => function ($q) {
+                            $q->select('id', 'program_id', 'episode_number', 'title', 'status')
+                              ->orderBy('episode_number', 'desc');
+                              // Removed limit(5) because it limits TOTAL results, not per program
+                        }
+                    ]);
                 
                 // Filter: HR tidak boleh melihat program musik
                 // Program musik adalah program yang memiliki production team dengan member role 'musik_arr'
@@ -129,9 +130,9 @@ class ProgramController extends Controller
                 return $result;
             });
             
-            // Add episode count to each program (tanpa load semua episodes)
+            // Mapping episode_count from withCount result
             $programs->getCollection()->transform(function ($program) {
-                $program->episode_count = $program->episodes()->count();
+                // episode_count automatically added by withCount('episodes')
                 return $program;
             });
             
@@ -227,7 +228,8 @@ class ProgramController extends Controller
             'duration_minutes' => 'nullable|integer|min:1',
             'broadcast_channel' => 'nullable|string|max:255',
             'target_views_per_episode' => 'nullable|integer|min:0',
-            'proposal_file' => 'nullable|file|mimes:pdf,doc,docx|max:10240' // Max 10MB
+            'proposal_file' => 'nullable|file|mimes:pdf,doc,docx|max:10240', // Max 10MB
+            'proposal_file_link' => 'nullable|url|max:2048' // Link to external proposal file
         ]);
         
         if ($validator->fails()) {
@@ -304,6 +306,11 @@ class ProgramController extends Controller
                 if (Schema::hasColumn('programs', 'proposal_file_mime_type')) {
                     $programData['proposal_file_mime_type'] = $proposalFileMimeType;
                 }
+            }
+            
+            // Add proposal file link jika ada (prioritas: link > file upload)
+            if ($request->proposal_file_link && Schema::hasColumn('programs', 'proposal_file_link')) {
+                $programData['proposal_file_link'] = $request->proposal_file_link;
             }
             
             // Set default status jika tidak ada
@@ -422,42 +429,41 @@ class ProgramController extends Controller
             if ($request->has('production_team_id') && $request->production_team_id != $oldTeamId && $request->production_team_id) {
                 $newTeamId = $request->production_team_id;
                 $team = ProductionTeam::findOrFail($newTeamId);
+            $newTeamId = $request->production_team_id;
+            $team = ProductionTeam::with(['members' => function($q) {
+                $q->where('is_active', true)->with('user');
+            }])->findOrFail($newTeamId);
+            
+            $teamMembers = $team->members;
+            
+            // Get SEMUA episode di program (baik yang sudah punya team maupun belum)
+            $allEpisodes = $program->episodes()->whereNull('deleted_at')->get();
+            
+            foreach ($allEpisodes as $episode) {
+                // Update semua episode (termasuk yang sudah punya team - akan di-override)
+                $wasOverridden = !is_null($episode->production_team_id) && $episode->production_team_id != $newTeamId;
                 
-                // Get SEMUA episode di program (baik yang sudah punya team maupun belum)
-                $allEpisodes = $program->episodes()->get();
+                $episode->update([
+                    'production_team_id' => $newTeamId,
+                    'team_assigned_by' => $user->id,
+                    'team_assigned_at' => now(),
+                    'team_assignment_notes' => $wasOverridden 
+                        ? "Auto-assigned dari Program team (Overrode previous team)" 
+                        : "Auto-assigned dari Program team"
+                ]);
                 
-                // Auto-assign team ke SEMUA episode
-                foreach ($allEpisodes as $episode) {
-                    // Skip jika episode sudah di-soft delete
-                    if ($episode->deleted_at) {
-                        $skippedCount++;
-                        continue;
-                    }
-                    
-                    // Update semua episode (termasuk yang sudah punya team - akan di-override)
-                    $wasOverridden = !is_null($episode->production_team_id) && $episode->production_team_id != $newTeamId;
-                    
-                    $episode->update([
-                        'production_team_id' => $newTeamId,
-                        'team_assigned_by' => $user->id,
-                        'team_assigned_at' => now(),
-                        'team_assignment_notes' => $wasOverridden 
-                            ? "Auto-assigned dari Program team (Overrode previous team)" 
-                            : "Auto-assigned dari Program team"
-                    ]);
-                    
-                    $updatedCount++;
-                    
-                    // Notify team members untuk setiap episode
-                    $teamMembers = $team->members()->where('is_active', true)->get();
-                    foreach ($teamMembers as $member) {
-                        \App\Models\Notification::create([
-                            'user_id' => $member->user_id,
-                            'type' => 'team_assigned',
-                            'title' => $wasOverridden ? 'Team Diubah untuk Episode' : 'Ditugaskan ke Episode',
-                            'message' => $wasOverridden
-                                ? "Team untuk Episode {$episode->episode_number} - {$episode->title} telah diubah (Auto-assigned dari Program)"
-                                : "Anda ditugaskan untuk Episode {$episode->episode_number} - {$episode->title} (Auto-assigned dari Program)",
+                $updatedCount++;
+                
+                // Notify team members (Hanya jika perlu, untuk performa mungkin lebih baik satu notifikasi per program)
+                // Tapi untuk menjaga workflow, kita tetap buat per episode namun tanpa query di loop
+                foreach ($teamMembers as $member) {
+                    \App\Models\Notification::create([
+                        'user_id' => $member->user_id,
+                        'type' => 'team_assigned',
+                        'title' => $wasOverridden ? 'Team Diubah untuk Episode' : 'Ditugaskan ke Episode',
+                        'message' => $wasOverridden
+                            ? "Team untuk Episode {$episode->episode_number} - {$episode->title} telah diubah ke team Anda."
+                            : "Anda telah ditugaskan ke Episode {$episode->episode_number} - {$episode->title} sebagai {$member->role_label}.",
                             'data' => [
                                 'episode_id' => $episode->id,
                                 'program_id' => $program->id,

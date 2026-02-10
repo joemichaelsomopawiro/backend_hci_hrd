@@ -98,6 +98,7 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     
     // Episode Management
     Route::post('/episodes/{episodeId}/assign-team', [ManagerProgramController::class, 'assignTeamToEpisode'])->middleware('throttle:sensitive');
+
     Route::put('/deadlines/{deadlineId}', [ManagerProgramController::class, 'editDeadlineById'])->middleware('throttle:sensitive');
     
     // Program Management
@@ -320,6 +321,34 @@ Route::prefix('files')->middleware(['auth:sanctum', 'throttle:uploads'])->group(
     Route::post('/cleanup', [FileUploadController::class, 'cleanupOrphaned']);
 });
 
+
+// Broadcasting Routes
+Route::prefix('roles/broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    // Works
+    Route::get('/works', [BroadcastingController::class, 'index'])->middleware('throttle:60,1');
+    Route::get('/works/{id}', [BroadcastingController::class, 'show'])->middleware('throttle:60,1');
+    Route::put('/works/{id}', [BroadcastingController::class, 'update'])->middleware('throttle:sensitive');
+    Route::post('/works', [BroadcastingController::class, 'store'])->middleware('throttle:sensitive');
+    
+    // Work Actions
+    Route::post('/works/{id}/accept-work', [BroadcastingController::class, 'acceptWork'])->middleware('throttle:sensitive');
+    Route::post('/works/{id}/upload-youtube', [BroadcastingController::class, 'uploadYouTube'])->middleware('throttle:sensitive');
+    Route::post('/works/{id}/upload-website', [BroadcastingController::class, 'uploadWebsite'])->middleware('throttle:sensitive');
+    Route::post('/works/{id}/input-youtube-link', [BroadcastingController::class, 'inputYouTubeLink'])->middleware('throttle:sensitive');
+    Route::post('/works/{id}/complete-work', [BroadcastingController::class, 'completeWork'])->middleware('throttle:sensitive');
+    Route::post('/works/{id}/schedule-work-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive');
+    Route::post('/works/{id}/publish', [BroadcastingController::class, 'publish'])->middleware('throttle:sensitive');
+
+    // Schedules
+    Route::get('/schedules', [BroadcastingController::class, 'getAllSchedules'])->middleware('throttle:60,1');
+    Route::get('/schedules/{id}', [BroadcastingController::class, 'getSchedule'])->middleware('throttle:60,1');
+    Route::get('/schedules/episode/{episodeId}', [BroadcastingController::class, 'getSchedulesForEpisode'])->middleware('throttle:60,1');
+    Route::post('/schedules', [BroadcastingController::class, 'createSchedule'])->middleware('throttle:sensitive');
+    
+    // Statistics
+    Route::get('/statistics', [BroadcastingController::class, 'statistics'])->middleware('throttle:60,1');
+});
+
 // Workflow State Management Routes
 Route::prefix('workflow-states')->group(function () {
     Route::get('/transitions', [WorkflowStateController::class, 'getTransitions']);
@@ -527,6 +556,7 @@ Route::prefix('roles')->group(function () {
 // Broadcasting Routes
 Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     // Broadcasting Schedules
+    Route::get('/works', [BroadcastingController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/schedules', [BroadcastingController::class, 'getAllSchedules'])->middleware('throttle:60,1');
     Route::get('/schedules/{id}', [BroadcastingController::class, 'getSchedule'])->middleware('throttle:60,1');
     Route::get('/schedules/episode/{episodeId}', [BroadcastingController::class, 'getSchedulesForEpisode'])->middleware('throttle:60,1');

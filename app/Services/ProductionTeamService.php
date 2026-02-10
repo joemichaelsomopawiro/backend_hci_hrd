@@ -160,11 +160,13 @@ class ProductionTeamService
         $hasAllRoles = count($missingRoles) === 0;
         
         $roleDistribution = [];
+        // Use already loaded members if available, otherwise fetch active members
+        $teamMembers = $team->relationLoaded('members') 
+            ? $team->members->where('is_active', true) 
+            : $team->members()->where('is_active', true)->get();
+        
         foreach ($requiredRoles as $role) {
-            $roleDistribution[$role] = $team->members()
-                ->where('role', $role)
-                ->where('is_active', true)
-                ->count();
+            $roleDistribution[$role] = $teamMembers->where('role', $role)->count();
         }
         
         return [
@@ -189,6 +191,9 @@ class ProductionTeamService
             ->with(['members' => function ($query) {
                 $query->where('is_active', true);
             }])
+            ->withCount(['members' => function ($query) {
+                $query->where('is_active', true);
+            }])
             ->get();
             
         return $teams->map(function ($team) {
@@ -199,7 +204,7 @@ class ProductionTeamService
                 'producer_id' => $team->producer_id,
                 'is_active' => $team->is_active,
                 'created_at' => $team->created_at,
-                'member_count' => $team->members()->where('is_active', true)->count(),
+                'member_count' => $team->members_count,
                 'is_ready_for_production' => $team->isReadyForProduction()
             ];
         })->toArray();

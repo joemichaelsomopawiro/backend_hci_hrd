@@ -123,6 +123,8 @@ class MusicArrangerController extends Controller
                 ], 403);
             }
 
+            // NOTE: file_link tidak diterima saat create
+            // Flow yang benar: create song proposal -> Producer approve -> upload file_link
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
                 'song_id' => 'nullable|exists:songs,id', 
@@ -130,7 +132,7 @@ class MusicArrangerController extends Controller
                 'singer_id' => 'nullable|exists:users,id', 
                 'singer_name' => 'nullable|string|max:255',
                 'arrangement_notes' => 'nullable|string',
-                'file_link' => 'nullable|url|max:2048', // New: Accept external link instead of file upload
+                // file_link REMOVED - harus melalui workflow song proposal dulu
             ]);
 
             if ($validator->fails()) {
@@ -197,11 +199,9 @@ class MusicArrangerController extends Controller
             }
 
 
-            // Handle file_link (external storage URL) instead of file upload
-            $fileLink = $request->file_link ?? null;
-            
-            // Determine status based on whether file_link is provided
-            $status = $fileLink ? 'draft' : 'song_proposal';
+            // file_link tidak boleh diisi saat create - harus melalui workflow
+            // Status selalu dimulai dari song_proposal
+            $status = 'song_proposal';
 
             // AUTO-ASSIGNMENT LOGIC: Use WorkAssignmentService to determine assignee
             // Checks if previous episode's MusicArrangement was reassigned
@@ -222,7 +222,7 @@ class MusicArrangerController extends Controller
                 'original_song_title' => $songTitle,
                 'original_singer_name' => $singerName,
                 'arrangement_notes' => $request->arrangement_notes,
-                'file_link' => $fileLink,  // New: Store external link
+                'file_link' => null,  // Tidak bisa diisi saat create, harus melalui uploadFile setelah song_approved
                 // Old fields kept as null for backward compatibility
                 'file_path' => null,
                 'file_name' => null,
@@ -263,7 +263,12 @@ class MusicArrangerController extends Controller
     {
         try {
             $user = Auth::user();
-            $arrangement = MusicArrangement::with(['episode', 'createdBy'])->findOrFail($id);
+            $arrangement = MusicArrangement::with([
+                'episode', 
+                'createdBy', 
+                'reviewedBy', 
+                'soundEngineerHelper'
+            ])->findOrFail($id);
 
             // Access check: creator or team members
             return response()->json(['success' => true, 'data' => $arrangement]);
@@ -399,11 +404,21 @@ class MusicArrangerController extends Controller
                 ], 422);
             }
             
+            // VALIDASI: Hanya bisa upload file link jika song sudah approved atau arrangement rejected
+            $allowedStatusesForUpload = ['song_approved', 'arrangement_in_progress', 'arrangement_rejected', 'rejected'];
+            if (!in_array($arrangement->status, $allowedStatusesForUpload)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Cannot upload file link. Song proposal must be approved first by Producer. Current status: '{$arrangement->status}'.",
+                    'hint' => 'Wait for Producer to approve your song proposal before uploading arrangement file.'
+                ], 400);
+            }
+            
             // Determine new status based on current status
-            $newStatus = $arrangement->status;
+            $newStatus = 'arrangement_in_progress'; // Default setelah upload file
             if ($arrangement->status === 'song_approved') {
-                // Jika song sudah approved, langsung submit arrangement
-                $newStatus = 'arrangement_submitted';
+                // Jika song sudah approved, set ke in_progress (perlu submit manual)
+                $newStatus = 'arrangement_in_progress';
             } elseif (in_array($arrangement->status, ['arrangement_rejected', 'rejected'])) {
                 // Jika arrangement ditolak, setelah upload file status tetap rejected
                 // Music Arranger perlu submit ulang secara manual
@@ -468,12 +483,22 @@ class MusicArrangerController extends Controller
             if (!in_array($arrangement->status, $allowedStatuses)) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Cannot submit arrangement with status '{$arrangement->status}'. Only arrangements with status: " . implode(', ', $allowedStatuses) . " can be submitted."
+                    'message' => "Cannot submit arrangement with status '{$arrangement->status}'. Only arrangements with status: " . implode(', ', $allowedStatuses) . " can be submitted.",
+                    'hint' => $arrangement->status === 'song_proposal' ? 'Wait for Producer to approve your song proposal first.' : null
                 ], 400);
             }
 
-            // If status is rejected and no file uploaded, require file first
-            if (in_array($arrangement->status, ['arrangement_rejected', 'rejected']) && !$arrangement->file_path) {
+            // VALIDASI: Harus ada file_link atau file_path sebelum submit
+            if (!$arrangement->file_link && !$arrangement->file_path) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please upload the arrangement file link first before submitting.',
+                    'hint' => 'Use the upload file endpoint to add your arrangement file link.'
+                ], 400);
+            }
+
+            // If status is rejected and no file uploaded, require file first (backup check)
+            if (in_array($arrangement->status, ['arrangement_rejected', 'rejected']) && !$arrangement->file_path && !$arrangement->file_link) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Please upload the arrangement file first before resubmitting.'
