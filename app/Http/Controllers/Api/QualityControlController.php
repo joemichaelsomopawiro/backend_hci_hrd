@@ -50,12 +50,33 @@ class QualityControlController extends Controller
                 }
             }
 
-            // Filter by QC type
-            if ($request->has('qc_type')) {
-                $query->where('qc_type', $request->qc_type);
+            // Filter by QC Category (Convenience filter)
+            if ($request->has('qc_category')) {
+                $category = $request->qc_category;
+                if ($category === 'video') {
+                    $query->whereIn('qc_type', ['main_episode']);
+                } elseif ($category === 'design') {
+                    $query->whereIn('qc_type', ['thumbnail_yt', 'thumbnail_bts', 'graphics_ig', 'graphics_facebook']);
+                } elseif ($category === 'promosi') {
+                    $query->whereIn('qc_type', [
+                        'bts_video', 'advertisement_tv', 'highlight_ig', 'highlight_facebook', 'highlight_tv',
+                        'thumbnail_yt', 'thumbnail_bts', 'website_content', 'tiktok', 'reels_facebook', 'promotion'
+                    ]);
+                }
             }
 
-            $controls = $query->orderBy('created_at', 'desc')->paginate(15);
+            // Filter by QC type (supports multiple)
+            if ($request->has('qc_type')) {
+                $types = explode(',', $request->qc_type);
+                if (count($types) > 1) {
+                    $query->whereIn('qc_type', $types);
+                } else {
+                    $query->where('qc_type', $request->qc_type);
+                }
+            }
+
+            $limit = $request->input('limit', 15);
+            $controls = $query->orderBy('updated_at', 'desc')->orderBy('created_at', 'desc')->paginate($limit);
 
             return response()->json([
                 'success' => true,
@@ -366,6 +387,15 @@ class QualityControlController extends Controller
                 ->groupBy('status')
                 ->pluck('count', 'status');
 
+            $pendingCounts = QualityControlWork::where('status', 'pending')
+                ->selectRaw('qc_type, count(*) as count')
+                ->groupBy('qc_type')
+                ->pluck('count', 'qc_type');
+
+            $designTypes = ['thumbnail_yt', 'thumbnail_bts', 'graphics_ig', 'graphics_facebook'];
+            $promosiTypes = ['bts_video', 'advertisement_tv', 'highlight_ig', 'highlight_facebook', 'highlight_tv', 'thumbnail_yt', 'thumbnail_bts', 'website_content', 'tiktok', 'reels_facebook', 'promotion'];
+            $videoTypes = ['main_episode'];
+
             $stats = [
                 'total_qc' => $statusStats->sum(),
                 'pending_qc' => $statusStats->get('pending', 0),
@@ -373,6 +403,12 @@ class QualityControlController extends Controller
                 'completed_qc' => $statusStats->get('completed', 0),
                 'approved_qc' => $statusStats->get('approved', 0),
                 'rejected_qc' => $statusStats->get('rejected', 0),
+                
+                // Granular Pending Counts for Dashboard Badges
+                'video_pending' => $pendingCounts->only($videoTypes)->sum(),
+                'design_pending' => $pendingCounts->only($designTypes)->sum(),
+                'promosi_pending' => $pendingCounts->only($promosiTypes)->sum(),
+
                 'qc_by_type' => QualityControlWork::selectRaw('qc_type, count(*) as count')
                     ->groupBy('qc_type')
                     ->get(),

@@ -783,15 +783,8 @@ class DesignGrafisController extends Controller
                         'qc_type' => $qcType,
                         'title' => "QC {$work->title}",
                         'description' => "Quality Control untuk {$work->work_type} dari Design Grafis",
-                        'design_grafis_file_locations' => [
-                            [
-                                'design_grafis_work_id' => $work->id,
-                                'file_path' => $work->file_path,
-                                'file_name' => $work->file_name,
-                                'work_type' => $work->work_type,
-                                'submitted_at' => now()->toDateTimeString()
-                            ]
-                        ],
+                        'files_to_check' => $this->prepareFilesToCheck($work),
+                        'design_grafis_file_locations' => $this->prepareFilesToCheck($work),
                         'status' => 'pending',
                         'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
                     ]);
@@ -815,13 +808,14 @@ class DesignGrafisController extends Controller
                 } else {
                      // Update existing QC work
                     $existingLocations = $existingQCWork->design_grafis_file_locations ?? [];
-                    $existingLocations[] = [
-                        'design_grafis_work_id' => $work->id,
-                        'file_path' => $work->file_path,
-                        'file_name' => $work->file_name,
-                        'work_type' => $work->work_type,
-                        'submitted_at' => now()->toDateTimeString()
-                    ];
+                    $newLocations = $this->prepareFilesToCheck($work);
+                    
+                    // Merge and unique based on file_path
+                    $existingLocations = array_merge($existingLocations, $newLocations);
+                    
+                    // Update files_to_check as well
+                    $existingFilesToCheck = $existingQCWork->files_to_check ?? [];
+                    $existingFilesToCheck = array_merge($existingFilesToCheck, $newLocations);
                     
                     $existingQCWork->update([
                         'design_grafis_file_locations' => $existingLocations,
@@ -1285,5 +1279,48 @@ class DesignGrafisController extends Controller
         }
 
         return $sourceFiles;
+    }
+
+    /**
+     * Helper to prepare files_to_check array from DesignGrafisWork
+     */
+    private function prepareFilesToCheck($work)
+    {
+        $files = [];
+        
+        // Priority 1: Use file_paths array if available (contains multiple files/links)
+        if (!empty($work->file_paths) && is_array($work->file_paths)) {
+            foreach ($work->file_paths as $file) {
+                // Handle both array structure from uploadFiles and potential raw strings
+                $path = is_array($file) ? ($file['file_path'] ?? null) : $file;
+                $name = is_array($file) ? ($file['file_name'] ?? 'Attached File') : 'Attached File';
+                $isLink = is_array($file) ? ($file['mime_type'] === 'url') : false;
+
+                if ($path) {
+                    $files[] = [
+                        'design_grafis_work_id' => $work->id,
+                        'file_path' => $path,
+                        'file_name' => $name,
+                        'work_type' => $work->work_type,
+                        'is_link' => $isLink,
+                        'submitted_at' => now()->toDateTimeString()
+                    ];
+                }
+            }
+        }
+        
+        // Priority 2: Fallback to single file_path if files array is empty but file_path exists
+        if (empty($files) && $work->file_path) {
+            $files[] = [
+                'design_grafis_work_id' => $work->id,
+                'file_path' => $work->file_path,
+                'file_name' => $work->file_name,
+                'work_type' => $work->work_type,
+                'is_link' => false, 
+                'submitted_at' => now()->toDateTimeString()
+            ];
+        }
+
+        return $files;
     }
 }

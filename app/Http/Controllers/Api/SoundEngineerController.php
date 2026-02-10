@@ -186,29 +186,23 @@ class SoundEngineerController extends Controller
             }
 
             // Check if user has access to this episode's production team
-            $episode = Episode::with(['program.productionTeam.members'])->findOrFail($request->episode_id);
-            
-            // Check if episode has program and production team
-            if (!$episode->program) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Episode does not have a program assigned.'
-                ], 400);
-            }
-            
-            if (!$episode->program->productionTeam) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Episode\'s program does not have a production team assigned.'
-                ], 400);
-            }
-            
-            $hasAccess = $episode->program->productionTeam
-                ->members()
-                ->where('user_id', $user->id)
-                ->where('role', 'sound_eng')
-                ->where('is_active', true)
-                ->exists();
+        $episode = Episode::with(['program.productionTeam.members', 'productionTeam.members'])->findOrFail($request->episode_id);
+        
+        // Prioritize Episode's production team, then fallback to Program's production team
+        $productionTeam = $episode->productionTeam ?? $episode->program->productionTeam;
+
+        if (!$productionTeam) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Episode does not have a production team assigned (neither directly nor via program).'
+            ], 400);
+        }
+        
+        $hasAccess = $productionTeam->members()
+            ->where('user_id', $user->id)
+            ->where('role', 'sound_eng')
+            ->where('is_active', true)
+            ->exists();
 
             if (!$hasAccess) {
                 return response()->json([
@@ -1416,8 +1410,68 @@ class SoundEngineerController extends Controller
 
             // Update arrangement
             $arrangement->update($updateData);
+            
+            // Jika Sound Engineer menyertakan file (link atau upload), langsung submit ke Producer
+            // Ini agar tidak perlu bolak-balik ke Music Arranger lagi
+            $hasHelpFile = $request->has('help_file_link') || $fileUploaded;
+            
+            if ($hasHelpFile) {
+                // Copy help file to main file_link jika perlu
+                if ($request->has('help_file_link') && !$arrangement->file_link) {
+                    $arrangement->update([
+                        'file_link' => $request->help_file_link
+                    ]);
+                }
+                
+                // Auto-submit ke Producer
+                $arrangement->update([
+                    'status' => 'arrangement_submitted',
+                    'submitted_at' => now()
+                ]);
+                
+                // Notify Producer - Arrangement ready for approval
+                $episode = $arrangement->episode;
+                $productionTeam = $episode->productionTeam ?? $episode->program->productionTeam;
+                $producer = $productionTeam ? $productionTeam->producer : null;
+                
+                if ($producer) {
+                    Notification::create([
+                        'user_id' => $producer->id,
+                        'type' => 'arrangement_fixed_by_sound_engineer',
+                        'title' => 'Arrangement Diperbaiki - Siap Review',
+                        'message' => "Sound Engineer {$user->name} telah memperbaiki arrangement '{$arrangement->song_title}' dan siap untuk direview.",
+                        'data' => [
+                            'arrangement_id' => $arrangement->id,
+                            'episode_id' => $arrangement->episode_id,
+                            'sound_engineer_id' => $user->id,
+                            'fixed_by' => 'sound_engineer',
+                            'help_notes' => $request->help_notes
+                        ]
+                    ]);
+                }
+                
+                // Notify Music Arranger - Info only (pekerjaan sudah di-submit)
+                Notification::create([
+                    'user_id' => $arrangement->created_by,
+                    'type' => 'sound_engineer_fixed_and_submitted',
+                    'title' => 'Arrangement Sudah Diperbaiki & Disubmit',
+                    'message' => "Sound Engineer {$user->name} telah memperbaiki dan mengirim ulang arrangement '{$arrangement->song_title}' ke Producer untuk direview.",
+                    'data' => [
+                        'arrangement_id' => $arrangement->id,
+                        'episode_id' => $arrangement->episode_id,
+                        'sound_engineer_id' => $user->id,
+                        'help_notes' => $request->help_notes
+                    ]
+                ]);
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => $arrangement->fresh(['soundEngineerHelper', 'createdBy']),
+                    'message' => 'Arrangement fixed and auto-submitted to Producer for approval. Both Music Arranger and Producer have been notified.'
+                ]);
+            }
 
-            // Prepare notification message
+            // Prepare notification message (jika tanpa file, tetap notify Music Arranger)
             $helpType = "";
             if ($request->has('help_file_link')) {
                 $helpType = "link file";
@@ -1467,7 +1521,7 @@ class SoundEngineerController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $arrangement->fresh(['soundEngineerHelper', 'createdBy']),
-                'message' => 'Help provided successfully. Link/File sent to Music Arranger for review and final submission.'
+                'message' => 'Help notes provided. Music Arranger has been notified to review and submit.'
             ]);
 
         } catch (\Exception $e) {
@@ -1632,9 +1686,9 @@ class SoundEngineerController extends Controller
                 $quantity = $equipment['quantity'];
 
                 // Check if equipment is available (not in_use or assigned)
-                $availableCount = EquipmentInventory::where('equipment_name', $equipmentName)
-                    ->whereIn('status', ['available'])
-                    ->count();
+            $availableCount = EquipmentInventory::where('name', $equipmentName)
+                ->whereIn('status', ['available'])
+                ->count();
 
                 // Also check ProductionEquipment for in_use status
                 $inUseCount = ProductionEquipment::where('equipment_list', 'like', '%' . $equipmentName . '%')

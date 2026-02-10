@@ -4325,14 +4325,20 @@ class ProducerController extends Controller
 
             if ($request->action === 'approve') {
                 // Validasi: Pastikan Creative sudah memasukkan data yang diperlukan
+                // Accept either content OR link for script and storyboard
                 $missingData = [];
                 
-                if (empty($creativeWork->script_content) || trim($creativeWork->script_content) === '') {
-                    $missingData[] = 'Script content';
+                // Script: accept script_content OR script_link
+                $hasScript = !empty($creativeWork->script_content) || !empty($creativeWork->script_link);
+                if (!$hasScript) {
+                    $missingData[] = 'Script (content or link)';
                 }
                 
-                if (empty($creativeWork->storyboard_data) || (is_array($creativeWork->storyboard_data) && count($creativeWork->storyboard_data) === 0)) {
-                    $missingData[] = 'Storyboard data';
+                // Storyboard: accept storyboard_data OR storyboard_link
+                $hasStoryboard = !empty($creativeWork->storyboard_link) || 
+                    (!empty($creativeWork->storyboard_data) && is_array($creativeWork->storyboard_data) && count($creativeWork->storyboard_data) > 0);
+                if (!$hasStoryboard) {
+                    $missingData[] = 'Storyboard (data or link)';
                 }
                 
                 if (empty($creativeWork->budget_data) || (is_array($creativeWork->budget_data) && count($creativeWork->budget_data) === 0)) {
@@ -4473,7 +4479,8 @@ class ProducerController extends Controller
                     'title' => "BTS Video & Talent Photos - Episode {$episode->episode_number}",
                     'description' => "Buat video BTS dan foto talent untuk Episode {$episode->episode_number}",
                     'shooting_date' => $creativeWork->shooting_schedule,
-                    'status' => 'planning'
+                    'status' => 'planning',
+                    'created_by' => $user->id
                 ]);
                 $createdTasks['promotion_work_id'] = $promosiWork->id;
 
@@ -4558,7 +4565,7 @@ class ProducerController extends Controller
                 );
 
                 // Audit logging
-                ControllerSecurityHelper::logCrud('creative_work_approved_parallel_notif', $creativeWork, [
+                \App\Helpers\ControllerSecurityHelper::logCrud('creative_work_approved_parallel_notif', $creativeWork, [
                     'parallel_notifications_sent' => count($rolesToNotify), // Promotion, Production
                     'sound_engineer_notified' => $recordingId ? true : false,
                     'tasks_created' => array_keys($createdTasks)

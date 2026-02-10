@@ -7,6 +7,7 @@ use App\Models\PromotionWork;
 use App\Models\Episode;
 use App\Models\MediaFile;
 use App\Models\Notification;
+use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -450,8 +451,7 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Editor Promotion') {
-                return response()->json([
+
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
@@ -821,7 +821,8 @@ class EditorPromosiController extends Controller
                     'qc_type' => $qcType,
                     'title' => "QC {$work->title}",
                     'description' => "Quality Control untuk {$work->work_type} dari Editor Promosi",
-                    'editor_promosi_file_locations' => $fileLocations,
+                    'editor_promosi_file_locations' => $fileLocations, // Keep for specific history
+                    'files_to_check' => $fileLocations, // Add for main visibility
                     'status' => 'pending',
                     'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
                 ]);
@@ -847,8 +848,12 @@ class EditorPromosiController extends Controller
                 $existingEditorPromosiFiles = $existingQCWork->editor_promosi_file_locations ?? [];
                 $existingEditorPromosiFiles = array_merge($existingEditorPromosiFiles, $fileLocations);
                 
+                $existingFilesToCheck = $existingQCWork->files_to_check ?? [];
+                $existingFilesToCheck = array_merge($existingFilesToCheck, $fileLocations);
+
                 $existingQCWork->update([
                     'editor_promosi_file_locations' => $existingEditorPromosiFiles,
+                    'files_to_check' => $existingFilesToCheck,
                     'status' => 'pending' // Reset to pending for re-review
                 ]);
 
