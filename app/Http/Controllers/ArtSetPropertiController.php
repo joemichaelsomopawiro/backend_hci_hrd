@@ -22,24 +22,24 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $query = ProductionEquipment::with(['assignedUser', 'program', 'episode']);
-            
+
             // Filter by status
             if ($request->has('status')) {
                 $query->where('status', $request->status);
             }
-            
+
             // Filter by category
             if ($request->has('category')) {
                 $query->where('category', $request->category);
             }
-            
+
             // Filter by program
             if ($request->has('program_id')) {
                 $query->where('program_id', $request->program_id);
             }
-            
+
             $equipment = $query->paginate(15);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $equipment,
@@ -194,7 +194,7 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $equipment = ProductionEquipment::findOrFail($id);
-            
+
             if ($equipment->status === 'in_use') {
                 return response()->json([
                     'success' => false,
@@ -223,7 +223,7 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $equipment = ProductionEquipment::findOrFail($id);
-            
+
             if ($equipment->status !== 'requested') {
                 return response()->json([
                     'success' => false,
@@ -251,6 +251,16 @@ class ArtSetPropertiController extends Controller
                 'approved_at' => now()
             ]);
 
+            // Update associated Production Work status to 'shooting'
+            if ($equipment->episode_id) {
+                $productionWork = \App\Models\ProduksiWork::where('episode_id', $equipment->episode_id)->first();
+                if ($productionWork) {
+                    $productionWork->update([
+                        'status' => 'shooting'
+                    ]);
+                }
+            }
+
             // Notify requester
             $this->notifyRequester($equipment, 'approved');
 
@@ -274,7 +284,7 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $equipment = ProductionEquipment::findOrFail($id);
-            
+
             if ($equipment->status !== 'requested') {
                 return response()->json([
                     'success' => false,
@@ -324,7 +334,7 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $equipment = ProductionEquipment::findOrFail($id);
-            
+
             if ($equipment->status !== 'approved') {
                 return response()->json([
                     'success' => false,
@@ -375,7 +385,7 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $equipment = ProductionEquipment::findOrFail($id);
-            
+
             if (!in_array($equipment->status, ['assigned', 'in_use'])) {
                 return response()->json([
                     'success' => false,
@@ -397,7 +407,7 @@ class ArtSetPropertiController extends Controller
             }
 
             $status = $request->return_condition === 'good' ? 'available' : 'maintenance';
-            
+
             $equipment->update([
                 'status' => $status,
                 'return_condition' => $request->return_condition,
@@ -429,26 +439,26 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $query = ProductionEquipment::query();
-            
+
             // Filter by category
             if ($request->has('category')) {
                 $query->where('category', $request->category);
             }
-            
+
             // Filter by status
             if ($request->has('status')) {
                 $query->where('status', $request->status);
             }
-            
+
             $inventory = $query->selectRaw('
                 category,
                 status,
                 COUNT(*) as count,
                 AVG(CASE WHEN last_maintenance IS NOT NULL THEN DATEDIFF(NOW(), last_maintenance) ELSE NULL END) as avg_days_since_maintenance
             ')
-            ->groupBy('category', 'status')
-            ->get();
-            
+                ->groupBy('category', 'status')
+                ->get();
+
             $summary = [
                 'total_equipment' => ProductionEquipment::count(),
                 'available_equipment' => ProductionEquipment::where('status', 'available')->count(),
@@ -458,7 +468,7 @@ class ArtSetPropertiController extends Controller
                 'inventory_by_category' => $inventory->groupBy('category'),
                 'maintenance_alerts' => $this->getMaintenanceAlerts()
             ];
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $summary,
@@ -478,12 +488,12 @@ class ArtSetPropertiController extends Controller
     private function getMaintenanceAlerts(): array
     {
         $alerts = [];
-        
+
         // Equipment due for maintenance
         $dueForMaintenance = ProductionEquipment::where('next_maintenance', '<=', now()->addDays(7))
             ->where('status', '!=', 'maintenance')
             ->get();
-            
+
         foreach ($dueForMaintenance as $equipment) {
             $alerts[] = [
                 'type' => 'maintenance_due',
@@ -493,12 +503,12 @@ class ArtSetPropertiController extends Controller
                 'message' => "Equipment '{$equipment->name}' is due for maintenance on {$equipment->next_maintenance}"
             ];
         }
-        
+
         // Overdue equipment
         $overdueEquipment = ProductionEquipment::where('return_date', '<', now())
             ->whereIn('status', ['assigned', 'in_use'])
             ->get();
-            
+
         foreach ($overdueEquipment as $equipment) {
             $alerts[] = [
                 'type' => 'overdue_return',
@@ -508,7 +518,7 @@ class ArtSetPropertiController extends Controller
                 'message' => "Equipment '{$equipment->name}' is overdue for return by {$equipment->return_date}"
             ];
         }
-        
+
         return $alerts;
     }
 
@@ -518,12 +528,12 @@ class ArtSetPropertiController extends Controller
     private function notifyArtSetPropertiTeam(ProductionEquipment $equipment, string $action): void
     {
         $artSetPropertiUsers = User::where('role', 'Art & Set Properti')->get();
-        
+
         $messages = [
             'new_request' => "New equipment request: '{$equipment->name}' from {$equipment->assignedUser->name}",
             'returned' => "Equipment '{$equipment->name}' has been returned by {$equipment->assignedUser->name}"
         ];
-        
+
         foreach ($artSetPropertiUsers as $user) {
             ProgramNotification::create([
                 'title' => 'Equipment ' . ucfirst($action),
@@ -545,7 +555,7 @@ class ArtSetPropertiController extends Controller
             'approved' => "Your equipment request for '{$equipment->name}' has been approved",
             'rejected' => "Your equipment request for '{$equipment->name}' has been rejected"
         ];
-        
+
         ProgramNotification::create([
             'title' => 'Equipment Request ' . ucfirst($action),
             'message' => $messages[$action] ?? "Equipment request '{$equipment->name}' {$action}",

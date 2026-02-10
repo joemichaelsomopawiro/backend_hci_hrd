@@ -63,6 +63,11 @@ class PrProduksiWork extends Model
         return $this->belongsTo(ShootingRunSheet::class, 'run_sheet_id');
     }
 
+    public function equipmentLoan()
+    {
+        return $this->hasOne(EquipmentLoan::class, 'pr_produksi_work_id');
+    }
+
     // Helper Methods
     public function acceptWork(int $userId): void
     {

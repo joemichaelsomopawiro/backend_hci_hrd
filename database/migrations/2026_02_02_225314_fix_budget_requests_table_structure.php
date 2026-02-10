@@ -3,9 +3,9 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
@@ -26,7 +26,8 @@ return new class extends Migration
             }
             if (!Schema::hasColumn('budget_requests', 'requested_amount')) {
                 if (Schema::hasColumn('budget_requests', 'amount')) {
-                    $table->renameColumn('amount', 'requested_amount');
+                    // Use raw SQL for better MariaDB compatibility
+                    DB::statement('ALTER TABLE `budget_requests` CHANGE COLUMN `amount` `requested_amount` DECIMAL(15,2) DEFAULT 0');
                 } else {
                     $table->decimal('requested_amount', 15, 2)->after('description')->default(0);
                 }
@@ -59,10 +60,10 @@ return new class extends Migration
             if (Schema::hasColumn('budget_requests', 'processed_by')) {
                 $table->dropForeign(['processed_by']);
             }
-            
+
             // Then drop columns
             $table->dropColumn(['program_id', 'request_type', 'title', 'processed_by', 'payment_date', 'payment_receipt', 'payment_notes']);
-            
+
             // Revert submission_id to not nullable if needed, but usually we leave it
         });
     }

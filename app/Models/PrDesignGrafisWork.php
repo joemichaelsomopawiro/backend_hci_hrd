@@ -4,30 +4,25 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 
-class PrEditorWork extends Model
+class PrDesignGrafisWork extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory;
 
     protected $fillable = [
         'pr_episode_id',
         'pr_production_work_id',
+        'pr_promotion_work_id',
         'assigned_to',
-        'work_type',
         'status',
-        'file_complete',
-        'file_notes',
-        'editing_notes',
-        'file_path',
-        'file_name',
-        'file_size',
+        'youtube_thumbnail_link',
+        'bts_thumbnail_link',
+        'notes',
         'started_at',
         'completed_at',
     ];
 
     protected $casts = [
-        'file_complete' => 'boolean',
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
     ];
@@ -43,18 +38,13 @@ class PrEditorWork extends Model
         return $this->belongsTo(PrProduksiWork::class, 'pr_production_work_id');
     }
 
+    public function promotionWork()
+    {
+        return $this->belongsTo(PrPromotionWork::class, 'pr_promotion_work_id');
+    }
+
     public function assignedUser()
     {
         return $this->belongsTo(User::class, 'assigned_to');
-    }
-
-    public function revisionNotes()
-    {
-        return $this->hasMany(PrEditorRevisionNote::class, 'pr_editor_work_id');
-    }
-
-    public function editorPromosiWork()
-    {
-        return $this->hasOne(PrEditorPromosiWork::class, 'pr_editor_work_id');
     }
 }

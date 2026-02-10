@@ -2,118 +2,297 @@
 
 namespace App\Http\Controllers\Api\Pr;
 
-use App\Http\Controllers\Controller;
 use App\Models\PrEditorWork;
-use App\Models\Notification;
+use App\Models\PrEditorRevisionNote;
+use App\Models\PrEpisode;
+use App\Models\PrProduksiWork;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class PrEditorController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    /**
+     * Get list of editor works with filters
+     */
+    public function index(Request $request)
     {
-        try {
-            $user = Auth::user();
+        $query = PrEditorWork::with([
+            'episode.program',
+            'episode.productionWork',
+            'episode.creativeWork',
+            'assignedUser',
+            'revisionNotes'
+        ]);
 
-            if (!$user || $user->role !== 'Editor') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
-
-            $query = PrEditorWork::with(['episode.program', 'createdBy', 'reviewedBy']);
-
-            if ($request->has('status')) {
-                $query->where('status', $request->status);
-            }
-
-            if ($request->has('work_type')) {
-                $query->where('work_type', $request->work_type);
-            }
-
-            $works = $query->orderBy('created_at', 'desc')->paginate(15);
-
-            return response()->json(['success' => true, 'data' => $works, 'message' => 'Editor works retrieved successfully']);
-
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        // Filter by status
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
         }
+
+        // Filter by assigned user
+        if ($request->has('assigned_to')) {
+            $query->where('assigned_to', $request->assigned_to);
+        }
+
+        $works = $query->orderBy('created_at', 'desc')->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $works
+        ]);
     }
 
-    public function acceptWork(int $id): JsonResponse
+    /**
+     * Get detail of specific editor work
+     */
+    public function show($id)
+    {
+        $work = PrEditorWork::with([
+            'episode.program',
+            'episode.creativeWork',
+            'episode.productionWork', // Load via episode
+            'assignedUser',
+            'revisionNotes.creator',
+            'revisionNotes.approver'
+        ])->findOrFail($id);
+
+        return response()->json([
+            'success' => true,
+            'data' => $work
+        ]);
+    }
+
+    /**
+     * Start working on an episode
+     */
+    public function start($episodeId)
     {
         try {
-            $user = Auth::user();
+            $episode = PrEpisode::findOrFail($episodeId);
 
-            if (!$user || $user->role !== 'Editor') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
+            $work = PrEditorWork::where('pr_episode_id', $episodeId)->first();
 
-            $work = PrEditorWork::findOrFail($id);
-
-            if ($work->status !== 'draft') {
-                return response()->json(['success' => false, 'message' => 'Work can only be accepted when draft'], 400);
+            if (!$work) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Editor work not found for this episode'
+                ], 404);
             }
 
             $work->update([
-                'status' => 'editing',
-                'created_by' => $user->id
+                'status' => 'checking_files',
+                'assigned_to' => Auth::id(),
+                'started_at' => now()
             ]);
 
-            return response()->json(['success' => true, 'data' => $work->fresh(['episode', 'createdBy']), 'message' => 'Work accepted successfully']);
-
+            return response()->json([
+                'success' => true,
+                'message' => 'Started working on episode',
+                'data' => $work->load(['episode', 'productionWork'])
+            ]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to start work: ' . $e->getMessage()
+            ], 500);
         }
     }
 
-    public function upload(Request $request, int $id): JsonResponse
+    /**
+     * Update file completeness check
+     */
+    public function updateFileCheck(Request $request, $id)
     {
+        $request->validate([
+            'files_complete' => 'required|boolean'
+        ]);
+
         try {
-            $user = Auth::user();
+            $work = PrEditorWork::findOrFail($id);
 
-            if (!$user || $user->role !== 'Editor') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
-
-            $validator = Validator::make($request->all(), [
-                'file_path' => 'required|string',
-                'file_name' => 'required|string|max:255'
+            $work->update([
+                'files_complete' => $request->files_complete,
+                'status' => $request->files_complete ? 'in_progress' : 'checking_files'
             ]);
 
-            if ($validator->fails()) {
-                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
-            }
+            return response()->json([
+                'success' => true,
+                'message' => 'File check updated',
+                'data' => $work
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update file check: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Create revision note
+     */
+    public function createRevisionNote(Request $request, $id)
+    {
+        $request->validate([
+            'notes' => 'required|string'
+        ]);
+
+        try {
+            DB::beginTransaction();
 
             $work = PrEditorWork::findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            $revisionNote = PrEditorRevisionNote::create([
+                'pr_editor_work_id' => $work->id,
+                'pr_episode_id' => $work->pr_episode_id,
+                'created_by' => Auth::id(),
+                'notes' => $request->notes,
+                'status' => 'pending'
+            ]);
+
+            // Update editor work status
+            $work->update([
+                'status' => 'waiting_producer_approval'
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Revision note created and sent to Producer',
+                'data' => $revisionNote->load(['creator'])
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create revision note: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Update work progress (notes)
+     */
+    /**
+     * Update editor work details
+     */
+    public function update(Request $request, $id)
+    {
+        $request->validate([
+            'work_type' => 'nullable|string',
+            'file_complete' => 'nullable|boolean',
+            'file_notes' => 'nullable|string',
+            'editing_notes' => 'nullable|string',
+            'file_path' => 'nullable|string',
+            'file_name' => 'nullable|string',
+            'file_size' => 'nullable|integer',
+        ]);
+
+        try {
+            $work = PrEditorWork::findOrFail($id);
+
+            $updateData = $request->only([
+                'work_type',
+                'file_complete',
+                'file_notes',
+                'editing_notes',
+                'file_path',
+                'file_name',
+                'file_size'
+            ]);
+
+            // If file_path is provided, update status to in_progress if currently draft
+            if ($request->has('file_path') && !empty($request->file_path)) {
+                if ($work->status === 'draft' || $work->status === 'checking_files') {
+                    $updateData['status'] = 'in_progress';
+                }
+            }
+
+            $work->update($updateData);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Work updated successfully',
+                'data' => $work
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Submit completed work
+     */
+    public function submit($id)
+    {
+        try {
+            DB::beginTransaction();
+
+            $work = PrEditorWork::findOrFail($id);
+
+            // Validate that video link is uploaded
+            if (empty($work->file_path)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please upload edited video file/link before submitting'
+                ], 400);
             }
 
             $work->update([
-                'file_path' => $request->file_path,
-                'file_name' => $request->file_name,
-                'editing_notes' => $request->editing_notes,
-                'status' => 'pending_review'
+                'status' => 'completed',
+                'completed_at' => now()
             ]);
 
-            // Notify Manager Program
-            $managerProgram = $work->episode->program->managerProgram ?? null;
-            if ($managerProgram) {
-                Notification::create([
-                    'user_id' => $managerProgram->id,
-                    'type' => 'pr_editor_work_submitted',
-                    'title' => 'Editor Work Submitted',
-                    'message' => "Editor work for PR Episode {$work->episode->episode_number} is ready for review.",
-                    'data' => ['editor_work_id' => $work->id, 'pr_episode_id' => $work->pr_episode_id]
-                ]);
-            }
+            // Check if all Step 6 roles are completed
+            $this->checkStep6Completion($work->pr_episode_id);
 
-            return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'File uploaded successfully']);
+            DB::commit();
 
+            return response()->json([
+                'success' => true,
+                'message' => 'Work submitted successfully',
+                'data' => $work
+            ]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to submit work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Check if all Step 6 works are completed
+     */
+    private function checkStep6Completion($episodeId)
+    {
+        $episode = PrEpisode::findOrFail($episodeId);
+
+        $editorCompleted = PrEditorWork::where('pr_episode_id', $episodeId)
+            ->where('status', 'completed')
+            ->exists();
+
+        $editorPromosiCompleted = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)
+            ->where('status', 'completed')
+            ->exists();
+
+        $designGrafisCompleted = \App\Models\PrDesignGrafisWork::where('pr_episode_id', $episodeId)
+            ->where('status', 'completed')
+            ->exists();
+
+        // If all three are completed, mark Step 6 as completed
+        if ($editorCompleted && $editorPromosiCompleted && $designGrafisCompleted) {
+            $episode->update([
+                'workflow_step' => 7, // Move to next step
+                'status' => 'step_6_completed'
+            ]);
         }
     }
 }

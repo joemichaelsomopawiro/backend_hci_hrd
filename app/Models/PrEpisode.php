@@ -50,6 +50,14 @@ class PrEpisode extends Model
     }
 
     /**
+     * Relationship dengan Production Work
+     */
+    public function productionWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrProduksiWork::class, 'pr_episode_id');
+    }
+
+    /**
      * Relationship dengan Production Schedules
      */
     public function productionSchedules(): HasMany

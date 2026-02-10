@@ -12,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
+use App\Helpers\QueryOptimizer;
 
 class EditorPromosiController extends Controller
 {
@@ -22,14 +23,14 @@ class EditorPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User not authenticated.'
                 ], 401);
             }
-            
+
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
@@ -41,9 +42,9 @@ class EditorPromosiController extends Controller
             // 1. Created by current user, OR
             // 2. In draft/planning status (available for acceptance) for any Editor Promosi user
             $query = PromotionWork::with(['episode', 'createdBy'])
-                ->where(function($q) use ($user) {
+                ->where(function ($q) use ($user) {
                     $q->where('created_by', $user->id)
-                      ->orWhereIn('status', ['draft', 'planning']); // Draft/planning works are available for any Editor Promosi to accept
+                        ->orWhereIn('status', ['draft', 'planning']); // Draft/planning works are available for any Editor Promosi to accept
                 });
 
             // Filter by status
@@ -79,14 +80,14 @@ class EditorPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User not authenticated.'
                 ], 401);
             }
-            
+
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
@@ -210,9 +211,16 @@ class EditorPromosiController extends Controller
             }
 
             $work->update($request->only([
-                'title', 'description', 'content_plan', 'talent_data',
-                'location_data', 'equipment_needed', 'shooting_date',
-                'shooting_time', 'shooting_notes', 'status'
+                'title',
+                'description',
+                'content_plan',
+                'talent_data',
+                'location_data',
+                'equipment_needed',
+                'shooting_date',
+                'shooting_time',
+                'shooting_notes',
+                'status'
             ]));
 
             // Notify on status change
@@ -256,10 +264,12 @@ class EditorPromosiController extends Controller
                 'file_links' => 'nullable|array',
                 'file_links.*' => 'nullable|url|max:2048' // Each link must be valid URL
             ]);
-            
+
             // Require either files or file_links
-            if ((!$request->hasFile('files') || empty($request->file('files'))) && 
-                (!$request->has('file_links') || empty($request->file_links))) {
+            if (
+                (!$request->hasFile('files') || empty($request->file('files'))) &&
+                (!$request->has('file_links') || empty($request->file_links))
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Either files or file_links array is required.'
@@ -279,36 +289,36 @@ class EditorPromosiController extends Controller
 
             if ($request->hasFile('files')) {
                 foreach ($request->file('files') as $file) {
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $filePath = $file->storeAs("editor_promosi/{$work->id}", $fileName, 'public');
-                
-                $uploadedFiles[] = [
-                    'original_name' => $file->getClientOriginalName(),
-                    'file_name' => $fileName,
-                    'file_path' => $filePath,
-                    'file_size' => $file->getSize(),
-                    'mime_type' => $file->getMimeType(),
-                    'uploaded_at' => now()
-                ];
+                    $fileName = time() . '_' . $file->getClientOriginalName();
+                    $filePath = $file->storeAs("editor_promosi/{$work->id}", $fileName, 'public');
 
-                $filePaths[] = $filePath;
+                    $uploadedFiles[] = [
+                        'original_name' => $file->getClientOriginalName(),
+                        'file_name' => $fileName,
+                        'file_path' => $filePath,
+                        'file_size' => $file->getSize(),
+                        'mime_type' => $file->getMimeType(),
+                        'uploaded_at' => now()
+                    ];
 
-                // Create MediaFile record
-                MediaFile::create([
-                    'episode_id' => $work->episode_id,
-                    'file_name' => $fileName,
-                    'file_path' => $filePath,
-                    'file_size' => $file->getSize(),
-                    'mime_type' => $file->getMimeType(),
-                    'file_type' => 'editor_promosi',
-                    'uploaded_by' => $user->id,
-                    'metadata' => [
-                        'promotion_work_id' => $work->id,
-                        'work_type' => $work->work_type,
-                        'original_name' => $file->getClientOriginalName()
-                    ]
-                ]);
-                ]);
+                    $filePaths[] = $filePath;
+
+                    // Create MediaFile record
+                    MediaFile::create([
+                        'episode_id' => $work->episode_id,
+                        'file_name' => $fileName,
+                        'file_path' => $filePath,
+                        'file_size' => $file->getSize(),
+                        'mime_type' => $file->getMimeType(),
+                        'file_type' => 'editor_promosi',
+                        'uploaded_by' => $user->id,
+                        'metadata' => [
+                            'promotion_work_id' => $work->id,
+                            'work_type' => $work->work_type,
+                            'original_name' => $file->getClientOriginalName()
+                        ]
+                    ]);
+
                 }
             }
 
@@ -358,14 +368,14 @@ class EditorPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User not authenticated.'
                 ], 401);
             }
-            
+
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
@@ -381,13 +391,13 @@ class EditorPromosiController extends Controller
 
             if ($sourceRole === 'editor') {
                 // Ambil file dari Editor (main editor)
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->where('file_type', 'editor')
-                      ->orWhere('file_type', 'editor_work');
+                        ->orWhere('file_type', 'editor_work');
                 })
-                ->whereHas('uploadedBy', function($q) {
-                    $q->where('role', 'Editor');
-                });
+                    ->whereHas('uploadedBy', function ($q) {
+                        $q->where('role', 'Editor');
+                    });
 
                 // Juga ambil dari EditorWork jika ada
                 $editorWorks = \App\Models\EditorWork::where('episode_id', $episodeId)
@@ -397,7 +407,7 @@ class EditorPromosiController extends Controller
                 $files = $query->orderBy('created_at', 'desc')->get();
 
                 // Convert EditorWork to file-like structure
-                $editorWorkFiles = $editorWorks->map(function($work) {
+                $editorWorkFiles = $editorWorks->map(function ($work) {
                     return [
                         'id' => 'editor_work_' . $work->id,
                         'file_name' => $work->file_name,
@@ -417,9 +427,9 @@ class EditorPromosiController extends Controller
             } elseif ($sourceRole === 'promotion' || $sourceRole === 'promosi' || !$sourceRole) { // Support both for backward compatibility
                 // Default: Ambil file dari Promotion (BTS)
                 $query->where('file_type', 'promotion')
-                      ->whereHas('uploadedBy', function($q) {
-                          $q->where('role', 'Promotion');
-                      });
+                    ->whereHas('uploadedBy', function ($q) {
+                        $q->where('role', 'Promotion');
+                    });
 
                 $allFiles = $query->orderBy('created_at', 'desc')->get();
             } else {
@@ -450,14 +460,14 @@ class EditorPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User not authenticated.'
                 ], 401);
             }
-            
+
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
@@ -535,10 +545,15 @@ class EditorPromosiController extends Controller
 
         foreach ($promotionWorks as $promotionWork) {
             if ($promotionWork->file_paths) {
-                $filePaths = is_array($promotionWork->file_paths) 
-                    ? $promotionWork->file_paths 
-                    : json_decode($promotionWork->file_paths, true);
-                
+                $filePaths = $promotionWork->file_paths;
+                if (is_string($filePaths)) {
+                    $filePaths = json_decode($filePaths, true);
+                }
+
+                if (!is_array($filePaths)) {
+                    $filePaths = [];
+                }
+
                 if (is_array($filePaths)) {
                     foreach ($filePaths as $file) {
                         // Filter hanya BTS video (bukan talent photos)
@@ -626,7 +641,7 @@ class EditorPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
@@ -646,7 +661,7 @@ class EditorPromosiController extends Controller
 
             // Auto-fetch source files dari Editor dan Promosi (BTS)
             $sourceFiles = $this->fetchSourceFilesForWork($work->episode_id);
-            
+
             // Reset review fields jika ini resubmission setelah reject
             $updateData = [
                 'status' => 'editing',
@@ -657,21 +672,21 @@ class EditorPromosiController extends Controller
                     'accepted_by' => $user->id
                 ])
             ];
-            
+
             // Reset review fields jika status adalah rejected atau review (resubmission)
             if (in_array($work->status, ['rejected', 'review'])) {
                 $updateData['review_notes'] = null;
                 $updateData['reviewed_by'] = null;
                 $updateData['reviewed_at'] = null;
             }
-            
+
             $work->update($updateData);
 
             // Notify Producer
             $episode = $work->episode;
             $productionTeam = $episode->program->productionTeam ?? null;
             $producer = $productionTeam ? $productionTeam->producer : null;
-            
+
             if ($producer) {
                 Notification::create([
                     'user_id' => $producer->id,
@@ -709,7 +724,7 @@ class EditorPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if ($user->role !== 'Editor Promotion') {
                 return response()->json([
                     'success' => false,
@@ -749,12 +764,12 @@ class EditorPromosiController extends Controller
                 'highlight_tv' => 'highlight_tv',
                 'highlight_facebook' => 'highlight_facebook'
             ];
-            
+
             $qcType = $qcTypeMap[$work->work_type] ?? 'bts_video'; // Default fallback
 
             // Prepare file locations with promotion_work_id
             $fileLocations = [];
-            
+
             // Process file_paths (physical files)
             if (is_array($work->file_paths)) {
                 foreach ($work->file_paths as $file) {
@@ -781,7 +796,7 @@ class EditorPromosiController extends Controller
                     }
                 }
             }
-            
+
             // Process file_links (external links)
             if (is_array($work->file_links)) {
                 foreach ($work->file_links as $link) {
@@ -850,7 +865,7 @@ class EditorPromosiController extends Controller
                 // Update existing QC work with latest editor promosi files
                 $existingEditorPromosiFiles = $existingQCWork->editor_promosi_file_locations ?? [];
                 $existingEditorPromosiFiles = array_merge($existingEditorPromosiFiles, $fileLocations);
-                
+
                 $existingQCWork->update([
                     'editor_promosi_file_locations' => $existingEditorPromosiFiles,
                     'status' => 'pending' // Reset to pending for re-review

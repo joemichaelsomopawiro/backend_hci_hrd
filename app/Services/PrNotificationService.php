@@ -138,7 +138,7 @@ class PrNotificationService
     {
         // Notify Manager Program
         $manager = $program->managerProgram;
-        
+
         Notification::create([
             'user_id' => $manager->id,
             'type' => 'program_regular_revision_requested',
@@ -153,5 +153,49 @@ class PrNotificationService
             'priority' => 'normal',
             'status' => 'unread'
         ]);
+    }
+
+    /**
+     * Notify Producer tentang Creative Work yang disubmit
+     */
+    public function notifyCreativeWorkSubmitted(\App\Models\PrCreativeWork $work): void
+    {
+        $program = $work->episode->program;
+
+        // 1. Notify Assigned Producer
+        $producersToNotify = collect();
+
+        if ($program->producer) {
+            $producersToNotify->push($program->producer);
+        }
+
+        // 2. Notify other crew members with Producer role
+        $crewProducers = \App\Models\PrProgramCrew::where('program_id', $program->id)
+            ->where('role', 'Producer')
+            ->with('user')
+            ->get()
+            ->pluck('user');
+
+        $producersToNotify = $producersToNotify->merge($crewProducers)->unique('id');
+
+        foreach ($producersToNotify as $producer) {
+            Notification::create([
+                'user_id' => $producer->id,
+                'type' => 'pr_creative_work_submitted',
+                'title' => 'Creative Work Submitted',
+                'message' => "Creative work for PR Episode {$work->episode->episode_number} has been submitted for review.",
+                'data' => [
+                    'creative_work_id' => $work->id,
+                    'pr_episode_id' => $work->pr_episode_id,
+                    'pr_program_id' => $program->id,
+                    'program_name' => $program->name,
+                    'episode_number' => $work->episode->episode_number
+                ],
+                'related_type' => 'PrCreativeWork',
+                'related_id' => $work->id,
+                'priority' => 'high',
+                'status' => 'unread'
+            ]);
+        }
     }
 }

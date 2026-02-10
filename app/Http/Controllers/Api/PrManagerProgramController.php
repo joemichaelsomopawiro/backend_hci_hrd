@@ -19,6 +19,7 @@ use App\Models\PrCreativeWork;
 use App\Constants\Role;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use App\Models\PrEpisodeCrew;
 
 class PrManagerProgramController extends Controller
 {
@@ -776,6 +777,18 @@ class PrManagerProgramController extends Controller
                     $step4->save();
                 }
 
+                // Auto-create PrPromotionWork (Ensure consistency with Producer approval)
+                \App\Models\PrPromotionWork::firstOrCreate(
+                    ['pr_episode_id' => $episode->id],
+                    [
+                        'work_type' => 'bts_video',
+                        'status' => 'planning',
+                        'created_by' => $creativeWork->created_by ?? $user->id,
+                        'shooting_date' => $creativeWork->shooting_schedule ?? null,
+                        'shooting_notes' => 'Auto-created from manager budget approval'
+                    ]
+                );
+
                 \Illuminate\Support\Facades\DB::commit();
 
                 // Log activity
@@ -878,7 +891,7 @@ class PrManagerProgramController extends Controller
                 $this->activityLogService->logProgramActivity(
                     $episode->program,
                     'reject_budget',
-                    'Special Budget rejected by Manager: ' . $user->name,
+                    'Budget rejected by Manager: ' . $user->name,
                     [
                         'episode_id' => $episode->id,
                         'creative_work_id' => $creativeWork->id,
@@ -897,10 +910,103 @@ class PrManagerProgramController extends Controller
                 throw $e;
             }
         } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get Episode Crews (Manager View)
+     */
+    public function getEpisodeCrews($episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            // Manager can view crews
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $crews = \App\Models\PrEpisodeCrew::where('episode_id', $episodeId)
+                ->with('user')
+                ->get();
+
             return response()->json([
-                'success' => false,
-                'message' => 'Error: ' . $e->getMessage()
-            ], 500);
+                'success' => true,
+                'data' => $crews
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Add Crew to Episode (Manager Action)
+     */
+    public function addEpisodeCrew(Request $request, $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'user_id' => 'required|exists:users,id',
+                'role' => 'required|in:shooting_team,setting_team'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            // Check if already exists
+            $exists = \App\Models\PrEpisodeCrew::where('episode_id', $episodeId)
+                ->where('user_id', $request->user_id)
+                ->where('role', $request->role)
+                ->exists();
+
+            if ($exists) {
+                return response()->json(['success' => false, 'message' => 'User already assigned to this role'], 400);
+            }
+
+            $crew = \App\Models\PrEpisodeCrew::create([
+                'episode_id' => $episodeId,
+                'user_id' => $request->user_id,
+                'role' => $request->role
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Crew added successfully',
+                'data' => $crew->load('user')
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Remove Crew from Episode (Manager Action)
+     */
+    public function removeEpisodeCrew($episodeId, $crewId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $crew = \App\Models\PrEpisodeCrew::where('episode_id', $episodeId)->findOrFail($crewId);
+            $crew->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Crew removed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 

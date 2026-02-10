@@ -13,9 +13,16 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use App\Models\PrProgramCrew;
 use App\Models\PrProgramFile;
+use App\Services\PrNotificationService;
 
 class PrCreativeController extends Controller
 {
+    protected $notificationService;
+
+    public function __construct(PrNotificationService $notificationService)
+    {
+        $this->notificationService = $notificationService;
+    }
     /**
      * Get episodes available for creating new creative work
      */
@@ -396,10 +403,10 @@ class PrCreativeController extends Controller
                 ], 403);
             }
 
-            if (!in_array($work->status, ['draft', 'in_progress', 'revised'])) {
+            if (!in_array($work->status, ['draft', 'in_progress', 'revised', 'rejected'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be submitted when draft, in_progress or revised'
+                    'message' => 'Work can only be submitted when draft, in_progress, revised or rejected'
                 ], 400);
             }
 
@@ -422,21 +429,8 @@ class PrCreativeController extends Controller
                 'review_notes' => null
             ]);
 
-            // Notify Producer
-            $producer = $work->episode->program->producer ?? null;
-            if ($producer) {
-                Notification::create([
-                    'user_id' => $producer->id,
-                    'type' => 'pr_creative_work_submitted',
-                    'title' => 'Creative Work Submitted',
-                    'message' => "Creative work for PR Episode {$work->episode->episode_number} has been submitted for review.",
-                    'data' => [
-                        'creative_work_id' => $work->id,
-                        'pr_episode_id' => $work->pr_episode_id,
-                        'pr_program_id' => $work->episode->program_id
-                    ]
-                ]);
-            }
+            // Notify Producer via Service
+            $this->notificationService->notifyCreativeWorkSubmitted($work);
 
             // Automate Workflow Step 3 Completion: Creative Submits to Producer
             $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
@@ -632,6 +626,47 @@ class PrCreativeController extends Controller
                 'success' => false,
                 'message' => 'Error deleting file: ' . $e->getMessage()
             ], 500);
+        }
+    }
+    /**
+     * Get creative highlights (drafts and rejected works)
+     * GET /api/pr/creative/highlights
+     */
+    public function getHighlights(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            // Get latest drafts (status 'draft')
+            $drafts = \App\Models\PrCreativeWork::with(['episode.program'])
+                ->where('created_by', $user->id)
+                ->where('status', 'draft')
+                ->orderBy('updated_at', 'desc')
+                ->take(3)
+                ->get();
+
+            // Get rejected works (status 'rejected')
+            $rejected = \App\Models\PrCreativeWork::with(['episode.program'])
+                ->where('created_by', $user->id)
+                ->where('status', 'rejected')
+                ->orderBy('updated_at', 'desc')
+                ->take(5)
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'active_drafts' => $drafts,
+                    'rejected_works' => $rejected
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 }

@@ -180,41 +180,7 @@ class PrProducerController extends Controller
         }
     }
 
-    /**
-     * Get episodes pending review for Producer
-     * GET /api/program-regular/producer/episodes/review
-     */
-    public function getEpisodesForReview(Request $request): JsonResponse
-    {
-        try {
-            $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
-            }
-
-            $episodes = \App\Models\PrEpisode::whereHas('program', function ($q) use ($user) {
-                $q->where('producer_id', $user->id)
-                    ->orWhereHas('crews', function ($subQ) use ($user) {
-                        $subQ->where('user_id', $user->id)
-                            ->where('role', 'Producer');
-                    });
-            })->whereHas('creativeWork', function ($q) {
-                $q->where('status', 'submitted');
-            })->with(['program', 'creativeWork'])->get();
-
-            return response()->json([
-                'success' => true,
-                'data' => $episodes
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve episodes',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
 
     /**
      * Mark program as read by Producer
@@ -1049,16 +1015,23 @@ class PrProducerController extends Controller
      */
     public function approveCreativeWorkScript(Request $request, $id): JsonResponse
     {
+        // Start Transaction
+        \Illuminate\Support\Facades\DB::beginTransaction();
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
             $work = \App\Models\PrCreativeWork::findOrFail($id);
 
             if ($work->status !== 'submitted') {
+                // Start transaction before any potential writes (though early returns are safe)
+                // But rollBack is needed if we started it. But here we haven't started.
+                // Actually, simpler to start transaction after basic validation if no writes happened yet.
+                // But to be consistent with block:
+                \Illuminate\Support\Facades\DB::rollBack();
                 return response()->json(['success' => false, 'message' => 'Work must be submitted to approve'], 400);
             }
 
@@ -1078,6 +1051,19 @@ class PrProducerController extends Controller
                     ['pr_episode_id' => $work->pr_episode_id],
                     ['pr_creative_work_id' => $work->id, 'status' => 'pending']
                 );
+
+                // Auto-create PrPromotionWork
+                \App\Models\PrPromotionWork::firstOrCreate(
+                    ['pr_episode_id' => $work->pr_episode_id],
+                    [
+                        'work_type' => 'bts_video',
+                        'status' => 'planning',
+                        'created_by' => $work->created_by,
+                        'shooting_date' => $work->shooting_schedule ?? null,
+                        'shooting_notes' => 'Auto-created from creative work approval'
+                    ]
+                );
+
 
                 // Automate Workflow Step 4 Completion: Producer Review
                 $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
@@ -1102,9 +1088,12 @@ class PrProducerController extends Controller
                 'data' => ['creative_work_id' => $work->id]
             ]);
 
+            \Illuminate\Support\Facades\DB::commit();
+
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Script approved successfully']);
 
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
@@ -1115,16 +1104,19 @@ class PrProducerController extends Controller
      */
     public function approveCreativeWorkBudget(Request $request, $id): JsonResponse
     {
+        // Start Transaction
+        \Illuminate\Support\Facades\DB::beginTransaction();
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
             $work = \App\Models\PrCreativeWork::findOrFail($id);
 
             if ($work->status !== 'submitted') {
+                \Illuminate\Support\Facades\DB::rollBack();
                 return response()->json(['success' => false, 'message' => 'Work must be submitted to approve'], 400);
             }
 
@@ -1144,6 +1136,19 @@ class PrProducerController extends Controller
                     ['pr_episode_id' => $work->pr_episode_id],
                     ['pr_creative_work_id' => $work->id, 'status' => 'pending']
                 );
+
+                // Auto-create PrPromotionWork
+                \App\Models\PrPromotionWork::firstOrCreate(
+                    ['pr_episode_id' => $work->pr_episode_id],
+                    [
+                        'work_type' => 'bts_video',
+                        'status' => 'planning',
+                        'created_by' => $work->created_by,
+                        'shooting_date' => $work->shooting_schedule ?? null,
+                        'shooting_notes' => 'Auto-created from creative work approval'
+                    ]
+                );
+
 
                 // Automate Workflow Step 4 Completion: Producer Review
                 $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
@@ -1168,9 +1173,12 @@ class PrProducerController extends Controller
                 'data' => ['creative_work_id' => $work->id]
             ]);
 
+            \Illuminate\Support\Facades\DB::commit();
+
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Budget approved successfully']);
 
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
@@ -1323,17 +1331,86 @@ class PrProducerController extends Controller
     }
 
     /**
+     * Get Episodes with Submitted Creative Work (For Review)
+     * GET /api/pr/producer/episodes/review
+     */
+    public function getEpisodesForReview(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (Role::normalize($user->role) !== Role::PRODUCER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            // Get episodes from assigned programs where creative work is submitted
+            $episodes = PrEpisode::whereHas('program', function ($q) use ($user) {
+                $q->where('producer_id', $user->id)
+                    ->orWhereHas('crews', function ($subQ) use ($user) {
+                        $subQ->where('user_id', $user->id)
+                            ->where('role', 'Producer');
+                    });
+            })
+                ->whereHas('creativeWork', function ($q) {
+                    $q->where('status', 'submitted');
+                })
+                ->with(['program', 'creativeWork.createdBy'])
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $episodes
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Validate Team Assignment
+     * Ensures shooting and setting teams are assigned
+     */
+    private function validateTeamAssignment($episodeId)
+    {
+        $shootingTeam = PrEpisodeCrew::where('episode_id', $episodeId)
+            ->where('role', 'shooting_team')
+            ->exists();
+
+        $settingTeam = PrEpisodeCrew::where('episode_id', $episodeId)
+            ->where('role', 'setting_team')
+            ->exists();
+
+        if (!$shootingTeam || !$settingTeam) {
+            return [
+                'valid' => false,
+                'message' => 'Tim Syuting dan Tim Setting wajib diisi minimal 1 orang sebelum melanjutkan.'
+            ];
+        }
+
+        return ['valid' => true];
+    }
+
+    /**
      * Approve Episode (Final Step 4 Completion)
      * POST /api/pr/producer/episodes/{id}/approve
      */
     public function approveEpisode(Request $request, $episodeId): JsonResponse
     {
-        try {
-            $user = Auth::user();
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
-            }
+        $user = Auth::user();
+        if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+        }
 
+        // Validate Team Assignment
+        $validation = $this->validateTeamAssignment($episodeId);
+        if (!$validation['valid']) {
+            return response()->json(['success' => false, 'message' => $validation['message']], 400);
+        }
+
+        // Start Transaction
+        \Illuminate\Support\Facades\DB::beginTransaction();
+        try {
             $episode = PrEpisode::findOrFail($episodeId);
             $work = $episode->creativeWork;
 
@@ -1341,8 +1418,10 @@ class PrProducerController extends Controller
                 // Or should we allow approval if it's already 'approved' but just re-triggering?
                 // Let's be strict: must be submitted or already approved (idempotent)
                 if ($work && $work->status === 'approved') {
+                    \Illuminate\Support\Facades\DB::rollBack();
                     return response()->json(['success' => true, 'message' => 'Episode already approved']);
                 }
+                \Illuminate\Support\Facades\DB::rollBack();
                 return response()->json(['success' => false, 'message' => 'Creative work not ready for approval'], 400);
             }
 
@@ -1362,6 +1441,19 @@ class PrProducerController extends Controller
                 ['pr_episode_id' => $episode->id],
                 ['pr_creative_work_id' => $work->id, 'status' => 'pending']
             );
+
+            // Auto-create PrPromotionWork (Missing in some flows)
+            \App\Models\PrPromotionWork::firstOrCreate(
+                ['pr_episode_id' => $episode->id],
+                [
+                    'work_type' => 'general',
+                    'status' => 'planning',
+                    'created_by' => $work->created_by,
+                    'shooting_date' => $work->shooting_schedule ?? null,
+                    'shooting_notes' => 'Auto-created from creative work approval'
+                ]
+            );
+
 
             // 3. Mark Workflow Step 4 as Completed
             $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $episode->id)
@@ -1385,18 +1477,19 @@ class PrProducerController extends Controller
                 'data' => ['episode_id' => $episode->id]
             ]);
 
+            \Illuminate\Support\Facades\DB::commit();
+
             return response()->json([
                 'success' => true,
-                'message' => 'Episode berhasil disetujui',
-                'data' => $episode->fresh()
+                'message' => 'Episode approved and forwarded to Production',
+                'data' => $work
             ]);
 
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 
 
-
 }
-

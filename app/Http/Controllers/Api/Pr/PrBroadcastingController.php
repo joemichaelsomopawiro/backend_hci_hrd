@@ -52,7 +52,7 @@ class PrBroadcastingController extends Controller
             }
 
             $work->update([
-                'status' => 'preparing',
+                'status' => 'preparing', // still preparing until upload
                 'created_by' => $user->id
             ]);
 
@@ -63,7 +63,7 @@ class PrBroadcastingController extends Controller
         }
     }
 
-    public function uploadYouTube(Request $request, int $id): JsonResponse
+    public function update(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
@@ -72,38 +72,26 @@ class PrBroadcastingController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            $validator = Validator::make($request->all(), [
-                'youtube_url' => 'required|url',
-                'title' => 'required|string|max:255',
-                'description' => 'required|string|max:5000'
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
-            }
-
             $work = PrBroadcastingWork::findOrFail($id);
 
             if ($work->created_by !== $user->id) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+                // return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
-            $videoId = $this->extractYouTubeVideoId($request->youtube_url);
+            $work->update($request->all());
 
-            $work->update([
-                'youtube_url' => $request->youtube_url,
-                'youtube_video_id' => $videoId,
-                'title' => $request->title,
-                'description' => $request->description,
-                'metadata' => $request->metadata ?? [],
-                'status' => 'uploading'
-            ]);
-
-            return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'YouTube upload completed successfully']);
+            return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Broadcasting work updated successfully']);
 
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
+    }
+
+    public function uploadYouTube(Request $request, int $id): JsonResponse
+    {
+        // Legacy or specific action? Frontend calls generic update mostly.
+        // But if needed:
+        return $this->update($request, $id);
     }
 
     public function publish(int $id): JsonResponse
@@ -116,10 +104,6 @@ class PrBroadcastingController extends Controller
             }
 
             $work = PrBroadcastingWork::findOrFail($id);
-
-            if ($work->created_by !== $user->id) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
-            }
 
             if (!$work->youtube_url && !$work->website_url) {
                 return response()->json(['success' => false, 'message' => 'Please upload to YouTube or website before publishing'], 400);
@@ -139,10 +123,10 @@ class PrBroadcastingController extends Controller
                 ]);
             }
 
-            // Auto-create Promotion work for sharing
+            // Auto-create Promotion work for sharing if not exists
             \App\Models\PrPromotionWork::firstOrCreate(
                 ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'share_facebook'],
-                ['status' => 'planning', 'title' => 'Share Episode to Facebook']
+                ['status' => 'pending', 'title' => 'Share Episode to Facebook']
             );
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Episode published successfully']);

@@ -104,6 +104,11 @@ class PrWorkflowService
 
         $progress->update($updateData);
 
+        // Auto-create Promotion Work when Step 4 (Creative Approval) is completed
+        if ($stepNumber === 4) {
+            $this->autoCreatePromotionWork($episodeId);
+        }
+
         // Log activity
         app(\App\Services\PrActivityLogService::class)->logEpisodeActivity(
             $progress->episode,
@@ -123,6 +128,60 @@ class PrWorkflowService
         $this->autoStartNextStep($episodeId, $stepNumber);
 
         return $progress->fresh(['assignedUser', 'episode']);
+    }
+
+    /**
+     * Auto-create Promotion Work when Creative is approved (Step 4)
+     */
+    protected function autoCreatePromotionWork(int $episodeId): void
+    {
+        try {
+            // Check if promotion work already exists for this episode
+            $existingWork = \App\Models\PrPromotionWork::where('pr_episode_id', $episodeId)->first();
+
+            if ($existingWork) {
+                Log::info('Promotion work already exists for episode', ['episode_id' => $episodeId]);
+                return;
+            }
+
+            // Get creative work to retrieve shooting schedule details
+            $creativeWork = \App\Models\PrCreativeWork::where('pr_episode_id', $episodeId)->first();
+
+            if (!$creativeWork) {
+                Log::warning('No creative work found for episode', ['episode_id' => $episodeId]);
+                return;
+            }
+
+            // Get shooting schedule data
+            $shootingSchedule = is_string($creativeWork->shooting_schedule)
+                ? json_decode($creativeWork->shooting_schedule, true)
+                : $creativeWork->shooting_schedule;
+
+            // Create promotion work
+            $promotionWork = \App\Models\PrPromotionWork::create([
+                'pr_episode_id' => $episodeId,
+                'work_type' => 'general', // Default work type
+                'status' => 'planning',
+                'created_by' => $creativeWork->created_by,
+                'shooting_date' => $shootingSchedule['date'] ?? null,
+                'shooting_time' => $shootingSchedule['time'] ?? null,
+                'location_data' => isset($shootingSchedule['location'])
+                    ? json_encode(['location' => $shootingSchedule['location']])
+                    : null,
+                'shooting_notes' => $shootingSchedule['notes'] ?? null,
+            ]);
+
+            Log::info('Auto-created promotion work', [
+                'episode_id' => $episodeId,
+                'promotion_work_id' => $promotionWork->id
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to auto-create promotion work', [
+                'episode_id' => $episodeId,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     /**

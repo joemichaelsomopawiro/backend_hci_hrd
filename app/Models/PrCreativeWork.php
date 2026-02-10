@@ -115,6 +115,7 @@ class PrCreativeWork extends Model
         $konsumsi = $budget['logistik']['konsumsi'] ?? 0;
         $operasional = $budget['operasional'] ?? 0;
 
+        // Ensure values are numeric
         return (int) ($host + $guest + $location + $konsumsi + $operasional);
     }
 

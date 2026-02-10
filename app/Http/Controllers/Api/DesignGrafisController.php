@@ -28,7 +28,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -82,7 +82,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -114,7 +114,7 @@ class DesignGrafisController extends Controller
 
             // Get episode details for auto-assignment logic
             $episode = Episode::with('program')->findOrFail($request->episode_id);
-            
+
             // AUTO-ASSIGNMENT LOGIC: Use WorkAssignmentService to determine assignee
             $assignedUserId = WorkAssignmentService::getNextAssignee(
                 DesignGrafisWork::class,
@@ -173,7 +173,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -211,7 +211,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -240,7 +240,7 @@ class DesignGrafisController extends Controller
             $episode = $work->episode;
             $productionTeam = $episode->program->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
-            
+
             if ($producer) {
                 Notification::create([
                     'user_id' => $producer->id,
@@ -284,7 +284,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -329,7 +329,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -353,7 +353,7 @@ class DesignGrafisController extends Controller
 
             // Ensure either file or file_link is provided
             if (!$request->hasFile('file') && !$request->file_link) {
-                 return response()->json([
+                return response()->json([
                     'success' => false,
                     'message' => 'Validation failed',
                     'errors' => ['file' => ['Please provide either a file upload or a file link.']]
@@ -419,7 +419,7 @@ class DesignGrafisController extends Controller
                     'file_size' => $uploadedFile['file_size'],
                     'mime_type' => $uploadedFile['mime_type'],
                     'file_paths' => $filePaths,
-                    'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') . 
+                    'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') .
                         "[YouTube Thumbnail Uploaded/Linked - " . now()->format('Y-m-d H:i:s') . "]\n" .
                         ($request->design_notes ?? '')
                 ]);
@@ -460,7 +460,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -482,14 +482,14 @@ class DesignGrafisController extends Controller
                 ], 422);
             }
 
-             // Ensure either file or file_link is provided
-             if (!$request->hasFile('file') && !$request->file_link) {
+            // Ensure either file or file_link is provided
+            if (!$request->hasFile('file') && !$request->file_link) {
                 return response()->json([
-                   'success' => false,
-                   'message' => 'Validation failed',
-                   'errors' => ['file' => ['Please provide either a file upload or a file link.']]
-               ], 422);
-           }
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => ['file' => ['Please provide either a file upload or a file link.']]
+                ], 422);
+            }
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
@@ -520,8 +520,8 @@ class DesignGrafisController extends Controller
             if ($request->hasFile('file')) {
                 $uploadedFile = FileUploadHelper::validateImageFile($request->file('file'), 10); // Max 10MB
             } elseif ($request->file_link) {
-                 // Use input link
-                 $uploadedFile = [
+                // Use input link
+                $uploadedFile = [
                     'file_path' => $request->file_link,
                     'file_name' => 'External Link',
                     'file_size' => 0,
@@ -550,7 +550,7 @@ class DesignGrafisController extends Controller
                     'file_size' => $uploadedFile['file_size'],
                     'mime_type' => $uploadedFile['mime_type'],
                     'file_paths' => $filePaths,
-                    'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') . 
+                    'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') .
                         "[BTS Thumbnail Uploaded/Linked - " . now()->format('Y-m-d H:i:s') . "]\n" .
                         ($request->design_notes ?? '')
                 ]);
@@ -591,7 +591,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -675,7 +675,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -731,7 +731,7 @@ class DesignGrafisController extends Controller
             $episode = $work->episode;
             $productionTeam = $episode->program->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
-            
+
             if ($producer) {
                 Notification::create([
                     'user_id' => $producer->id,
@@ -776,7 +776,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -801,7 +801,7 @@ class DesignGrafisController extends Controller
             }
 
             if (!$request->hasFile('files') && !$request->file_links) {
-                 return response()->json([
+                return response()->json([
                     'success' => false,
                     'message' => 'Validation failed',
                     'errors' => ['files' => ['Please provide either file uploads or file links.']]
@@ -882,7 +882,7 @@ class DesignGrafisController extends Controller
                 }
             }
             if ($request->file_links) {
-                  ControllerSecurityHelper::logFileOperation(
+                ControllerSecurityHelper::logFileOperation(
                     'upload',
                     'url',
                     'External links (' . count($request->file_links) . ')',
@@ -920,7 +920,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -949,7 +949,7 @@ class DesignGrafisController extends Controller
                 'thumbnail_youtube' => 'thumbnail_yt',
                 'thumbnail_bts' => 'thumbnail_bts'
             ];
-            
+
             $qcType = $qcTypeMap[$work->work_type] ?? 'thumbnail_yt'; // Default fallback
 
             // Check if QC work already exists for this design grafis work
@@ -1016,7 +1016,7 @@ class DesignGrafisController extends Controller
                     'file_paths' => $work->file_paths,
                     'updated_at' => now()->toDateTimeString()
                 ];
-                
+
                 $existingQCWork->update([
                     'design_grafis_file_locations' => $existingDesignFiles,
                     'status' => 'pending' // Reset to pending for re-review
@@ -1078,7 +1078,7 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Graphic Design') {
                 return response()->json([
                     'success' => false,
@@ -1158,47 +1158,45 @@ class DesignGrafisController extends Controller
         }
 
         // Get files from Promosi (talent photos)
-    $promotionWork = PromotionWork::where('episode_id', $episodeId)
-        ->whereIn('status', ['editing', 'review', 'approved', 'published'])
-        ->first();
+        $promotionWork = PromotionWork::where('episode_id', $episodeId)
+            ->whereIn('status', ['editing', 'review', 'approved', 'published'])
+            ->first();
 
-    if ($promotionWork) {
-        $talentPhotos = [];
-        
-        // Check file_links (new strategy)
-        if (!empty($promotionWork->file_links)) {
-            $talentPhotos = array_filter($promotionWork->file_links, function($file) {
-                return isset($file['type']) && $file['type'] === 'talent_photo';
-            });
-        }
-        
-        // fallback to file_paths (old strategy)
-        if (empty($talentPhotos) && !empty($promotionWork->file_paths)) {
-            $talentPhotos = array_filter($promotionWork->file_paths, function($file) {
-                return isset($file['type']) && $file['type'] === 'talent_photo';
-            });
-        }
+        if ($promotionWork) {
+            $talentPhotos = [];
 
-        if (!empty($talentPhotos)) {
-            $sourceFiles['promosi_files'] = [
-                'promotion_work_id' => $promotionWork->id,
-                'talent_photos' => array_values($talentPhotos),
-                'available' => true
-            ];
+            // Check file_links (new strategy)
+            if (!empty($promotionWork->file_links)) {
+                $talentPhotos = array_filter($promotionWork->file_links, function ($file) {
+                    return isset($file['type']) && $file['type'] === 'talent_photo';
+                });
+            }
+
+            // fallback to file_paths (old strategy)
+            if (empty($talentPhotos) && !empty($promotionWork->file_paths)) {
+                $talentPhotos = array_filter($promotionWork->file_paths, function ($file) {
+                    return isset($file['type']) && $file['type'] === 'talent_photo';
+                });
+            }
+
+            if (!empty($talentPhotos)) {
+                $sourceFiles['promosi_files'] = [
+                    'promotion_work_id' => $promotionWork->id,
+                    'talent_photos' => array_values($talentPhotos),
+                    'available' => true
+                ];
+            } else {
+                $sourceFiles['promosi_files'] = [
+                    'available' => false,
+                    'message' => 'Talent photos not available yet or no links found'
+                ];
+            }
         } else {
             $sourceFiles['promosi_files'] = [
                 'available' => false,
-                'message' => 'Talent photos not available yet or no links found'
+                'message' => 'Promotion work not found or not in progress'
             ];
         }
-    } else {
-        $sourceFiles['promosi_files'] = [
-            'available' => false,
-            'message' => 'Promotion work not found or not in progress'
-        ];
-    }
-        }
-
         return $sourceFiles;
     }
 }
