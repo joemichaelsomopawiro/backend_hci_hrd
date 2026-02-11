@@ -15,20 +15,28 @@ class EquipmentInventory extends Model
     protected $table = 'equipment_inventory';
 
     protected $fillable = [
-        'episode_id',
-        'equipment_type',
-        'equipment_name',
-        'quantity',
+        'name',
+        'category',
+        'brand',
+        'model',
+        'serial_number',
+        'description',
         'status',
-        'assigned_to',
-        'assigned_by',
-        'assigned_at',
-        'return_date',
-        'returned_at',
-        'return_condition',
-        'return_notes',
-        'notes',
-        'created_by'
+        'location',
+        'purchase_price',
+        'purchase_date',
+        'image_path',
+        'is_active',
+        // 'episode_id', // Not in active migration schema
+        // 'assigned_to', // Not in active migration schema
+        // 'assigned_by', // Not in active migration schema
+        // 'assigned_at', // Not in active migration schema
+        // 'return_date', // Not in active migration schema
+        // 'returned_at', // Not in active migration schema
+        // 'return_condition', // Not in active migration schema
+        // 'return_notes', // Not in active migration schema
+        // 'notes', // Not in active migration schema
+        // 'created_by' // Not in active migration schema, relies on timestamps
     ];
 
     protected $casts = [

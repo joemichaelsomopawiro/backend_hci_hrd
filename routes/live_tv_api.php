@@ -582,6 +582,10 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
     // Art & Set Properti Routes
     Route::prefix('art-set-properti')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
         Route::get('/equipment', [ArtSetPropertiController::class, 'index'])->middleware('throttle:60,1');
+        Route::post('/equipment', [ArtSetPropertiController::class, 'store'])->middleware('throttle:sensitive');
+        Route::put('/equipment/{id}', [ArtSetPropertiController::class, 'update'])->middleware('throttle:sensitive');
+        Route::delete('/equipment/{id}', [ArtSetPropertiController::class, 'destroy'])->middleware('throttle:sensitive');
+        
         Route::get('/requests', [ArtSetPropertiController::class, 'getRequests'])->middleware('throttle:60,1');
         Route::post('/requests/{id}/approve', [ArtSetPropertiController::class, 'approveRequest'])->middleware('throttle:sensitive');
         Route::post('/requests/{id}/reject', [ArtSetPropertiController::class, 'rejectRequest'])->middleware('throttle:sensitive');

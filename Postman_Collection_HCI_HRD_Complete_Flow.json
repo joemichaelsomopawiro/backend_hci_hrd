@@ -655,6 +655,63 @@
 					]
 				},
 				{
+					"name": "Login - Art & Set Properti",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"login\": \"artsetproperti@example.com\",\n  \"password\": \"password\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data.token) {",
+									"        var token = jsonData.data.token;",
+									"        pm.collectionVariables.set('auth_token', token);",
+									"        pm.collectionVariables.set('user_id', jsonData.data.user.id);",
+									"        pm.collectionVariables.set('user_role', jsonData.data.user.role);",
+									"        console.log('✅ Login berhasil sebagai: ' + jsonData.data.user.role);",
+									"        console.log('✅ Token tersimpan: ' + token.substring(0, 20) + '...');",
+									"        ",
+									"        // Verify token tersimpan",
+									"        var savedToken = pm.collectionVariables.get('auth_token');",
+									"        if (savedToken && savedToken === token) {",
+									"            console.log('✅ Token berhasil disimpan di collection variables');",
+									"        } else {",
+									"            console.log('❌ ERROR: Token tidak tersimpan dengan benar!');",
+									"        }",
+									"    } else {",
+									"        console.log('❌ Login gagal: ' + JSON.stringify(jsonData));",
+									"    }",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
 					"name": "Login - Quality Control",
 					"request": {
 						"method": "POST",
@@ -7736,6 +7793,124 @@
 					}
 				},
 				{
+					"name": "Create Equipment",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Microphone Test\",\n  \"category\": \"Audio\",\n  \"quantity\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/equipment",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"equipment"
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Equipment Inventory",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/equipment",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"equipment"
+							]
+						}
+					}
+				},
+				{
+					"name": "Update Equipment",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"available\",\n  \"name\": \"Microphone Update\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/equipment/{{equipment_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"equipment",
+								"{{equipment_id}}"
+							]
+						}
+					}
+				},
+				{
+					"name": "Delete Equipment",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/equipment/{{equipment_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"equipment",
+								"{{equipment_id}}"
+							]
+						}
+					}
+				},
+				{
 					"name": "Approve Equipment Request",
 					"request": {
 						"method": "POST",
@@ -11357,158 +11532,157 @@
 					}
 				}
 			]
-		}
-	],
-	"variable": [
-		{
-			"key": "base_url",
-			"value": "http://localhost:8000",
-			"type": "string"
-		},
-		{
-			"key": "auth_token",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "user_id",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "user_role",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "program_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "episode_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "arrangement_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "creative_work_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "produksi_work_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "editor_work_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "qc_work_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "broadcasting_work_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "recording_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "editing_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "promosi_work_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "design_grafis_work_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "editor_promosi_work_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "approval_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "equipment_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "request_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "budget_request_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "qc_control_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "notification_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "production_team_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "schedule_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "schedule_option_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "producer_user_id",
-			"value": "2",
-			"type": "string"
-		},
-		{
-			"key": "member_user_id",
-			"value": "3",
-			"type": "string"
-		},
-		{
-			"key": "qc_control_id",
-			"value": "1",
-			"type": "string"
-		},
-		{
-			"key": "team_assignment_id",
-			"value": "1",
-			"type": "string"
-		}
-	]
-}
+		],
+		"variable": [
+			{
+				"key": "base_url",
+				"value": "http://localhost:8000",
+				"type": "string"
+			},
+			{
+				"key": "auth_token",
+				"value": "",
+				"type": "string"
+			},
+			{
+				"key": "user_id",
+				"value": "",
+				"type": "string"
+			},
+			{
+				"key": "user_role",
+				"value": "",
+				"type": "string"
+			},
+			{
+				"key": "program_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "episode_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "arrangement_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "creative_work_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "produksi_work_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "editor_work_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "qc_work_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "broadcasting_work_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "recording_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "editing_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "promosi_work_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "design_grafis_work_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "editor_promosi_work_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "approval_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "equipment_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "request_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "budget_request_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "qc_control_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "notification_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "production_team_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "schedule_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "schedule_option_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "producer_user_id",
+				"value": "2",
+				"type": "string"
+			},
+			{
+				"key": "member_user_id",
+				"value": "3",
+				"type": "string"
+			},
+			{
+				"key": "qc_control_id",
+				"value": "1",
+				"type": "string"
+			},
+			{
+				"key": "team_assignment_id",
+				"value": "1",
+				"type": "string"
+			}
+		]
+	}
