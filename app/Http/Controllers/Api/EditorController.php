@@ -296,10 +296,22 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // Team-based authorization: allow if creator OR production team member
+            $productionTeam = $work->episode->program->productionTeam;
+            $isTeamMember = false;
+            
+            if ($productionTeam) {
+                $isTeamMember = $productionTeam->members()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'editor')
+                    ->where('is_active', true)
+                    ->exists();
+            }
+            
+            if ($work->created_by !== $user->id && !$isTeamMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
+                    'message' => 'Unauthorized: This work is not assigned to you or your production team.'
                 ], 403);
             }
 
@@ -433,12 +445,7 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
-                ], 403);
-            }
+            // Editor role already verified - any editor can report missing files
 
             // Update work with missing files report
             $work->update([
@@ -512,10 +519,22 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // Team-based authorization: allow if creator OR production team member
+            $productionTeam = $work->episode->program->productionTeam;
+            $isTeamMember = false;
+            
+            if ($productionTeam) {
+                $isTeamMember = $productionTeam->members()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'editor')
+                    ->where('is_active', true)
+                    ->exists();
+            }
+            
+            if ($work->created_by !== $user->id && !$isTeamMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
+                    'message' => 'Unauthorized: This work is not assigned to you or your production team.'
                 ], 403);
             }
 
@@ -638,10 +657,22 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // Team-based authorization: allow if creator OR production team member
+            $productionTeam = $work->episode->program->productionTeam;
+            $isTeamMember = false;
+            
+            if ($productionTeam) {
+                $isTeamMember = $productionTeam->members()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'editor')
+                    ->where('is_active', true)
+                    ->exists();
+            }
+            
+            if ($work->created_by !== $user->id && !$isTeamMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
+                    'message' => 'Unauthorized: This work is not assigned to you or your production team.'
                 ], 403);
             }
 
@@ -767,10 +798,22 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // Team-based authorization: allow if creator OR production team member
+            $productionTeam = $work->episode->program->productionTeam;
+            $isTeamMember = false;
+            
+            if ($productionTeam) {
+                $isTeamMember = $productionTeam->members()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'editor')
+                    ->where('is_active', true)
+                    ->exists();
+            }
+            
+            if ($work->created_by !== $user->id && !$isTeamMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
+                    'message' => 'Unauthorized: This work is not assigned to you or your production team.'
                 ], 403);
             }
 
@@ -845,10 +888,22 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // Team-based authorization: allow if creator OR production team member
+            $productionTeam = $work->episode->program->productionTeam;
+            $isTeamMember = false;
+            
+            if ($productionTeam) {
+                $isTeamMember = $productionTeam->members()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'editor')
+                    ->where('is_active', true)
+                    ->exists();
+            }
+            
+            if ($work->created_by !== $user->id && !$isTeamMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
+                    'message' => 'Unauthorized: This work is not assigned to you or your production team.'
                 ], 403);
             }
 

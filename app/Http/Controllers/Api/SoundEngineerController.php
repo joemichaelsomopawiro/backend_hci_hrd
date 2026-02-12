@@ -359,10 +359,12 @@ class SoundEngineerController extends Controller
                 }
             }
             
-            if ($recording->status !== 'draft') {
+            // Allow starting if not already started or completed
+            $allowedStatuses = ['draft', 'pending', 'scheduled', 'in_progress', 'ready'];
+            if (!in_array($recording->status, $allowedStatuses)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Only draft recordings can be started'
+                    'message' => 'Recording cannot be started in its current status: ' . $recording->status . '. Current allowed statuses: ' . implode(', ', $allowedStatuses)
                 ], 400);
             }
             
@@ -1655,7 +1657,7 @@ class SoundEngineerController extends Controller
                 'equipment_list' => 'required|array|min:1',
                 'equipment_list.*.equipment_name' => 'required|string|max:255',
                 'equipment_list.*.quantity' => 'required|integer|min:1',
-                'equipment_list.*.return_date' => 'required|date|after:today',
+                'equipment_list.*.return_date' => 'required|date|after_or_equal:today',
                 'equipment_list.*.notes' => 'nullable|string|max:1000',
                 'request_notes' => 'nullable|string|max:1000'
             ]);
@@ -1690,26 +1692,24 @@ class SoundEngineerController extends Controller
                 ->whereIn('status', ['available'])
                 ->count();
 
-                // Also check ProductionEquipment for in_use status
-                $inUseCount = ProductionEquipment::where('equipment_list', 'like', '%' . $equipmentName . '%')
-                    ->whereIn('status', ['approved', 'in_use'])
-                    ->count();
 
-                if ($availableCount < $quantity || $inUseCount > 0) {
+
+                if ($availableCount < $quantity) {
                     $unavailableEquipment[] = [
                         'equipment_name' => $equipmentName,
                         'requested_quantity' => $quantity,
                         'available_count' => $availableCount,
-                        'in_use_count' => $inUseCount,
-                        'reason' => $inUseCount > 0 ? 'Equipment sedang dipakai' : 'Equipment tidak tersedia dalam jumlah yang diminta'
+                        'reason' => 'Equipment tidak tersedia dalam jumlah yang diminta'
                     ];
                     continue;
                 }
 
                 // Create equipment request
+                // We fill the array with the equipment name repeated 'quantity' times 
+                // to match the Art & Set Properti approval logic
                 $equipmentRequest = ProductionEquipment::create([
                     'episode_id' => $recording->episode_id,
-                    'equipment_list' => [$equipmentName],
+                    'equipment_list' => array_fill(0, $quantity, $equipmentName),
                     'request_notes' => ($equipment['notes'] ?? '') . ($request->request_notes ? "\n" . $request->request_notes : ''),
                     'status' => 'pending',
                     'requested_by' => $user->id,
@@ -1756,12 +1756,119 @@ class SoundEngineerController extends Controller
                     'equipment_requests' => ProductionEquipment::whereIn('id', $equipmentRequests)->get()
                 ],
                 'message' => 'Equipment requests created successfully. Art & Set Properti has been notified.'
-            ]);
+            ], 201);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error requesting equipment: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get available equipment for Sound Engineer role to view before requesting
+     */
+    public function getAvailableEquipment(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        // Check if user is Sound Engineer
+        if (!$this->isSoundEngineer($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized access.'
+            ], 403);
+        }
+        
+        // Group by name to show total available quantity for each type/model
+        $availableEquipment = EquipmentInventory::where('status', 'available')
+            ->select('name', 'category', \DB::raw('count(*) as available_quantity'))
+            ->groupBy('name', 'category')
+            ->orderBy('name')
+            ->get();
+            
+        return response()->json([
+            'success' => true,
+            'data' => $availableEquipment,
+            'message' => 'Available equipment retrieved successfully'
+        ]);
+    }
+
+    /**
+     * Notify Art & Set Properti that equipment has been returned physically
+     * POST /sound-engineer/equipment/{id}/notify-return
+     */
+    public function notifyReturn(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            // Check if user is Sound Engineer
+            if (!$this->isSoundEngineer($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $equipment = ProductionEquipment::find($id);
+            
+            if (!$equipment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Equipment request not found.'
+                ], 404);
+            }
+
+            // Sound Engineer sudah diverifikasi via isSoundEngineer()
+            // Cukup pastikan equipment terkait episode yang valid
+            // (tidak perlu strict ownership check karena dalam tim bisa saling handle)
+
+            // Verify status
+            if ($equipment->status !== 'in_use' && $equipment->status !== 'approved') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Equipment must be in "approved" or "in_use" status to notify return.'
+                ], 400);
+            }
+
+            // Update return notes
+            $currentNotes = $equipment->return_notes ?? '';
+            $timestamp = now()->format('Y-m-d H:i');
+            $newNote = "[User Return Notification] Sound Engineer {$user->name} reported equipment returned at {$timestamp}.";
+            
+            $equipment->update([
+                'return_notes' => $currentNotes ? $currentNotes . "\n" . $newNote : $newNote
+            ]);
+
+            // Notify Art & Set Properti
+            $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
+            foreach ($artSetUsers as $artSetUser) {
+                Notification::create([
+                    'user_id' => $artSetUser->id,
+                    'type' => 'equipment_return_notification',
+                    'title' => 'Pengembalian Alat (Sound Eng Reported)',
+                    'message' => "Sound Engineer {$user->name} melaporkan telah mengembalikan alat: {$equipment->equipment_name} (ID: {$equipment->id}). Harap cek fisik & konfirmasi return.",
+                    'data' => [
+                        'equipment_id' => $equipment->id,
+                        'equipment_name' => $equipment->equipment_name,
+                        'reported_by' => $user->name,
+                        'role' => $user->role
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Notifikasi pengembalian berhasil dikirim ke Art & Set Properti. Harap tunggu konfirmasi final mereka.',
+                'data' => $equipment
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error sending return notification: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -1929,14 +2036,8 @@ class SoundEngineerController extends Controller
                     continue;
                 }
 
-                // Verify equipment was requested by this user
-                if ($equipment->requested_by !== $user->id) {
-                    $failedEquipment[] = [
-                        'equipment_request_id' => $equipmentRequestId,
-                        'reason' => 'Equipment request was not created by you'
-                    ];
-                    continue;
-                }
+                // Sound Engineer sudah diverifikasi via isSoundEngineer()
+                // Tidak perlu strict ownership check
 
                 // Verify equipment is approved (can only return approved equipment)
                 if ($equipment->status !== 'approved' && $equipment->status !== 'in_use') {

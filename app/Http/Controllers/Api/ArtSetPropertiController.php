@@ -237,25 +237,32 @@ class ArtSetPropertiController extends Controller
             }
 
             // Get equipment requests from Production Equipment table
-            $requests = ProductionEquipment::with(['episode', 'requestedBy'])
-                ->where('status', 'pending')
-                ->orderBy('created_at', 'desc')
-                ->paginate(15);
+        $query = ProductionEquipment::with(['episode', 'requestedBy'])
+            ->orderBy('created_at', 'desc');
 
-            return response()->json([
-                'success' => true,
-                'data' => $requests,
-                'message' => 'Equipment requests retrieved successfully'
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error retrieving equipment requests: ' . $e->getMessage()
-            ], 500);
+        // Allow filtering by status
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        } else {
+            // Default to pending if no status provided (backward compatibility)
+            $query->where('status', 'pending');
         }
-    }
 
+        $requests = $query->paginate(15);
+
+        return response()->json([
+            'success' => true,
+            'data' => $requests,
+            'message' => 'Equipment requests retrieved successfully'
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error retrieving equipment requests: ' . $e->getMessage()
+        ], 500);
+    }
+}
     /**
      * Approve equipment request
      */

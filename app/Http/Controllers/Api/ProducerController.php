@@ -4808,9 +4808,15 @@ class ProducerController extends Controller
                 ], 403);
             }
 
+            // Alias source_assignment_type to team_type for better usability
+            if ($request->has('source_assignment_type') && !$request->has('team_type')) {
+                $request->merge(['team_type' => $request->source_assignment_type]);
+            }
+
             $validator = Validator::make($request->all(), [
-                'source_assignment_id' => 'required|exists:production_teams_assignment,id',
-                'team_type' => 'nullable|in:shooting,setting,recording', // Optional: filter by type
+                'source_assignment_id' => 'required_without:source_episode_id|exists:production_teams_assignment,id',
+                'source_episode_id' => 'required_without:source_assignment_id|exists:episodes,id',
+                'team_type' => 'required_with:source_episode_id|in:shooting,setting,recording',
                 'schedule_id' => 'nullable|exists:music_schedules,id',
                 'team_notes' => 'nullable|string|max:1000',
                 'modify_members' => 'nullable|array', // Optional: modify team members
@@ -4836,9 +4842,26 @@ class ProducerController extends Controller
                 ], 403);
             }
 
-            // Get source assignment
-            $sourceAssignment = \App\Models\ProductionTeamAssignment::with(['members.user', 'episode.program.productionTeam'])
-                ->findOrFail($request->source_assignment_id);
+            $sourceAssignmentId = $request->source_assignment_id;
+            $sourceAssignment = null;
+
+            if (!$sourceAssignmentId && $request->has('source_episode_id')) {
+                $sourceAssignment = \App\Models\ProductionTeamAssignment::where('episode_id', $request->source_episode_id)
+                    ->where('team_type', $request->team_type)
+                    ->with(['members.user', 'episode.program.productionTeam'])
+                    ->first();
+                
+                if (!$sourceAssignment) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "No assignment found for Episode {$request->source_episode_id} with type '{$request->team_type}'."
+                    ], 404);
+                }
+            } else {
+                // Get source assignment by ID
+                $sourceAssignment = \App\Models\ProductionTeamAssignment::with(['members.user', 'episode.program.productionTeam'])
+                    ->findOrFail($sourceAssignmentId);
+            }
 
             // Validate Producer has access to source assignment
             if ($sourceAssignment->episode->program->productionTeam->producer_id !== $user->id) {

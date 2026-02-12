@@ -1023,6 +1023,10 @@ class PromosiController extends Controller
      * Share Link Website ke Facebook (Masukan Bukti ke Sistem)
      * POST /api/live-tv/promosi/works/{id}/share-facebook
      */
+    /**
+     * Share Link Website ke Facebook (Masukan Bukti ke Sistem)
+     * POST /api/live-tv/promosi/works/{id}/share-facebook
+     */
     public function shareFacebook(Request $request, int $id): JsonResponse
     {
         try {
@@ -1036,7 +1040,8 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'proof_file' => 'nullable|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'proof_link' => 'required_without:proof_file|nullable|url',
                 'facebook_post_url' => 'nullable|url',
                 'notes' => 'nullable|string|max:1000'
             ]);
@@ -1058,17 +1063,23 @@ class PromosiController extends Controller
                 ], 400);
             }
 
-            // Upload proof file
-            $proofFile = $request->file('proof_file');
-            $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
-            $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeFileName, 'public');
-            $proofUrl = Storage::disk('public')->url($proofPath);
+            $proofPath = null;
+            $proofUrl = null;
+
+            // Upload proof file if exists
+            if ($request->hasFile('proof_file')) {
+                $proofFile = $request->file('proof_file');
+                $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
+                $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeFileName, 'public');
+                $proofUrl = Storage::disk('public')->url($proofPath);
+            }
 
             // Update social_media_proof dengan bukti
             $socialProof = $work->social_media_proof ?? [];
             $socialProof['facebook_share'] = [
                 'proof_file_path' => $proofPath,
                 'proof_file_url' => $proofUrl,
+                'proof_link' => $request->proof_link, // Nullable url
                 'facebook_post_url' => $request->facebook_post_url,
                 'shared_at' => now()->toDateTimeString(),
                 'shared_by' => $user->id,
@@ -1113,8 +1124,10 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'video_file' => 'required|file|mimes:mp4,mov,avi|max:102400', // Max 100MB
-                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'video_file' => 'nullable|file|mimes:mp4,mov,avi|max:102400', // Max 100MB
+                'video_link' => 'required_without:video_file|nullable|url',
+                'proof_file' => 'nullable|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'proof_link' => 'required_without:proof_file|nullable|url',
                 'story_url' => 'nullable|url',
                 'notes' => 'nullable|string|max:1000'
             ]);
@@ -1134,35 +1147,66 @@ class PromosiController extends Controller
                     'success' => false,
                     'message' => 'This endpoint is only for story_ig work type.'
                 ], 400);
-    }
+            }
 
-            // Upload video file
-            $videoFile = $request->file('video_file');
-            $safeVideoName = \App\Helpers\SecurityHelper::generateSafeFileName($videoFile->getClientOriginalName());
-            $videoPath = $videoFile->storeAs("promosi/story_ig/{$work->id}", $safeVideoName, 'public');
+            $videoPath = null;
+            $safeVideoName = null;
+            $videoSize = 0;
+            $videoMime = null;
+            
+            // Upload video file if exists
+            if ($request->hasFile('video_file')) {
+                $videoFile = $request->file('video_file');
+                $safeVideoName = \App\Helpers\SecurityHelper::generateSafeFileName($videoFile->getClientOriginalName());
+                $videoPath = $videoFile->storeAs("promosi/story_ig/{$work->id}", $safeVideoName, 'public');
+                $videoSize = $videoFile->getSize();
+                $videoMime = $videoFile->getMimeType();
+            }
 
-            // Upload proof file
-            $proofFile = $request->file('proof_file');
-            $safeProofName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
-            $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeProofName, 'public');
-            $proofUrl = Storage::disk('public')->url($proofPath);
+            $proofPath = null;
+            $proofUrl = null;
+
+            // Upload proof file if exists
+            if ($request->hasFile('proof_file')) {
+                $proofFile = $request->file('proof_file');
+                $safeProofName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
+                $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeProofName, 'public');
+                $proofUrl = Storage::disk('public')->url($proofPath);
+            }
 
             // Update file_paths dan social_media_links
             $filePaths = $work->file_paths ?? [];
-            $filePaths[] = [
-                'type' => 'story_ig_video',
-                'file_path' => $videoPath,
-                'file_name' => $safeVideoName,
-                'file_size' => $videoFile->getSize(),
-                'mime_type' => $videoFile->getMimeType(),
-                'uploaded_at' => now()->toDateTimeString()
-            ];
+            
+            // Add video if uploaded physically
+            if ($videoPath) {
+                $filePaths[] = [
+                    'type' => 'story_ig_video',
+                    'file_path' => $videoPath,
+                    'file_name' => $safeVideoName,
+                    'file_size' => $videoSize,
+                    'mime_type' => $videoMime,
+                    'uploaded_at' => now()->toDateTimeString()
+                ];
+            }
+
+            // Also store links in file_links for consistency
+            $fileLinks = $work->file_links ?? [];
+            if ($request->video_link) {
+                 $fileLinks[] = [
+                    'type' => 'story_ig_video_link',
+                    'file_link' => $request->video_link,
+                    'uploaded_at' => now()->toDateTimeString(),
+                    'uploaded_by' => $user->id
+                ];
+            }
 
             $socialProof = $work->social_media_proof ?? [];
             $socialProof['story_ig'] = [
                 'video_file_path' => $videoPath,
+                'video_link' => $request->video_link,
                 'proof_file_path' => $proofPath,
                 'proof_file_url' => $proofUrl,
+                'proof_link' => $request->proof_link,
                 'story_url' => $request->story_url,
                 'uploaded_at' => now()->toDateTimeString(),
                 'uploaded_by' => $user->id,
@@ -1170,7 +1214,8 @@ class PromosiController extends Controller
             ];
 
             $work->update([
-                'file_paths' => $filePaths,
+                'file_paths' => array_values($filePaths),
+                'file_links' => array_values($fileLinks),
                 'social_media_proof' => $socialProof,
                 'status' => 'published'
             ]);
@@ -1180,7 +1225,7 @@ class PromosiController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Story IG video uploaded successfully. Proof has been saved to system.'
+                'message' => 'Story IG video/link uploaded successfully. Proof has been saved to system.'
             ]);
 
         } catch (\Exception $e) {
@@ -1208,8 +1253,10 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'video_file' => 'required|file|mimes:mp4,mov,avi|max:102400', // Max 100MB
-                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'video_file' => 'nullable|file|mimes:mp4,mov,avi|max:102400', // Max 100MB
+                'video_link' => 'required_without:video_file|nullable|url',
+                'proof_file' => 'nullable|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'proof_link' => 'required_without:proof_file|nullable|url',
                 'reels_url' => 'nullable|url',
                 'notes' => 'nullable|string|max:1000'
             ]);
@@ -1231,33 +1278,62 @@ class PromosiController extends Controller
                 ], 400);
             }
 
+            $videoPath = null;
+            $safeVideoName = null;
+            $videoSize = 0;
+            $videoMime = null;
+
             // Upload video file
-            $videoFile = $request->file('video_file');
-            $safeVideoName = \App\Helpers\SecurityHelper::generateSafeFileName($videoFile->getClientOriginalName());
-            $videoPath = $videoFile->storeAs("promosi/reels_facebook/{$work->id}", $safeVideoName, 'public');
+            if ($request->hasFile('video_file')) {
+                $videoFile = $request->file('video_file');
+                $safeVideoName = \App\Helpers\SecurityHelper::generateSafeFileName($videoFile->getClientOriginalName());
+                $videoPath = $videoFile->storeAs("promosi/reels_facebook/{$work->id}", $safeVideoName, 'public');
+                $videoSize = $videoFile->getSize();
+                $videoMime = $videoFile->getMimeType();
+            }
+
+            $proofPath = null;
+            $proofUrl = null;
 
             // Upload proof file
-            $proofFile = $request->file('proof_file');
-            $safeProofName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
-            $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeProofName, 'public');
-            $proofUrl = Storage::disk('public')->url($proofPath);
+            if ($request->hasFile('proof_file')) {
+                $proofFile = $request->file('proof_file');
+                $safeProofName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
+                $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeProofName, 'public');
+                $proofUrl = Storage::disk('public')->url($proofPath);
+            }
 
             // Update file_paths dan social_media_links
             $filePaths = $work->file_paths ?? [];
-            $filePaths[] = [
-                'type' => 'reels_facebook_video',
-                'file_path' => $videoPath,
-                'file_name' => $safeVideoName,
-                'file_size' => $videoFile->getSize(),
-                'mime_type' => $videoFile->getMimeType(),
-                'uploaded_at' => now()->toDateTimeString()
-            ];
+            if ($videoPath) {
+                $filePaths[] = [
+                    'type' => 'reels_facebook_video',
+                    'file_path' => $videoPath,
+                    'file_name' => $safeVideoName,
+                    'file_size' => $videoSize,
+                    'mime_type' => $videoMime,
+                    'uploaded_at' => now()->toDateTimeString()
+                ];
+            }
+
+            // Also store links in file_links for consistency
+            $fileLinks = $work->file_links ?? [];
+            if ($request->video_link) {
+                 $fileLinks[] = [
+                    'type' => 'reels_facebook_video_link',
+                    'file_link' => $request->video_link,
+                    'uploaded_at' => now()->toDateTimeString(),
+                    'uploaded_by' => $user->id
+                ];
+            }
 
             $socialProof = $work->social_media_proof ?? [];
             $socialProof['reels_facebook'] = [
                 'video_file_path' => $videoPath,
+                'video_link' => $request->video_link,
                 'proof_file_path' => $proofPath,
                 'proof_file_url' => $proofUrl,
+                'proof_link' => $request->proof_link,
                 'reels_url' => $request->reels_url,
                 'uploaded_at' => now()->toDateTimeString(),
                 'uploaded_by' => $user->id,
@@ -1265,7 +1341,8 @@ class PromosiController extends Controller
             ];
 
             $work->update([
-                'file_paths' => $filePaths,
+                'file_paths' => array_values($filePaths),
+                'file_links' => array_values($fileLinks),
                 'social_media_proof' => $socialProof,
                 'status' => 'published'
             ]);
@@ -1275,7 +1352,7 @@ class PromosiController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Reels Facebook video uploaded successfully. Proof has been saved to system.'
+                'message' => 'Reels Facebook video/link uploaded successfully. Proof has been saved to system.'
             ]);
 
         } catch (\Exception $e) {
@@ -1283,7 +1360,7 @@ class PromosiController extends Controller
                 'success' => false,
                 'message' => 'Error uploading Reels Facebook: ' . $e->getMessage()
             ], 500);
-    }
+        }
     }
 
     /**
@@ -1303,7 +1380,8 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'proof_file' => 'nullable|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'proof_link' => 'required_without:proof_file|nullable|url',
                 'group_name' => 'nullable|string|max:255',
                 'notes' => 'nullable|string|max:1000'
             ]);
@@ -1325,17 +1403,23 @@ class PromosiController extends Controller
                 ], 400);
             }
 
+            $proofPath = null;
+            $proofUrl = null;
+
             // Upload proof file
-            $proofFile = $request->file('proof_file');
-            $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
-            $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeFileName, 'public');
-            $proofUrl = Storage::disk('public')->url($proofPath);
+            if ($request->hasFile('proof_file')) {
+                $proofFile = $request->file('proof_file');
+                $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
+                $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeFileName, 'public');
+                $proofUrl = Storage::disk('public')->url($proofPath);
+            }
 
             // Update social_media_proof dengan bukti
             $socialProof = $work->social_media_proof ?? [];
             $socialProof['wa_group_share'] = [
                 'proof_file_path' => $proofPath,
                 'proof_file_url' => $proofUrl,
+                'proof_link' => $request->proof_link,
                 'group_name' => $request->group_name,
                 'shared_at' => now()->toDateTimeString(),
                 'shared_by' => $user->id,
@@ -1360,7 +1444,7 @@ class PromosiController extends Controller
                 'success' => false,
                 'message' => 'Error sharing to WA Group: ' . $e->getMessage()
             ], 500);
-    }
+        }
     }
 
     /**

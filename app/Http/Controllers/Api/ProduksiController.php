@@ -10,6 +10,8 @@ use App\Models\ShootingRunSheet;
 use App\Models\MediaFile;
 use App\Models\Notification;
 use App\Models\QualityControlWork;
+use App\Models\DesignGrafisWork;
+use App\Services\WorkAssignmentService;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
@@ -82,6 +84,42 @@ class ProduksiController extends Controller
     }
 
     /**
+     * Get specific production work detail
+     * GET /api/live-tv/roles/produksi/works/{id}
+     */
+    public function show(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            $work = ProduksiWork::with([
+                'episode',
+                'creativeWork',
+                'createdBy',
+                'completedBy',
+                'runSheet'
+            ])->findOrFail($id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work,
+                'message' => 'Produksi work detail retrieved successfully'
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Produksi work not found'
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving work detail: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Terima Pekerjaan - Produksi terima pekerjaan setelah Producer approve Creative Work
      * POST /api/live-tv/roles/produksi/works/{id}/accept-work
      */
@@ -100,10 +138,19 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
 
+            // Idempotency check: If already accepted by this user, return success
+            if ($work->status === 'in_progress' && $work->created_by === $user->id) {
+                return response()->json([
+                    'success' => true,
+                    'data' => $work->fresh(['episode', 'creativeWork', 'createdBy']),
+                    'message' => 'Work already accepted by you.'
+                ]);
+            }
+
             if ($work->status !== 'pending') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be accepted when status is pending'
+                    'message' => 'Work can only be accepted when status is pending. Current status: ' . $work->status
                 ], 400);
             }
 
@@ -155,7 +202,7 @@ class ProduksiController extends Controller
                 'equipment_list' => 'required|array|min:1',
                 'equipment_list.*.equipment_name' => 'required|string|max:255',
                 'equipment_list.*.quantity' => 'required|integer|min:1',
-                'equipment_list.*.return_date' => 'required|date|after:today',
+                'equipment_list.*.return_date' => 'required|date|after_or_equal:today',
                 'equipment_list.*.notes' => 'nullable|string|max:1000',
                 'request_notes' => 'nullable|string|max:1000'
             ]);
@@ -200,38 +247,30 @@ class ProduksiController extends Controller
                 ->groupBy($nameColumn)
                 ->map->count();
             
-            // 2. Fetch in-use equipment requests
-            // We fetch all approved/in_use requests to check against our requested items
-            $inUseRequests = ProductionEquipment::whereIn('status', ['approved', 'in_use'])->get();
-
             // Check each equipment availability
             foreach ($request->equipment_list as $equipment) {
                 $equipmentName = $equipment['equipment_name'];
                 $quantity = $equipment['quantity'];
 
                 $availableCount = $inventoryCounts->get($equipmentName, 0);
-                
-                // Check if equipment is in use in any other production equipment request
-                $inUseCount = $inUseRequests->filter(function($req) use ($equipmentName) {
-                    $list = is_array($req->equipment_list) ? $req->equipment_list : [];
-                    return in_array($equipmentName, $list);
-                })->count();
 
-                if ($availableCount < $quantity || $inUseCount > 0) {
+
+                if ($availableCount < $quantity) {
                     $unavailableEquipment[] = [
                         'equipment_name' => $equipmentName,
                         'requested_quantity' => $quantity,
                         'available_count' => $availableCount,
-                        'in_use_count' => $inUseCount,
-                        'reason' => $inUseCount > 0 ? 'Equipment sedang dipakai' : 'Equipment tidak tersedia dalam jumlah yang diminta'
+                        'reason' => 'Equipment tidak tersedia dalam jumlah yang diminta'
                     ];
                     continue;
                 }
 
                 // Create equipment request
+                // We fill the array with the equipment name repeated 'quantity' times 
+                // to match the Art & Set Properti approval logic
                 $equipmentRequest = ProductionEquipment::create([
                     'episode_id' => $work->episode_id,
-                    'equipment_list' => [$equipmentName],
+                    'equipment_list' => array_fill(0, $quantity, $equipmentName),
                     'request_notes' => ($equipment['notes'] ?? '') . ($request->request_notes ? "\n" . $request->request_notes : ''),
                     'status' => 'pending',
                     'requested_by' => $user->id,
@@ -494,7 +533,50 @@ class ProduksiController extends Controller
                     'episode_id' => $work->episode_id
                 ]
             ]);
-        }    
+        }
+
+        // Auto-create DesignGrafisWork for Thumbnail YouTube
+        $existingThumbnailWork = DesignGrafisWork::where('episode_id', $work->episode_id)
+            ->where('work_type', 'thumbnail_youtube')
+            ->first();
+
+        if (!$existingThumbnailWork) {
+            // Determine assignee using WorkAssignmentService
+            $assignedDesignerId = WorkAssignmentService::getNextAssignee(
+                DesignGrafisWork::class,
+                $episode->program_id,
+                $episode->episode_number,
+                'thumbnail_youtube',
+                $user->id // Fallback
+            );
+
+            $thumbnailWork = DesignGrafisWork::create([
+                'episode_id' => $work->episode_id,
+                'work_type' => 'thumbnail_youtube',
+                'title' => "Thumbnail YouTube - Episode {$episode->episode_number}",
+                'description' => "Buat thumbnail YouTube untuk episode ini. File syuting sudah tersedia dari Produksi.",
+                'status' => 'draft', // Draft makes it available for designer to accept
+                'created_by' => $assignedDesignerId,
+                'originally_assigned_to' => null,
+                'was_reassigned' => false
+            ]);
+
+            // Notify Assigned Designer specifically
+            $assignedDesigner = \App\Models\User::find($assignedDesignerId);
+            if ($assignedDesigner) {
+                    Notification::create([
+                    'user_id' => $assignedDesigner->id,
+                    'type' => 'design_work_assigned', // Specific type for assignment
+                    'title' => 'Tugas Baru: Thumbnail YouTube',
+                    'message' => "Tugas baru 'Thumbnail YouTube' untuk Episode {$episode->episode_number} telah dibuat otomatis setelah Produksi selesai.",
+                    'data' => [
+                        'design_grafis_work_id' => $thumbnailWork->id,
+                        'episode_id' => $work->episode_id,
+                        'work_type' => 'thumbnail_youtube'
+                    ]
+                ]);
+            }
+        }
 
             return response()->json([
                 'success' => true,
@@ -926,6 +1008,62 @@ class ProduksiController extends Controller
                 'shooting_file_links' => implode(',', array_column($request->file_links, 'url'))
             ]);
 
+            // Auto-create EditorWork
+            $existingEditorWork = \App\Models\EditorWork::where('episode_id', $work->episode_id)
+                ->where('work_type', 'main_episode')
+                ->first();
+
+            if (!$existingEditorWork) {
+                $editorWork = \App\Models\EditorWork::create([
+                    'episode_id' => $work->episode_id,
+                    'work_type' => 'main_episode',
+                    'status' => 'draft',
+                    'source_files' => [
+                        'produksi_work_id' => $work->id,
+                        'shooting_files' => $request->file_links,
+                        'shooting_file_links' => array_column($request->file_links, 'url')
+                    ],
+                    'file_complete' => true, // Link considered complete
+                    'created_by' => $user->id
+                ]);
+            } else {
+                // Update existing EditorWork
+                $existingSourceFiles = $existingEditorWork->source_files ?? [];
+                $existingEditorWork->update([
+                    'source_files' => array_merge($existingSourceFiles, [
+                        'produksi_work_id' => $work->id,
+                        'shooting_files' => $request->file_links,
+                        'shooting_file_links' => array_column($request->file_links, 'url'),
+                        'updated_at' => now()->toDateTimeString()
+                    ]),
+                    'file_complete' => true
+                ]);
+                $editorWork = $existingEditorWork;
+            }
+
+            // Auto-create DesignGrafisWork for Thumbnails
+            $designGrafisWorkTypes = ['thumbnail_youtube', 'thumbnail_bts'];
+            
+            foreach ($designGrafisWorkTypes as $workType) {
+                $existingDesignGrafisWork = \App\Models\DesignGrafisWork::where('episode_id', $work->episode_id)
+                    ->where('work_type', $workType)
+                    ->first();
+
+                if (!$existingDesignGrafisWork) {
+                    \App\Models\DesignGrafisWork::create([
+                        'episode_id' => $work->episode_id,
+                        'work_type' => $workType,
+                        'title' => $workType === 'thumbnail_youtube' 
+                            ? "Thumbnail YouTube - Episode {$work->episode->episode_number}"
+                            : "Thumbnail BTS - Episode {$work->episode->episode_number}",
+                        'status' => 'draft',
+                        'notes' => "Auto-created from Production shooting links",
+                        'priority' => 'normal',
+                        'created_by' => $user->id
+                    ]);
+                }
+            }
+
             // ✨ PARALLEL NOTIFICATIONS ✨
             // Produksi selesai syuting → notify 4 roles simultaneously:
             // 1. Art & Set Properti → alat kembali
@@ -1001,9 +1139,9 @@ class ProduksiController extends Controller
                 ->get();
 
             // Also get EpisodeQC if exists
-            $episodeQC = \App\Models\EpisodeQC::where('program_episode_id', $episodeId)
+            $episodeQC = \App\Models\QualityControl::where('episode_id', $episodeId)
                 ->with(['qcBy'])
-                ->orderBy('reviewed_at', 'desc')
+                ->orderBy('created_at', 'desc')
                 ->first();
 
             return response()->json([

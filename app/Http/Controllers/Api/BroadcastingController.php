@@ -1079,14 +1079,45 @@ class BroadcastingController extends Controller
                     ]
                 );
 
-                // Update existing Story IG dan Reels Facebook dengan YouTube & Website URL jika ada
+                // Ensure Story IG exists
+                \App\Models\PromotionWork::firstOrCreate(
+                    [
+                        'episode_id' => $episode->id,
+                        'work_type' => 'story_ig'
+                    ],
+                    [
+                        'title' => "Story IG - Episode {$episode->episode_number}",
+                        'description' => "Buat Story IG untuk Episode {$episode->episode_number}. YouTube URL sudah tersedia.",
+                        'status' => 'planning',
+                        'created_by' => $promosiUsers->first()->id,
+                        'social_media_links' => []
+                    ]
+                );
+
+                // Ensure Reels Facebook exists
+                \App\Models\PromotionWork::firstOrCreate(
+                    [
+                        'episode_id' => $episode->id,
+                        'work_type' => 'reels_facebook'
+                    ],
+                    [
+                        'title' => "Reels Facebook - Episode {$episode->episode_number}",
+                        'description' => "Buat Reels Facebook untuk Episode {$episode->episode_number}. YouTube URL sudah tersedia.",
+                        'status' => 'planning',
+                        'created_by' => $promosiUsers->first()->id,
+                        'social_media_links' => []
+                    ]
+                );
+
+                // Update ALL Promosi works (Story IG, Reels FB, Share FB, Share WA) with latest links
                 \App\Models\PromotionWork::where('episode_id', $episode->id)
-                    ->whereIn('work_type', ['story_ig', 'reels_facebook'])
+                    ->whereIn('work_type', ['story_ig', 'reels_facebook', 'share_facebook', 'share_wa_group'])
                     ->get()
                     ->each(function($promoWork) use ($work) {
                         $socialLinks = $promoWork->social_media_links ?? [];
                         $socialLinks['youtube_url'] = $work->youtube_url;
                         $socialLinks['website_url'] = $work->website_url;
+                        $socialLinks['thumbnail_path'] = $work->thumbnail_path; // Also pass thumbnail
                         $promoWork->update(['social_media_links' => $socialLinks]);
                     });
 

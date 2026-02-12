@@ -45,7 +45,8 @@ class ProductionTeamService
                 ->first();
                 
             if ($existingMember) {
-                throw new \Exception("User already has role {$role} in this team");
+                // Idempotent: return existing member instead of error
+                return $existingMember;
             }
             
             $member = $team->addMember($userId, $role, $notes);

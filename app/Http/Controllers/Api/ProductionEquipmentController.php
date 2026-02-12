@@ -47,6 +47,35 @@ class ProductionEquipmentController extends Controller
     }
 
     /**
+     * Get available equipment for Production role to view before requesting
+     */
+    public function getAvailableEquipment(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if ($user->role !== 'Production') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized access.'
+            ], 403);
+        }
+        
+        // Group by name to show total available quantity for each type/model
+        // We assume 'name' is the identifier for the type of equipment users request
+        $availableEquipment = EquipmentInventory::where('status', 'available')
+            ->select('name', 'category', \DB::raw('count(*) as available_quantity'))
+            ->groupBy('name', 'category')
+            ->orderBy('name')
+            ->get();
+            
+        return response()->json([
+            'success' => true,
+            'data' => $availableEquipment,
+            'message' => 'Available equipment retrieved successfully'
+        ]);
+    }
+
+    /**
      * Request equipment from Art & Set Properti
      */
     public function requestEquipment(Request $request): JsonResponse
@@ -65,7 +94,7 @@ class ProductionEquipmentController extends Controller
             'equipment_type' => 'required|string|max:255',
             'equipment_name' => 'required|string|max:255',
             'quantity' => 'required|integer|min:1',
-            'return_date' => 'required|date|after:today',
+            'return_date' => 'required|date|after_or_equal:today',
             'notes' => 'nullable|string|max:1000'
         ]);
 
@@ -155,6 +184,88 @@ class ProductionEquipmentController extends Controller
             'message' => 'Permintaan alat berhasil diajukan',
             'data' => $equipment
         ]);
+    }
+
+    /**
+     * Notify Art & Set Properti that equipment has been returned physically
+     * POST /production/equipment/{id}/notify-return
+     */
+    public function notifyReturn(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            // Allow Production & Sound Engineer roles
+            if (!in_array($user->role, ['Production', 'Sound Engineer'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $equipment = ProductionEquipment::find($id);
+            
+            if (!$equipment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Equipment request not found.'
+                ], 404);
+            }
+
+            // Verify ownership or assignment
+            if ($equipment->requested_by !== $user->id && $equipment->assigned_to !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This equipment request is not associated with you.'
+                ], 403);
+            }
+
+            // Verify status
+            if ($equipment->status !== 'in_use' && $equipment->status !== 'approved') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Equipment must be in "approved" or "in_use" status to notify return.'
+                ], 400);
+            }
+
+            // Update return notes to indicate user return
+            $currentNotes = $equipment->return_notes ?? '';
+            $timestamp = now()->format('Y-m-d H:i');
+            $newNote = "[User Return Notification] User {$user->name} reported equipment returned at {$timestamp}.";
+            
+            $equipment->update([
+                'return_notes' => $currentNotes ? $currentNotes . "\n" . $newNote : $newNote
+            ]);
+
+            // Notify Art & Set Properti
+            $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
+            foreach ($artSetUsers as $artSetUser) {
+                Notification::create([
+                    'user_id' => $artSetUser->id,
+                    'type' => 'equipment_return_notification',
+                    'title' => 'Pengembalian Alat (User Reported)',
+                    'message' => "User {$user->name} melaporkan telah mengembalikan alat: {$equipment->equipment_name} (ID: {$equipment->id}). Harap cek fisik & konfirmasi return.",
+                    'data' => [
+                        'equipment_id' => $equipment->id,
+                        'equipment_name' => $equipment->equipment_name,
+                        'reported_by' => $user->name,
+                        'role' => $user->role
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Notifikasi pengembalian berhasil dikirim ke Art & Set Properti. Harap tunggu konfirmasi final mereka.',
+                'data' => $equipment
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error sending return notification: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
