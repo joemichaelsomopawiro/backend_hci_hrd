@@ -11,67 +11,160 @@ class ProgramMusicScheduleController extends Controller
     public function getShootingSchedules(Request $request): JsonResponse
     {
         try {
-            // Get creative works with shooting schedules
-            $schedules = \App\Models\CreativeWork::whereNotNull('shooting_schedule')
+            // 1. Get shooting schedules from CreativeWork
+            $creativeShooting = \App\Models\CreativeWork::whereNotNull('shooting_schedule')
                 ->where('status', '!=', 'cancelled')
-                ->with(['episode.program', 'episode.productionTeam'])
-                ->orderBy('shooting_schedule', 'asc')
+                ->with(['episode.program'])
                 ->get()
                 ->map(function ($work) {
                     return [
-                        'id' => $work->id,
-                        'title' => 'Shooting: ' . ($work->episode->title ?? 'Episode ' . $work->episode->episode_number),
+                        'id' => 'creative_shooting_' . $work->id,
+                        'title' => 'Syuting: ' . ($work->episode->program->name ?? 'Unknown') . ' Ep ' . ($work->episode->episode_number ?? ''),
                         'start' => $work->shooting_schedule,
-                        'end' => $work->shooting_schedule, // Assuming 1 day event for now
                         'type' => 'shooting',
-                        'program_name' => $work->episode->program->name ?? 'Unknown Program',
-                        'location' => $work->location ?? 'Studio',
-                        'status' => $work->status
+                        'location' => $work->shooting_location ?? 'Studio',
+                        'status' => $work->status,
+                        'color' => '#3b82f6' // Blue
                     ];
                 });
 
-            return response()->json(['success' => true, 'data' => $schedules, 'message' => 'Shooting schedules retrieved']);
+            // 2. Get shooting schedules from MusicSchedule
+            $musicShooting = \App\Models\MusicSchedule::where('schedule_type', 'shooting')
+                ->where('status', '!=', 'cancelled')
+                ->with(['musicSubmission.episode.program'])
+                ->get()
+                ->map(function ($schedule) {
+                    $episode = $schedule->musicSubmission->episode ?? null;
+                    return [
+                        'id' => 'music_shooting_' . $schedule->id,
+                        'title' => 'Syuting Musik: ' . ($episode ? $episode->program->name . ' - ' . $episode->title : 'Music Shooting'),
+                        'start' => $schedule->scheduled_datetime,
+                        'type' => 'shooting',
+                        'location' => $schedule->location,
+                        'status' => $schedule->status,
+                        'color' => '#2563eb' // Darker Blue
+                    ];
+                });
+
+            $schedules = collect($creativeShooting)->merge($musicShooting)->sortBy('start')->values();
+
+            return response()->json(['success' => true, 'data' => $schedules]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Failed to get shooting schedules', 'error' => $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    public function getRecordingSchedules(Request $request): JsonResponse
+    {
+        try {
+            // 1. Get recording schedules from CreativeWork
+            $creativeRecording = \App\Models\CreativeWork::whereNotNull('recording_schedule')
+                ->where('status', '!=', 'cancelled')
+                ->with(['episode.program'])
+                ->get()
+                ->map(function ($work) {
+                    return [
+                        'id' => 'creative_recording_' . $work->id,
+                        'title' => 'Rekaman: ' . ($work->episode->program->name ?? 'Unknown') . ' Ep ' . ($work->episode->episode_number ?? ''),
+                        'start' => $work->recording_schedule,
+                        'type' => 'recording',
+                        'location' => 'Studio Rekaman',
+                        'status' => $work->status,
+                        'color' => '#10b981' // Green
+                    ];
+                });
+
+            // 2. Get recording schedules from MusicSchedule
+            $musicRecording = \App\Models\MusicSchedule::where('schedule_type', 'recording')
+                ->where('status', '!=', 'cancelled')
+                ->with(['musicSubmission.episode.program'])
+                ->get()
+                ->map(function ($schedule) {
+                    $episode = $schedule->musicSubmission->episode ?? null;
+                    return [
+                        'id' => 'music_recording_' . $schedule->id,
+                        'title' => 'Rekaman Vokal: ' . ($episode ? $episode->program->name . ' - ' . $episode->title : 'Vocal Recording'),
+                        'start' => $schedule->scheduled_datetime,
+                        'type' => 'recording',
+                        'location' => $schedule->location,
+                        'status' => $schedule->status,
+                        'color' => '#059669' // Darker Green
+                    ];
+                });
+
+            $schedules = collect($creativeRecording)->merge($musicRecording)->sortBy('start')->values();
+
+            return response()->json(['success' => true, 'data' => $schedules]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
     public function getAirSchedules(Request $request): JsonResponse
     {
         try {
-            // Get episodes with air dates
-            $schedules = \App\Models\Episode::whereNotNull('air_date')
+            // 1. Get from BroadcastingSchedule (Primary source for verified airing)
+            $broadcastingAiring = \App\Models\BroadcastingSchedule::whereIn('status', ['scheduled', 'uploaded', 'published'])
+                ->with(['episode.program'])
+                ->get()
+                ->map(function ($schedule) {
+                    return [
+                        'id' => 'broadcasting_airing_' . $schedule->id,
+                        'title' => 'Tayang: ' . ($schedule->episode->program->name ?? 'Unknown') . ' Ep ' . ($schedule->episode->episode_number ?? ''),
+                        'start' => $schedule->schedule_date,
+                        'type' => 'airing',
+                        'platform' => $schedule->platform,
+                        'status' => $schedule->status,
+                        'color' => '#ef4444' // Red
+                    ];
+                });
+
+            // 2. Get from Episode air_date (Fallback/Plan source)
+            $episodeAiring = \App\Models\Episode::whereNotNull('air_date')
+                ->whereNotIn('id', \App\Models\BroadcastingSchedule::pluck('episode_id')) // Avoid duplicates
                 ->with(['program'])
-                ->orderBy('air_date', 'asc')
                 ->get()
                 ->map(function ($episode) {
                     return [
-                        'id' => $episode->id,
-                        'title' => 'Airing: ' . $episode->title,
+                        'id' => 'episode_airing_' . $episode->id,
+                        'title' => 'Rencana Tayang: ' . ($episode->program->name ?? 'Unknown') . ' Ep ' . $episode->episode_number,
                         'start' => $episode->air_date . ' ' . ($episode->air_time ?? '00:00:00'),
                         'type' => 'airing',
-                        'program_name' => $episode->program->name ?? 'Unknown Program',
-                        'status' => $episode->status
+                        'status' => $episode->status,
+                        'color' => '#f87171' // Lighter Red
                     ];
                 });
+
+            $schedules = collect($broadcastingAiring)->merge($episodeAiring)->sortBy('start')->values();
             
-            return response()->json(['success' => true, 'data' => $schedules, 'message' => 'Air schedules retrieved']);
+            return response()->json(['success' => true, 'data' => $schedules]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Failed to get air schedules', 'error' => $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
     public function getCalendar(Request $request): JsonResponse
     {
-        // Combine shooting and airing
-        $shooting = $this->getShootingSchedules($request)->getData()->data;
-        $airing = $this->getAirSchedules($request)->getData()->data;
-        
-        return response()->json([
-            'success' => true, 
-            'data' => array_merge($shooting, $airing), 
-            'message' => 'Calendar data retrieved'
-        ]);
+        try {
+            $shooting = $this->getShootingSchedules($request)->getData()->data;
+            $recording = $this->getRecordingSchedules($request)->getData()->data;
+            $airing = $this->getAirSchedules($request)->getData()->data;
+            
+            $allEvents = array_merge($shooting, $recording, $airing);
+            
+            // Re-sort by start date
+            usort($allEvents, function($a, $b) {
+                return strcmp($a->start, $b->start);
+            });
+
+            return response()->json([
+                'success' => true, 
+                'data' => $allEvents, 
+                'message' => 'Unified calendar retrieved'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
     }
 
     public function getTodaySchedules(Request $request): JsonResponse

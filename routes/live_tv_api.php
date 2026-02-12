@@ -738,6 +738,7 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
 // MOVED OUTSIDE 'roles' prefix group
 Route::prefix('schedules')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::get('/shooting', [ProgramMusicScheduleController::class, 'getShootingSchedules'])->middleware('throttle:60,1');
+    Route::get('/recording', [ProgramMusicScheduleController::class, 'getRecordingSchedules'])->middleware('throttle:60,1');
     Route::get('/airing', [ProgramMusicScheduleController::class, 'getAirSchedules'])->middleware('throttle:60,1');
     Route::get('/calendar', [ProgramMusicScheduleController::class, 'getCalendar'])->middleware('throttle:60,1');
     Route::get('/today', [ProgramMusicScheduleController::class, 'getTodaySchedules'])->middleware('throttle:60,1');
