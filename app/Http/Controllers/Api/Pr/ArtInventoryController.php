@@ -43,7 +43,7 @@ class ArtInventoryController extends Controller
             'description' => 'nullable|string',
             'total_quantity' => 'required|integer|min:0',
             'status' => 'required|in:active,maintenance,lost,damaged,available',
-            'photo' => 'nullable|image|max:2048' // Max 2MB
+            'photo_link' => 'nullable|url' // Strict Link Only
         ]);
 
         if ($validator->fails()) {
@@ -70,9 +70,16 @@ class ArtInventoryController extends Controller
             $data['available_quantity'] = $data['total_quantity']; // Initial diff is 0? No, available = total initially.
             $data['created_by'] = auth()->id();
 
+            // Physical file upload disabled
             if ($request->hasFile('photo')) {
-                $path = $request->file('photo')->store('inventory-photos', 'public');
-                $data['photo_url'] = url('storage/' . $path);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use photo_link.'
+                ], 405);
+            }
+
+            if ($request->has('photo_link')) {
+                $data['photo_url'] = $request->photo_link;
             }
 
             $item = InventoryItem::create($data);
@@ -106,7 +113,7 @@ class ArtInventoryController extends Controller
             'description' => 'nullable|string',
             'total_quantity' => 'sometimes|integer|min:0',
             'status' => 'sometimes|in:active,maintenance,lost,damaged,available',
-            'photo' => 'nullable|image|max:2048'
+            'photo_link' => 'nullable|url'
         ]);
 
         if ($validator->fails()) {
@@ -139,9 +146,16 @@ class ArtInventoryController extends Controller
                 }
             }
 
+            // Physical file upload disabled
             if ($request->hasFile('photo')) {
-                $path = $request->file('photo')->store('inventory-photos', 'public');
-                $data['photo_url'] = url('storage/' . $path);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use photo_link.'
+                ], 405);
+            }
+
+            if ($request->has('photo_link')) {
+                $data['photo_url'] = $request->photo_link;
             }
 
             $item->update($data);

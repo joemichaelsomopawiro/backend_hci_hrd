@@ -31,11 +31,11 @@ class SocialMediaController extends Controller
 
         $validator = Validator::make($request->all(), [
             'episode_id' => 'required|exists:episodes,id',
-            'video_file' => 'required|file|mimes:mp4,mov,avi|max:500000',
+            'video_link' => 'required|url', // Strict Link Only
             'title' => 'required|string|max:100',
             'description' => 'required|string|max:5000',
             'tags' => 'nullable|array',
-            'thumbnail' => 'nullable|file|mimes:jpg,jpeg,png|max:10000',
+            'thumbnail_link' => 'nullable|url', // Strict Link Only
             'scheduled_at' => 'nullable|date|after:now'
         ]);
 
@@ -48,16 +48,16 @@ class SocialMediaController extends Controller
         }
 
         try {
-            // Upload video file
-            $videoFile = $request->file('video_file');
-            $videoPath = $videoFile->storeAs('youtube/videos', time() . '_' . $videoFile->getClientOriginalName(), 'public');
-
-            // Upload thumbnail if provided
-            $thumbnailPath = null;
-            if ($request->hasFile('thumbnail')) {
-                $thumbnailFile = $request->file('thumbnail');
-                $thumbnailPath = $thumbnailFile->storeAs('youtube/thumbnails', time() . '_' . $thumbnailFile->getClientOriginalName(), 'public');
+            // Physical file upload disabled
+            if ($request->hasFile('video_file') || $request->hasFile('thumbnail')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use video_link and thumbnail_link.'
+                ], 405);
             }
+
+            $videoPath = $request->video_link;
+            $thumbnailPath = $request->thumbnail_link;
 
             // Create social media post record
             $post = SocialMediaPost::create([
@@ -117,8 +117,8 @@ class SocialMediaController extends Controller
             'episode_id' => 'required|exists:episodes,id',
             'content' => 'required|string|max:2000',
             'link_url' => 'required|url',
-            'media_files' => 'nullable|array',
-            'media_files.*' => 'file|mimes:jpg,jpeg,png,mp4,mov|max:50000',
+            'media_links' => 'nullable|array',
+            'media_links.*' => 'url',
             'scheduled_at' => 'nullable|date|after:now'
         ]);
 
@@ -131,14 +131,15 @@ class SocialMediaController extends Controller
         }
 
         try {
-            // Upload media files if provided
-            $mediaPaths = [];
+            // Physical file upload disabled
             if ($request->hasFile('media_files')) {
-                foreach ($request->file('media_files') as $file) {
-                    $path = $file->storeAs('facebook/media', time() . '_' . $file->getClientOriginalName(), 'public');
-                    $mediaPaths[] = $path;
-                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use media_links array.'
+                ], 405);
             }
+
+            $mediaPaths = $request->media_links ?? [];
 
             // Create social media post record
             $post = SocialMediaPost::create([
@@ -192,26 +193,15 @@ class SocialMediaController extends Controller
             return response()->json(['message' => 'Access denied'], 403);
         }
 
-        $validator = Validator::make($request->all(), [
-            'episode_id' => 'required|exists:episodes,id',
-            'media_file' => 'required|file|mimes:jpg,jpeg,png,mp4,mov|max:50000',
-            'content' => 'nullable|string|max:2200',
-            'hashtags' => 'nullable|array',
-            'mentions' => 'nullable|array'
-        ]);
+            // Physical file upload disabled
+            if ($request->hasFile('media_file')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use media_link.'
+                ], 405);
+            }
 
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        try {
-            // Upload media file
-            $mediaFile = $request->file('media_file');
-            $mediaPath = $mediaFile->storeAs('instagram/stories', time() . '_' . $mediaFile->getClientOriginalName(), 'public');
+            $mediaPath = $request->media_link;
 
             // Create social media post record
             $post = SocialMediaPost::create([
@@ -270,8 +260,8 @@ class SocialMediaController extends Controller
             'message' => 'required|string|max:1000',
             'link_url' => 'required|url',
             'group_name' => 'required|string',
-            'media_files' => 'nullable|array',
-            'media_files.*' => 'file|mimes:jpg,jpeg,png,mp4,mov,pdf|max:100000'
+            'media_links' => 'nullable|array',
+            'media_links.*' => 'url'
         ]);
 
         if ($validator->fails()) {
@@ -283,14 +273,15 @@ class SocialMediaController extends Controller
         }
 
         try {
-            // Upload media files if provided
-            $mediaPaths = [];
+            // Physical file upload disabled
             if ($request->hasFile('media_files')) {
-                foreach ($request->file('media_files') as $file) {
-                    $path = $file->storeAs('whatsapp/media', time() . '_' . $file->getClientOriginalName(), 'public');
-                    $mediaPaths[] = $path;
-                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use media_links array.'
+                ], 405);
             }
+
+            $mediaPaths = $request->media_links ?? [];
 
             // Create social media post record
             $post = SocialMediaPost::create([

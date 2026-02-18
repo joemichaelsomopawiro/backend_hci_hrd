@@ -401,9 +401,10 @@ Route::prefix('roles')->group(function () {
         Route::post('/arrangements', [MusicArrangerController::class, 'store'])->middleware('throttle:uploads'); // Rate limit untuk upload
         Route::get('/arrangements/{id}', [MusicArrangerController::class, 'show'])->middleware('throttle:60,1');
         Route::put('/arrangements/{id}', [MusicArrangerController::class, 'update'])->middleware('throttle:uploads'); // Rate limit untuk upload
-        Route::post('/arrangements/{id}/submit-song-proposal', [MusicArrangerController::class, 'submitSongProposal'])->middleware('throttle:sensitive'); // Ajukan lagu & penyanyi
-        Route::post('/arrangements/{id}/submit', [MusicArrangerController::class, 'submit'])->middleware('throttle:uploads'); // Submit arrangement file
-        // Upload arrangement file via POST (useful for clients that cannot send multipart PUT)
+        // Submit arrangement link (JSON only)
+        Route::post('/arrangements/{id}/input-link', [MusicArrangerController::class, 'inputLink'])->middleware('throttle:api');
+        
+        // Disabled file upload - returns 405 handled by controller
         Route::post('/arrangements/{id}/upload-file', [MusicArrangerController::class, 'uploadFile'])->middleware('throttle:uploads');
     
         // Upload arrangement file via POST (compat alias)

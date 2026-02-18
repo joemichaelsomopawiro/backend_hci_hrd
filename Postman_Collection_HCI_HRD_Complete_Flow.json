@@ -3152,53 +3152,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "episode_id",
-									"value": "{{episode_id}}",
-									"type": "text",
-									"description": "Required: ID episode"
-								},
-								{
-									"key": "song_id",
-									"value": "",
-									"type": "text",
-									"description": "Optional: ID lagu dari database"
-								},
-								{
-									"key": "singer_id",
-									"value": "",
-									"type": "text",
-									"description": "Optional: ID penyanyi dari database"
-								},
-								{
-									"key": "song_title",
-									"value": "Lagu Baru",
-									"type": "text",
-									"description": "Required if song_id not provided"
-								},
-								{
-									"key": "singer_name",
-									"value": "Penyanyi",
-									"type": "text",
-									"description": "Optional: Nama penyanyi"
-								},
-								{
-									"key": "arrangement_notes",
-									"value": "Catatan untuk arrangement",
-									"type": "text",
-									"description": "Optional: Catatan arrangement"
-								},
-								{
-									"key": "file",
-									"type": "file",
-									"src": [],
-									"description": "Optional: File audio (mp3/wav/midi, max 100MB). Jika ada file, status = 'draft'. Jika tidak ada, status = 'song_proposal'"
+							"mode": "raw",
+							"raw": "{\n    \"episode_id\": \"{{episode_id}}\",\n    \"song_title\": \"Lagu Baru\",\n    \"singer_name\": \"Penyanyi\",\n    \"arrangement_notes\": \"Catatan untuk arrangement\",\n    \"arrangement_file_link\": \"https://example.com/audio.mp3\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
-						"description": "Buat arrangement baru. Jika tidak ada file, status otomatis menjadi 'song_proposal' dan akan notifikasi Producer. Jika ada file, status menjadi 'draft'.",
+						"description": "Buat proposal arrangement baru dengan link file. Status otomatis menjadi 'song_proposal'.",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/music-arranger/arrangements",
 							"host": [
@@ -3375,9 +3337,9 @@
 					]
 				},
 				{
-					"name": "Upload Arrangement File",
+					"name": "Input Link",
 					"request": {
-						"method": "PUT",
+						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
@@ -3385,19 +3347,17 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "file",
-									"type": "file",
-									"src": [],
-									"description": "Required: File audio arrangement (mp3/wav/midi, max 100MB)"
+							"mode": "raw",
+							"raw": "{\n    \"arrangement_file_link\": \"https://example.com/audio_revised.mp3\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
-						"description": "Upload file arrangement audio. Jika status adalah 'song_approved', setelah upload status otomatis menjadi 'arrangement_submitted'. Jika status adalah 'arrangement_rejected', setelah upload status tetap 'arrangement_rejected' dan perlu submit ulang.",
+						"description": "Upload link arrangement baru (JSON Only).",
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/music-arranger/arrangements/{{arrangement_id}}",
+							"raw": "{{base_url}}/api/live-tv/roles/music-arranger/arrangements/{{arrangement_id}}/input-link",
 							"host": [
 								"{{base_url}}"
 							],
@@ -3407,47 +3367,11 @@
 								"roles",
 								"music-arranger",
 								"arrangements",
-								"{{arrangement_id}}"
+								"{{arrangement_id}}",
+								"input-link"
 							]
 						}
-					},
-					"event": [
-						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"// Validasi arrangement_id",
-									"var arrangementId = pm.collectionVariables.get('arrangement_id');",
-									"if (!arrangementId) {",
-									"    console.log('⚠️ arrangement_id tidak ditemukan! Gunakan request \"Create Arrangement\" atau \"Get Arrangements\" terlebih dahulu.');",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						},
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"if (pm.response.code === 200 || pm.response.code === 201) {",
-									"    var jsonData = pm.response.json();",
-									"    if (jsonData.success) {",
-									"        console.log('✅ File arrangement berhasil di-upload');",
-									"        console.log('Status: ' + jsonData.data.status);",
-									"        console.log('File: ' + jsonData.data.file_name);",
-									"        if (jsonData.data.status === 'arrangement_rejected') {",
-									"            console.log('⚠️ Status masih rejected. Silakan submit ulang arrangement.');",
-									"        }",
-									"    }",
-									"} else {",
-									"    console.log('❌ Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
+					}
 				},
 				{
 					"name": "Submit Arrangement",
@@ -5495,27 +5419,31 @@
 					}
 				},
 				{
-					"name": "Upload Storyboard",
+					"name": "Update Storyboard Link",
 					"request": {
-						"method": "POST",
+						"method": "PUT",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "storyboard_file",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n  \"type\": \"storyboard\",\n  \"link\": \"https://example.com/storyboard.pdf\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Update link storyboard (JSON Only).",
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/creative/works/{{creative_work_id}}/upload-storyboard",
+							"raw": "{{base_url}}/api/live-tv/roles/creative/works/{{creative_work_id}}/update-link",
 							"host": [
 								"{{base_url}}"
 							],
@@ -5526,7 +5454,7 @@
 								"creative",
 								"works",
 								"{{creative_work_id}}",
-								"upload-storyboard"
+								"update-link"
 							]
 						}
 					}
@@ -6272,15 +6200,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "bts_video",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"file_link\": \"https://example.com/bts_video.mp4\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link video BTS (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/upload-bts-video",
 							"host": [
@@ -6309,20 +6237,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "photos",
-									"type": "file",
-									"src": []
-								},
-								{
-									"key": "photos",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"file_links\": [\n        \"https://example.com/photo1.jpg\",\n        \"https://example.com/photo2.jpg\"\n    ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link foto talent (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/upload-talent-photos",
 							"host": [
@@ -6382,20 +6305,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "website_link",
-									"value": "https://example.com/episode",
-									"type": "text"
-								},
-								{
-									"key": "proof_screenshot",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"website_link\": \"https://example.com/episode\",\n    \"proof_link\": \"https://example.com/screenshot.jpg\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link sharing Facebook (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/episodes/{{episode_id}}/share-facebook",
 							"host": [
@@ -6424,20 +6342,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "highlight_video",
-									"type": "file",
-									"src": []
-								},
-								{
-									"key": "proof_screenshot",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"video_link\": \"https://example.com/story.mp4\",\n    \"proof_link\": \"https://example.com/ig_screenshot.jpg\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link IG Story (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/episodes/{{episode_id}}/create-ig-story-highlight",
 							"host": [
@@ -6466,20 +6379,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "message",
-									"value": "Link episode",
-									"type": "text"
-								},
-								{
-									"key": "proof_screenshot",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"message\": \"Link episode...\",\n    \"proof_link\": \"https://example.com/wa_screenshot.jpg\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link WA Group sharing (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/episodes/{{episode_id}}/share-wa-group",
 							"host": [

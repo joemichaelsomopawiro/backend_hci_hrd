@@ -257,12 +257,12 @@ class ProgramController extends Controller
             $proposalFileSize = null;
             $proposalFileMimeType = null;
             
+            // Physical file upload disabled
             if ($request->hasFile('proposal_file')) {
-                $file = $request->file('proposal_file');
-                $proposalFilePath = $file->store('programs/proposals', 'public');
-                $proposalFileName = $file->getClientOriginalName();
-                $proposalFileSize = $file->getSize();
-                $proposalFileMimeType = $file->getMimeType();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use proposal_file_link for URL submission.'
+                ], 405);
             }
             
             // Create program dengan data yang sudah divalidasi
@@ -292,21 +292,7 @@ class ProgramController extends Controller
                 unset($programData['category']);
             }
             
-            // Add proposal file data hanya jika kolom ada di database
-            if ($proposalFilePath) {
-                if (Schema::hasColumn('programs', 'proposal_file_path')) {
-                    $programData['proposal_file_path'] = $proposalFilePath;
-                }
-                if (Schema::hasColumn('programs', 'proposal_file_name')) {
-                    $programData['proposal_file_name'] = $proposalFileName;
-                }
-                if (Schema::hasColumn('programs', 'proposal_file_size')) {
-                    $programData['proposal_file_size'] = $proposalFileSize;
-                }
-                if (Schema::hasColumn('programs', 'proposal_file_mime_type')) {
-                    $programData['proposal_file_mime_type'] = $proposalFileMimeType;
-                }
-            }
+            // Proposal file data from upload removed
             
             // Add proposal file link jika ada (prioritas: link > file upload)
             if ($request->proposal_file_link && Schema::hasColumn('programs', 'proposal_file_link')) {

@@ -738,61 +738,35 @@ class ProduksiController extends Controller
                 ], 400);
             }
 
-            $uploadedFiles = [];
-            $filePaths = [];
-
-            foreach ($request->file('files') as $file) {
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $filePath = $file->storeAs("produksi/shooting_results/{$work->id}", $fileName, 'public');
-                
-                $uploadedFiles[] = [
-                    'original_name' => $file->getClientOriginalName(),
-                    'file_name' => $fileName,
-                    'file_path' => $filePath,
-                    'file_size' => $file->getSize(),
-                    'mime_type' => $file->getMimeType(),
-                    'url' => asset('storage/' . $filePath),
-                    'uploaded_at' => now()->toDateTimeString()
-                ];
-
-                $filePaths[] = $filePath;
-
-                // Create MediaFile record
-                // NOTE: file_type must match enum in media_files migration
-                // Using 'video' for production shooting results
-                MediaFile::create([
-                    'episode_id' => $work->episode_id,
-                    'file_type' => 'video', // enum: audio, video, image, document, thumbnail, bts, highlight, advertisement
-                    'file_path' => $filePath,
-                    'file_name' => $fileName,
-                    'file_extension' => $file->getClientOriginalExtension(),
-                    'file_size' => $file->getSize(),
-                    'mime_type' => $file->getMimeType(),
-                    // storage_disk, status, uploaded_at will use defaults from migration
-                    'uploaded_by' => $user->id,
-                    'metadata' => [
-                        'produksi_work_id' => $work->id,
-                        'original_name' => $file->getClientOriginalName()
-                    ]
-                ]);
+            // Physical file upload disabled
+            if ($request->hasFile('files')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use shooting_file_links for URL submissions.'
+                ], 405);
             }
 
-            // Update work with shooting files
-            $work->update([
-                'shooting_files' => $uploadedFiles,
-                'shooting_file_links' => implode(',', $filePaths)
-            ]);
+            if ($request->has('shooting_file_links')) {
+                $filePaths = is_array($request->shooting_file_links) 
+                    ? $request->shooting_file_links 
+                    : explode(',', $request->shooting_file_links);
+                
+                $uploadedFiles = [];
+                foreach ($filePaths as $link) {
+                    $uploadedFiles[] = [
+                        'original_name' => 'Shooting Result Link',
+                        'file_path' => $link,
+                        'url' => $link,
+                        'uploaded_at' => now()->toDateTimeString()
+                    ];
+                }
 
-            // Audit logging for file uploads
-            foreach ($request->file('files') as $file) {
-                ControllerSecurityHelper::logFileOperation(
-                    'upload',
-                    $file->getMimeType(),
-                    $file->getClientOriginalName(),
-                    $file->getSize(),
-                    $work,
-                    $request
-                );
+                $work->update([
+                    'shooting_files' => $uploadedFiles,
+                    'shooting_file_links' => is_array($request->shooting_file_links) 
+                        ? implode(',', $request->shooting_file_links) 
+                        : $request->shooting_file_links
+                ]);
             }
 
             // Clear cache

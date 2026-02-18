@@ -388,36 +388,10 @@ class SoundEngineerEditingController extends Controller
      */
     public function uploadVocal(Request $request): JsonResponse
     {
-        $user = auth()->user();
-        if (!$user) {
-            return response()->json(['message' => 'Unauthorized'], 401);
-        }
-
-        $validator = Validator::make($request->all(), [
-            'file' => 'required|file|mimes:wav,mp3,aiff,flac|max:50000'
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $file = $request->file('file');
-        $filename = time() . '_' . $file->getClientOriginalName();
-        $path = $file->storeAs('sound_engineer_editing', $filename, 'public');
-
         return response()->json([
-            'success' => true,
-            'message' => 'File uploaded successfully',
-            'data' => [
-                'file_path' => $path,
-                'file_name' => $filename,
-                'file_size' => $file->getSize()
-            ]
-        ]);
+            'success' => false,
+            'message' => 'Physical file uploads are disabled. Please use the inputVocalLink endpoint.'
+        ], 405);
     }
 
     /**

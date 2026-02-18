@@ -25,16 +25,21 @@ class ProductionTeamController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            $perPage = $request->get('per_page', 15);
+            // Handle per_page = 0 to mean returning all (limited to 1000 for safety)
+            $paginationSize = ($perPage == 0) ? 1000 : (int)$perPage;
+
             // Build cache key based on request parameters
             $cacheKey = 'production_teams_index_' . md5(json_encode([
                 'producer_id' => $request->get('producer_id'),
                 'is_active' => $request->get('is_active'),
                 'search' => $request->get('search'),
+                'per_page' => $paginationSize,
                 'page' => $request->get('page', 1)
             ]));
             
             // Use cache with 5 minutes TTL
-            $teams = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request) {
+            $teams = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request, $paginationSize) {
                 // Optimize eager loading - hanya load active members
                 $query = ProductionTeam::with([
                     'producer',
@@ -63,7 +68,7 @@ class ProductionTeamController extends Controller
                     });
                 }
                 
-                return $query->orderBy('created_at', 'desc')->paginate(15);
+                return $query->orderBy('created_at', 'desc')->paginate($paginationSize);
             });
             
             // Transform members to include user data explicitly

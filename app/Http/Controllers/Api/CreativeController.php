@@ -7,7 +7,6 @@ use App\Models\CreativeWork;
 use App\Models\Episode;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
-use App\Services\FileUploadService;
 use App\Services\WorkAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -17,11 +16,9 @@ use Illuminate\Support\Facades\DB;
 
 class CreativeController extends Controller
 {
-    protected $fileUploadService;
-
-    public function __construct(FileUploadService $fileUploadService)
+    public function __construct()
     {
-        $this->fileUploadService = $fileUploadService;
+        // Link-only policy enforced
     }
 
     /**

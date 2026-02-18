@@ -1362,7 +1362,7 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            // Prepare update data
+            // Prepared update data
             // Mark help as provided
             $updateData = [
                 'needs_sound_engineer_help' => false,
@@ -1381,34 +1381,7 @@ class SoundEngineerController extends Controller
                 $updateData['sound_engineer_help_file_link'] = $request->help_file_link;
             }
 
-            // Handle file upload if provided
-            $fileUploaded = false;
-            if ($request->hasFile('file')) {
-                try {
-                    // Start saving file logic
-                    $file = $request->file('file');
-                    $filePath = $file->store('music-arrangements', 'public');
-                    
-                    // We save the file info but we DO NOT submit it as the "main" file yet.
-                    // Or do we? The requirement is "Submit Link to Arranger".
-                    // If we overwrite file_path, the Arranger sees it. 
-                    // Let's overwrite file_path so Arranger can download it, BUT do NOT change status to submitted.
-                    
-                    $updateData['file_path'] = $filePath;
-                    $updateData['file_name'] = $file->getClientOriginalName();
-                    $updateData['file_size'] = $file->getSize();
-                    $updateData['mime_type'] = $file->getMimeType();
-                    $fileUploaded = true;
-
-                    // Log file upload
-                    \App\Helpers\AuditLogger::logFileUpload('audio', $file->getClientOriginalName(), $file->getSize(), null, $request);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'File upload failed: ' . $e->getMessage()
-                    ], 422);
-                }
-            }
+            $fileUploaded = false; // Physical upload removed
 
             // Update arrangement
             $arrangement->update($updateData);
