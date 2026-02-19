@@ -825,10 +825,10 @@ class ManagerProgramController extends Controller
             ], 401);
         }
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can access this dashboard'
+                'message' => 'Only Manager Program or Distribution Manager can access this dashboard'
             ], 403);
         }
         
@@ -1145,12 +1145,12 @@ class ManagerProgramController extends Controller
         $user = auth()->user();
         
         // Allow all authenticated users to monitor workflow for transparency
-        // if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
-        //     return response()->json([
-        //         'success' => false,
-        //         'message' => 'Only Manager Program or Distribution Manager can monitor workflow'
-        //     ], 403);
-        // }
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program or Distribution Manager can monitor workflow'
+            ], 403);
+        }
         
         try {
             $episode = Episode::with([

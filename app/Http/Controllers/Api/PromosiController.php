@@ -395,70 +395,7 @@ class PromosiController extends Controller
         }
     }
 
-            
-            // file_links is now required via validator
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-
-            $work = PromotionWork::with(['episode.program'])->findOrFail($id);
-
-            // Check if user has access
-            if ($work->created_by !== $user->id && $work->status !== 'shooting') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you or not in shooting status.'
-                ], 403);
-            }
-
-            // Get existing file_links or initialize
-            $fileLinks = $work->file_links ?? [];
-            
-            // Remove existing talent photos link if any
-            $fileLinks = array_filter($fileLinks, function($item) {
-                return isset($item['type']) && $item['type'] !== 'talent_photo';
-            });
-            
-            // Add new talent photo links
-            foreach ($request->file_links as $link) {
-                $fileLinks[] = [
-                    'type' => 'talent_photo',
-                    'file_link' => $link,
-                    'uploaded_at' => now()->toDateTimeString(),
-                    'uploaded_by' => $user->id
-                ];
-            }
-
-            $work->update([
-                'file_links' => array_values($fileLinks)
-            ]);
-
-            // Audit logging
-            ControllerSecurityHelper::logCrud('promosi_talent_photos_link_submitted', $work, [
-                'links_count' => count($request->file_links),
-                'links' => $request->file_links
-            ], $request);
-
-            QueryOptimizer::clearAllIndexCaches();
-
-            return response()->json([
-                'success' => true,
-                'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Talent photo links submitted successfully.'
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error uploading talent photos: ' . $e->getMessage()
-            ], 500);
-    }
-    }
 
     /**
      * Upload BTS Content (Legacy/Alternative endpoint)

@@ -193,6 +193,7 @@ class SocialMediaController extends Controller
             return response()->json(['message' => 'Access denied'], 403);
         }
 
+        try {
             // Physical file upload disabled
             if ($request->hasFile('media_file')) {
                 return response()->json([

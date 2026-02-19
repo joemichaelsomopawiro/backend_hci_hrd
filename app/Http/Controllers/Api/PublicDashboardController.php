@@ -72,7 +72,7 @@ class PublicDashboardController extends Controller
             $musicScheduleList = $musicSchedulesQuery->get();
 
             // Format creative works untuk calendar
-            $calendarEvents = $creativeSchedules->map(function ($work) {
+            $calendarEvents = $creativeSchedules->toBase()->map(function ($work) {
                 return [
                     'id' => 'creative_' . $work->id,
                     'title' => $work->episode->program->name . ' - Episode ' . $work->episode->episode_number,
@@ -88,7 +88,7 @@ class PublicDashboardController extends Controller
             });
             
             // Format music schedules untuk calendar
-            $musicEvents = $musicScheduleList->map(function ($schedule) {
+            $musicEvents = $musicScheduleList->toBase()->map(function ($schedule) {
                 $episode = $schedule->musicSubmission->episode ?? null;
                 return [
                     'id' => 'music_' . $schedule->id,
