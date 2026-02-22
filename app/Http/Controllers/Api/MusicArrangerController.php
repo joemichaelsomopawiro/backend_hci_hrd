@@ -137,7 +137,7 @@ class MusicArrangerController extends Controller
             // Create record
             $arrangement = MusicArrangement::create([
                 'episode_id' => $request->episode_id,
-                'user_id' => $user->id,
+                'created_by' => $user->id,
                 'song_id' => $request->song_id,
                 'singer_id' => $request->singer_id,
                 'song_title' => $request->song_title,
@@ -322,8 +322,8 @@ class MusicArrangerController extends Controller
 
             $arrangement = MusicArrangement::findOrFail($id);
 
-            // Access check
-            if ($arrangement->user_id !== $user->id) {
+            // Access check: only the Music Arranger who created this arrangement can input link
+            if ((int) $arrangement->created_by !== (int) $user->id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access to this arrangement.'], 403);
             }
 

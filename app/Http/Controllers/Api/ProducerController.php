@@ -27,6 +27,23 @@ use Illuminate\Support\Facades\DB;
 
 class ProducerController extends Controller
 {
+    /**
+     * Check if Producer is authorized for episode: either episode's production team
+     * or program's production team has this producer (same logic as getApprovals).
+     */
+    protected function isProducerAuthorizedForEpisode(?Episode $episode, $producerId): bool
+    {
+        if (!$episode) {
+            return false;
+        }
+        if ($episode->productionTeam && (int) $episode->productionTeam->producer_id === (int) $producerId) {
+            return true;
+        }
+        if ($episode->program && $episode->program->productionTeam && (int) $episode->program->productionTeam->producer_id === (int) $producerId) {
+            return true;
+        }
+        return false;
+    }
 
     /**
      * Get approvals pending
@@ -385,6 +402,51 @@ class ProducerController extends Controller
     }
 
     /**
+     * Get Song Proposal History (Approved & Rejected)
+     */
+    public function getSongProposalHistory(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            // Get Approved and Rejected Song Proposals
+            // Filter by Producer's Production Team
+            $history = MusicArrangement::whereIn('status', ['song_approved', 'song_rejected', 'approved', 'rejected']) // Handle legacy status if any
+                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy', 'reviewer'])
+                ->where(function ($q) use ($user) {
+                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    })
+                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    });
+                })
+                ->orderBy('updated_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $history,
+                'message' => 'Song proposal history retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get song proposal history',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Approve item
      */
     public function approve(Request $request, int $id): JsonResponse
@@ -419,8 +481,7 @@ class ProducerController extends Controller
                     // Approve song proposal (lagu & penyanyi)
                     $item = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
                     
-                    // Validate Producer has access
-                    // Support episode.productionTeam langsung atau episode.program.productionTeam
+                    // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
                     if (!$episode) {
                         return response()->json([
@@ -428,17 +489,15 @@ class ProducerController extends Controller
                             'message' => 'Episode not found for this song proposal.'
                         ], 404);
                     }
-                    
-                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
-                    
-                    if (!$productionTeam) {
+                    $teamOnEpisode = $episode->productionTeam;
+                    $teamOnProgram = $episode->program ? $episode->program->productionTeam : null;
+                    if (!$teamOnEpisode && !$teamOnProgram) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Production team not found for this episode. Please assign a production team first.'
                         ], 404);
                     }
-                    
-                    if ($productionTeam->producer_id !== $user->id) {
+                    if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This song proposal is not from your production team.'
@@ -491,8 +550,7 @@ class ProducerController extends Controller
                     // Approve arrangement file (setelah song approved dan arrangement file submitted)
                     $item = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
                     
-                    // Validate Producer has access to this arrangement
-                    // Support episode.productionTeam langsung atau episode.program.productionTeam
+                    // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
                     if (!$episode) {
                         return response()->json([
@@ -500,17 +558,15 @@ class ProducerController extends Controller
                             'message' => 'Episode not found for this arrangement.'
                         ], 404);
                     }
-                    
-                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
-                    
-                    if (!$productionTeam) {
+                    $teamOnEpisode = $episode->productionTeam;
+                    $teamOnProgram = $episode->program ? $episode->program->productionTeam : null;
+                    if (!$teamOnEpisode && !$teamOnProgram) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Production team not found for this episode. Please assign a production team first.'
                         ], 404);
                     }
-                    
-                    if ($productionTeam->producer_id !== $user->id) {
+                    if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This arrangement is not from your production team.'
@@ -649,8 +705,7 @@ class ProducerController extends Controller
                 case 'creative_work':
                     $item = CreativeWork::with(['episode.productionTeam', 'episode.program.productionTeam'])->findOrFail($id);
                     
-                    // Validate Producer has access
-                    // Support episode.productionTeam langsung atau episode.program.productionTeam
+                    // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
                     if (!$episode) {
                         return response()->json([
@@ -658,17 +713,15 @@ class ProducerController extends Controller
                             'message' => 'Episode not found for this creative work.'
                         ], 404);
                     }
-                    
-                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
-                    
-                    if (!$productionTeam) {
+                    $teamOnEpisode = $episode->productionTeam;
+                    $teamOnProgram = $episode->program ? $episode->program->productionTeam : null;
+                    if (!$teamOnEpisode && !$teamOnProgram) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Production team not found for this episode. Please assign a production team first.'
                         ], 404);
                     }
-                    
-                    if ($productionTeam->producer_id !== $user->id) {
+                    if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This creative work is not from your production team.'
@@ -1037,8 +1090,7 @@ class ProducerController extends Controller
                     // Reject song proposal (lagu & penyanyi)
                     $item = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
                     
-                    // Validate Producer has access
-                    // Support episode.productionTeam langsung atau episode.program.productionTeam
+                    // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
                     if (!$episode) {
                         return response()->json([
@@ -1046,17 +1098,15 @@ class ProducerController extends Controller
                             'message' => 'Episode not found for this song proposal.'
                         ], 404);
                     }
-                    
-                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
-                    
-                    if (!$productionTeam) {
+                    $teamOnEpisode = $episode->productionTeam;
+                    $teamOnProgram = $episode->program ? $episode->program->productionTeam : null;
+                    if (!$teamOnEpisode && !$teamOnProgram) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Production team not found for this episode. Please assign a production team first.'
                         ], 404);
                     }
-                    
-                    if ($productionTeam->producer_id !== $user->id) {
+                    if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This song proposal is not from your production team.'
@@ -1127,8 +1177,7 @@ class ProducerController extends Controller
                     // Reject arrangement file
                     $item = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
                     
-                    // Validate Producer has access to this arrangement
-                    // Support episode.productionTeam langsung atau episode.program.productionTeam
+                    // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
                     if (!$episode) {
                         return response()->json([
@@ -1136,17 +1185,15 @@ class ProducerController extends Controller
                             'message' => 'Episode not found for this arrangement.'
                         ], 404);
                     }
-                    
-                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
-                    
-                    if (!$productionTeam) {
+                    $teamOnEpisode = $episode->productionTeam;
+                    $teamOnProgram = $episode->program ? $episode->program->productionTeam : null;
+                    if (!$teamOnEpisode && !$teamOnProgram) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Production team not found for this episode. Please assign a production team first.'
                         ], 404);
                     }
-                    
-                    if ($productionTeam->producer_id !== $user->id) {
+                    if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This arrangement is not from your production team.'
@@ -1224,8 +1271,7 @@ class ProducerController extends Controller
                 case 'creative_work':
                     $item = CreativeWork::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
                     
-                    // Validate Producer has access
-                    // Support episode.productionTeam langsung atau episode.program.productionTeam
+                    // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
                     if (!$episode) {
                         return response()->json([
@@ -1233,17 +1279,15 @@ class ProducerController extends Controller
                             'message' => 'Episode not found for this creative work.'
                         ], 404);
                     }
-                    
-                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
-                    
-                    if (!$productionTeam) {
+                    $teamOnEpisode = $episode->productionTeam;
+                    $teamOnProgram = $episode->program ? $episode->program->productionTeam : null;
+                    if (!$teamOnEpisode && !$teamOnProgram) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Production team not found for this episode. Please assign a production team first.'
                         ], 404);
                     }
-                    
-                    if ($productionTeam->producer_id !== $user->id) {
+                    if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This creative work is not from your production team.'
@@ -1968,6 +2012,11 @@ class ProducerController extends Controller
                 ], 403);
             }
 
+            // Frontend boleh kirim vocal_team_ids (Vocal Team) = backend pakai recording_team_ids
+            if ($request->has('vocal_team_ids')) {
+                $request->merge(['recording_team_ids' => $request->vocal_team_ids]);
+            }
+
             $validator = Validator::make($request->all(), [
                 'shooting_team_ids' => 'nullable|array',
                 'shooting_team_ids.*' => 'exists:users,id',
@@ -1976,6 +2025,8 @@ class ProducerController extends Controller
                 'setting_team_ids.*' => 'exists:users,id',
                 'recording_team_ids' => 'nullable|array',
                 'recording_team_ids.*' => 'exists:users,id',
+                'vocal_team_ids' => 'nullable|array',
+                'vocal_team_ids.*' => 'exists:users,id',
                 'recording_schedule_id' => 'nullable|exists:music_schedules,id',
                 'shooting_team_notes' => 'nullable|string|max:1000',
                 'setting_team_notes' => 'nullable|string|max:1000',
@@ -1990,43 +2041,41 @@ class ProducerController extends Controller
                 ], 422);
             }
 
-            $creativeWork = CreativeWork::with(['episode.program.productionTeam'])->findOrFail($creativeWorkId);
+            $creativeWork = CreativeWork::with(['episode.productionTeam', 'episode.program.productionTeam'])->findOrFail($creativeWorkId);
 
             // Validate relationships exist
-            if (!$creativeWork->episode) {
+            $episode = $creativeWork->episode;
+            if (!$episode) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Creative work does not have an associated episode.'
                 ], 400);
             }
 
-            if (!$creativeWork->episode->program) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Episode does not have an associated program.'
-                ], 400);
-            }
-
-            if (!$creativeWork->episode->program->productionTeam) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Program does not have an associated production team.'
-                ], 400);
-            }
-
-            // Validate Producer has access
-            $productionTeam = $creativeWork->episode->program->productionTeam;
-            if ($productionTeam->producer_id !== $user->id) {
+            // Producer harus punya akses (episode.productionTeam ATAU program.productionTeam)
+            if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This creative work is not from your production team.'
                 ], 403);
             }
 
-            // ENHANCED: Allow Producer to select ANY active user (not restricted to production team)
-            // BUT EXCLUDE MANAGERS as per business rule ("kecuali manager gabisa yah")
+            // Paling tidak satu tim harus diisi agar ada yang disimpan
+            $hasShooting = !empty($request->shooting_team_ids);
+            $hasSetting = !empty($request->setting_team_ids);
+            $hasRecording = !empty($request->recording_team_ids);
+            if (!$hasShooting && !$hasSetting && !$hasRecording) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pilih minimal satu tim (Shooting, Setting, atau Vocal/Recording) beserta anggotanya.',
+                    'errors' => ['teams' => ['At least one team with members is required.']]
+                ], 422);
+            }
+
+            // Semua user aktif boleh ditambahkan, kecuali Program Manager dan Distribution Manager (dua penulisan untuk PM)
+            $excludedRoles = ['Program Manager', 'Manager Program', 'Distribution Manager'];
             $allActiveUsers = \App\Models\User::where('is_active', true)
-                ->where('role', 'not like', '%Manager%') // Exclude Manager Program, Manager Broadcasting, Distribution Manager, etc.
+                ->whereNotIn('role', $excludedRoles)
                 ->pluck('id')
                 ->toArray();
 
@@ -2042,7 +2091,7 @@ class ProducerController extends Controller
                 if (!empty($invalidMembers)) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Some selected users are not active or do not exist',
+                        'message' => 'Some selected users cannot be assigned (must be active; Program Manager and Distribution Manager cannot be added to teams).',
                         'invalid_users' => array_values($invalidMembers)
                     ], 400);
                 }
@@ -2820,6 +2869,11 @@ class ProducerController extends Controller
     /**
      * Get available crew members for the producer's programs
      * GET /api/live-tv/producer/crew-members
+     *
+     * Query params:
+     * - scope=all  : Return ALL users that can be assigned to teams (active, excluding Program Manager & Distribution Manager).
+     *                Use this for Shooting/Setting/Vocal team selection so HR, Hopeline Care, Office Assistant, etc. appear.
+     * - (default) : Return only members of the Producer's production team(s) — legacy behavior.
      */
     public function getCrewMembers(Request $request): JsonResponse
     {
@@ -2829,16 +2883,42 @@ class ProducerController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // Get all production teams where this user is the producer
+            $scopeAll = $request->query('scope') === 'all' || $request->boolean('assignable');
+
+            if ($scopeAll) {
+                // Semua user yang bisa ditugaskan: aktif, kecuali Program Manager & Distribution Manager
+                $excludedRoles = ['Program Manager', 'Manager Program', 'Distribution Manager'];
+                $users = \App\Models\User::where('is_active', true)
+                    ->whereNotIn('role', $excludedRoles)
+                    ->orderBy('name')
+                    ->get(['id', 'name', 'email', 'role']);
+
+                $members = $users->map(function ($u) {
+                    return [
+                        'id' => $u->id,
+                        'name' => $u->name,
+                        'role' => $u->role,
+                        'role_label' => $u->role ?? '—',
+                        'is_active' => true
+                    ];
+                })->values();
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $members,
+                    'message' => 'All assignable users retrieved successfully',
+                    'scope' => 'all'
+                ]);
+            }
+
+            // Default: hanya anggota production team program ini
             $productionTeamIds = \App\Models\ProductionTeam::where('producer_id', $user->id)
                 ->pluck('id');
 
-            // Get all members of those production teams
             $query = \App\Models\ProductionTeamMember::whereIn('production_team_id', $productionTeamIds)
                 ->with('user');
 
             if ($request->boolean('exclude_manager')) {
-                // ProductionTeamMember doesn't usually have manager_program, but let's be safe
                 $query->where('role', '!=', 'manager_program');
             }
 
@@ -3519,28 +3599,28 @@ class ProducerController extends Controller
                 ], 404);
             }
 
-            // Validate Producer has access
-            if ($productionTeam->producer_id !== $user->id) {
+            // Validate Producer has access (episode or program production team)
+            if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This creative work is not from your production team.'
                 ], 403);
             }
 
-            // Get production team members (semua crew program selain manager)
-            $availableMembers = $productionTeam->members()
-                ->where('is_active', true)
-                ->where('role', '!=', 'manager_program')
-                ->pluck('user_id')
+            // Semua user aktif boleh ditambahkan, kecuali Program Manager dan Distribution Manager
+            $excludedRoles = ['Program Manager', 'Manager Program', 'Distribution Manager'];
+            $assignableUserIds = \App\Models\User::where('is_active', true)
+                ->whereNotIn('role', $excludedRoles)
+                ->pluck('id')
                 ->toArray();
 
-            // Validate all team members are from production team
-            $invalidMembers = array_diff($request->team_member_ids, $availableMembers);
+            // Validate all selected team members are assignable (active, non-manager)
+            $invalidMembers = array_diff($request->team_member_ids, $assignableUserIds);
             if (!empty($invalidMembers)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Some team members are not part of the production team',
-                    'invalid_members' => $invalidMembers
+                    'message' => 'Some selected users cannot be assigned (must be active; Program Manager and Distribution Manager cannot be added to teams).',
+                    'invalid_members' => array_values($invalidMembers)
                 ], 400);
             }
 
@@ -3986,6 +4066,52 @@ class ProducerController extends Controller
     }
 
     /**
+     * Get creative work detail (untuk Producer melihat data yang diajukan Creative, termasuk script_link, storyboard_link)
+     * GET /api/live-tv/producer/creative-works/{id}
+     */
+    public function getCreativeWorkDetail(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $creativeWork = CreativeWork::with([
+                'episode.productionTeam',
+                'episode.program.productionTeam',
+                'episode.program',
+                'createdBy',
+                'specialBudgetApproval',
+                'reviewedBy'
+            ])->findOrFail($id);
+
+            $episode = $creativeWork->episode;
+            if (!$episode) {
+                return response()->json(['success' => false, 'message' => 'Creative work has no episode.'], 404);
+            }
+            if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This creative work is not from your production team.'
+                ], 403);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $creativeWork,
+                'message' => 'Creative work retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve creative work',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Cancel Jadwal Syuting
      * POST /api/live-tv/producer/creative-works/{id}/cancel-shooting
      */
@@ -4281,8 +4407,7 @@ class ProducerController extends Controller
 
             $creativeWork = CreativeWork::with(['episode.productionTeam', 'episode.program.productionTeam', 'specialBudgetApproval'])->findOrFail($id);
 
-            // Validate Producer has access
-            // Support episode.productionTeam langsung atau episode.program.productionTeam
+            // Validate Producer has access (sama seperti getApprovals: episode ATAU program production team)
             $episode = $creativeWork->episode;
             if (!$episode) {
                 return response()->json([
@@ -4290,17 +4415,15 @@ class ProducerController extends Controller
                     'message' => 'Episode not found for this creative work.'
                 ], 404);
             }
-            
-            $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
-            
-            if (!$productionTeam) {
+            $teamOnEpisode = $episode->productionTeam;
+            $teamOnProgram = $episode->program ? $episode->program->productionTeam : null;
+            if (!$teamOnEpisode && !$teamOnProgram) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Production team not found for this episode. Please assign a production team first.'
                 ], 404);
             }
-            
-            if ($productionTeam->producer_id !== $user->id) {
+            if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This creative work is not from your production team.'
@@ -5491,6 +5614,209 @@ class ProducerController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get Production Team Details (Members)
+     */
+    public function getProductionTeamDetails(int $teamId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            // Verify producer owns this team
+            $team = \App\Models\ProductionTeam::where('id', $teamId)
+                ->where('producer_id', $user->id)
+                ->first();
+
+            if (!$team) {
+                return response()->json(['success' => false, 'message' => 'Team not found or not owned by you.'], 404);
+            }
+
+            $members = $team->members()
+                ->where('is_active', true)
+                ->with('user:id,name,email,role')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $members,
+                'team' => $team,
+                'message' => 'Team details retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Failed to get team details', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Add Member to Production Team
+     */
+    public function addProductionTeamMember(Request $request, int $teamId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'user_id' => 'required|exists:users,id',
+                'role' => 'required|string',
+                'notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            // Verify producer owns this team
+            $team = \App\Models\ProductionTeam::where('id', $teamId)
+                ->where('producer_id', $user->id)
+                ->first();
+
+            if (!$team) {
+                return response()->json(['success' => false, 'message' => 'Team not found or not owned by you.'], 404);
+            }
+
+            // Check if user already in team with active status
+            $existing = $team->members()
+                ->where('user_id', $request->user_id)
+                ->where('is_active', true)
+                ->first();
+
+            if ($existing) {
+                // Update role if different
+                if ($existing->role !== $request->role) {
+                    $existing->update(['role' => $request->role]);
+                    return response()->json(['success' => true, 'message' => 'Member role updated successfully']);
+                }
+                return response()->json(['success' => false, 'message' => 'User is already a member of this team.'], 400);
+            }
+
+            // Add member
+            $team->addMember($request->user_id, $request->role, $request->notes);
+
+            return response()->json(['success' => true, 'message' => 'Member added successfully']);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Failed to add member', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Remove Member from Production Team
+     */
+    public function removeProductionTeamMember(Request $request, int $teamId, int $userId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            // Verify producer owns this team
+            $team = \App\Models\ProductionTeam::where('id', $teamId)
+                ->where('producer_id', $user->id)
+                ->first();
+
+            if (!$team) {
+                return response()->json(['success' => false, 'message' => 'Team not found or not owned by you.'], 404);
+            }
+
+            // Get role from request or find active member
+            $role = $request->input('role');
+            if (!$role) {
+                $member = $team->members()
+                    ->where('user_id', $userId)
+                    ->where('is_active', true)
+                    ->first();
+                if (!$member) {
+                     return response()->json(['success' => false, 'message' => 'Member not found in this team.'], 404);
+                }
+                $role = $member->role;
+            }
+
+            try {
+                $team->removeMember($userId, $role);
+            } catch (\Exception $e) {
+                 return response()->json(['success' => false, 'message' => $e->getMessage()], 400);
+            }
+
+            return response()->json(['success' => true, 'message' => 'Member removed successfully']);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Failed to remove member', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Assign Team to Episode
+     * Producer hanya bisa assign team yang dia miliki
+     */
+    public function assignTeamToEpisode(Request $request, int $episodeId): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'production_team_id' => 'required|exists:production_teams,id',
+                'notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            // Verify producer owns the target team
+            $team = \App\Models\ProductionTeam::where('id', $request->production_team_id)
+                ->where('producer_id', $user->id)
+                ->first();
+
+            if (!$team) {
+                return response()->json(['success' => false, 'message' => 'Target team not found or not owned by you.'], 404);
+            }
+
+            $episode = Episode::with('program.productionTeam')->findOrFail($episodeId);
+
+            // Verify producer has access to this episode
+            $hasAccess = false;
+            // Check program's production team
+            if ($episode->program && $episode->program->productionTeam && $episode->program->productionTeam->producer_id === $user->id) {
+                $hasAccess = true;
+            } 
+            // Check episode's current production team (if any)
+            elseif ($episode->productionTeam && $episode->productionTeam->producer_id === $user->id) {
+                $hasAccess = true;
+            }
+
+            if (!$hasAccess) {
+                 return response()->json(['success' => false, 'message' => 'Unauthorized: You do not have access to manage this episode.'], 403);
+            }
+
+            $episode->update([
+                'production_team_id' => $request->production_team_id,
+                'team_assignment_notes' => $request->notes,
+                'team_assigned_by' => $user->id,
+                'team_assigned_at' => now()
+            ]);
+
+            return response()->json(['success' => true, 'message' => 'Team assigned to episode successfully']);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Failed to assign team', 'error' => $e->getMessage()], 500);
         }
     }
 

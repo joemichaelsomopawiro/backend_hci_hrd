@@ -9,6 +9,39 @@ use Illuminate\Http\JsonResponse;
 class UserController extends Controller
 {
     /**
+     * Search users by name or email
+     */
+    public function search(Request $request): JsonResponse
+    {
+        try {
+            $query = $request->input('query');
+            
+            if (empty($query) || strlen($query) < 2) {
+                return response()->json([
+                    'success' => true,
+                    'data' => []
+                ]);
+            }
+
+            $users = User::where('name', 'like', "%{$query}%")
+                ->orWhere('email', 'like', "%{$query}%")
+                ->limit(20)
+                ->get(['id', 'name', 'email', 'role']);
+
+            return response()->json([
+                'success' => true,
+                'data' => $users
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Search failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Display a listing of users with filtering options
      */
     public function index(Request $request): JsonResponse

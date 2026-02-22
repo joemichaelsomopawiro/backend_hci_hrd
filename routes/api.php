@@ -64,6 +64,7 @@ Route::post('/employees/{employeeId}/documents', [EmployeeController::class, 'up
 
 // User routes
 Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/users/search', [UserController::class, 'search']);
     Route::get('/users', [UserController::class, 'index']);
     Route::get('/users/{id}', [UserController::class, 'show']);
 });

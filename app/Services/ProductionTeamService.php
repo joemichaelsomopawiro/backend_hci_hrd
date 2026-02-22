@@ -16,7 +16,24 @@ class ProductionTeamService
     public function createTeam(array $data): ProductionTeam
     {
         return DB::transaction(function () use ($data) {
+            // Extract members before creating team (not a column on production_teams)
+            $members = $data['members'] ?? [];
+            unset($data['members']);
+            
             $team = ProductionTeam::create($data);
+            
+            // Add members if provided
+            if (!empty($members) && is_array($members)) {
+                foreach ($members as $member) {
+                    if (!empty($member['user_id']) && !empty($member['role'])) {
+                        $team->addMember(
+                            $member['user_id'],
+                            $member['role'],
+                            $member['notes'] ?? null
+                        );
+                    }
+                }
+            }
             
             // Send notification to producer
             Notification::create([
@@ -188,7 +205,13 @@ class ProductionTeamService
      */
     public function getTeamsByProducer(int $producerId): array
     {
-        $teams = ProductionTeam::where('producer_id', $producerId)
+        $teams = ProductionTeam::where(function($query) use ($producerId) {
+                $query->where('producer_id', $producerId)
+                      ->orWhereHas('members', function ($q) use ($producerId) {
+                          $q->where('user_id', $producerId)
+                            ->where('is_active', true);
+                      });
+            })
             ->with(['members' => function ($query) {
                 $query->where('is_active', true);
             }])
@@ -224,9 +247,9 @@ class ProductionTeamService
      */
     public function getAvailableUsersForRole(string $role): array
     {
-        // Special logic for Tim Syuting (production), Tim Setting (art_set_design), and Tim Vocal (sound_eng)
+        // Special logic for Tim Setting (art_set_design) and Tim Vocal (sound_eng)
         // Producer can select ANY user (except Managers) for these roles
-        if (in_array($role, ['production', 'art_set_design', 'sound_eng'])) {
+        if (in_array($role, ['art_set_design', 'sound_eng'])) {
              $users = User::whereNotIn('role', ['Manager Program', 'Program Manager', 'General Manager', 'Administrator'])
                 ->where('is_active', true)
                 ->get();
@@ -235,8 +258,12 @@ class ProductionTeamService
             $roleMapping = [
                 'creative' => 'Creative',
                 'musik_arr' => 'Music Arranger',
+                'music_arranger' => 'Music Arranger',
                 'sound_eng' => 'Sound Engineer',
+                'sound_engineer' => 'Sound Engineer',
                 'editor' => 'Editor',
+                'producer' => 'Producer',
+                'production' => 'Production',
             ];
             
             // Get user role from mapping, fallback to original role if not found

@@ -765,12 +765,21 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     Route::put('/schedules/{scheduleId}/emergency-reassign-team', [ProducerController::class, 'emergencyReassignTeam']);
     Route::post('/episodes/{episodeId}/edit-rundown', [ProducerController::class, 'editRundown']);
     
+    // Song Proposal History
+    Route::get('/song-proposals/history', [ProducerController::class, 'getSongProposalHistory'])->middleware('throttle:60,1');
+    
     // Edit arrangement song/singer sebelum approve
     Route::put('/arrangements/{arrangementId}/edit-song-singer', [ProducerController::class, 'editArrangementSongSinger']);
     
     // Kirim reminder manual ke crew
     Route::post('/send-reminder-to-crew', [ProducerController::class, 'sendReminderToCrew']);
     
+    // Team Management
+    Route::get('/production-teams/{teamId}/details', [ProducerController::class, 'getProductionTeamDetails']);
+    Route::post('/production-teams/{teamId}/add-member', [ProducerController::class, 'addProductionTeamMember']);
+    Route::delete('/production-teams/{teamId}/remove-member/{userId}', [ProducerController::class, 'removeProductionTeamMember']);
+    Route::put('/episodes/{episodeId}/assign-team', [ProducerController::class, 'assignTeamToEpisode']);
+
     // Weekly Airing Control
     Route::get('/weekly-airing-control', [ProducerController::class, 'getWeeklyAiringControl']);
     Route::get('/episodes/upcoming-this-week', [ProducerController::class, 'getUpcomingEpisodesThisWeek']);
@@ -778,6 +787,7 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     
     // Creative Work Management
     Route::get('/crew-members', [ProducerController::class, 'getCrewMembers']); // Ambil daftar kru untuk dipilih
+    Route::get('/creative-works/{id}', [ProducerController::class, 'getCreativeWorkDetail'])->middleware('throttle:60,1'); // Detail creative work (termasuk script_link, storyboard_link)
     Route::post('/creative-works/{id}/review', [ProducerController::class, 'reviewCreativeWork']); // Cek script, storyboard, budget
     Route::post('/creative-works/{id}/assign-team', [ProducerController::class, 'assignTeamToCreativeWork']); // Tambah tim syuting/setting/rekam vokal
     Route::put('/creative-works/{id}/edit', [ProducerController::class, 'editCreativeWork']); // Edit creative work langsung
