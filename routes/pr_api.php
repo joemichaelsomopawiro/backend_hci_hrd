@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\Pr\PrCreativeController;
 use App\Http\Controllers\Api\Pr\PrProduksiController;
 use App\Http\Controllers\Api\Pr\PrEditorController;
 use App\Http\Controllers\Api\Pr\PrPromosiController;
+use App\Http\Controllers\Api\Pr\PrDesignGrafisController;
 use App\Http\Controllers\Api\Pr\PrQualityControlController;
 use App\Http\Controllers\Api\Pr\PrBroadcastingController;
 use App\Http\Controllers\Api\PrProducerController;
@@ -97,6 +98,9 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
 
     // ==================== PROMOSI ROUTES ====================
     Route::prefix('promosi')->group(function () {
+        Route::get('/episodes', [PrPromosiController::class, 'getEpisodes']); // For Share Konten dropdown
+        Route::get('/share-konten/{episodeId}', [PrPromosiController::class, 'getShareKonten']); // Get saved share tasks
+        Route::post('/share-konten/{episodeId}', [PrPromosiController::class, 'saveShareKonten']); // Save share tasks
         Route::get('/works', [PrPromosiController::class, 'index']);
         Route::post('/works', [PrPromosiController::class, 'store']); // Create new work
         Route::get('/works/{id}', [PrPromosiController::class, 'show']); // Get work detail
@@ -108,22 +112,56 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/works/{id}/share', [PrPromosiController::class, 'shareContent']); // Alias for frontend
     });
 
+    // ==================== EDITOR PROMOSI ROUTES ====================
+    Route::prefix('editor-promosi')->group(function () {
+        Route::get('/works', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'index']);
+        Route::get('/works/{id}', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'show']);
+        Route::post('/works/{id}/accept-work', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'acceptWork']);
+        Route::put('/works/{id}', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'updateProgress']);
+        Route::post('/works/{id}/submit', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'submit']);
+        Route::post('/works/{id}/approve', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'approve']);
+        Route::get('/check-editor-status/{episodeId}', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'checkEditorStatus']);
+    });
+
+    // ==================== DESIGN GRAFIS ROUTES ====================
+    Route::prefix('design-grafis')->group(function () {
+        Route::get('/works', [PrDesignGrafisController::class, 'index']);
+        Route::get('/works/{id}', [PrDesignGrafisController::class, 'show']);
+        Route::post('/works/{id}/accept', [PrDesignGrafisController::class, 'acceptWork']);
+        Route::put('/works/{id}', [PrDesignGrafisController::class, 'updateProgress']);
+        Route::post('/works/{id}/submit', [PrDesignGrafisController::class, 'submit']);
+    });
+
     // ==================== QUALITY CONTROL ROUTES ====================
     Route::prefix('quality-control')->group(function () {
         Route::get('/works', [PrQualityControlController::class, 'index']);
+        Route::get('/works/{id}', [PrQualityControlController::class, 'show']);
         Route::post('/works/{id}/accept-work', [PrQualityControlController::class, 'acceptWork']);
         Route::post('/works/{id}/submit-qc-form', [PrQualityControlController::class, 'submitQCForm']);
         Route::post('/works/{id}/approve', [PrQualityControlController::class, 'approve']);
         Route::post('/works/{id}/reject', [PrQualityControlController::class, 'reject']);
+        Route::put('/works/{id}/checklist', [PrQualityControlController::class, 'updateChecklistItem']);
+        Route::post('/works/{id}/finish', [PrQualityControlController::class, 'finish']);
+    });
+
+    // ==================== MANAGER DISTRIBUSI QC ROUTES ====================
+    Route::prefix('manager-distribusi-qc')->group(function () {
+        Route::get('/works', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'index']);
+        Route::get('/works/{id}', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'show']);
+        Route::post('/works/{id}/accept-work', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'acceptWork']);
+        Route::put('/works/{id}/checklist', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'updateChecklistItem']);
+        Route::post('/works/{id}/finish', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'finish']);
     });
 
     // ==================== BROADCASTING ROUTES ====================
     Route::prefix('broadcasting')->group(function () {
         Route::get('/works', [PrBroadcastingController::class, 'index']);
+        Route::get('/works/{id}', [PrBroadcastingController::class, 'show']);
         Route::post('/works/{id}/accept-work', [PrBroadcastingController::class, 'acceptWork']);
         Route::put('/works/{id}', [PrBroadcastingController::class, 'update']); // Generic update
         Route::post('/works/{id}/upload-youtube', [PrBroadcastingController::class, 'uploadYouTube']);
         Route::post('/works/{id}/publish', [PrBroadcastingController::class, 'publish']);
+        Route::post('/works/{id}/finish', [PrBroadcastingController::class, 'finish']);
     });
 
     // ==================== DISTRIBUSI ROUTES ====================

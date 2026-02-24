@@ -283,8 +283,130 @@ class PrWorkflowService
             ];
         });
 
-        // SELF-HEALING: Check for Step 3 (Kreatif) inconsistency
-        // If Creative Work is submitted/approved but Step 3 is not completed, fix it.
+        // SELF-HEALING: Check for Step 6 (Edit Konten) completion
+        // Criteria:
+        // 1. Editor Work: 'pending_qc' or 'completed'
+        // 2. Promotion Work: 'completed'
+        // 3. Editor Promosi Work: 'pending_qc' or 'completed'
+        $step6 = $episode->workflowProgress->firstWhere('workflow_step', 6);
+        if ($step6 && $step6->status !== 'completed') {
+            try {
+                $editorWork = \App\Models\PrEditorWork::where('pr_episode_id', $episodeId)->first();
+                $promoWork = \App\Models\PrPromotionWork::where('pr_episode_id', $episodeId)->first();
+                $editorPromoWork = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)->first();
+                $designGrafisWork = \App\Models\PrDesignGrafisWork::where('pr_episode_id', $episodeId)->first();
+
+                $editorReady = $editorWork && in_array($editorWork->status, ['pending_qc', 'completed']);
+                $promoReady = $promoWork && $promoWork->status === 'completed';
+                $editorPromoReady = $editorPromoWork && in_array($editorPromoWork->status, ['pending_qc', 'completed']);
+                $designGrafisReady = $designGrafisWork && in_array($designGrafisWork->status, ['pending_qc', 'completed']);
+
+                if ($editorReady && $promoReady && $editorPromoReady && $designGrafisReady) {
+                    $step6->update([
+                        'status' => 'completed',
+                        'completed_at' => now(),
+                        'notes' => 'Auto-completed: Editor, Promotion, Editor Promotion, and Design Grafis requirements met'
+                    ]);
+
+                    // Refresh episode to get updated workflow progress
+                    $episode->load('workflowProgress');
+
+                    // Update the steps array with the new status
+                    // We need to regenerate the steps array because it was already built above
+                    $steps = $episode->workflowProgress->map(function ($progress) use ($episode) {
+                        // Determine the "assigned user" to display based on Role Logic
+                        $displayUser = null;
+
+                        if ($progress->responsible_role === 'Program Manager') {
+                            // For Program Manager steps, always show the Program Manager
+                            $displayUser = [
+                                'id' => $episode->program->managerProgram->id,
+                                'name' => $episode->program->managerProgram->name,
+                                'role' => 'Program Manager' // Force display role
+                            ];
+                        } else {
+                            // For other roles, look for the specific crew member assigned to this role in this program
+                            // Note: responsible_role in workflow might match the role in PrProgramCrew
+                            $crewMember = $episode->program->crews->first(function ($crew) use ($progress) {
+                                return $crew->role === $progress->responsible_role;
+                            });
+
+                            if ($crewMember && $crewMember->user) {
+                                $displayUser = [
+                                    'id' => $crewMember->user->id,
+                                    'name' => $crewMember->user->name,
+                                    'role' => $crewMember->role
+                                ];
+                            } else {
+                                // Fallback to manually assigned user if no crew found (legacy support)
+                                if ($progress->assignedUser) {
+                                    $displayUser = [
+                                        'id' => $progress->assignedUser->id,
+                                        'name' => $progress->assignedUser->name,
+                                        'role' => $progress->assignedUser->role
+                                    ];
+                                }
+                            }
+                        }
+
+                        return [
+                            'step_number' => $progress->workflow_step,
+                            'step_name' => $progress->step_name,
+                            'responsible_role' => $progress->responsible_role,
+                            'responsible_roles' => $progress->responsible_roles, // Array of roles
+                            'status' => $progress->status,
+                            'color' => WorkflowStep::getStatusColor($progress->status),
+                            'assigned_user' => $displayUser,
+                            'started_at' => $progress->started_at?->toIso8601String(),
+                            'completed_at' => $progress->completed_at?->toIso8601String(),
+                            'duration_hours' => $progress->duration,
+                            'notes' => $progress->notes
+                        ];
+                    });
+                }
+            } catch (\Exception $e) {
+                Log::error('Error checking Step 6 completion: ' . $e->getMessage());
+            }
+        }
+
+        // SELF-HEALING: Check for Step 7 (Quality Check Manager Distribusi) completion
+        // Criteria: PrManagerDistribusiQcWork status is 'completed' or 'approved'
+        $step7 = $episode->workflowProgress->firstWhere('workflow_step', 7);
+        if ($step7 && $step7->status !== 'completed') {
+            try {
+                $qcManagerWork = \App\Models\PrManagerDistribusiQcWork::where('pr_episode_id', $episodeId)->first();
+                if ($qcManagerWork && in_array($qcManagerWork->status, ['completed', 'approved'])) {
+                    $step7->update([
+                        'status' => 'completed',
+                        'completed_at' => $qcManagerWork->qc_completed_at ?? now(),
+                        'notes' => 'Auto-completed: Manager Distribusi QC is marked as completed/approved'
+                    ]);
+                    $needRefresh = true;
+                }
+            } catch (\Exception $e) {
+                Log::error('Error checking Step 7 completion: ' . $e->getMessage());
+            }
+        }
+
+        // SELF-HEALING: Check for Step 8 (Quality Check Final) completion
+        // Criteria: PrQualityControlWork status is 'completed' or 'approved'
+        $step8 = $episode->workflowProgress->firstWhere('workflow_step', 8);
+        if ($step8 && $step8->status !== 'completed') {
+            try {
+                $qcFinalWork = \App\Models\PrQualityControlWork::where('pr_episode_id', $episodeId)->first();
+                if ($qcFinalWork && in_array($qcFinalWork->status, ['completed', 'approved'])) {
+                    $step8->update([
+                        'status' => 'completed',
+                        'completed_at' => $qcFinalWork->qc_completed_at ?? now(),
+                        'notes' => 'Auto-completed: Final QC is marked as completed/approved'
+                    ]);
+                    $needRefresh = true;
+                }
+            } catch (\Exception $e) {
+                Log::error('Error checking Step 8 completion: ' . $e->getMessage());
+            }
+        }
+
         $step3 = $episode->workflowProgress->firstWhere('workflow_step', 3);
         if ($step3 && $step3->status !== 'completed') {
             $creativeWork = \App\Models\PrCreativeWork::where('pr_episode_id', $episodeId)->first();
@@ -298,61 +420,66 @@ class PrWorkflowService
                     'notes' => 'Auto-completed by system (Self-Healing)'
                 ]);
 
-                // Refresh the steps collection to reflect the change
-                $episode->load('workflowProgress');
-                // Re-map steps
-                $steps = $episode->workflowProgress->map(function ($progress) use ($episode) {
-                    // Determine the "assigned user" to display based on Role Logic
-                    $displayUser = null;
-
-                    if ($progress->responsible_role === 'Program Manager') {
-                        // For Program Manager steps, always show the Program Manager
-                        $displayUser = [
-                            'id' => $episode->program->managerProgram->id,
-                            'name' => $episode->program->managerProgram->name,
-                            'role' => 'Program Manager' // Force display role
-                        ];
-                    } else {
-                        // For other roles, look for the specific crew member assigned to this role in this program
-                        // Note: responsible_role in workflow might match the role in PrProgramCrew
-                        $crewMember = $episode->program->crews->first(function ($crew) use ($progress) {
-                            return $crew->role === $progress->responsible_role;
-                        });
-
-                        if ($crewMember && $crewMember->user) {
-                            $displayUser = [
-                                'id' => $crewMember->user->id,
-                                'name' => $crewMember->user->name,
-                                'role' => $crewMember->role
-                            ];
-                        } else {
-                            // Fallback to manually assigned user if no crew found (legacy support)
-                            if ($progress->assignedUser) {
-                                $displayUser = [
-                                    'id' => $progress->assignedUser->id,
-                                    'name' => $progress->assignedUser->name,
-                                    'role' => $progress->assignedUser->role
-                                ];
-                            }
-                        }
-                    }
-
-                    return [
-                        'step_number' => $progress->workflow_step,
-                        'step_name' => $progress->step_name,
-                        'responsible_role' => $progress->responsible_role,
-                        'responsible_roles' => $progress->responsible_roles, // Array of roles
-                        'status' => $progress->status,
-                        'color' => WorkflowStep::getStatusColor($progress->status),
-                        'assigned_user' => $displayUser,
-                        'started_at' => $progress->started_at?->toIso8601String(),
-                        'completed_at' => $progress->completed_at?->toIso8601String(),
-                        'duration_hours' => $progress->duration,
-                        'notes' => $progress->notes
-                    ];
-                });
+                $needRefresh = true;
             }
         }
+
+        if (isset($needRefresh) && $needRefresh) {
+            // Refresh the steps collection to reflect the change
+            $episode->load('workflowProgress');
+            // Re-map steps
+            $steps = $episode->workflowProgress->map(function ($progress) use ($episode) {
+                // Determine the "assigned user" to display based on Role Logic
+                $displayUser = null;
+
+                if ($progress->responsible_role === 'Program Manager') {
+                    // For Program Manager steps, always show the Program Manager
+                    $displayUser = [
+                        'id' => $episode->program->managerProgram->id,
+                        'name' => $episode->program->managerProgram->name,
+                        'role' => 'Program Manager' // Force display role
+                    ];
+                } else {
+                    // For other roles, look for the specific crew member assigned to this role in this program
+                    // Note: responsible_role in workflow might match the role in PrProgramCrew
+                    $crewMember = $episode->program->crews->first(function ($crew) use ($progress) {
+                        return $crew->role === $progress->responsible_role;
+                    });
+
+                    if ($crewMember && $crewMember->user) {
+                        $displayUser = [
+                            'id' => $crewMember->user->id,
+                            'name' => $crewMember->user->name,
+                            'role' => $crewMember->role
+                        ];
+                    } else {
+                        // Fallback to manually assigned user if no crew found (legacy support)
+                        if ($progress->assignedUser) {
+                            $displayUser = [
+                                'id' => $progress->assignedUser->id,
+                                'name' => $progress->assignedUser->name,
+                                'role' => $progress->assignedUser->role
+                            ];
+                        }
+                    }
+                }
+
+                return [
+                    'step_number' => $progress->workflow_step,
+                    'step_name' => $progress->step_name,
+                    'responsible_role' => $progress->responsible_role,
+                    'responsible_roles' => $progress->responsible_roles, // Array of roles
+                    'status' => $progress->status,
+                    'color' => WorkflowStep::getStatusColor($progress->status),
+                    'assigned_user' => $displayUser,
+                    'started_at' => $progress->started_at?->toIso8601String(),
+                    'completed_at' => $progress->completed_at?->toIso8601String(),
+                    'duration_hours' => $progress->duration,
+                    'notes' => $progress->notes
+                ];
+            });
+        }
+
 
         return [
             'episode' => [

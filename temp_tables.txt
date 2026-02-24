@@ -1,0 +1,38 @@
+PHP Warning:  Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+PHP Warning:  Module "ftp" is already loaded in Unknown on line 0
+
+Warning: Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: Module "ftp" is already loaded in Unknown on line 0
+Listing tables...
+broadcasting_works
+creative_works
+design_grafis_works
+editor_promosi_works
+editor_works
+pr_activity_logs
+pr_broadcasting_works
+pr_creative_works
+pr_design_grafis_works
+pr_distribution_reports
+pr_distribution_schedules
+pr_editor_promosi_works
+pr_editor_revision_notes
+pr_editor_works
+pr_episode_crews
+pr_episode_workflow_progress
+pr_episodes
+pr_production_schedules
+pr_produksi_works
+pr_program_concepts
+pr_program_crews
+pr_program_files
+pr_program_revisions
+pr_programs
+pr_promotion_works
+pr_quality_control_works
+pr_talents
+pr_workflow_steps
+produksi_works
+promotion_works
+quality_control_works

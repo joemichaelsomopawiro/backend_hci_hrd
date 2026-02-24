@@ -730,6 +730,12 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::get('/programs/{id}/team-members', [PrProgramCrewController::class, 'index']); // List team
         Route::post('/programs/{id}/team-members', [PrProgramCrewController::class, 'store']); // Add team member
         Route::delete('/programs/{id}/team-members/{memberId}', [PrProgramCrewController::class, 'destroy']); // Remove team member
+
+        // Episode Crews Management (Shooting & Setting Team)
+        Route::get('/episodes/{id}/crews', [PrManagerProgramController::class, 'getEpisodeCrews']);
+        Route::post('/episodes/{id}/crews', [PrManagerProgramController::class, 'addEpisodeCrew']);
+        Route::delete('/episodes/{id}/crews/{crewId}', [PrManagerProgramController::class, 'removeEpisodeCrew']);
+
     });
 
     // Producer Routes
@@ -878,6 +884,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'update']);
         Route::put('/works/{id}/file-check', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'updateFileCheck']);
         Route::post('/works/{id}/revision-notes', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'createRevisionNote']);
+        Route::post('/works/{id}/request-files', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'requestFiles']); // New route
         Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrEditorController::class, 'submit']);
     });
 
@@ -891,20 +898,21 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'submit']);
     });
 
-    // Design Grafis Routes (Step 6)
-    Route::prefix('design-grafis')->group(function () {
-        Route::get('/works', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'index']);
-        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'show']);
-        Route::post('/works/{episodeId}/start', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'start']);
-        Route::put('/works/{id}/progress', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'updateProgress']);
-        Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'submit']);
-    });
 
     // Producer - Revision Approval (Step 6)
     Route::prefix('producer')->group(function () {
         Route::get('/revision-requests', [App\Http\Controllers\Api\Pr\PrProducerController::class, 'getRevisionRequests']);
         Route::post('/revision-requests/{id}/approve', [App\Http\Controllers\Api\Pr\PrProducerController::class, 'approveRevision']);
         Route::post('/revision-requests/{id}/reject', [App\Http\Controllers\Api\Pr\PrProducerController::class, 'rejectRevision']);
+    });
+
+    // Quality Control Routes (Step 7)
+    Route::prefix('quality-control')->group(function () {
+        Route::get('/works', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'index']);
+        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'show']);
+        Route::post('/works/{id}/accept', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'acceptWork']);
+        Route::post('/works/{id}/checklist', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'updateChecklistItem']);
+        Route::post('/works/{id}/finish', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'finish']);
     });
 });
 
@@ -968,3 +976,141 @@ Route::get('/fix-step-6-sync-dry-run', function () {
         return response()->json(['error' => $e->getMessage()]);
     }
 });
+
+
+Route::get('/verify-sanity-check', function () {
+    return response()->json(['message' => 'Sanity Check OK', 'path' => base_path()]);
+});
+
+Route::get('/verify-step-6-v2', function () {
+    try {
+        // 1. Create a dummy user
+        $user = \App\Models\User::first();
+        if (!$user)
+            return 'No user found';
+
+        // 2. Create a dummy program and episode
+        // DEBUG: Check table schema
+        $columns = \Illuminate\Support\Facades\DB::select('DESCRIBE pr_programs');
+        // Filter for start_date
+        $startDateCol = array_filter($columns, function ($c) {
+            return $c->Field === 'start_date';
+        });
+
+        if (empty($startDateCol)) {
+            return response()->json(['error' => 'start_date column missing from DB', 'columns' => $columns], 500);
+        }
+
+        $program = \App\Models\PrProgram::where('name', 'Test Program Verification')->first();
+        if (!$program) {
+            try {
+                $program = \App\Models\PrProgram::create([
+                    'name' => 'Test Program Verification',
+                    'description' => 'Test',
+                    'status' => 'draft',
+                    'manager_program_id' => $user->id,
+                ]);
+            } catch (\Exception $e) {
+                return response()->json(['error' => 'Program Create Failed', 'message' => $e->getMessage()], 500);
+            }
+        }
+
+        $episode = \App\Models\PrEpisode::create([
+            'program_id' => $program->id,
+            'episode_number' => rand(10000, 99999),
+            'title' => 'Test Episode Step 6 Verification ' . rand(1, 1000),
+            'status' => 'scheduled',
+        ]);
+
+        // 3. Initialize Workflow
+        $service = app(\App\Services\PrWorkflowService::class);
+        $service->initializeWorkflow($episode);
+
+        $debugErrors = [];
+        $editorWork = null;
+        $promoWork = null;
+        $editorPromoWork = null;
+
+        // Editor: pending_qc
+        try {
+            $editorWork = \App\Models\PrEditorWork::create([
+                'pr_episode_id' => $episode->id,
+                'status' => 'pending_qc',
+            ]);
+        } catch (\Exception $e) {
+            $debugErrors['editor'] = $e->getMessage();
+        }
+
+        // Promotion: completed (create first so we have its ID for EditorPromosi)
+        try {
+            $promoWork = \App\Models\PrPromotionWork::create([
+                'pr_episode_id' => $episode->id,
+                'status' => 'completed',
+                'work_type' => 'bts_video'
+            ]);
+        } catch (\Exception $e) {
+            $debugErrors['promo'] = $e->getMessage();
+        }
+
+        // Editor Promosi: pending_qc (requires pr_promotion_work_id)
+        try {
+            if ($promoWork) {
+                $editorPromoWork = \App\Models\PrEditorPromosiWork::create([
+                    'pr_episode_id' => $episode->id,
+                    'pr_promotion_work_id' => $promoWork->id,
+                    'status' => 'pending_qc',
+                ]);
+            } else {
+                $debugErrors['editor_promo'] = 'Skipped: no promotion work created';
+            }
+        } catch (\Exception $e) {
+            $debugErrors['editor_promo'] = $e->getMessage();
+        }
+
+        // 5. Call getWorkflowVisualization to trigger logic
+        $data = $service->getWorkflowVisualization($episode->id);
+
+        // 6. Check Step 6 status AFTER
+        $step6 = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episode->id)
+            ->where('workflow_step', 6)
+            ->first();
+
+        return response()->json([
+            'status' => $step6->status,
+            'success' => $step6->status === 'completed',
+            'debug_errors' => $debugErrors,
+            'editor_work_created' => $editorWork !== null,
+            'promo_work_created' => $promoWork !== null,
+            'editor_promo_created' => $editorPromoWork !== null,
+        ]);
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+    }
+});
+
+// Cleanup after test (separate route)
+Route::get('/cleanup-step-6-test', function () {
+    \App\Models\PrEditorPromosiWork::whereHas('episode', function ($q) {
+        $q->where('episode_number', 'TEST-001');
+    })->delete();
+    \App\Models\PrPromotionWork::whereHas('episode', function ($q) {
+        $q->where('episode_number', 'TEST-001');
+    })->delete();
+    \App\Models\PrEditorWork::whereHas('episode', function ($q) {
+        $q->where('episode_number', 'TEST-001');
+    })->delete();
+    $episode = \App\Models\PrEpisode::where('episode_number', 'TEST-001')->first();
+    if ($episode) {
+        $episode->workflowProgress()->delete();
+        $episode->delete();
+    }
+    $program = \App\Models\PrProgram::where('name', 'Test Program V2')->first();
+    if ($program) {
+        $program->delete();
+    }
+    return response()->json(['cleaned' => true]);
+});
+
+require __DIR__ . '/verification_step6_v3.php';
+require __DIR__ . '/verification_step6_v5.php';
+require __DIR__ . '/pr_api.php';

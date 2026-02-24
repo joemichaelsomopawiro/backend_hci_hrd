@@ -113,7 +113,7 @@ class PrPromosiController extends Controller
                 \Illuminate\Support\Facades\Log::error("Self-healing sync failed: " . $e->getMessage());
             }
 
-            $query = PrPromotionWork::with(['episode.program', 'createdBy']);
+            $query = PrPromotionWork::with(['episode.program', 'episode.creativeWork', 'createdBy']);
 
             if ($request->has('status') && $request->status !== '') {
                 $query->where('status', $request->status);
@@ -360,6 +360,150 @@ class PrPromosiController extends Controller
      * Check if both promotion and production are complete for an episode,
      * and update workflow step 5 accordingly. Also create Step 6 work records.
      */
+    /**
+     * Get all episodes that have a promotion work (for Share Konten dropdown)
+     */
+    public function getEpisodes(): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $episodes = \App\Models\PrEpisode::with(['program', 'promotionWork', 'broadcastingWork', 'editorPromosiWork'])
+                ->whereHas('promotionWork')
+                ->whereHas('workflowProgress', function ($query) {
+                    $query->where('workflow_step', 8)->where('status', 'completed');
+                })
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(function ($episode) {
+                    $isPromoted = $episode->status === 'promoted';
+                    $hasSharingTasks = !empty($episode->promotionWork?->sharing_proof['share_konten_tasks']);
+                    $workStatus = $isPromoted ? 'completed' : ($hasSharingTasks ? 'in_progress' : 'pending');
+
+                    return [
+                        'id' => $episode->id,
+                        'episode_number' => $episode->episode_number,
+                        'title' => $episode->title ?? ('Episode ' . $episode->episode_number),
+                        'program_name' => $episode->program?->name ?? '',
+                        'youtube_link' => $episode->broadcastingWork?->youtube_url ?? null,
+                        'work_status' => $workStatus,
+                        'last_edited' => $episode->promotionWork?->updated_at ? $episode->promotionWork->updated_at->format('Y-m-d H:i') : null,
+                        'status' => $episode->status,
+                    ];
+                });
+
+            return response()->json(['success' => true, 'data' => $episodes]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get saved Share Konten task progress for an episode
+     */
+    public function getShareKonten(int $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $promotionWork = PrPromotionWork::where('pr_episode_id', $episodeId)->first();
+
+            if (!$promotionWork) {
+                return response()->json(['success' => false, 'message' => 'No promotion work found for this episode'], 404);
+            }
+
+            $sharingProof = $promotionWork->sharing_proof ?? [];
+            $tasks = $sharingProof['share_konten_tasks'] ?? null;
+
+            // Load highlight links from EditorPromosiWork
+            $editorPromosi = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)->first();
+            $igHighlightLink = $editorPromosi?->ig_highlight_link ?? null;
+            $fbHighlightLink = $editorPromosi?->fb_highlight_link ?? null;
+
+            // Inject highlight links into tasks so frontend always has fresh data from DB
+            if ($tasks) {
+                if (isset($tasks['story_ig'])) {
+                    $tasks['story_ig']['video_link'] = $igHighlightLink;
+                }
+                if (isset($tasks['reels_fb'])) {
+                    $tasks['reels_fb']['video_link'] = $fbHighlightLink;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $tasks,
+                'ig_highlight_link' => $igHighlightLink,
+                'fb_highlight_link' => $fbHighlightLink,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Save Share Konten task progress for an episode
+     */
+    public function saveShareKonten(Request $request, int $episodeId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $promotionWork = PrPromotionWork::with(['episode.program'])->where('pr_episode_id', $episodeId)->first();
+
+            if (!$promotionWork) {
+                return response()->json(['success' => false, 'message' => 'No promotion work found for this episode'], 404);
+            }
+
+            $tasks = $request->input('tasks');
+
+            // Merge into sharing_proof under dedicated key to avoid overwriting other data
+            $sharingProof = $promotionWork->sharing_proof ?? [];
+            $sharingProof['share_konten_tasks'] = $tasks;
+
+            $promotionWork->sharing_proof = $sharingProof;
+            $promotionWork->save();
+
+            // Mark Step 10 as completed
+            $stepProgress = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+                ->where('workflow_step', 10)
+                ->first();
+
+            if ($stepProgress && $stepProgress->status !== 'completed') {
+                $stepProgress->update([
+                    'status' => 'completed',
+                    'completed_at' => now()
+                ]);
+            }
+
+            // Mark episode and program as promoted so Step 10 shows green checkmark
+            if ($promotionWork->episode) {
+                $promotionWork->episode->update(['status' => 'promoted']);
+
+                if ($promotionWork->episode->program) {
+                    $promotionWork->episode->program->update(['status' => 'promoted']);
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Share Konten tasks saved successfully',
+                'data' => $tasks
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
     private function checkAndUpdateWorkflowStep5($episode)
     {
         if (!$episode)

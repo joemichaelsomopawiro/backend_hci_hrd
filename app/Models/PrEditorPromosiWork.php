@@ -23,11 +23,14 @@ class PrEditorPromosiWork extends Model
         'notes',
         'started_at',
         'completed_at',
+        'submitted_at',
+        'deadline',
     ];
 
     protected $casts = [
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
+        'submitted_at' => 'datetime',
     ];
 
     // Relationships

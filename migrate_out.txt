@@ -1,0 +1,66 @@
+﻿php : PHP Warning:  
+Failed loading Zend 
+extension 'xdebug' 
+(tried: C:\xampp\php\e
+xt\xdebug (The 
+specified module 
+could not be found), C
+:\xampp\php\ext\php_xd
+ebug.dll (The 
+specified module 
+could not be found)) 
+in Unknown on line 0
+At line:1 char:1
++ php artisan migrate 
+--path="database/migra
+tions/2026_02_12_06534
+1_add ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (PHP Warnin   
+ g:  F...known on     
+line 0:String) []    
+, RemoteException
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+PHP Warning:  Module 
+"ftp" is already 
+loaded in Unknown on 
+line 0
+
+Warning: Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: Module "ftp" is already loaded in Unknown on line 0
+
+   INFO  Running migrations.  
+
+  2026_02_12_065341_add_start_date_to_pr_programs_table  3ms FAIL
+
+In Connection.php line 829:
+                      
+  SQLSTATE[42S21]: C  
+  olumn already exis  
+  ts: 1060 Duplicate  
+   column name 'star  
+  t_date' (Connectio  
+  n: mysql, SQL: alt  
+  er table `pr_progr  
+  ams` add `start_da  
+  te` date null)      
+                      
+
+In Connection.php line 587:
+                      
+  SQLSTATE[42S21]: C  
+  olumn already exis  
+  ts: 1060 Duplicate  
+   column name 'star  
+  t_date'             
+                      
+

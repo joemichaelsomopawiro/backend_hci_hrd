@@ -64,7 +64,8 @@ class PrProduksiController extends Controller
                 'episode.files', // Load files for the episode (scripts etc)
                 'creativeWork',
                 'createdBy',
-                'equipmentLoan.loanItems.inventoryItem'
+                'equipmentLoan.loanItems.inventoryItem',
+                'editorWork'
             ]);
             if ($request->has('status') && !empty($request->status)) {
                 $query->where('status', $request->status);
@@ -114,13 +115,14 @@ class PrProduksiController extends Controller
 
             $work = PrProduksiWork::findOrFail($id);
 
-            if ($work->created_by !== $user->id && $work->status !== 'pending') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
-            }
+            // Relaxed ownership check: Allow any Production user to update.
+            // If we want to track who updated, we could add updated_by field later.
+            // For now, if user has role 'Production', they can edit.
 
             if ($work->status === 'pending' && $work->created_by !== $user->id) {
-                $work->created_by = $user->id;
-                $work->save();
+                // Optional: Take ownership if pending? Or just allow edit.
+                // $work->created_by = $user->id; 
+                // $work->save();
             }
 
             $work->update($request->all());
@@ -140,13 +142,11 @@ class PrProduksiController extends Controller
                 if ($workflowStep && !$workflowStep->is_completed) {
                     $workflowStep->markAsCompleted($user->id, 'Produksi completed with file upload');
                 }
-
-                // Auto-create PrEditorWork
-                \App\Models\PrEditorWork::firstOrCreate(
-                    ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'main_episode'],
-                    ['status' => 'draft', 'created_by' => $user->id]
-                );
             }
+
+            // Always ensure Editor work is ready when Production work is updated
+            // This handles the case where revision was requested and Production is resubmitting
+            $this->ensureEditorWorkReady($work->pr_episode_id, $user->id);
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Production work updated successfully']);
 
@@ -286,17 +286,16 @@ class PrProduksiController extends Controller
                 return response()->json(['success' => false, 'message' => 'Please provide at least one link or upload a file.'], 422);
             }
 
-            $work->update([
+            $updateData = [
                 'shooting_file_links' => $finalLinksString,
                 'shooting_notes' => $request->shooting_notes,
                 'status' => 'completed'
-            ]);
+            ];
 
-            // Auto-create PrEditorWork
-            \App\Models\PrEditorWork::firstOrCreate(
-                ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'main_episode'],
-                ['status' => 'draft', 'created_by' => $user->id]
-            );
+            $work->update($updateData);
+
+            // Access PrEditorWork to update its status if it was in revision
+            $this->ensureEditorWorkReady($work->pr_episode_id, $user->id);
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Shooting results uploaded successfully']);
 
@@ -380,10 +379,7 @@ class PrProduksiController extends Controller
             $this->checkAndUpdateWorkflowStep5($work->episode);
 
             // Auto-create PrEditorWork for next step
-            \App\Models\PrEditorWork::firstOrCreate(
-                ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'main_episode'],
-                ['status' => 'draft', 'created_by' => $user->id]
-            );
+            $this->ensureEditorWorkReady($work->pr_episode_id, $user->id);
 
             DB::commit();
 
@@ -397,6 +393,33 @@ class PrProduksiController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Helper to ensure Editor work is ready for editing/review.
+     * If status is 'revision_requested', reset to 'revised'.
+     * If not exists, create as 'draft'.
+     */
+    private function ensureEditorWorkReady($episodeId, $userId)
+    {
+        $editorWork = \App\Models\PrEditorWork::where('pr_episode_id', $episodeId)->first();
+
+        if ($editorWork) {
+            // If the work was revision requested, we move it to 'revised' status
+            if ($editorWork->status === 'revision_requested') {
+                $editorWork->update([
+                    'status' => 'revised', // Set to 'revised' to distinguish from fresh 'draft' work
+                    'files_complete' => true, // Assuming now it is complete as per production submission
+                    'file_notes' => null
+                ]);
+            }
+        } else {
+            // Auto-create PrEditorWork if not exists
+            \App\Models\PrEditorWork::firstOrCreate(
+                ['pr_episode_id' => $episodeId, 'work_type' => 'main_episode'],
+                ['status' => 'draft', 'created_by' => $userId]
+            );
         }
     }
 

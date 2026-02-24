@@ -58,6 +58,61 @@ class PrEpisode extends Model
     }
 
     /**
+     * Relationship dengan Editor Work
+     */
+    public function editorWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrEditorWork::class, 'pr_episode_id');
+    }
+
+    /**
+     * Relationship dengan Promotion Work
+     */
+    public function promotionWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrPromotionWork::class, 'pr_episode_id');
+    }
+
+    /**
+     * Relationship dengan Editor Promosi Work
+     */
+    public function editorPromosiWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrEditorPromosiWork::class, 'pr_episode_id');
+    }
+
+    /**
+     * Relationship dengan Design Grafis Work
+     */
+    public function designGrafisWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrDesignGrafisWork::class, 'pr_episode_id');
+    }
+
+    /**
+     * Relationship dengan Quality Control Work
+     */
+    public function qualityControlWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrQualityControlWork::class, 'pr_episode_id');
+    }
+
+    /**
+     * Relationship dengan Manager Distribusi QC Work
+     */
+    public function managerDistribusiQcWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrManagerDistribusiQcWork::class, 'pr_episode_id');
+    }
+
+    /**
+     * Relationship dengan Broadcasting Work
+     */
+    public function broadcastingWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PrBroadcastingWork::class, 'pr_episode_id');
+    }
+    /**
      * Relationship dengan Production Schedules
      */
     public function productionSchedules(): HasMany

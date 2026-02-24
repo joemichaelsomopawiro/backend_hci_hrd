@@ -1,0 +1,23 @@
+PHP Warning:  Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+PHP Warning:  Module "ftp" is already loaded in Unknown on line 0
+
+Warning: Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: Module "ftp" is already loaded in Unknown on line 0
+Testing PrProduksiWork query...
+Query failed: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'pr_editor_works.pr_production_work_id' in 'where clause' (Connection: mysql, SQL: select * from `pr_editor_works` where `pr_editor_works`.`pr_production_work_id` in (8, 9, 10, 11, 12) and `pr_editor_works`.`deleted_at` is null)
+Stack trace: #0 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Connection.php(783): Illuminate\Database\Connection->runQueryCallback('select * from `...', Array, Object(Closure))
+#1 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Connection.php(414): Illuminate\Database\Connection->run('select * from `...', Array, Object(Closure))
+#2 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Query\Builder.php(2913): Illuminate\Database\Connection->select('select * from `...', Array, true)
+#3 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Query\Builder.php(2902): Illuminate\Database\Query\Builder->runSelect()
+#4 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Query\Builder.php(3456): Illuminate\Database\Query\Builder->Illuminate\Database\Query\{closure}()
+#5 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Query\Builder.php(2901): Illuminate\Database\Query\Builder->onceWithColumns(Array, Object(Closure))
+#6 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Builder.php(739): Illuminate\Database\Query\Builder->get(Array)
+#7 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Builder.php(723): Illuminate\Database\Eloquent\Builder->getModels(Array)
+#8 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Relations\Relation.php(203): Illuminate\Database\Eloquent\Builder->get(Array)
+#9 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Relations\Relation.php(166): Illuminate\Database\Eloquent\Relations\Relation->get()
+#10 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Builder.php(787): Illuminate\Database\Eloquent\Relations\Relation->getEager()
+#11 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Builder.php(756): Illuminate\Database\Eloquent\Builder->eagerLoadRelation(Array, 'editorWork', Object(Closure))
+#12 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Builder.php(724): Illuminate\Database\Eloquent\Builder->eagerLoadRelations(Array)
+#13 C:\xampp\htdocs\backend_hci\scripts\debug_produksi.php(20): Illuminate\Database\Eloquent\Builder->get()
+#14 {main}

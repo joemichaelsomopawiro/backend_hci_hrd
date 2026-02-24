@@ -1,0 +1,1 @@
+{"error":"Program Create Failed","message":"SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 (Connection: mysql, SQL: insert into `pr_programs` (`name`, `description`, `status`, `manager_program_id`, `updated_at`, `created_at`) values (Test Program Verification, Test, active, 1, 2026-02-19 21:46:16, 2026-02-19 21:46:16))"}
