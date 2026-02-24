@@ -7,7 +7,6 @@ use App\Models\CreativeWork;
 use App\Models\Episode;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
-use App\Services\FileUploadService;
 use App\Services\WorkAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -17,11 +16,9 @@ use Illuminate\Support\Facades\DB;
 
 class CreativeController extends Controller
 {
-    protected $fileUploadService;
-
-    public function __construct(FileUploadService $fileUploadService)
+    public function __construct()
     {
-        $this->fileUploadService = $fileUploadService;
+        // Link-only policy enforced
     }
 
     /**
@@ -820,13 +817,17 @@ class CreativeController extends Controller
     /**
      * Update Script or Storyboard Link
      * PUT /api/live-tv/roles/creative/works/{id}/update-link
-     * Replaces file upload mechanism
+     * Replaces file upload mechanism.
+     *
+     * Accepted body formats:
+     * 1) { "type": "script"|"storyboard", "link": "https://..." }
+     * 2) { "script_link": "https://...", "storyboard_link": "https://..." } (one or both, nullable)
      */
     public function updateLink(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user || $user->role !== 'Creative') {
                 return response()->json([
                     'success' => false,
@@ -834,10 +835,30 @@ class CreativeController extends Controller
                 ], 403);
             }
 
-            $validator = Validator::make($request->all(), [
-                'type' => 'required|in:script,storyboard',
-                'link' => 'required|url|max:2048'
-            ]);
+            // Format 1: type + link
+            $hasTypeLink = $request->filled('type') && $request->filled('link');
+            // Format 2: script_link and/or storyboard_link
+            $hasDirectLinks = $request->has('script_link') || $request->has('storyboard_link');
+
+            if ($hasTypeLink) {
+                $validator = Validator::make($request->all(), [
+                    'type' => 'required|in:script,storyboard',
+                    'link' => 'required|url|max:2048'
+                ]);
+            } elseif ($hasDirectLinks) {
+                $validator = Validator::make($request->all(), [
+                    'script_link' => 'nullable|url|max:2048',
+                    'storyboard_link' => 'nullable|url|max:2048'
+                ]);
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => [
+                        'body' => ['Provide either (type + link) or (script_link and/or storyboard_link).']
+                    ]
+                ], 422);
+            }
 
             if ($validator->fails()) {
                 return response()->json([
@@ -848,19 +869,34 @@ class CreativeController extends Controller
             }
 
             $work = CreativeWork::findOrFail($id);
-            
-            // Validate ownership/assignment logic typically should be here
-            if ($work->created_by !== $user->id) {
-                // strict check removed for now as per controller convention allowing team members to edit
+
+            $updateData = [];
+            if ($hasTypeLink) {
+                $field = $request->type . '_link';
+                $updateData[$field] = $request->link;
+            } else {
+                if ($request->has('script_link')) {
+                    $updateData['script_link'] = $request->script_link;
+                }
+                if ($request->has('storyboard_link')) {
+                    $updateData['storyboard_link'] = $request->storyboard_link;
+                }
             }
 
-            $field = $request->type . '_link'; // script_link or storyboard_link
-            $work->update([$field => $request->link]);
+            if (empty($updateData)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => ['link' => ['At least one valid link is required.']]
+                ], 422);
+            }
+
+            $work->update($updateData);
 
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => ucfirst($request->type) . ' link updated successfully'
+                'message' => 'Link(s) updated successfully'
             ]);
 
         } catch (\Exception $e) {

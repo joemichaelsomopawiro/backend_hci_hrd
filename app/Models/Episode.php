@@ -259,6 +259,14 @@ class Episode extends Model
     }
 
     /**
+     * Relationship dengan Creative Work tunggal (Latest)
+     */
+    public function creativeWork(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(CreativeWork::class)->latestOfMany();
+    }
+
+    /**
      * Relationship dengan Production Equipment
      */
     public function productionEquipment(): HasMany

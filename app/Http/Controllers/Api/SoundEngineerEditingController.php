@@ -388,36 +388,62 @@ class SoundEngineerEditingController extends Controller
      */
     public function uploadVocal(Request $request): JsonResponse
     {
-        $user = auth()->user();
-        if (!$user) {
-            return response()->json(['message' => 'Unauthorized'], 401);
-        }
+        return response()->json([
+            'success' => false,
+            'message' => 'Physical file uploads are disabled. Please use the inputVocalLink endpoint.'
+        ], 405);
+    }
 
-        $validator = Validator::make($request->all(), [
-            'file' => 'required|file|mimes:wav,mp3,aiff,flac|max:50000'
-        ]);
+    /**
+     * Input Vocal Link (External Storage)
+     * POST /api/live-tv/sound-engineer-editing/input-vocal-link
+     */
+    public function inputVocalLink(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json(['message' => 'Unauthorized'], 401);
+            }
 
-        if ($validator->fails()) {
+            if (!$this->isSoundEngineerEditing($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Access denied. Your role does not have access to this endpoint.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'vocal_file_link' => 'required|url|max:2048',
+                'vocal_file_name' => 'required|string|max:255',
+                'vocal_file_size' => 'nullable|integer'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Vocal link received successfully',
+                'data' => [
+                    'file_link' => $request->vocal_file_link,
+                    'file_name' => $request->vocal_file_name,
+                    'file_size' => $request->vocal_file_size,
+                    'file_path' => $request->vocal_file_link // For backward compatibility in Postman variables
+                ]
+            ]);
+
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
+                'message' => 'Error processing vocal link: ' . $e->getMessage()
+            ], 500);
         }
-
-        $file = $request->file('file');
-        $filename = time() . '_' . $file->getClientOriginalName();
-        $path = $file->storeAs('sound_engineer_editing', $filename, 'public');
-
-        return response()->json([
-            'success' => true,
-            'message' => 'File uploaded successfully',
-            'data' => [
-                'file_path' => $path,
-                'file_name' => $filename,
-                'file_size' => $file->getSize()
-            ]
-        ]);
     }
 
     /**

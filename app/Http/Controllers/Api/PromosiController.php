@@ -302,54 +302,35 @@ class PromosiController extends Controller
     }
 
     /**
-     * Upload BTS Video
-     * POST /api/live-tv/promosi/works/{id}/upload-bts-video
+     * Submit BTS Video Link
+     * POST /api/live-tv/roles/promosi/works/{id}/upload-bts-video
      */
     public function uploadBTSVideo(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            
             if (!$user || $user->role !== 'Promotion') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'file_link' => 'required|url|max:2048' // Enforced: External storage link only
+                'file_link' => 'required|url'
             ]);
-            
-            // file_link is now required via validator
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
-            $work = PromotionWork::with(['episode.program'])->findOrFail($id);
+            $work = PromotionWork::findOrFail($id);
 
-            // Check if user has access
-            if ($work->created_by !== $user->id && $work->status !== 'shooting') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you or not in shooting status.'
-                ], 403);
+            // Access check
+            if ($work->created_by !== $user->id) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // Get existing file_links or initialize
             $fileLinks = $work->file_links ?? [];
+            $fileLinks = array_filter($fileLinks, fn($item) => ($item['type'] ?? '') !== 'bts_video');
             
-            // Remove existing BTS video link if any
-            $fileLinks = array_filter($fileLinks, function($item) {
-                return isset($item['type']) && $item['type'] !== 'bts_video';
-            });
-            
-            // Add new BTS video to file_links
             $fileLinks[] = [
                 'type' => 'bts_video',
                 'file_link' => $request->file_link,
@@ -357,81 +338,45 @@ class PromosiController extends Controller
                 'uploaded_by' => $user->id
             ];
 
-            $work->update([
-                'file_links' => array_values($fileLinks)
-            ]);
+            $work->update(['file_links' => array_values($fileLinks)]);
 
-            // Audit logging
-            ControllerSecurityHelper::logCrud('promosi_bts_video_link_submitted', $work, [
-                'file_link' => $request->file_link
-            ], $request);
-
-            QueryOptimizer::clearAllIndexCaches();
-
-            return response()->json([
-                'success' => true,
-                'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'BTS video link submitted successfully.'
-            ]);
+            return response()->json(['success' => true, 'message' => 'BTS video link submitted successfully.']);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error uploading BTS video: ' . $e->getMessage()
-            ], 500);
-    }
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
-     * Upload Talent Photos
-     * POST /api/live-tv/promosi/works/{id}/upload-talent-photos
+     * Submit Talent Photo Links
+     * POST /api/live-tv/roles/promosi/works/{id}/upload-talent-photos
      */
     public function uploadTalentPhotos(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            
             if (!$user || $user->role !== 'Promotion') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'file_links' => 'required|array|min:1', // Enforced: External storage links only
-                'file_links.*' => 'required|url|max:2048'
+                'file_links' => 'required|array|min:1',
+                'file_links.*' => 'required|url'
             ]);
-            
-            // file_links is now required via validator
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
-            $work = PromotionWork::with(['episode.program'])->findOrFail($id);
+            $work = PromotionWork::findOrFail($id);
 
-            // Check if user has access
-            if ($work->created_by !== $user->id && $work->status !== 'shooting') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you or not in shooting status.'
-                ], 403);
+            if ($work->created_by !== $user->id) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // Get existing file_links or initialize
             $fileLinks = $work->file_links ?? [];
+            $fileLinks = array_filter($fileLinks, fn($item) => ($item['type'] ?? '') !== 'talent_photo');
             
-            // Remove existing talent photos link if any
-            $fileLinks = array_filter($fileLinks, function($item) {
-                return isset($item['type']) && $item['type'] !== 'talent_photo';
-            });
-            
-            // Add new talent photo links
             foreach ($request->file_links as $link) {
                 $fileLinks[] = [
                     'type' => 'talent_photo',
@@ -441,31 +386,16 @@ class PromosiController extends Controller
                 ];
             }
 
-            $work->update([
-                'file_links' => array_values($fileLinks)
-            ]);
+            $work->update(['file_links' => array_values($fileLinks)]);
 
-            // Audit logging
-            ControllerSecurityHelper::logCrud('promosi_talent_photos_link_submitted', $work, [
-                'links_count' => count($request->file_links),
-                'links' => $request->file_links
-            ], $request);
-
-            QueryOptimizer::clearAllIndexCaches();
-
-            return response()->json([
-                'success' => true,
-                'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Talent photo links submitted successfully.'
-            ]);
+            return response()->json(['success' => true, 'message' => 'Talent photo links submitted successfully.']);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error uploading talent photos: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
-    }
+
+
 
     /**
      * Upload BTS Content (Legacy/Alternative endpoint)
@@ -473,17 +403,10 @@ class PromosiController extends Controller
      */
     public function uploadBTSContent(Request $request, int $id): JsonResponse
     {
-        // Redirect to uploadBTSVideo or uploadTalentPhotos based on file type
-        if ($request->hasFile('bts_video')) {
-            return $this->uploadBTSVideo($request, $id);
-        } elseif ($request->hasFile('talent_photos')) {
-            return $this->uploadTalentPhotos($request, $id);
-        }
-        
         return response()->json([
             'success' => false,
-            'message' => 'Please provide either bts_video or talent_photos file'
-        ], 422);
+            'message' => 'Physical file uploads are disabled. Please use the link submission endpoints (upload-bts-video or upload-talent-photos).'
+        ], 405);
     }
 
     /**
@@ -1020,55 +943,32 @@ class PromosiController extends Controller
     }
 
     /**
-     * Share Link Website ke Facebook (Masukan Bukti ke Sistem)
+     * Share Link Website ke Facebook (Strict Link Only)
      * POST /api/live-tv/promosi/works/{id}/share-facebook
      */
     public function shareFacebook(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            
             if (!$user || $user->role !== 'Promotion') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'proof_link' => 'required|url',
                 'facebook_post_url' => 'nullable|url',
-                'notes' => 'nullable|string|max:1000'
+                'notes' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
             $work = PromotionWork::findOrFail($id);
 
-            if ($work->work_type !== 'share_facebook') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This endpoint is only for share_facebook work type.'
-                ], 400);
-            }
-
-            // Upload proof file
-            $proofFile = $request->file('proof_file');
-            $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
-            $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeFileName, 'public');
-            $proofUrl = Storage::disk('public')->url($proofPath);
-
-            // Update social_media_proof dengan bukti
             $socialProof = $work->social_media_proof ?? [];
             $socialProof['facebook_share'] = [
-                'proof_file_path' => $proofPath,
-                'proof_file_url' => $proofUrl,
+                'proof_link' => $request->proof_link,
                 'facebook_post_url' => $request->facebook_post_url,
                 'shared_at' => now()->toDateTimeString(),
                 'shared_by' => $user->id,
@@ -1077,92 +977,46 @@ class PromosiController extends Controller
 
             $work->update([
                 'social_media_proof' => $socialProof,
-                'status' => 'published' // Mark as completed
+                'status' => 'published'
             ]);
 
-            QueryOptimizer::clearAllIndexCaches();
-
-            return response()->json([
-                'success' => true,
-                'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Facebook share completed successfully. Proof has been saved to system.'
-            ]);
+            return response()->json(['success' => true, 'message' => 'Facebook share proof link saved.']);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error sharing to Facebook: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 
+
     /**
-     * Buat Video HL untuk Story IG (Masukan Bukti ke Sistem)
+     * Submit IG Story (Strict Link Only)
      * POST /api/live-tv/promosi/works/{id}/upload-story-ig
      */
     public function uploadStoryIG(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            
             if (!$user || $user->role !== 'Promotion') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'video_file' => 'required|file|mimes:mp4,mov,avi|max:102400', // Max 100MB
-                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'video_link' => 'required|url',
+                'proof_link' => 'required|url',
                 'story_url' => 'nullable|url',
-                'notes' => 'nullable|string|max:1000'
+                'notes' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
             $work = PromotionWork::findOrFail($id);
 
-            if ($work->work_type !== 'story_ig') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This endpoint is only for story_ig work type.'
-                ], 400);
-    }
-
-            // Upload video file
-            $videoFile = $request->file('video_file');
-            $safeVideoName = \App\Helpers\SecurityHelper::generateSafeFileName($videoFile->getClientOriginalName());
-            $videoPath = $videoFile->storeAs("promosi/story_ig/{$work->id}", $safeVideoName, 'public');
-
-            // Upload proof file
-            $proofFile = $request->file('proof_file');
-            $safeProofName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
-            $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeProofName, 'public');
-            $proofUrl = Storage::disk('public')->url($proofPath);
-
-            // Update file_paths dan social_media_links
-            $filePaths = $work->file_paths ?? [];
-            $filePaths[] = [
-                'type' => 'story_ig_video',
-                'file_path' => $videoPath,
-                'file_name' => $safeVideoName,
-                'file_size' => $videoFile->getSize(),
-                'mime_type' => $videoFile->getMimeType(),
-                'uploaded_at' => now()->toDateTimeString()
-            ];
-
             $socialProof = $work->social_media_proof ?? [];
             $socialProof['story_ig'] = [
-                'video_file_path' => $videoPath,
-                'proof_file_path' => $proofPath,
-                'proof_file_url' => $proofUrl,
+                'video_link' => $request->video_link,
+                'proof_link' => $request->proof_link,
                 'story_url' => $request->story_url,
                 'uploaded_at' => now()->toDateTimeString(),
                 'uploaded_by' => $user->id,
@@ -1170,94 +1024,47 @@ class PromosiController extends Controller
             ];
 
             $work->update([
-                'file_paths' => $filePaths,
                 'social_media_proof' => $socialProof,
                 'status' => 'published'
             ]);
 
-            QueryOptimizer::clearAllIndexCaches();
-
-            return response()->json([
-                'success' => true,
-                'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Story IG video uploaded successfully. Proof has been saved to system.'
-            ]);
+            return response()->json(['success' => true, 'message' => 'Story IG links saved.']);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error uploading Story IG: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 
+
     /**
-     * Buat Video HL untuk Reels Facebook (Masukan Bukti ke Sistem)
+     * Submit Reels Facebook (Strict Link Only)
      * POST /api/live-tv/promosi/works/{id}/upload-reels-facebook
      */
     public function uploadReelsFacebook(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            
             if (!$user || $user->role !== 'Promotion') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'video_file' => 'required|file|mimes:mp4,mov,avi|max:102400', // Max 100MB
-                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
+                'video_link' => 'required|url',
+                'proof_link' => 'required|url',
                 'reels_url' => 'nullable|url',
-                'notes' => 'nullable|string|max:1000'
+                'notes' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
             $work = PromotionWork::findOrFail($id);
 
-            if ($work->work_type !== 'reels_facebook') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This endpoint is only for reels_facebook work type.'
-                ], 400);
-            }
-
-            // Upload video file
-            $videoFile = $request->file('video_file');
-            $safeVideoName = \App\Helpers\SecurityHelper::generateSafeFileName($videoFile->getClientOriginalName());
-            $videoPath = $videoFile->storeAs("promosi/reels_facebook/{$work->id}", $safeVideoName, 'public');
-
-            // Upload proof file
-            $proofFile = $request->file('proof_file');
-            $safeProofName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
-            $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeProofName, 'public');
-            $proofUrl = Storage::disk('public')->url($proofPath);
-
-            // Update file_paths dan social_media_links
-            $filePaths = $work->file_paths ?? [];
-            $filePaths[] = [
-                'type' => 'reels_facebook_video',
-                'file_path' => $videoPath,
-                'file_name' => $safeVideoName,
-                'file_size' => $videoFile->getSize(),
-                'mime_type' => $videoFile->getMimeType(),
-                'uploaded_at' => now()->toDateTimeString()
-            ];
-
             $socialProof = $work->social_media_proof ?? [];
             $socialProof['reels_facebook'] = [
-                'video_file_path' => $videoPath,
-                'proof_file_path' => $proofPath,
-                'proof_file_url' => $proofUrl,
+                'video_link' => $request->video_link,
+                'proof_link' => $request->proof_link,
                 'reels_url' => $request->reels_url,
                 'uploaded_at' => now()->toDateTimeString(),
                 'uploaded_by' => $user->id,
@@ -1265,77 +1072,45 @@ class PromosiController extends Controller
             ];
 
             $work->update([
-                'file_paths' => $filePaths,
                 'social_media_proof' => $socialProof,
                 'status' => 'published'
             ]);
 
-            QueryOptimizer::clearAllIndexCaches();
-
-            return response()->json([
-                'success' => true,
-                'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'Reels Facebook video uploaded successfully. Proof has been saved to system.'
-            ]);
+            return response()->json(['success' => true, 'message' => 'Reels Facebook links saved.']);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error uploading Reels Facebook: ' . $e->getMessage()
-            ], 500);
-    }
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
 
+
     /**
-     * Share ke Grup Promosi WA (Masukan Bukti ke Sistem)
+     * Share WA Group (Strict Link Only)
      * POST /api/live-tv/promosi/works/{id}/share-wa-group
      */
     public function shareWAGroup(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            
             if (!$user || $user->role !== 'Promotion') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'proof_file' => 'required|file|mimes:jpg,jpeg,png|max:10240', // Max 10MB
-                'group_name' => 'nullable|string|max:255',
-                'notes' => 'nullable|string|max:1000'
+                'proof_link' => 'required|url',
+                'group_name' => 'nullable|string',
+                'notes' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
             $work = PromotionWork::findOrFail($id);
 
-            if ($work->work_type !== 'share_wa_group') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This endpoint is only for share_wa_group work type.'
-                ], 400);
-            }
-
-            // Upload proof file
-            $proofFile = $request->file('proof_file');
-            $safeFileName = \App\Helpers\SecurityHelper::generateSafeFileName($proofFile->getClientOriginalName());
-            $proofPath = $proofFile->storeAs("promosi/sharing_proofs/{$work->id}", $safeFileName, 'public');
-            $proofUrl = Storage::disk('public')->url($proofPath);
-
-            // Update social_media_proof dengan bukti
             $socialProof = $work->social_media_proof ?? [];
             $socialProof['wa_group_share'] = [
-                'proof_file_path' => $proofPath,
-                'proof_file_url' => $proofUrl,
+                'proof_link' => $request->proof_link,
                 'group_name' => $request->group_name,
                 'shared_at' => now()->toDateTimeString(),
                 'shared_by' => $user->id,
@@ -1344,24 +1119,16 @@ class PromosiController extends Controller
 
             $work->update([
                 'social_media_proof' => $socialProof,
-                'status' => 'published' // Mark as completed
+                'status' => 'published'
             ]);
 
-            QueryOptimizer::clearAllIndexCaches();
-
-            return response()->json([
-                'success' => true,
-                'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'WA Group share completed successfully. Proof has been saved to system.'
-            ]);
+            return response()->json(['success' => true, 'message' => 'WA Group proof link saved.']);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error sharing to WA Group: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
-    }
+
 
     /**
      * Alias untuk backward compatibility

@@ -11,6 +11,9 @@ return new class extends Migration {
      */
     public function up(): void
     {
+        // Get the first user ID to assign as creator (usually admin or created via seeder)
+        $userId = DB::table('users')->value('id') ?? 1;
+
         $items = [
             [
                 'name' => 'Sony A7S III Camera Kit',
@@ -18,6 +21,7 @@ return new class extends Migration {
                 'total_quantity' => 2,
                 'available_quantity' => 2,
                 'status' => 'active',
+                'created_by' => $userId,
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
@@ -27,6 +31,7 @@ return new class extends Migration {
                 'total_quantity' => 4,
                 'available_quantity' => 4,
                 'status' => 'active',
+                'created_by' => $userId,
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
@@ -36,6 +41,7 @@ return new class extends Migration {
                 'total_quantity' => 2,
                 'available_quantity' => 2,
                 'status' => 'active',
+                'created_by' => $userId,
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
@@ -45,6 +51,7 @@ return new class extends Migration {
                 'total_quantity' => 3,
                 'available_quantity' => 3,
                 'status' => 'active',
+                'created_by' => $userId,
                 'created_at' => now(),
                 'updated_at' => now(),
             ],

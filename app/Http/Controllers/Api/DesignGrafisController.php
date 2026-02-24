@@ -343,8 +343,7 @@ class DesignGrafisController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'file' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:10240', // Max 10MB
-                'file_link' => 'nullable|url',
+                'file_link' => 'required|url',
                 'design_notes' => 'nullable|string|max:5000'
             ]);
 
@@ -356,14 +355,6 @@ class DesignGrafisController extends Controller
                 ], 422);
             }
 
-            // Ensure either file or file_link is provided
-            if (!$request->hasFile('file') && !$request->file_link) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => ['file' => ['Please provide either a file upload or a file link.']]
-                ], 422);
-            }
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
@@ -388,24 +379,17 @@ class DesignGrafisController extends Controller
                 ], 400);
             }
 
-            $uploadedFile = null;
-
-            // Upload file if exists
-            if ($request->hasFile('file')) {
-                $uploadedFile = FileUploadHelper::validateImageFile($request->file('file'), 10); // Max 10MB
-            } elseif ($request->file_link) {
-                // Use input link
-                $uploadedFile = [
-                    'file_path' => $request->file_link,
-                    'file_name' => 'External Link',
-                    'file_size' => 0,
-                    'mime_type' => 'url',
-                    'original_name' => 'External Link'
-                ];
-            }
-
-            // Delete old file if exists (and is not a link/URL)
-            if ($work->file_path && Storage::disk('public')->exists($work->file_path)) {
+            // Link-based implementation (Strict Link Only)
+            $uploadedFile = [
+                'file_path' => $request->file_link,
+                'file_name' => 'External Link',
+                'file_size' => 0,
+                'mime_type' => 'url',
+                'original_name' => 'External Link'
+            ];
+            
+            // Delete old physical file if exists
+            if ($work->file_path && !filter_var($work->file_path, FILTER_VALIDATE_URL) && Storage::disk('public')->exists($work->file_path)) {
                 Storage::disk('public')->delete($work->file_path);
             }
 
@@ -474,8 +458,7 @@ class DesignGrafisController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'file' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:10240', // Max 10MB
-                'file_link' => 'nullable|url',
+                'file_link' => 'required|url',
                 'design_notes' => 'nullable|string|max:5000'
             ]);
 
@@ -487,14 +470,7 @@ class DesignGrafisController extends Controller
                 ], 422);
             }
 
-            // Ensure either file or file_link is provided
-            if (!$request->hasFile('file') && !$request->file_link) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => ['file' => ['Please provide either a file upload or a file link.']]
-                ], 422);
-            }
+            // Link-only policy enforced
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
@@ -519,24 +495,17 @@ class DesignGrafisController extends Controller
                 ], 400);
             }
 
-            $uploadedFile = null;
+            // Link-based implementation (Strict Link Only)
+            $uploadedFile = [
+                'file_path' => $request->file_link,
+                'file_name' => 'External Link',
+                'file_size' => 0,
+                'mime_type' => 'url',
+                'original_name' => 'External Link'
+            ];
 
-            // Upload file
-            if ($request->hasFile('file')) {
-                $uploadedFile = FileUploadHelper::validateImageFile($request->file('file'), 10); // Max 10MB
-            } elseif ($request->file_link) {
-                // Use input link
-                $uploadedFile = [
-                    'file_path' => $request->file_link,
-                    'file_name' => 'External Link',
-                    'file_size' => 0,
-                    'mime_type' => 'url',
-                    'original_name' => 'External Link'
-                ];
-            }
-
-            // Delete old file if exists
-            if ($work->file_path && Storage::disk('public')->exists($work->file_path)) {
+            // Delete old physical file if exists
+            if ($work->file_path && !filter_var($work->file_path, FILTER_VALIDATE_URL) && Storage::disk('public')->exists($work->file_path)) {
                 Storage::disk('public')->delete($work->file_path);
             }
 
@@ -870,11 +839,11 @@ class DesignGrafisController extends Controller
                 ], 422);
             }
 
-            if (!$request->hasFile('files') && !$request->file_links) {
+            if (!$request->file_links) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Validation failed',
-                    'errors' => ['files' => ['Please provide either file uploads or file links.']]
+                    'errors' => ['file_links' => ['Please provide at least one file link.']]
                 ], 422);
             }
 
@@ -887,23 +856,11 @@ class DesignGrafisController extends Controller
                 ], 403);
             }
 
-            $uploadedFiles = [];
-            $filePaths = $work->file_paths ?? [];
-
-            // Process file uploads
-            if ($request->hasFile('files')) {
-                foreach ($request->file('files') as $file) {
-                    $uploadedFile = FileUploadHelper::validateImageFile($file, 10); // Max 10MB
-                    $filePaths[] = array_merge($uploadedFile, [
-                        'type' => $work->work_type,
-                        'uploaded_at' => now()->toDateTimeString(),
-                        'uploaded_by' => $user->id
-                    ]);
-                    $uploadedFiles[] = $uploadedFile;
-                }
-            }
+            // Physical file upload processing removed
 
             // Process file links
+            $uploadedFiles = [];
+            $filePaths = $work->file_paths ?? [];
             if ($request->file_links) {
                 foreach ($request->file_links as $link) {
                     $linkData = [
@@ -939,18 +896,7 @@ class DesignGrafisController extends Controller
             ]);
 
             // Audit logging
-            if ($request->hasFile('files')) {
-                foreach ($request->file('files') as $file) {
-                    ControllerSecurityHelper::logFileOperation(
-                        'upload',
-                        $file->getMimeType(),
-                        $file->getClientOriginalName(),
-                        $file->getSize(),
-                        $work,
-                        $request
-                    );
-                }
-            }
+            // Physical file audit logging removed
             if ($request->file_links) {
                 ControllerSecurityHelper::logFileOperation(
                     'upload',

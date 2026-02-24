@@ -45,7 +45,7 @@ class ArtInventoryController extends Controller
                 'description' => 'nullable|string',
                 'total_quantity' => 'required|integer|min:0',
                 'status' => 'required|in:active,maintenance,lost',
-                'photo' => 'nullable|image|max:5120', // 5MB Max
+                'photo_link' => 'nullable|url', // Strict Link Only
             ]);
 
             if ($validator->fails()) {
@@ -56,9 +56,16 @@ class ArtInventoryController extends Controller
             $data['created_by'] = $user->id;
             $data['available_quantity'] = $data['total_quantity']; // Initially available = total
 
+            // Physical file upload disabled
             if ($request->hasFile('photo')) {
-                $path = $request->file('photo')->store('inventory_photos', 'public');
-                $data['photo_url'] = Storage::url($path);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use photo_link.'
+                ], 405);
+            }
+
+            if ($request->has('photo_link')) {
+                $data['photo_url'] = $request->photo_link;
             }
 
             $item = InventoryItem::create($data);
@@ -80,7 +87,7 @@ class ArtInventoryController extends Controller
                 'description' => 'nullable|string',
                 'total_quantity' => 'sometimes|required|integer|min:0',
                 'status' => 'sometimes|required|in:active,maintenance,lost',
-                'photo' => 'nullable|image|max:5120',
+                'photo_link' => 'nullable|url',
             ]);
 
             if ($validator->fails()) {
@@ -98,15 +105,16 @@ class ArtInventoryController extends Controller
                 }
             }
 
+            // Physical file upload disabled
             if ($request->hasFile('photo')) {
-                // Delete old photo if exists
-                if ($item->photo_url) {
-                    $oldPath = str_replace('/storage/', '', $item->photo_url);
-                    Storage::disk('public')->delete($oldPath);
-                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use photo_link.'
+                ], 405);
+            }
 
-                $path = $request->file('photo')->store('inventory_photos', 'public');
-                $data['photo_url'] = Storage::url($path);
+            if ($request->has('photo_link')) {
+                $data['photo_url'] = $request->photo_link;
             }
 
             $item->update($data);

@@ -36,8 +36,8 @@ class ParallelNotificationService
                 'type' => $notificationData['type'] ?? 'general',
                 'title' => $notificationData['title'] ?? 'Notification',
                 'message' => $notificationData['message'] ?? '',
-                'data' => json_encode($notificationData['data'] ?? []),
-                'read' => false,
+                'data' => is_array($notificationData['data'] ?? []) ? json_encode($notificationData['data']) : ($notificationData['data'] ?? '{}'),
+                'status' => 'unread',
                 'created_at' => $now,
                 'updated_at' => $now,
             ];

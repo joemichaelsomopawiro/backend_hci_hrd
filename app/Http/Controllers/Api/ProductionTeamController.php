@@ -25,16 +25,24 @@ class ProductionTeamController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            $perPage = $request->get('per_page', 15);
+            // Handle per_page = 0 to mean returning all (limited to 1000 for safety)
+            $paginationSize = ($perPage == 0) ? 1000 : (int)$perPage;
+
             // Build cache key based on request parameters
             $cacheKey = 'production_teams_index_' . md5(json_encode([
                 'producer_id' => $request->get('producer_id'),
                 'is_active' => $request->get('is_active'),
                 'search' => $request->get('search'),
+                'per_page' => $paginationSize,
                 'page' => $request->get('page', 1)
             ]));
             
             // Use cache with 5 minutes TTL
-            $teams = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request) {
+            // Determine if cache should be skipped
+            $skipCache = $request->boolean('no_cache') || $request->boolean('refresh');
+            
+            $queryCallback = function () use ($request, $paginationSize) {
                 // Optimize eager loading - hanya load active members
                 $query = ProductionTeam::with([
                     'producer',
@@ -44,9 +52,16 @@ class ProductionTeamController extends Controller
                     'members.user'
                 ]);
                 
-                // Filter by producer
+                // Filter by producer (owner or member)
                 if ($request->has('producer_id')) {
-                    $query->where('producer_id', $request->producer_id);
+                    $producerId = $request->producer_id;
+                    $query->where(function($q) use ($producerId) {
+                        $q->where('producer_id', $producerId)
+                          ->orWhereHas('members', function ($sq) use ($producerId) {
+                              $sq->where('user_id', $producerId)
+                                ->where('is_active', true);
+                          });
+                    });
                 }
                 
                 // Filter by active status
@@ -63,8 +78,15 @@ class ProductionTeamController extends Controller
                     });
                 }
                 
-                return $query->orderBy('created_at', 'desc')->paginate(15);
-            });
+                return $query->orderBy('created_at', 'desc')->paginate($paginationSize);
+            };
+
+            // Use cache with 5 minutes TTL unless skipped
+            if ($skipCache) {
+                $teams = $queryCallback();
+            } else {
+                $teams = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, $queryCallback);
+            }
             
             // Transform members to include user data explicitly
             $teams->getCollection()->transform(function ($team) {
@@ -407,6 +429,7 @@ class ProductionTeamController extends Controller
         }
     }
 
+
     /**
      * Remove member from team
      */
@@ -414,20 +437,21 @@ class ProductionTeamController extends Controller
     {
         $team = ProductionTeam::findOrFail($id);
         
-        $validator = Validator::make($request->all(), [
-            'role' => 'required|string'
-        ]);
-        
-        if ($validator->fails()) {
+        // Find the membership record
+        $membership = \App\Models\ProductionTeamMember::where('id', $memberId)
+                        ->where('production_team_id', $id)
+                        ->first();
+                        
+        if (!$membership) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
+                'message' => 'Member not found in this team'
+            ], 404);
         }
         
         try {
-            $result = $this->productionTeamService->removeMember($team, $memberId, $request->role);
+            // Pass user_id and role from the membership record
+            $result = $this->productionTeamService->removeMember($team, $membership->user_id, $membership->role);
             
             if (!$result) {
                 return response()->json([
@@ -436,9 +460,9 @@ class ProductionTeamController extends Controller
                 ], 400);
             }
             
-            // Clear cache setelah remove member
+            // Clear cache
             QueryOptimizer::clearIndexCache('production_teams');
-            QueryOptimizer::clearIndexCache('programs'); // Programs juga perlu di-clear karena terkait production team
+            QueryOptimizer::clearIndexCache('programs');
             
             return response()->json([
                 'success' => true,
@@ -452,6 +476,7 @@ class ProductionTeamController extends Controller
             ], 500);
         }
     }
+
 
     /**
      * Update team member

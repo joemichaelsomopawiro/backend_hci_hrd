@@ -655,6 +655,63 @@
 					]
 				},
 				{
+					"name": "Login - Art & Set Properti",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"login\": \"artsetproperti@example.com\",\n  \"password\": \"password\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data.token) {",
+									"        var token = jsonData.data.token;",
+									"        pm.collectionVariables.set('auth_token', token);",
+									"        pm.collectionVariables.set('user_id', jsonData.data.user.id);",
+									"        pm.collectionVariables.set('user_role', jsonData.data.user.role);",
+									"        console.log('✅ Login berhasil sebagai: ' + jsonData.data.user.role);",
+									"        console.log('✅ Token tersimpan: ' + token.substring(0, 20) + '...');",
+									"        ",
+									"        // Verify token tersimpan",
+									"        var savedToken = pm.collectionVariables.get('auth_token');",
+									"        if (savedToken && savedToken === token) {",
+									"            console.log('✅ Token berhasil disimpan di collection variables');",
+									"        } else {",
+									"            console.log('❌ ERROR: Token tidak tersimpan dengan benar!');",
+									"        }",
+									"    } else {",
+									"        console.log('❌ Login gagal: ' + JSON.stringify(jsonData));",
+									"    }",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
 					"name": "Login - Quality Control",
 					"request": {
 						"method": "POST",
@@ -3095,53 +3152,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "episode_id",
-									"value": "{{episode_id}}",
-									"type": "text",
-									"description": "Required: ID episode"
-								},
-								{
-									"key": "song_id",
-									"value": "",
-									"type": "text",
-									"description": "Optional: ID lagu dari database"
-								},
-								{
-									"key": "singer_id",
-									"value": "",
-									"type": "text",
-									"description": "Optional: ID penyanyi dari database"
-								},
-								{
-									"key": "song_title",
-									"value": "Lagu Baru",
-									"type": "text",
-									"description": "Required if song_id not provided"
-								},
-								{
-									"key": "singer_name",
-									"value": "Penyanyi",
-									"type": "text",
-									"description": "Optional: Nama penyanyi"
-								},
-								{
-									"key": "arrangement_notes",
-									"value": "Catatan untuk arrangement",
-									"type": "text",
-									"description": "Optional: Catatan arrangement"
-								},
-								{
-									"key": "file",
-									"type": "file",
-									"src": [],
-									"description": "Optional: File audio (mp3/wav/midi, max 100MB). Jika ada file, status = 'draft'. Jika tidak ada, status = 'song_proposal'"
+							"mode": "raw",
+							"raw": "{\n    \"episode_id\": \"{{episode_id}}\",\n    \"song_title\": \"Lagu Baru\",\n    \"singer_name\": \"Penyanyi\",\n    \"arrangement_notes\": \"Catatan untuk arrangement\",\n    \"arrangement_file_link\": \"https://example.com/audio.mp3\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
-						"description": "Buat arrangement baru. Jika tidak ada file, status otomatis menjadi 'song_proposal' dan akan notifikasi Producer. Jika ada file, status menjadi 'draft'.",
+						"description": "Buat proposal arrangement baru dengan link file. Status otomatis menjadi 'song_proposal'.",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/music-arranger/arrangements",
 							"host": [
@@ -3318,9 +3337,9 @@
 					]
 				},
 				{
-					"name": "Upload Arrangement File",
+					"name": "Input Link",
 					"request": {
-						"method": "PUT",
+						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
@@ -3328,19 +3347,17 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "file",
-									"type": "file",
-									"src": [],
-									"description": "Required: File audio arrangement (mp3/wav/midi, max 100MB)"
+							"mode": "raw",
+							"raw": "{\n    \"arrangement_file_link\": \"https://example.com/audio_revised.mp3\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
-						"description": "Upload file arrangement audio. Jika status adalah 'song_approved', setelah upload status otomatis menjadi 'arrangement_submitted'. Jika status adalah 'arrangement_rejected', setelah upload status tetap 'arrangement_rejected' dan perlu submit ulang.",
+						"description": "Upload link arrangement baru (JSON Only).",
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/music-arranger/arrangements/{{arrangement_id}}",
+							"raw": "{{base_url}}/api/live-tv/roles/music-arranger/arrangements/{{arrangement_id}}/input-link",
 							"host": [
 								"{{base_url}}"
 							],
@@ -3350,47 +3367,11 @@
 								"roles",
 								"music-arranger",
 								"arrangements",
-								"{{arrangement_id}}"
+								"{{arrangement_id}}",
+								"input-link"
 							]
 						}
-					},
-					"event": [
-						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"// Validasi arrangement_id",
-									"var arrangementId = pm.collectionVariables.get('arrangement_id');",
-									"if (!arrangementId) {",
-									"    console.log('⚠️ arrangement_id tidak ditemukan! Gunakan request \"Create Arrangement\" atau \"Get Arrangements\" terlebih dahulu.');",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						},
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"if (pm.response.code === 200 || pm.response.code === 201) {",
-									"    var jsonData = pm.response.json();",
-									"    if (jsonData.success) {",
-									"        console.log('✅ File arrangement berhasil di-upload');",
-									"        console.log('Status: ' + jsonData.data.status);",
-									"        console.log('File: ' + jsonData.data.file_name);",
-									"        if (jsonData.data.status === 'arrangement_rejected') {",
-									"            console.log('⚠️ Status masih rejected. Silakan submit ulang arrangement.');",
-									"        }",
-									"    }",
-									"} else {",
-									"    console.log('❌ Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
+					}
 				},
 				{
 					"name": "Submit Arrangement",
@@ -4648,32 +4629,8 @@
 			]
 		},
 		{
-			"name": "5. Sound Engineer",
-			"description": "Auto-login sebagai Sound Engineer. Semua request otomatis pakai token!",
-			"event": [
-				{
-					"listen": "prerequest",
-					"script": {
-						"exec": [
-							"// Skip untuk request login",
-							"if (pm.request.name && (pm.request.name.includes('Login') || pm.request.name.includes('🔐'))) {",
-							"    return;",
-							"}",
-							"",
-							"// Cek token",
-							"var authToken = pm.collectionVariables.get('auth_token');",
-							"",
-							"if (!authToken || authToken === '' || authToken === null || authToken === undefined) {",
-							"    console.log('⚠️ Token tidak ditemukan! Silakan login dulu dengan request \"🔐 Login\" di folder ini');",
-							"    console.log('⚠️ Atau tunggu beberapa detik jika baru saja login...');",
-							"} else {",
-							"    console.log('✅ Token ditemukan: ' + authToken.substring(0, 30) + '...');",
-							"}"
-						],
-						"type": "text/javascript"
-					}
-				}
-			],
+			"name": "5. Sound Engineer (Recording Phase)",
+			"description": "Fase Rekaman: Sound Engineer menerima notifikasi, memproses alat, dan melakukan rekaman vocal.",
 			"item": [
 				{
 					"name": "🔐 Login - Sound Engineer",
@@ -4706,52 +4663,21 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"// Clear old token first",
 									"pm.collectionVariables.unset('auth_token');",
-									"",
 									"if (pm.response.code === 200) {",
-									"    try {",
-									"        var jsonData = pm.response.json();",
-									"        ",
-									"        if (jsonData.success && jsonData.data && jsonData.data.token) {",
-									"            var token = jsonData.data.token.toString().trim();",
-									"            ",
-									"            // Save token",
-									"            pm.collectionVariables.set('auth_token', token);",
-									"            pm.collectionVariables.set('user_id', jsonData.data.user.id);",
-									"            pm.collectionVariables.set('user_role', jsonData.data.user.role);",
-									"            ",
-									"            // Verify token tersimpan",
-									"            var savedToken = pm.collectionVariables.get('auth_token');",
-									"            ",
-									"            if (savedToken && savedToken === token && savedToken.length > 0) {",
-									"                console.log('✅ Login berhasil sebagai: ' + jsonData.data.user.role);",
-									"                console.log('✅ Token berhasil disimpan: ' + savedToken.substring(0, 30) + '...');",
-									"                console.log('✅ Token length: ' + savedToken.length);",
-									"            } else {",
-									"                console.log('❌ ERROR: Token tidak tersimpan!');",
-									"                console.log('Token yang diterima: ' + token.substring(0, 30));",
-									"                console.log('Token yang tersimpan: ' + (savedToken || 'KOSONG'));",
-									"            }",
-									"        } else {",
-									"            console.log('❌ Login gagal: Token tidak ada di response');",
-									"            console.log('Response: ' + JSON.stringify(jsonData));",
-									"        }",
-									"    } catch (e) {",
-									"        console.log('❌ Error parsing response: ' + e.message);",
-									"        console.log('Response text: ' + pm.response.text());",
-									"    }",
-									"} else {",
-									"    console.log('❌ HTTP Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('auth_token', jsonData.data.token);",
+									"    pm.collectionVariables.set('user_id', jsonData.data.user.id);",
+									"    console.log('✅ Login berhasil sebagai Sound Engineer');",
 									"}"
-								]
+								],
+								"type": "text/javascript"
 							}
 						}
 					]
 				},
 				{
-					"name": "Get Approved Arrangements",
+					"name": "1. Get Recordings (Terima Notifikasi)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4760,35 +4686,7 @@
 								"value": "Bearer {{auth_token}}"
 							}
 						],
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/approved-arrangements",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"approved-arrangements"
-							]
-						}
-					}
-				},
-				{
-					"name": "Create Recording",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"episode_id\": 1,\n  \"music_arrangement_id\": 1,\n  \"recording_schedule\": \"2025-01-20 10:00:00\",\n  \"recording_notes\": \"Recording notes\"\n}"
-						},
+						"description": "Menerima notifikasi rekaman vokal baru (auto-created setelah Producer approve Creative Work).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings",
 							"host": [
@@ -4802,10 +4700,27 @@
 								"recordings"
 							]
 						}
-					}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data.data.length > 0) {",
+									"        pm.collectionVariables.set('recording_id', jsonData.data.data[0].id);",
+									"        pm.collectionVariables.set('episode_id', jsonData.data.data[0].episode_id);",
+									"        console.log('✅ Recording ID captured: ' + jsonData.data.data[0].id);",
+									"    }",
+									"}"
+								]
+							}
+						}
+					]
 				},
 				{
-					"name": "Accept Work",
+					"name": "2. Accept Work (Terima Pekerjaan)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4814,6 +4729,7 @@
 								"value": "Bearer {{auth_token}}"
 							}
 						],
+						"description": "Sound Engineer menerima pekerjaan rekaman vokal.",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/accept-work",
 							"host": [
@@ -4832,7 +4748,7 @@
 					}
 				},
 				{
-					"name": "Request Equipment",
+					"name": "3. Terima Jadwal Rekaman (Accept Schedule)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4841,170 +4757,7 @@
 								"value": "Bearer {{auth_token}}"
 							}
 						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"equipment_list\": [\n    {\"name\": \"Microphone\", \"quantity\": 2},\n    {\"name\": \"Audio Interface\", \"quantity\": 1}\n  ]\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/request-equipment",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"recordings",
-								"{{recording_id}}",
-								"request-equipment"
-							]
-						}
-					}
-				},
-				{
-					"name": "Complete Recording",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "file",
-									"type": "file",
-									"src": []
-								},
-								{
-									"key": "completion_notes",
-									"value": "Recording selesai",
-									"type": "text"
-								}
-							]
-						},
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/complete",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"recordings",
-								"{{recording_id}}",
-								"complete"
-							]
-						}
-					}
-				},
-				{
-					"name": "Get Recording Detail",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"description": "Get recording detail by ID",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"recordings",
-								"{{recording_id}}"
-							]
-						}
-					}
-				},
-				{
-					"name": "Update Recording",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"recording_schedule\": \"2025-01-20 10:00:00\",\n  \"recording_notes\": \"Updated notes\"\n}"
-						},
-						"description": "Update recording information",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"recordings",
-								"{{recording_id}}"
-							]
-						}
-					}
-				},
-				{
-					"name": "Start Recording",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"start_time\": \"2025-01-20 10:00:00\"\n}"
-						},
-						"description": "Start recording session",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/start",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"recordings",
-								"{{recording_id}}",
-								"start"
-							]
-						}
-					}
-				},
-				{
-					"name": "Accept Schedule",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"description": "Accept recording schedule",
+						"description": "Sound Engineer mengkonfirmasi jadwal rekaman yang diajukan dalam Creative Work.",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/accept-schedule",
 							"host": [
@@ -5023,22 +4776,52 @@
 					}
 				},
 				{
-					"name": "Complete Work",
+					"name": "4. Lihat Daftar Alat (Get Available Equipment)",
 					"request": {
-						"method": "POST",
+						"method": "GET",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
 							}
 						],
+						"description": "Melihat stok alat yang tersedia di Art & Set Properti.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/equipment/available",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"sound-engineer",
+								"equipment",
+								"available"
+							]
+						}
+					}
+				},
+				{
+					"name": "5. Ajukan List Alat (Request Equipment)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"completion_notes\": \"Work selesai setelah request equipment\"\n}"
+							"raw": "{\n  \"equipment_list\": [\n    {\n      \"equipment_name\": \"Mic Condenser\",\n      \"quantity\": 1,\n      \"return_date\": \"{{return_date}}\",\n      \"notes\": \"Mic untuk vokal\"\n    }\n  ],\n  \"request_notes\": \"Equipment untuk rekaman vokal\"\n}"
 						},
-						"description": "Complete work setelah request equipment",
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/complete-work",
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/request-equipment",
 							"host": [
 								"{{base_url}}"
 							],
@@ -5049,24 +4832,40 @@
 								"sound-engineer",
 								"recordings",
 								"{{recording_id}}",
-								"complete-work"
+								"request-equipment"
 							]
+						},
+						"description": "Mengajukan permintaan alat ke bagian Art & Set Properti."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data.equipment_requests.length > 0) {",
+									"        pm.collectionVariables.set('equipment_id', jsonData.data.equipment_requests[0].id);",
+									"        console.log('✅ Equipment ID captured');",
+									"    }",
+									"}"
+								]
+							}
 						}
-					}
+					]
 				},
 				{
-					"name": "Get Arrangement by Episode",
+					"name": "6. Mulai Rekam Vocal (Start Recording)",
 					"request": {
-						"method": "GET",
+						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
 							}
 						],
-						"description": "Get arrangement for specific episode",
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/episodes/{{episode_id}}/arrangement",
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/start",
 							"host": [
 								"{{base_url}}"
 							],
@@ -5075,30 +4874,62 @@
 								"live-tv",
 								"roles",
 								"sound-engineer",
-								"episodes",
-								"{{episode_id}}",
-								"arrangement"
+								"recordings",
+								"{{recording_id}}",
+								"start"
 							]
-						}
+						},
+						"description": "Update status ke 'recording' (Mulai pengerjaan offline)."
 					}
 				},
 				{
-					"name": "Create Recording from Arrangement",
+					"name": "7. Kembalikan Alat ke Art Properti (Notify Return)",
 					"request": {
 						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/equipment/{{equipment_id}}/notify-return",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"sound-engineer",
+								"equipment",
+								"{{equipment_id}}",
+								"notify-return"
+							]
+						},
+						"description": "Notifikasi ke Art Properti bahwa alat telah dikembalikan."
+					}
+				},
+				{
+					"name": "8. Kirim File Record & Input Link (Complete Recording)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"recording_schedule\": \"2025-01-20 10:00:00\",\n  \"recording_notes\": \"Recording notes\"\n}"
+							"raw": "{\n  \"vocal_file_link\": \"https://drive.google.com/example-vocal-link\",\n  \"recording_notes\": \"Rekaman vokal episode ini sudah selesai.\"\n}"
 						},
-						"description": "Create recording from approved arrangement",
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/arrangements/{{arrangement_id}}/create-recording",
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/recordings/{{recording_id}}/complete",
 							"host": [
 								"{{base_url}}"
 							],
@@ -5107,106 +4938,12 @@
 								"live-tv",
 								"roles",
 								"sound-engineer",
-								"arrangements",
-								"{{arrangement_id}}",
-								"create-recording"
-							]
-						}
-					}
-				},
-				{
-					"name": "Get Rejected Arrangements",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"description": "Get rejected arrangements that need help",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/rejected-arrangements",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"rejected-arrangements"
-							]
-						}
-					}
-				},
-				{
-					"name": "Get Rejected Song Proposals",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"description": "Get rejected song proposals that need help",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/rejected-song-proposals",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"rejected-song-proposals"
-							]
-						}
-					}
-				},
-				{
-					"name": "Help Fix Song Proposal",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "help_notes",
-									"value": "Perbaikan song proposal",
-									"type": "text"
-								},
-								{
-									"key": "file",
-									"type": "file",
-									"src": []
-								}
+								"recordings",
+								"{{recording_id}}",
+								"complete"
 							]
 						},
-						"description": "Help fix rejected song proposal",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/song-proposals/{{arrangement_id}}/help-fix",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"song-proposals",
-								"{{arrangement_id}}",
-								"help-fix"
-							]
-						}
+						"description": "Menginput link bukti rekaman dan menyelesaikan tugas recording. (Trigger auto-create Editing task)."
 					}
 				},
 				{
@@ -5219,7 +4956,6 @@
 								"value": "Bearer {{auth_token}}"
 							}
 						],
-						"description": "Get Sound Engineer statistics",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/statistics",
 							"host": [
@@ -5234,78 +4970,12 @@
 							]
 						}
 					}
-				},
-				{
-					"name": "Help Fix Arrangement",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "help_notes",
-									"value": "Perbaikan arrangement",
-									"type": "text"
-								},
-								{
-									"key": "file",
-									"type": "file",
-									"src": []
-								}
-							]
-						},
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer/arrangements/{{arrangement_id}}/help-fix",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer",
-								"arrangements",
-								"{{arrangement_id}}",
-								"help-fix"
-							]
-						}
-					}
 				}
 			]
 		},
 		{
 			"name": "6. Sound Engineer Editing",
-			"description": "Auto-login sebagai Sound Engineer Editing. Semua request otomatis pakai token!",
-			"event": [
-				{
-					"listen": "prerequest",
-					"script": {
-						"exec": [
-							"// Skip untuk request login",
-							"if (pm.request.name && (pm.request.name.includes('Login') || pm.request.name.includes('🔐'))) {",
-							"    return;",
-							"}",
-							"",
-							"// Cek token",
-							"var authToken = pm.collectionVariables.get('auth_token');",
-							"",
-							"if (!authToken || authToken === '' || authToken === null || authToken === undefined) {",
-							"    console.log('⚠️ Token tidak ditemukan! Silakan login dulu dengan request \"🔐 Login\" di folder ini');",
-							"    console.log('⚠️ Atau tunggu beberapa detik jika baru saja login...');",
-							"} else {",
-							"    console.log('✅ Token ditemukan: ' + authToken.substring(0, 30) + '...');",
-							"}"
-						],
-						"type": "text/javascript"
-					}
-				}
-			],
+			"description": "Fase Editing: Sound Engineer melakukan editing vokal dan submit untuk QC.",
 			"item": [
 				{
 					"name": "🔐 Login - Sound Engineer Editing",
@@ -5319,7 +4989,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"login\": \"soundengineer@example.com\",\n  \"password\": \"password\"\n}"
+							"raw": "{\n  \"login\": \"soundediting@example.com\",\n  \"password\": \"password\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/auth/login",
@@ -5338,44 +5008,11 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"// Clear old token first",
 									"pm.collectionVariables.unset('auth_token');",
-									"",
 									"if (pm.response.code === 200) {",
-									"    try {",
-									"        var jsonData = pm.response.json();",
-									"        ",
-									"        if (jsonData.success && jsonData.data && jsonData.data.token) {",
-									"            var token = jsonData.data.token.toString().trim();",
-									"            ",
-									"            // Save token",
-									"            pm.collectionVariables.set('auth_token', token);",
-									"            pm.collectionVariables.set('user_id', jsonData.data.user.id);",
-									"            pm.collectionVariables.set('user_role', jsonData.data.user.role);",
-									"            ",
-									"            // Verify token tersimpan",
-									"            var savedToken = pm.collectionVariables.get('auth_token');",
-									"            ",
-									"            if (savedToken && savedToken === token && savedToken.length > 0) {",
-									"                console.log('✅ Login berhasil sebagai: ' + jsonData.data.user.role);",
-									"                console.log('✅ Token berhasil disimpan: ' + savedToken.substring(0, 30) + '...');",
-									"                console.log('✅ Token length: ' + savedToken.length);",
-									"            } else {",
-									"                console.log('❌ ERROR: Token tidak tersimpan!');",
-									"                console.log('Token yang diterima: ' + token.substring(0, 30));",
-									"                console.log('Token yang tersimpan: ' + (savedToken || 'KOSONG'));",
-									"            }",
-									"        } else {",
-									"            console.log('❌ Login gagal: Token tidak ada di response');",
-									"            console.log('Response: ' + JSON.stringify(jsonData));",
-									"        }",
-									"    } catch (e) {",
-									"        console.log('❌ Error parsing response: ' + e.message);",
-									"        console.log('Response text: ' + pm.response.text());",
-									"    }",
-									"} else {",
-									"    console.log('❌ HTTP Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('auth_token', jsonData.data.token);",
+									"    console.log('✅ Login berhasil sebagai Sound Engineer Editing');",
 									"}"
 								]
 							}
@@ -5383,7 +5020,7 @@
 					]
 				},
 				{
-					"name": "Get Works",
+					"name": "1. Get Works (Terima Notifikasi)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5392,105 +5029,7 @@
 								"value": "Bearer {{auth_token}}"
 							}
 						],
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer-editing/works",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer-editing",
-								"works"
-							]
-						}
-					}
-				},
-				{
-					"name": "Upload Vocal File",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "file",
-									"type": "file",
-									"src": [],
-									"description": "File audio vocal (wav, mp3, aiff, flac, max 50MB)"
-								}
-							]
-						},
-						"description": "Upload file vocal untuk editing. Response akan memberikan file_path yang bisa digunakan untuk create/update editing work atau submit.",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer-editing/upload-vocal",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"sound-engineer-editing",
-								"upload-vocal"
-							]
-						}
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"if (pm.response.code === 200 || pm.response.code === 201) {",
-									"    var jsonData = pm.response.json();",
-									"    if (jsonData.success && jsonData.data) {",
-									"        pm.collectionVariables.set('vocal_file_path', jsonData.data.file_path);",
-									"        console.log('✅ File vocal berhasil di-upload');",
-									"        console.log('File Path: ' + jsonData.data.file_path);",
-									"        console.log('File Name: ' + jsonData.data.file_name);",
-									"        console.log('File Size: ' + jsonData.data.file_size + ' bytes');",
-									"    }",
-									"} else {",
-									"    console.log('❌ Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Editing Work",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							},
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"episode_id\": {{episode_id}},\n  \"vocal_file_path\": \"{{vocal_file_path}}\",\n  \"editing_notes\": \"Editing vocal untuk episode\",\n  \"estimated_completion\": \"2025-01-25\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
-						},
-						"description": "Buat editing work baru. Field yang diperlukan:\n- episode_id: ID episode (required)\n- vocal_file_path: Path file vocal dari upload (required)\n- editing_notes: Catatan editing (optional)\n- estimated_completion: Estimasi selesai (optional, format: YYYY-MM-DD)",
+						"description": "Melihat daftar tugas editing vokal.",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer-editing/works",
 							"host": [
@@ -5507,73 +5046,34 @@
 					},
 					"event": [
 						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"// Validasi episode_id dan vocal_file_path",
-									"var episodeId = pm.collectionVariables.get('episode_id');",
-									"var vocalFilePath = pm.collectionVariables.get('vocal_file_path');",
-									"",
-									"if (!episodeId) {",
-									"    console.log('⚠️ episode_id tidak ditemukan! Gunakan request \"Get Episodes\" terlebih dahulu.');",
-									"}",
-									"",
-									"if (!vocalFilePath) {",
-									"    console.log('⚠️ vocal_file_path tidak ditemukan! Gunakan request \"Upload Vocal File\" terlebih dahulu.');",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						},
-						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"if (pm.response.code === 200) {",
 									"    var jsonData = pm.response.json();",
-									"    if (jsonData.success && jsonData.data) {",
-									"        pm.collectionVariables.set('editing_id', jsonData.data.id);",
-									"        console.log('✅ Editing work berhasil dibuat');",
-									"        console.log('Editing ID: ' + jsonData.data.id);",
-									"        console.log('Status: ' + jsonData.data.status);",
-									"        console.log('Episode ID: ' + jsonData.data.episode_id);",
+									"    if (jsonData.success && jsonData.data.data.length > 0) {",
+									"        pm.collectionVariables.set('editing_id', jsonData.data.data[0].id);",
+									"        console.log('✅ Editing ID captured: ' + jsonData.data.data[0].id);",
 									"    }",
-									"} else {",
-									"    console.log('❌ Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
 									"}"
-								],
-								"type": "text/javascript"
+								]
 							}
 						}
 					]
 				},
 				{
-					"name": "Update Editing Work",
+					"name": "2. Accept Work (Terima Pekerjaan)",
 					"request": {
-						"method": "PUT",
+						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
-							},
-							{
-								"key": "Content-Type",
-								"value": "application/json"
 							}
 						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"vocal_file_path\": \"{{vocal_file_path}}\",\n  \"editing_notes\": \"Update editing notes\",\n  \"estimated_completion\": \"2025-01-25\",\n  \"status\": \"in_progress\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
-						},
-						"description": "Update editing work. Field optional:\n- vocal_file_path: Path file vocal (optional)\n- editing_notes: Catatan editing (optional)\n- estimated_completion: Estimasi selesai (optional)\n- status: in_progress, completed, atau revision_needed (optional)",
+						"description": "Menerima tugas editing vokal.",
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer-editing/works/{{editing_id}}",
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer-editing/works/{{editing_id}}/accept-work",
 							"host": [
 								"{{base_url}}"
 							],
@@ -5583,28 +5083,14 @@
 								"roles",
 								"sound-engineer-editing",
 								"works",
-								"{{editing_id}}"
+								"{{editing_id}}",
+								"accept-work"
 							]
 						}
-					},
-					"event": [
-						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"// Validasi editing_id",
-									"var editingId = pm.collectionVariables.get('editing_id');",
-									"if (!editingId) {",
-									"    console.log('⚠️ editing_id tidak ditemukan! Gunakan request \"Create Editing Work\" atau \"Get Works\" terlebih dahulu.');",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
+					}
 				},
 				{
-					"name": "Submit for QC",
+					"name": "3. Lanjut Edit Vocal (Input Link)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5613,20 +5099,43 @@
 								"value": "Bearer {{auth_token}}"
 							},
 							{
-								"key": "Content-Type",
+								"key": "Accept",
 								"value": "application/json"
 							}
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"final_file_path\": \"{{vocal_file_path}}\",\n  \"submission_notes\": \"Editing selesai, siap untuk QC\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
+							"raw": "{\n    \"vocal_file_link\": \"https://drive.google.com/example-vocal-editing-link\",\n    \"vocal_file_name\": \"vocal_edited_episode.wav\",\n    \"vocal_file_size\": 1024000\n}"
 						},
-						"description": "Submit editing work untuk QC Producer. Field yang diperlukan:\n- final_file_path: Path file final yang sudah di-edit (required) - bisa dari upload vocal atau path yang sudah ada\n- submission_notes: Catatan submission (optional)\n\n**Catatan**: Pastikan sudah upload file final terlebih dahulu menggunakan \"Upload Vocal File\" untuk mendapatkan file_path.",
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer-editing/input-vocal-link",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"sound-engineer-editing",
+								"input-vocal-link"
+							]
+						}
+					}
+				},
+				{
+					"name": "4. Slesai Pekerjaan (Submit Work)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"final_file_link\": \"https://drive.google.com/final-vocal-link\",\n  \"submission_notes\": \"Vocal editing selesai.\"\n}"
+						},
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/sound-engineer-editing/works/{{editing_id}}/submit",
 							"host": [
@@ -5642,49 +5151,7 @@
 								"submit"
 							]
 						}
-					},
-					"event": [
-						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"// Validasi editing_id dan final_file_path",
-									"var editingId = pm.collectionVariables.get('editing_id');",
-									"var finalFilePath = pm.collectionVariables.get('vocal_file_path');",
-									"",
-									"if (!editingId) {",
-									"    console.log('⚠️ editing_id tidak ditemukan! Gunakan request \"Create Editing Work\" atau \"Get Works\" terlebih dahulu.');",
-									"}",
-									"",
-									"if (!finalFilePath) {",
-									"    console.log('⚠️ vocal_file_path tidak ditemukan! Gunakan request \"Upload Vocal File\" terlebih dahulu untuk mendapatkan file_path.');",
-									"    console.log('💡 Atau isi manual final_file_path di body request.');",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						},
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"if (pm.response.code === 200 || pm.response.code === 201) {",
-									"    var jsonData = pm.response.json();",
-									"    if (jsonData.success) {",
-									"        console.log('✅ Editing work berhasil di-submit untuk QC');",
-									"        console.log('Status: ' + jsonData.data.status);",
-									"        console.log('Submitted At: ' + jsonData.data.submitted_at);",
-									"        console.log('Producer akan menerima notifikasi untuk QC');",
-									"    }",
-									"} else {",
-									"    console.log('❌ Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
+					}
 				}
 			]
 		},
@@ -5952,27 +5419,31 @@
 					}
 				},
 				{
-					"name": "Upload Storyboard",
+					"name": "Update Storyboard Link",
 					"request": {
-						"method": "POST",
+						"method": "PUT",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "storyboard_file",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n  \"type\": \"storyboard\",\n  \"link\": \"https://example.com/storyboard.pdf\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Update link storyboard (JSON Only).",
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/creative/works/{{creative_work_id}}/upload-storyboard",
+							"raw": "{{base_url}}/api/live-tv/roles/creative/works/{{creative_work_id}}/update-link",
 							"host": [
 								"{{base_url}}"
 							],
@@ -5983,7 +5454,7 @@
 								"creative",
 								"works",
 								"{{creative_work_id}}",
-								"upload-storyboard"
+								"update-link"
 							]
 						}
 					}
@@ -6729,15 +6200,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "bts_video",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"file_link\": \"https://example.com/bts_video.mp4\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link video BTS (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/upload-bts-video",
 							"host": [
@@ -6766,20 +6237,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "photos",
-									"type": "file",
-									"src": []
-								},
-								{
-									"key": "photos",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"file_links\": [\n        \"https://example.com/photo1.jpg\",\n        \"https://example.com/photo2.jpg\"\n    ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link foto talent (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/upload-talent-photos",
 							"host": [
@@ -6839,20 +6305,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "website_link",
-									"value": "https://example.com/episode",
-									"type": "text"
-								},
-								{
-									"key": "proof_screenshot",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"website_link\": \"https://example.com/episode\",\n    \"proof_link\": \"https://example.com/screenshot.jpg\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link sharing Facebook (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/episodes/{{episode_id}}/share-facebook",
 							"host": [
@@ -6881,20 +6342,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "highlight_video",
-									"type": "file",
-									"src": []
-								},
-								{
-									"key": "proof_screenshot",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"video_link\": \"https://example.com/story.mp4\",\n    \"proof_link\": \"https://example.com/ig_screenshot.jpg\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link IG Story (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/episodes/{{episode_id}}/create-ig-story-highlight",
 							"host": [
@@ -6923,20 +6379,15 @@
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "message",
-									"value": "Link episode",
-									"type": "text"
-								},
-								{
-									"key": "proof_screenshot",
-									"type": "file",
-									"src": []
+							"mode": "raw",
+							"raw": "{\n    \"message\": \"Link episode...\",\n    \"proof_link\": \"https://example.com/wa_screenshot.jpg\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
-							]
+							}
 						},
+						"description": "Submit link WA Group sharing (JSON Only).",
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/promosi/episodes/{{episode_id}}/share-wa-group",
 							"host": [
@@ -7269,6 +6720,34 @@
 					]
 				},
 				{
+					"name": "Get Available Equipment",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/production/equipment/available",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"production",
+								"equipment",
+								"available"
+							]
+						},
+						"description": "Cek stok alat yang tersedia sebelum melakukan request."
+					},
+					"event": []
+				},
+				{
 					"name": "Accept Work",
 					"request": {
 						"method": "POST",
@@ -7331,7 +6810,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"equipment_list\": [\n    {\n      \"equipment_name\": \"Camera\",\n      \"quantity\": 2,\n      \"return_date\": \"2025-01-30\",\n      \"notes\": \"Camera untuk shooting\"\n    },\n    {\n      \"equipment_name\": \"Light\",\n      \"quantity\": 4,\n      \"return_date\": \"2025-01-30\",\n      \"notes\": \"Lighting untuk shooting\"\n    }\n  ],\n  \"request_notes\": \"Equipment untuk shooting episode\"\n}"
+							"raw": "{\n  \"equipment_list\": [\n    {\n      \"equipment_name\": \"Camera\",\n      \"quantity\": 2,\n      \"return_date\": \"{{return_date}}\",\n      \"notes\": \"Camera untuk shooting\"\n    },\n    {\n      \"equipment_name\": \"Light\",\n      \"quantity\": 4,\n      \"return_date\": \"{{return_date}}\",\n      \"notes\": \"Lighting untuk shooting\"\n    }\n  ],\n  \"request_notes\": \"Equipment untuk shooting episode\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/produksi/works/{{produksi_work_id}}/request-equipment",
@@ -7349,7 +6828,26 @@
 							]
 						},
 						"description": "⚠️ PENTING: Pastikan Content-Type header adalah 'application/json'!\n\n📋 Required Fields:\n- equipment_list: Array of equipment (required, min: 1)\n  - equipment_name: Nama alat (required, string, max: 255)\n  - quantity: Jumlah (required, integer, min: 1)\n  - return_date: Tanggal pengembalian (required, date, harus setelah hari ini)\n  - notes: Catatan (optional, string, max: 1000)\n- request_notes: Catatan request (optional, string, max: 1000)\n\n✅ Requirement:\n- Produksi work harus berstatus 'in_progress' (setelah accept work)\n- User harus yang accept work tersebut"
-					}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data && jsonData.data.equipment_requests && jsonData.data.equipment_requests.length > 0) {",
+									"        var firstId = jsonData.data.equipment_requests[0].id;",
+									"        pm.collectionVariables.set(\"equipment_id\", firstId.toString());",
+									"        pm.collectionVariables.set(\"request_id\", firstId.toString());",
+									"        console.log(\"✅ Equipment ID captured: \" + firstId);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
 					"name": "Request Needs",
@@ -7414,7 +6912,7 @@
 					}
 				},
 				{
-					"name": "Upload Shooting Results",
+					"name": "Upload Shooting Results (FILE - DEPRECATED)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7461,7 +6959,7 @@
 					}
 				},
 				{
-					"name": "Input File Links",
+					"name": "Input File Links (PREFERRED)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7492,7 +6990,7 @@
 					}
 				},
 				{
-					"name": "Return Equipment",
+					"name": "Notify Return (Equipment)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7501,25 +6999,24 @@
 								"value": "Bearer {{auth_token}}"
 							}
 						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"return_condition\": \"good\",\n  \"return_notes\": \"Equipment dalam kondisi baik\"\n}"
-						},
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/production/equipment/{{equipment_id}}/return",
+							"raw": "{{base_url}}/api/live-tv/roles/produksi/equipment/{{equipment_id}}/notify-return",
 							"host": [
 								"{{base_url}}"
 							],
 							"path": [
 								"api",
 								"live-tv",
-								"production",
+								"roles",
+								"produksi",
 								"equipment",
 								"{{equipment_id}}",
-								"return"
+								"notify-return"
 							]
-						}
-					}
+						},
+						"description": "Notifikasi ke Art & Set Properti bahwa alat telah dikembalikan secara fisik.\n\n⚠️ Requirement:\n- Equipment status harus 'in_use'\n- User harus yang me-request atau assigned\n\n📌 Effect:\n- Mengirim notifikasi ke Art & Set Properti\n- Menambah catatan return di database\n- Status tetap 'in_use' sampai Art & Set Properti konfirmasi"
+					},
+					"event": []
 				},
 				{
 					"name": "Complete Work",
@@ -7736,6 +7233,158 @@
 					}
 				},
 				{
+					"name": "Get Active Loans (Dipinjam)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/requests?status=in_use",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"requests"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "in_use",
+									"description": "Filter barang yang sedang dipinjam"
+								}
+							]
+						},
+						"description": "Melihat daftar barang yang sedang dipinjam (in_use) untuk mengetahui siapa peminjamnya."
+					},
+					"event": []
+				},
+				{
+					"name": "Create Equipment",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Microphone Test\",\n  \"category\": \"Audio\",\n  \"quantity\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/equipment",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"equipment"
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Equipment Inventory",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/equipment",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"equipment"
+							]
+						}
+					}
+				},
+				{
+					"name": "Update Equipment",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"available\",\n  \"name\": \"Microphone Update\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/equipment/{{equipment_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"equipment",
+								"{{equipment_id}}"
+							]
+						}
+					}
+				},
+				{
+					"name": "Delete Equipment",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/equipment/{{equipment_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"art-set-properti",
+								"equipment",
+								"{{equipment_id}}"
+							]
+						}
+					}
+				},
+				{
 					"name": "Approve Equipment Request",
 					"request": {
 						"method": "POST",
@@ -7747,7 +7396,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"equipment_notes\": \"Equipment approved\",\n  \"return_date\": \"2025-01-25\"\n}"
+							"raw": "{\n  \"equipment_notes\": \"Equipment approved\",\n  \"return_date\": \"{{return_date}}\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/art-set-properti/requests/{{request_id}}/approve",
@@ -7764,7 +7413,26 @@
 								"approve"
 							]
 						}
-					}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data) {",
+									"        var id = jsonData.data.id;",
+									"        pm.collectionVariables.set(\"request_id\", id.toString());",
+									"        pm.collectionVariables.set(\"equipment_id\", id.toString());",
+									"        console.log(\"✅ Approved Equipment ID captured: \" + id);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
 					"name": "Return Equipment",
@@ -8128,26 +7796,15 @@
 		},
 		{
 			"name": "13. Design Grafis",
-			"description": "Auto-login sebagai Design Grafis. Semua request otomatis pakai token!",
+			"description": "Auto-login sebagai Design Grafis. Mendukung upload link (Google Drive, dll).",
 			"event": [
 				{
 					"listen": "prerequest",
 					"script": {
 						"exec": [
-							"// Skip untuk request login",
-							"if (pm.request.name && (pm.request.name.includes('Login') || pm.request.name.includes('🔐'))) {",
-							"    return;",
-							"}",
-							"",
-							"// Cek token",
+							"if (pm.request.name && (pm.request.name.includes('Login') || pm.request.name.includes('🔐'))) { return; }",
 							"var authToken = pm.collectionVariables.get('auth_token');",
-							"",
-							"if (!authToken || authToken === '' || authToken === null || authToken === undefined) {",
-							"    console.log('⚠️ Token tidak ditemukan! Silakan login dulu dengan request \"🔐 Login\" di folder ini');",
-							"    console.log('⚠️ Atau tunggu beberapa detik jika baru saja login...');",
-							"} else {",
-							"    console.log('✅ Token ditemukan: ' + authToken.substring(0, 30) + '...');",
-							"}"
+							"if (!authToken) { console.log('⚠️ Token tidak ditemukan! Silakan login dulu.'); }"
 						],
 						"type": "text/javascript"
 					}
@@ -8185,44 +7842,14 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"// Clear old token first",
 									"pm.collectionVariables.unset('auth_token');",
-									"",
 									"if (pm.response.code === 200) {",
-									"    try {",
-									"        var jsonData = pm.response.json();",
-									"        ",
-									"        if (jsonData.success && jsonData.data && jsonData.data.token) {",
-									"            var token = jsonData.data.token.toString().trim();",
-									"            ",
-									"            // Save token",
-									"            pm.collectionVariables.set('auth_token', token);",
-									"            pm.collectionVariables.set('user_id', jsonData.data.user.id);",
-									"            pm.collectionVariables.set('user_role', jsonData.data.user.role);",
-									"            ",
-									"            // Verify token tersimpan",
-									"            var savedToken = pm.collectionVariables.get('auth_token');",
-									"            ",
-									"            if (savedToken && savedToken === token && savedToken.length > 0) {",
-									"                console.log('✅ Login berhasil sebagai: ' + jsonData.data.user.role);",
-									"                console.log('✅ Token berhasil disimpan: ' + savedToken.substring(0, 30) + '...');",
-									"                console.log('✅ Token length: ' + savedToken.length);",
-									"            } else {",
-									"                console.log('❌ ERROR: Token tidak tersimpan!');",
-									"                console.log('Token yang diterima: ' + token.substring(0, 30));",
-									"                console.log('Token yang tersimpan: ' + (savedToken || 'KOSONG'));",
-									"            }",
-									"        } else {",
-									"            console.log('❌ Login gagal: Token tidak ada di response');",
-									"            console.log('Response: ' + JSON.stringify(jsonData));",
-									"        }",
-									"    } catch (e) {",
-									"        console.log('❌ Error parsing response: ' + e.message);",
-									"        console.log('Response text: ' + pm.response.text());",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data && jsonData.data.token) {",
+									"        pm.collectionVariables.set('auth_token', jsonData.data.token);",
+									"        pm.collectionVariables.set('user_id', jsonData.data.user.id);",
+									"        console.log('✅ Login berhasil sebagai: ' + jsonData.data.user.role);",
 									"    }",
-									"} else {",
-									"    console.log('❌ HTTP Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
 									"}"
 								]
 							}
@@ -8230,7 +7857,7 @@
 					]
 				},
 				{
-					"name": "Get Works",
+					"name": "Get Works (Design Grafis)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8252,10 +7879,26 @@
 								"works"
 							]
 						}
-					}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data && jsonData.data.data && jsonData.data.data.length > 0) {",
+									"        pm.collectionVariables.set('design_grafis_work_id', jsonData.data.data[0].id);",
+									"        console.log('✅ Work ID tersimpan: ' + jsonData.data.data[0].id);",
+									"    }",
+									"}"
+								]
+							}
+						}
+					]
 				},
 				{
-					"name": "Get Shared Files",
+					"name": "Get Shared Files (Produksi & Promosi)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8265,7 +7908,7 @@
 							}
 						],
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/shared-files",
+							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/shared-files?episode_id={{episode_id}}",
 							"host": [
 								"{{base_url}}"
 							],
@@ -8275,37 +7918,36 @@
 								"roles",
 								"design-grafis",
 								"shared-files"
+							],
+							"query": [
+								{
+									"key": "episode_id",
+									"value": "{{episode_id}}"
+								}
 							]
 						}
 					}
 				},
 				{
-					"name": "Upload Files",
+					"name": "Upload Youtube Thumbnail (Link)",
 					"request": {
 						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "files[]",
-									"type": "file",
-									"src": []
-								},
-								{
-									"key": "files[]",
-									"type": "file",
-									"src": []
-								}
-							]
+							"mode": "raw",
+							"raw": "{\n  \"file_link\": \"https://link-google-drive.com/thumb-yt.jpg\",\n  \"design_notes\": \"Thumbnail Youtube untuk Episode {{episode_id}}\"\n}"
 						},
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}/upload",
+							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}/upload-thumbnail-youtube",
 							"host": [
 								"{{base_url}}"
 							],
@@ -8316,24 +7958,31 @@
 								"design-grafis",
 								"works",
 								"{{design_grafis_work_id}}",
-								"upload"
+								"upload-thumbnail-youtube"
 							]
 						}
 					}
 				},
 				{
-					"name": "Get Design Grafis Work Detail",
+					"name": "Upload BTS Thumbnail (Link)",
 					"request": {
-						"method": "GET",
+						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
-						"description": "Get design grafis work detail by ID",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"file_link\": \"https://link-google-drive.com/thumb-bts.jpg\",\n  \"design_notes\": \"Thumbnail BTS untuk Episode {{episode_id}}\"\n}"
+						},
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}",
+							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}/upload-thumbnail-bts",
 							"host": [
 								"{{base_url}}"
 							],
@@ -8343,24 +7992,32 @@
 								"roles",
 								"design-grafis",
 								"works",
-								"{{design_grafis_work_id}}"
+								"{{design_grafis_work_id}}",
+								"upload-thumbnail-bts"
 							]
 						}
 					}
 				},
 				{
-					"name": "Get Statistics",
+					"name": "Upload Generic Files (Link)",
 					"request": {
-						"method": "GET",
+						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
-						"description": "Get Design Grafis statistics",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"file_links\": [\n    \"https://link-google-drive.com/file1.png\",\n    \"https://link-google-drive.com/file2.psd\"\n  ],\n  \"design_notes\": \"Aset tambahan untuk program\"\n}"
+						},
 						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/statistics",
+							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}/upload-files",
 							"host": [
 								"{{base_url}}"
 							],
@@ -8369,13 +8026,46 @@
 								"live-tv",
 								"roles",
 								"design-grafis",
-								"statistics"
+								"works",
+								"{{design_grafis_work_id}}",
+								"upload-files"
 							]
 						}
 					}
 				},
 				{
-					"name": "Submit to QC",
+					"name": "Complete Work",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"completion_notes\": \"Semua desain selesai dikerjakan.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}/complete-work",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"design-grafis",
+								"works",
+								"{{design_grafis_work_id}}",
+								"complete-work"
+							]
+						}
+					}
+				},
+				{
+					"name": "Submit to QC (Optional)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8405,26 +8095,15 @@
 		},
 		{
 			"name": "14. Editor Promosi",
-			"description": "Auto-login sebagai Editor Promosi. Semua request otomatis pakai token!",
+			"description": "Auto-login sebagai Editor Promosi. Mendukung upload link video BTS/Highlight.",
 			"event": [
 				{
 					"listen": "prerequest",
 					"script": {
 						"exec": [
-							"// Skip untuk request login",
-							"if (pm.request.name && (pm.request.name.includes('Login') || pm.request.name.includes('🔐'))) {",
-							"    return;",
-							"}",
-							"",
-							"// Cek token",
+							"if (pm.request.name && (pm.request.name.includes('Login') || pm.request.name.includes('🔐'))) { return; }",
 							"var authToken = pm.collectionVariables.get('auth_token');",
-							"",
-							"if (!authToken || authToken === '' || authToken === null || authToken === undefined) {",
-							"    console.log('⚠️ Token tidak ditemukan! Silakan login dulu dengan request \"🔐 Login\" di folder ini');",
-							"    console.log('⚠️ Atau tunggu beberapa detik jika baru saja login...');",
-							"} else {",
-							"    console.log('✅ Token ditemukan: ' + authToken.substring(0, 30) + '...');",
-							"}"
+							"if (!authToken) { console.log('⚠️ Token tidak ditemukan!'); }"
 						],
 						"type": "text/javascript"
 					}
@@ -8462,44 +8141,13 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"// Clear old token first",
 									"pm.collectionVariables.unset('auth_token');",
-									"",
 									"if (pm.response.code === 200) {",
-									"    try {",
-									"        var jsonData = pm.response.json();",
-									"        ",
-									"        if (jsonData.success && jsonData.data && jsonData.data.token) {",
-									"            var token = jsonData.data.token.toString().trim();",
-									"            ",
-									"            // Save token",
-									"            pm.collectionVariables.set('auth_token', token);",
-									"            pm.collectionVariables.set('user_id', jsonData.data.user.id);",
-									"            pm.collectionVariables.set('user_role', jsonData.data.user.role);",
-									"            ",
-									"            // Verify token tersimpan",
-									"            var savedToken = pm.collectionVariables.get('auth_token');",
-									"            ",
-									"            if (savedToken && savedToken === token && savedToken.length > 0) {",
-									"                console.log('✅ Login berhasil sebagai: ' + jsonData.data.user.role);",
-									"                console.log('✅ Token berhasil disimpan: ' + savedToken.substring(0, 30) + '...');",
-									"                console.log('✅ Token length: ' + savedToken.length);",
-									"            } else {",
-									"                console.log('❌ ERROR: Token tidak tersimpan!');",
-									"                console.log('Token yang diterima: ' + token.substring(0, 30));",
-									"                console.log('Token yang tersimpan: ' + (savedToken || 'KOSONG'));",
-									"            }",
-									"        } else {",
-									"            console.log('❌ Login gagal: Token tidak ada di response');",
-									"            console.log('Response: ' + JSON.stringify(jsonData));",
-									"        }",
-									"    } catch (e) {",
-									"        console.log('❌ Error parsing response: ' + e.message);",
-									"        console.log('Response text: ' + pm.response.text());",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data && jsonData.data.token) {",
+									"        pm.collectionVariables.set('auth_token', jsonData.data.token);",
+									"        console.log('✅ Login berhasil: ' + jsonData.data.user.role);",
 									"    }",
-									"} else {",
-									"    console.log('❌ HTTP Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
 									"}"
 								]
 							}
@@ -8507,7 +8155,7 @@
 					]
 				},
 				{
-					"name": "Get Works",
+					"name": "Get Works (Editor Promosi)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8529,7 +8177,23 @@
 								"works"
 							]
 						}
-					}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data && jsonData.data.data && jsonData.data.data.length > 0) {",
+									"        pm.collectionVariables.set('editor_promosi_work_id', jsonData.data.data[0].id);",
+									"        console.log('✅ Editor Promosi Work ID tersimpan: ' + jsonData.data.data[0].id);",
+									"    }",
+									"}"
+								]
+							}
+						}
+					]
 				},
 				{
 					"name": "Get Source Files",
@@ -8557,24 +8221,22 @@
 					}
 				},
 				{
-					"name": "Upload Files",
+					"name": "Upload Files (Link)",
 					"request": {
 						"method": "POST",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
 						"body": {
-							"mode": "formdata",
-							"formdata": [
-								{
-									"key": "files[]",
-									"type": "file",
-									"src": []
-								}
-							]
+							"mode": "raw",
+							"raw": "{\n  \"file_links\": [\n    \"https://link-google-drive.com/video-bts.mp4\"\n  ],\n  \"notes\": \"Video BTS sudah di-edit\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/live-tv/roles/editor-promosi/works/{{editor_promosi_work_id}}/upload",
@@ -8589,59 +8251,6 @@
 								"works",
 								"{{editor_promosi_work_id}}",
 								"upload"
-							]
-						}
-					}
-				},
-				{
-					"name": "Get Editor Promosi Work Detail",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"description": "Get editor promosi work detail by ID",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/editor-promosi/works/{{editor_promosi_work_id}}",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"editor-promosi",
-								"works",
-								"{{editor_promosi_work_id}}"
-							]
-						}
-					}
-				},
-				{
-					"name": "Get Statistics",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"description": "Get Editor Promosi statistics",
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/editor-promosi/statistics",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"editor-promosi",
-								"statistics"
 							]
 						}
 					}
@@ -8668,218 +8277,6 @@
 								"editor-promosi",
 								"works",
 								"{{editor_promosi_work_id}}",
-								"submit-to-qc"
-							]
-						}
-					}
-				}
-			]
-		},
-		{
-			"name": "14. Design Grafis",
-			"description": "Auto-login sebagai Design Grafis. Semua request otomatis pakai token!",
-			"event": [
-				{
-					"listen": "prerequest",
-					"script": {
-						"exec": [
-							"// Skip untuk request login",
-							"if (pm.request.name && (pm.request.name.includes('Login') || pm.request.name.includes('🔐'))) {",
-							"    return;",
-							"}",
-							"",
-							"// Cek token",
-							"var authToken = pm.collectionVariables.get('auth_token');",
-							"",
-							"if (!authToken || authToken === '' || authToken === null || authToken === undefined) {",
-							"    console.log('⚠️ Token tidak ditemukan! Silakan login dulu dengan request \"🔐 Login\" di folder ini');",
-							"    console.log('⚠️ Atau tunggu beberapa detik jika baru saja login...');",
-							"} else {",
-							"    console.log('✅ Token ditemukan: ' + authToken.substring(0, 30) + '...');",
-							"}"
-						],
-						"type": "text/javascript"
-					}
-				}
-			],
-			"item": [
-				{
-					"name": "🔐 Login - Design Grafis",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"login\": \"graphicdesign@example.com\",\n  \"password\": \"password\"\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/auth/login",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"auth",
-								"login"
-							]
-						}
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"// Clear old token first",
-									"pm.collectionVariables.unset('auth_token');",
-									"",
-									"if (pm.response.code === 200) {",
-									"    try {",
-									"        var jsonData = pm.response.json();",
-									"        ",
-									"        if (jsonData.success && jsonData.data && jsonData.data.token) {",
-									"            var token = jsonData.data.token.toString().trim();",
-									"            ",
-									"            // Save token",
-									"            pm.collectionVariables.set('auth_token', token);",
-									"            pm.collectionVariables.set('user_id', jsonData.data.user.id);",
-									"            pm.collectionVariables.set('user_role', jsonData.data.user.role);",
-									"            ",
-									"            // Verify token tersimpan",
-									"            var savedToken = pm.collectionVariables.get('auth_token');",
-									"            ",
-									"            if (savedToken && savedToken === token && savedToken.length > 0) {",
-									"                console.log('✅ Login berhasil sebagai: ' + jsonData.data.user.role);",
-									"                console.log('✅ Token berhasil disimpan: ' + savedToken.substring(0, 30) + '...');",
-									"                console.log('✅ Token length: ' + savedToken.length);",
-									"            } else {",
-									"                console.log('❌ ERROR: Token tidak tersimpan!');",
-									"                console.log('Token yang diterima: ' + token.substring(0, 30));",
-									"                console.log('Token yang tersimpan: ' + (savedToken || 'KOSONG'));",
-									"            }",
-									"        } else {",
-									"            console.log('❌ Login gagal: Token tidak ada di response');",
-									"            console.log('Response: ' + JSON.stringify(jsonData));",
-									"        }",
-									"    } catch (e) {",
-									"        console.log('❌ Error parsing response: ' + e.message);",
-									"        console.log('Response text: ' + pm.response.text());",
-									"    }",
-									"} else {",
-									"    console.log('❌ HTTP Error: ' + pm.response.code);",
-									"    console.log('Response: ' + pm.response.text());",
-									"}"
-								]
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Works",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"design-grafis",
-								"works"
-							]
-						}
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"if (pm.response.code === 200) {",
-									"    var jsonData = pm.response.json();",
-									"    if (jsonData.success && jsonData.data && jsonData.data.data && jsonData.data.data.length > 0) {",
-									"        var firstWork = jsonData.data.data[0];",
-									"        pm.collectionVariables.set('design_grafis_work_id', firstWork.id);",
-									"        console.log('✅ Design Grafis Work ID tersimpan: ' + firstWork.id);",
-									"    } else {",
-									"        console.log('⚠️ Tidak ada work tersedia');",
-									"    }",
-									"}"
-								]
-							}
-						}
-					]
-				},
-				{
-					"name": "Upload Files (Link)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							},
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"file_links\": [\n    \"https://drive.google.com/file/d/12345/view\",\n    \"https://docs.google.com/presentation/d/67890/edit\"\n  ],\n  \"design_notes\": \"Link Google Drive untuk thumbnail dan banner\"\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}/upload-files",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"design-grafis",
-								"works",
-								"{{design_grafis_work_id}}",
-								"upload-files"
-							]
-						},
-						"description": "Upload link file (Google Drive, dll) menggantikan upload file fisik"
-					}
-				},
-				{
-					"name": "Submit to QC",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/live-tv/roles/design-grafis/works/{{design_grafis_work_id}}/submit-to-qc",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"api",
-								"live-tv",
-								"roles",
-								"design-grafis",
-								"works",
-								"{{design_grafis_work_id}}",
 								"submit-to-qc"
 							]
 						}
@@ -11357,6 +10754,1496 @@
 					}
 				}
 			]
+		},
+		{
+			"name": "Distribution Manager (Manager Broadcasting)",
+			"description": "Endpoints untuk Distribution Manager / Manager Broadcasting.\nLogin: distributionmanager@example.com / password\n\nRoute Groups:\n1. roles/manager-broadcasting/* - Schedule & Work Approval, QC\n2. roles/distribution-manager/* - Schedule Options dari Manager Program\n3. roles/distribution/* - Dashboard, Assign Work",
+			"item": [
+				{
+					"name": "Login - Distribution Manager",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"login\": \"distributionmanager@example.com\",\n  \"password\": \"password\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login sebagai Distribution Manager"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.success && jsonData.data.token) {",
+									"        pm.collectionVariables.set('auth_token', jsonData.data.token);",
+									"        pm.collectionVariables.set('user_id', jsonData.data.user.id);",
+									"        pm.collectionVariables.set('user_role', jsonData.data.user.role);",
+									"        console.log('Distribution Manager token saved');",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "--- Dashboard & Work Assignment ---",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "",
+							"host": [
+								""
+							]
+						},
+						"description": "=== SEPARATOR ==="
+					}
+				},
+				{
+					"name": "Dashboard",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/distribution/dashboard",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"distribution",
+								"dashboard"
+							]
+						},
+						"description": "Get Distribution Manager dashboard overview"
+					}
+				},
+				{
+					"name": "Get Available Workers by Role",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/distribution/available-workers/editor",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"distribution",
+								"available-workers",
+								"editor"
+							]
+						},
+						"description": "Get available workers by role untuk assign work. Ganti 'editor' dengan role lain: produksi, sound_engineer, design_grafis, editor_promosi, promosi, broadcasting, quality_control"
+					}
+				},
+				{
+					"name": "Assign Work to Episode",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"assignments\": [\n    {\n      \"role\": \"editor\",\n      \"user_id\": 16\n    },\n    {\n      \"role\": \"quality_control\",\n      \"user_id\": 14\n    }\n  ],\n  \"notes\": \"Assign work untuk episode ini\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/distribution/episodes/{{episode_id}}/assign-work",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"distribution",
+								"episodes",
+								"{{episode_id}}",
+								"assign-work"
+							]
+						},
+						"description": "Membagi pekerjaan berdasarkan jabatan ke episode tertentu"
+					}
+				},
+				{
+					"name": "--- Schedule Options (dari Manager Program) ---",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "",
+							"host": [
+								""
+							]
+						},
+						"description": "=== SEPARATOR ==="
+					}
+				},
+				{
+					"name": "Get Schedule Options",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/distribution-manager/schedule-options",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"distribution-manager",
+								"schedule-options"
+							]
+						},
+						"description": "Menerima Opsi Jadwal Tayang dari Manager Program"
+					}
+				},
+				{
+					"name": "Approve Schedule Option",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"approved_option_id\": 1,\n  \"notes\": \"Jadwal tayang disetujui\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/distribution-manager/schedule-options/{{schedule_option_id}}/approve",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"distribution-manager",
+								"schedule-options",
+								"{{schedule_option_id}}",
+								"approve"
+							]
+						},
+						"description": "ACC jadwal tayang yang dipilih"
+					}
+				},
+				{
+					"name": "Revise Schedule Option",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"revision_notes\": \"Tolong ganti jadwal untuk hari Sabtu\",\n  \"reason\": \"Bertabrakan dengan program lain\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/distribution-manager/schedule-options/{{schedule_option_id}}/revise",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"distribution-manager",
+								"schedule-options",
+								"{{schedule_option_id}}",
+								"revise"
+							]
+						},
+						"description": "Merevisi jadwal dan memberitahukan kembali ke Manager Program"
+					}
+				},
+				{
+					"name": "Reject Schedule Option",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"Jadwal tidak memungkinkan\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/distribution-manager/schedule-options/{{schedule_option_id}}/reject",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"distribution-manager",
+								"schedule-options",
+								"{{schedule_option_id}}",
+								"reject"
+							]
+						},
+						"description": "Reject jadwal tayang"
+					}
+				},
+				{
+					"name": "--- Broadcasting Schedule & Work Approval ---",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "",
+							"host": [
+								""
+							]
+						},
+						"description": "=== SEPARATOR ==="
+					}
+				},
+				{
+					"name": "Get Broadcasting Schedules",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/manager-broadcasting/schedules",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"manager-broadcasting",
+								"schedules"
+							]
+						},
+						"description": "Get semua broadcasting schedules untuk approval"
+					}
+				},
+				{
+					"name": "Get Broadcasting Works",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/manager-broadcasting/works",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"manager-broadcasting",
+								"works"
+							]
+						},
+						"description": "Get broadcasting works untuk approval/QC"
+					}
+				},
+				{
+					"name": "Approve Broadcasting Schedule",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"notes\": \"Schedule approved for broadcasting\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/manager-broadcasting/schedules/{{schedule_id}}/approve",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"manager-broadcasting",
+								"schedules",
+								"{{schedule_id}}",
+								"approve"
+							]
+						},
+						"description": "Approve jadwal broadcasting"
+					}
+				},
+				{
+					"name": "Reject Broadcasting Schedule",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"Schedule tidak sesuai\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/manager-broadcasting/schedules/{{schedule_id}}/reject",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"manager-broadcasting",
+								"schedules",
+								"{{schedule_id}}",
+								"reject"
+							]
+						},
+						"description": "Reject jadwal broadcasting"
+					}
+				},
+				{
+					"name": "Revise Broadcasting Schedule",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"new_date\": \"2026-03-15\",\n  \"reason\": \"Jadwal perlu digeser karena ada acara lain\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/manager-broadcasting/schedules/{{schedule_id}}/revise",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"manager-broadcasting",
+								"schedules",
+								"{{schedule_id}}",
+								"revise"
+							]
+						},
+						"description": "Revisi jadwal dan beritahukan kembali ke Manager Program"
+					}
+				},
+				{
+					"name": "Approve Broadcasting Work (QC)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"qc_notes\": \"Konten sudah sesuai standar\",\n  \"no_revision\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/manager-broadcasting/works/{{broadcasting_work_id}}/approve",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"manager-broadcasting",
+								"works",
+								"{{broadcasting_work_id}}",
+								"approve"
+							]
+						},
+						"description": "QC Program - Approve work setelah isi form catatan QC (tidak ada revisi)"
+					}
+				},
+				{
+					"name": "Get Manager Broadcasting Schedule Options",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/manager-broadcasting/schedule-options",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"manager-broadcasting",
+								"schedule-options"
+							]
+						},
+						"description": "Get schedule options (via Manager Broadcasting route)"
+					}
+				},
+				{
+					"name": "Get Statistics",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/manager-broadcasting/statistics",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"manager-broadcasting",
+								"statistics"
+							]
+						},
+						"description": "Get broadcasting statistics & target pencapaian"
+					}
+				},
+				{
+					"name": "--- QC Kerjaan Editor (Login sbg Dist Manager) ---",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "",
+							"host": [
+								""
+							]
+						},
+						"description": "=== QC Program (Manager Broadcasting) - Proses review kerjaan Editor ==="
+					}
+				},
+				{
+					"name": "QC - Get All QC Works",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/works",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"quality-control",
+								"works"
+							]
+						},
+						"description": "Terima Notifikasi - Lihat semua QC works (termasuk kerjaan editor). Filter: ?status=pending atau ?qc_category=video"
+					}
+				},
+				{
+					"name": "QC - Get QC Work Detail",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/controls/{{qc_work_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"quality-control",
+								"controls",
+								"{{qc_work_id}}"
+							]
+						},
+						"description": "Lihat detail QC work"
+					}
+				},
+				{
+					"name": "QC - Terima Pekerjaan",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"notes\": \"Pekerjaan diterima untuk di-QC\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/works/{{qc_work_id}}/accept-work",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"quality-control",
+								"works",
+								"{{qc_work_id}}",
+								"accept-work"
+							]
+						},
+						"description": "Terima Pekerjaan - QC terima pekerjaan dari Editor"
+					}
+				},
+				{
+					"name": "QC - Isi Form Catatan QC",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"qc_notes\": \"Video kualitas baik, audio jernih, editing rapi\",\n  \"quality_score\": 85,\n  \"qc_checklist\": {\n    \"video_quality\": true,\n    \"audio_quality\": true,\n    \"editing_quality\": true,\n    \"content_accuracy\": true,\n    \"branding_compliance\": true\n  },\n  \"no_revision_needed\": false\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/works/{{qc_work_id}}/submit-qc-form",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"quality-control",
+								"works",
+								"{{qc_work_id}}",
+								"submit-qc-form"
+							]
+						},
+						"description": "Isi Form Catatan QC - checklist dan notes untuk kerjaan editor"
+					}
+				},
+				{
+					"name": "QC - Selesaikan (Approve - Tidak Ada Revisi)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"action\": \"approve\",\n  \"notes\": \"Kerjaan editor sudah sesuai standar, tidak ada revisi\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/works/{{qc_work_id}}/finalize",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"quality-control",
+								"works",
+								"{{qc_work_id}}",
+								"finalize"
+							]
+						},
+						"description": "Selesaikan Pekerjaan - APPROVE (tidak ada revisi). Catatan QC masuk ke Produksi. Kerjaan editor lanjut ke Broadcasting."
+					}
+				},
+				{
+					"name": "QC - Selesaikan (Reject - Perlu Revisi)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"action\": \"reject\",\n  \"notes\": \"Audio kurang jernih di menit 3-5, perlu di-edit ulang\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/works/{{qc_work_id}}/finalize",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"quality-control",
+								"works",
+								"{{qc_work_id}}",
+								"finalize"
+							]
+						},
+						"description": "Selesaikan Pekerjaan - REJECT (perlu revisi). Kembali ke Editor + Notifikasi ke Producer & Catatan QC."
+					}
+				}
+			]
+		},
+		{
+			"name": "Broadcasting Staff",
+			"item": [
+				{
+					"name": "Broadcasting - Login",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"login\": \"broadcasting@example.com\",\n    \"password\": \"password\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login sebagai Broadcasting Staff"
+					}
+				},
+				{
+					"name": "Broadcasting - Get Works",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/broadcasting/works",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"broadcasting",
+								"works"
+							]
+						},
+						"description": "Lihat semua broadcasting works"
+					}
+				},
+				{
+					"name": "Broadcasting - Terima Pekerjaan",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"notes\": \"File materi dan thumbnail diterima\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/broadcasting/works/{{broadcasting_work_id}}/accept-work",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"broadcasting",
+								"works",
+								"{{broadcasting_work_id}}",
+								"accept-work"
+							]
+						},
+						"description": "Terima Pekerjaan broadcasting"
+					}
+				},
+				{
+					"name": "Broadcasting - Masukan ke Jadwal Playlist",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"playlist_name\": \"Program Musik Mingguan\",\n  \"scheduled_time\": \"2026-03-15 20:00:00\",\n  \"playlist_data\": {\n      \"format\": \"HD\",\n      \"platform\": \"TV\"\n  },\n  \"notes\": \"Jadwal playlist episode terbaru\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/broadcasting/works/{{broadcasting_work_id}}/schedule-work-playlist",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"broadcasting",
+								"works",
+								"{{broadcasting_work_id}}",
+								"schedule-work-playlist"
+							]
+						},
+						"description": "Masukan ke Jadwal Playlist"
+					}
+				},
+				{
+					"name": "Broadcasting - Upload ke YouTube (SEO)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Episode 5 - Program Musik Live [Full HD]\",\n  \"description\": \"Episode terbaru program musik live featuring artis papan atas Indonesia.\",\n  \"tags\": [\"musik\", \"live\", \"Indonesia\", \"episode5\"],\n  \"thumbnail_url\": \"https://example.com/thumbnail.jpg\",\n  \"category_id\": \"10\",\n  \"privacy_status\": \"public\",\n  \"youtube_url\": \"https://www.youtube.com/watch?v=placeholder\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/broadcasting/works/{{broadcasting_work_id}}/upload-youtube",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"broadcasting",
+								"works",
+								"{{broadcasting_work_id}}",
+								"upload-youtube"
+							]
+						},
+						"description": "Upload ke YouTube"
+					}
+				},
+				{
+					"name": "Broadcasting - Upload ke Website",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Episode 5 - Program Musik Live\",\n  \"content\": \"Konten episode terbaru\",\n  \"category\": \"Music Program\",\n  \"website_url\": \"https://example.com/episode-5\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/broadcasting/works/{{broadcasting_work_id}}/upload-website",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"broadcasting",
+								"works",
+								"{{broadcasting_work_id}}",
+								"upload-website"
+							]
+						},
+						"description": "Upload ke Website"
+					}
+				},
+				{
+					"name": "Broadcasting - Input Link YouTube",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"youtube_url\": \"https://www.youtube.com/watch?v=xxxxx\",\n  \"notes\": \"Link YouTube sudah live\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/broadcasting/works/{{broadcasting_work_id}}/input-youtube-link",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"broadcasting",
+								"works",
+								"{{broadcasting_work_id}}",
+								"input-youtube-link"
+							]
+						},
+						"description": "Input link YouTube"
+					}
+				},
+				{
+					"name": "Broadcasting - Selesaikan Pekerjaan",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"notes\": \"Semua proses broadcasting selesai\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/broadcasting/works/{{broadcasting_work_id}}/complete-work",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"broadcasting",
+								"works",
+								"{{broadcasting_work_id}}",
+								"complete-work"
+							]
+						},
+						"description": "Selesaikan Pekerjaan Broadcasting"
+					}
+				}
+			]
+		},
+		{
+			"name": "Quality Control (Role)",
+			"item": [
+				{
+					"name": "QC - Login",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"login\": \"qualitycontrol@example.com\",\n    \"password\": \"password\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login sebagai Quality Control"
+					}
+				},
+				{
+					"name": "QC - Get Statistics",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/quality-control/statistics",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"quality-control",
+								"statistics"
+							]
+						},
+						"description": "Get QC statistics"
+					}
+				}
+			]
+		},
+		{
+			"name": "Produksi (Role)",
+			"item": [
+				{
+					"name": "Produksi - Login (Production Staff)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"login\": \"production@example.com\",\n    \"password\": \"password\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login sebagai Produksi/Staff Production"
+					}
+				},
+				{
+					"name": "Produksi - Get QC Results",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/produksi/qc-results/{{episode_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"produksi",
+								"qc-results",
+								"{{episode_id}}"
+							]
+						},
+						"description": "Produksi: Terima Notifikasi QC & Baca Hasil QC untuk episode tertentu"
+					}
+				}
+			]
+		},
+		{
+			"name": "Promosi (Role)",
+			"item": [
+				{
+					"name": "Promosi - Login (Production Staff)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"login\": \"promotion@example.com\",\n    \"password\": \"password\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login sebagai Promotion/Promosi Team"
+					}
+				},
+				{
+					"name": "Promosi - Get Works",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works"
+							]
+						},
+						"description": "Lihat semua Promosi works"
+					}
+				},
+				{
+					"name": "Promosi - Terima Pekerjaan",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/accept-work",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works",
+								"{{promosi_work_id}}",
+								"accept-work"
+							]
+						},
+						"description": "Terima Pekerjaan Promosi"
+					}
+				},
+				{
+					"name": "Promosi - Upload BTS Video",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"file_link\": \"https://drive.google.com/file/d/xxxxx/view\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/upload-bts-video",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works",
+								"{{promosi_work_id}}",
+								"upload-bts-video"
+							]
+						},
+						"description": "Upload Link BTS Video (JSON Body)"
+					}
+				},
+				{
+					"name": "Promosi - Upload Talent Photos",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"file_links\": [\n    \"https://drive.google.com/photo1\",\n    \"https://drive.google.com/photo2\"\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/upload-talent-photos",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works",
+								"{{promosi_work_id}}",
+								"upload-talent-photos"
+							]
+						},
+						"description": "Upload Link Talent Photos (JSON Array)"
+					}
+				},
+				{
+					"name": "Promosi - Share ke Facebook",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"proof_link\": \"https://drive.google.com/file/d/PROOF_LINK_DISINI\",\n    \"facebook_post_url\": \"https://facebook.com/post/123\",\n    \"notes\": \"Sudah di-share gan\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/share-facebook",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works",
+								"{{promosi_work_id}}",
+								"share-facebook"
+							]
+						},
+						"description": "Share Bukti Facebook (Link)"
+					}
+				},
+				{
+					"name": "Promosi - Upload Story IG",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"video_link\": \"https://drive.google.com/file/d/VIDEO_LINK_DISINI\",\n    \"proof_link\": \"https://drive.google.com/file/d/PROOF_LINK_DISINI\",\n    \"story_url\": \"https://instagram.com/stories/...\",\n    \"notes\": \"Story created\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/upload-story-ig",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works",
+								"{{promosi_work_id}}",
+								"upload-story-ig"
+							]
+						},
+						"description": "Upload Video Story IG & Bukti (Link)"
+					}
+				},
+				{
+					"name": "Promosi - Upload Reels Facebook",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"video_link\": \"https://drive.google.com/file/d/VIDEO_LINK_DISINI\",\n    \"proof_link\": \"https://drive.google.com/file/d/PROOF_LINK_DISINI\",\n    \"reels_url\": \"https://facebook.com/reel/...\",\n    \"notes\": \"Reels uploaded\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/upload-reels-facebook",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works",
+								"{{promosi_work_id}}",
+								"upload-reels-facebook"
+							]
+						},
+						"description": "Upload Video Reels FB & Bukti (Link)"
+					}
+				},
+				{
+					"name": "Promosi - Share ke WA Group",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"proof_link\": \"https://drive.google.com/file/d/PROOF_LINK_DISINI\",\n    \"group_name\": \"Grup Keluarga Besar\",\n    \"notes\": \"Shared to group\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/share-wa-group",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works",
+								"{{promosi_work_id}}",
+								"share-wa-group"
+							]
+						},
+						"description": "Share Bukti WA Group (Link)"
+					}
+				},
+				{
+					"name": "Promosi - Selesaikan Pekerjaan",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"completion_notes\": \"Selesai shooting dan upload BTS\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/live-tv/roles/promosi/works/{{promosi_work_id}}/complete-work",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"live-tv",
+								"roles",
+								"promosi",
+								"works",
+								"{{promosi_work_id}}",
+								"complete-work"
+							]
+						},
+						"description": "Selesaikan Pekerjaan Promosi"
+					}
+				}
+			]
 		}
 	],
 	"variable": [
@@ -11501,13 +12388,13 @@
 			"type": "string"
 		},
 		{
-			"key": "qc_control_id",
+			"key": "team_assignment_id",
 			"value": "1",
 			"type": "string"
 		},
 		{
-			"key": "team_assignment_id",
-			"value": "1",
+			"key": "return_date",
+			"value": "2027-01-30",
 			"type": "string"
 		}
 	]

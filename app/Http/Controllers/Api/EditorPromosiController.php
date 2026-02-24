@@ -289,40 +289,12 @@ class EditorPromosiController extends Controller
             $uploadedFiles = [];
             $filePaths = $work->file_paths ?? [];
 
+            // Physical file upload removed
             if ($request->hasFile('files')) {
-                foreach ($request->file('files') as $file) {
-                    $fileName = time() . '_' . $file->getClientOriginalName();
-                    $filePath = $file->storeAs("editor_promosi/{$work->id}", $fileName, 'public');
-
-                    $uploadedFiles[] = [
-                        'original_name' => $file->getClientOriginalName(),
-                        'file_name' => $fileName,
-                        'file_path' => $filePath,
-                        'file_size' => $file->getSize(),
-                        'mime_type' => $file->getMimeType(),
-                        'uploaded_at' => now()
-                    ];
-
-                    $filePaths[] = $filePath;
-
-                    // Create MediaFile record
-                    MediaFile::create([
-                        'episode_id' => $work->episode_id,
-                        'file_name' => $fileName,
-                        'file_path' => $filePath,
-                        'file_size' => $file->getSize(),
-                        'mime_type' => $file->getMimeType(),
-                        'file_type' => 'editor_promosi',
-                        'uploaded_by' => $user->id,
-                        'metadata' => [
-                            'promotion_work_id' => $work->id,
-                            'work_type' => $work->work_type,
-                            'original_name' => $file->getClientOriginalName()
-                        ]
-                    ]);
-
-
-                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical file uploads are disabled. Please use the file_links array for URL submissions.'
+                ], 405);
             }
 
             // Handle file_links (new: external storage links)

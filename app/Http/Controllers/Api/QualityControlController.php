@@ -486,20 +486,27 @@ class QualityControlController extends Controller
 
             foreach ($items as $item) {
                 $notesKey = $item . '_notes';
-                $screenshotKey = $item . '_screenshot';
+                $notesKey = $item . '_notes';
+                $screenshotLinkKey = $item . '_screenshot_link';
                 
-                if ($request->hasFile($screenshotKey)) {
-                    $file = $request->file($screenshotKey);
-                    $filePath = $file->store('qc/screenshots', 'public');
+                if ($request->has($screenshotLinkKey)) {
                     $screenshots[$item] = [
-                        'path' => $filePath,
-                        'name' => $file->getClientOriginalName(),
+                        'path' => $request->get($screenshotLinkKey), // Treat link as path
+                        'name' => 'QC Screenshot Link',
                         'notes' => $request->get($notesKey)
                     ];
                 } elseif ($request->has($notesKey) && $request->get($notesKey)) {
                     $screenshots[$item] = [
                         'notes' => $request->get($notesKey)
                     ];
+                }
+
+                // Physical file upload disabled
+                if ($request->hasFile($item . '_screenshot')) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Physical file uploads for screenshots are disabled. Please use the _screenshot_link fields.'
+                    ], 405);
                 }
             }
 

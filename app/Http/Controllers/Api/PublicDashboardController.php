@@ -8,7 +8,7 @@ use App\Models\Episode;
 use App\Models\Program;
 use App\Models\BroadcastingSchedule;
 use App\Models\CreativeWork;
-// use App\Models\MusicSchedule; // DISABLED: MusicSubmission model not exist yet
+use App\Models\MusicSchedule;
 use App\Models\User;
 use App\Models\Deadline;
 use Illuminate\Http\Request;
@@ -39,11 +39,10 @@ class PublicDashboardController extends Controller
                 ->where('status', 'approved')
                 ->whereNotNull('shooting_schedule');
             
-            // DISABLED: MusicSubmission model not exist yet
             // Get music schedules yang sudah confirmed/scheduled (untuk program musik)
-            // $musicSchedulesQuery = MusicSchedule::with(['musicSubmission.episode.program', 'creator'])
-            //     ->whereIn('status', ['scheduled', 'confirmed'])
-            //     ->where('schedule_type', 'shooting');
+            $musicSchedulesQuery = MusicSchedule::with(['musicSubmission.episode.program', 'creator'])
+                ->whereIn('status', ['scheduled', 'confirmed'])
+                ->where('schedule_type', 'shooting');
 
             // Filter creative works by date range
             if ($request->has('start_date')) {
@@ -57,15 +56,23 @@ class PublicDashboardController extends Controller
                               ->whereYear('shooting_schedule', $request->year);
             }
             
-            // DISABLED: Music schedules filter (MusicSubmission model not exist)
+            // Filter music schedules by date range
+            if ($request->has('start_date')) {
+                $musicSchedulesQuery->where('scheduled_datetime', '>=', $request->start_date);
+            }
+            if ($request->has('end_date')) {
+                $musicSchedulesQuery->where('scheduled_datetime', '<=', $request->end_date);
+            }
+            if ($request->has('month') && $request->has('year')) {
+                $musicSchedulesQuery->whereMonth('scheduled_datetime', $request->month)
+                                   ->whereYear('scheduled_datetime', $request->year);
+            }
 
             $creativeSchedules = $creativeWorksQuery->get();
-            // DISABLED: MusicSubmission model not exist yet
-            // $musicScheduleList = $musicSchedulesQuery->get();
-            $musicScheduleList = collect([]); // Empty collection as fallback
+            $musicScheduleList = $musicSchedulesQuery->get();
 
             // Format creative works untuk calendar
-            $calendarEvents = $creativeSchedules->map(function ($work) {
+            $calendarEvents = $creativeSchedules->toBase()->map(function ($work) {
                 return [
                     'id' => 'creative_' . $work->id,
                     'title' => $work->episode->program->name . ' - Episode ' . $work->episode->episode_number,
@@ -81,7 +88,7 @@ class PublicDashboardController extends Controller
             });
             
             // Format music schedules untuk calendar
-            $musicEvents = $musicScheduleList->map(function ($schedule) {
+            $musicEvents = $musicScheduleList->toBase()->map(function ($schedule) {
                 $episode = $schedule->musicSubmission->episode ?? null;
                 return [
                     'id' => 'music_' . $schedule->id,
@@ -224,22 +231,19 @@ class PublicDashboardController extends Controller
                 ];
             }
             
-            // DISABLED: MusicSubmission model not exist yet
             // Get shooting schedules from Music Schedule (program musik)
-            // $musicShootingQuery = MusicSchedule::with(['musicSubmission.episode.program'])
-            //     ->whereIn('status', ['scheduled', 'confirmed'])
-            //     ->where('schedule_type', 'shooting');
-            //
-            // if ($request->has('start_date') && $request->has('end_date')) {
-            //     $musicShootingQuery->whereBetween('scheduled_datetime', [
-            //         $request->start_date, 
-            //         $request->end_date
-            //     ]);
-            // }
+            $musicShootingQuery = MusicSchedule::with(['musicSubmission.episode.program'])
+                ->whereIn('status', ['scheduled', 'confirmed'])
+                ->where('schedule_type', 'shooting');
 
-            // DISABLED: MusicSubmission model not exist yet
-            // $musicShootingSchedules = $musicShootingQuery->get();
-            $musicShootingSchedules = collect([]); // Empty collection as fallback
+            if ($request->has('start_date') && $request->has('end_date')) {
+                $musicShootingQuery->whereBetween('scheduled_datetime', [
+                    $request->start_date, 
+                    $request->end_date
+                ]);
+            }
+
+            $musicShootingSchedules = $musicShootingQuery->get();
 
             foreach ($musicShootingSchedules as $schedule) {
                 $episode = $schedule->musicSubmission->episode ?? null;
@@ -350,9 +354,14 @@ class PublicDashboardController extends Controller
                     'shooting_schedules' => CreativeWork::where('status', 'approved')
                         ->whereDate('shooting_schedule', today())
                         ->with(['episode.program'])
-                        ->get(),
-                        // DISABLED: MusicSubmission model not exist yet
-                        // ->merge(MusicSchedule query)
+                        ->get()
+                        ->merge(
+                            MusicSchedule::where('status', 'scheduled')
+                                ->where('schedule_type', 'shooting')
+                                ->whereDate('scheduled_datetime', today())
+                                ->with(['musicSubmission.episode.program'])
+                                ->get()
+                        ),
                     
                     'recording_schedules' => CreativeWork::where('status', 'approved')
                         ->whereDate('recording_schedule', today())

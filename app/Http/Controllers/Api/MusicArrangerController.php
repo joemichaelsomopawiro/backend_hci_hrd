@@ -109,30 +109,21 @@ class MusicArrangerController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'User not authenticated.'
-                ], 401);
-            }
-            
-            if ($user->role !== 'Music Arranger') {
+            if (!$user || ($user->role !== 'Music Arranger' && $user->role !== 'Producer')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            // NOTE: file_link tidak diterima saat create
-            // Flow yang benar: create song proposal -> Producer approve -> upload file_link
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
-                'song_id' => 'nullable|exists:songs,id', 
-                'song_title' => 'required_without:song_id|string|max:255', 
-                'singer_id' => 'nullable|exists:users,id', 
+                'song_id' => 'nullable|exists:songs,id',
+                'singer_id' => 'nullable|exists:users,id',
+                'song_title' => 'required_without:song_id|string|max:255',
                 'singer_name' => 'nullable|string|max:255',
                 'arrangement_notes' => 'nullable|string',
-                // file_link REMOVED - harus melalui workflow song proposal dulu
+                'arrangement_file_link' => 'nullable|url'
             ]);
 
             if ($validator->fails()) {
@@ -143,116 +134,48 @@ class MusicArrangerController extends Controller
                 ], 422);
             }
 
-            $episode = Episode::with(['productionTeam.members', 'program.productionTeam.members'])->findOrFail($request->episode_id);
-            $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
-            
-            if (!$productionTeam) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Episode tidak memiliki ProductionTeam yang di-assign'
-                ], 403);
-            }
-
-            $isMember = $productionTeam->members()
-                ->where('user_id', $user->id)
-                ->where('role', 'musik_arr')
-                ->where('is_active', true)
-                ->exists();
-
-            if (!$isMember) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Anda tidak di-assign sebagai Music Arranger di ProductionTeam episode ini.'
-                ], 403);
-            }
-
-            $songTitle = $request->song_title;
-            $songId = $request->song_id;
-            
-            // Auto-save Song to master data
-            if ($songTitle && (!$songId || $request->has('song_title'))) {
-                $song = \App\Models\Song::firstOrCreate(
-                    ['title' => $songTitle],
-                    ['status' => 'available', 'created_by' => $user->id]
-                );
-                $songId = $song->id;
-                $songTitle = $song->title;
-            } elseif ($songId && !$songTitle) {
-                $song = \App\Models\Song::find($songId);
-                if ($song) $songTitle = $song->title;
-            }
-
-            $singerName = $request->singer_name;
-            $singerId = $request->singer_id;
-            
-            // Auto-save Singer to master data
-            if ($singerName && (!$singerId || $request->has('singer_name'))) {
-                $singer = \App\Models\Singer::firstOrCreate(
-                    ['name' => $singerName],
-                    ['is_active' => true]
-                );
-                $singerId = $singer->id;
-                $singerName = $singer->name;
-            } elseif ($singerId && !$singerName) {
-                $singer = \App\Models\Singer::find($singerId);
-                if ($singer) $singerName = $singer->name;
-            }
-
-
-            // file_link tidak boleh diisi saat create - harus melalui workflow
-            // Status selalu dimulai dari song_proposal
-            $status = 'song_proposal';
-
-            // AUTO-ASSIGNMENT LOGIC: Use WorkAssignmentService to determine assignee
-            // Checks if previous episode's MusicArrangement was reassigned
-            $assignedUserId = WorkAssignmentService::getNextAssignee(
-                MusicArrangement::class,
-                $episode->program_id,
-                $episode->episode_number,
-                null,  // MusicArrangement doesn't have work_type
-                $user->id
-            );
-
+            // Create record
             $arrangement = MusicArrangement::create([
                 'episode_id' => $request->episode_id,
-                'song_id' => $songId,
-                'singer_id' => $singerId,
-                'song_title' => $songTitle,
-                'singer_name' => $singerName,
-                'original_song_title' => $songTitle,
-                'original_singer_name' => $singerName,
+                'created_by' => $user->id,
+                'song_id' => $request->song_id,
+                'singer_id' => $request->singer_id,
+                'song_title' => $request->song_title,
+                'singer_name' => $request->singer_name,
                 'arrangement_notes' => $request->arrangement_notes,
-                'file_link' => null,  // Tidak bisa diisi saat create, harus melalui uploadFile setelah song_approved
-                // Old fields kept as null for backward compatibility
-                'file_path' => null,
-                'file_name' => null,
-                'file_size' => null,
-                'mime_type' => null,
-                'status' => $status,
-                'created_by' => $assignedUserId,          // AUTO-ASSIGNED
-                'originally_assigned_to' => null,          // Reset
-                'was_reassigned' => false                  // Reset
+                'file_link' => $request->arrangement_file_link,
+                'status' => $request->arrangement_file_link ? 'arrangement_submitted' : 'song_proposal'
             ]);
 
-            $producer = $productionTeam->producer;
+            // Notify Producer
+            $episode = Episode::with('program.productionTeam')->find($request->episode_id);
+            $producer = $episode->program->productionTeam->producer ?? null;
+
             if ($producer) {
                 Notification::create([
                     'user_id' => $producer->id,
-                    'type' => $status === 'song_proposal' ? 'song_proposal_submitted' : 'music_arrangement_created',
-                    'title' => $status === 'song_proposal' ? 'Usulan Lagu Baru' : 'Arrangement Baru',
-                    'message' => "Music Arranger {$user->name} mengirim " . ($status === 'song_proposal' ? "usulan lagu" : "file arrangement") . " untuk Episode {$episode->episode_number}.",
-                    'data' => ['arrangement_id' => $arrangement->id, 'episode_id' => $arrangement->episode_id]
+                    'type' => 'new_song_proposal',
+                    'title' => 'Proposal Lagu Baru',
+                    'message' => "Music Arranger mengajukan proposal lagu untuk Episode {$episode->episode_number}",
+                    'data' => [
+                        'arrangement_id' => $arrangement->id,
+                        'episode_id' => $episode->id,
+                        'song_title' => $arrangement->song_title
+                    ]
                 ]);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Music arrangement created successfully',
-                'data' => $arrangement->load(['episode', 'createdBy', 'song', 'singer'])
+                'data' => $arrangement->load(['song', 'singer', 'episode']),
+                'message' => 'Music arrangement created successfully'
             ], 201);
 
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error creating arrangement: ' . $e->getMessage()
+            ], 500);
         }
     }
 
@@ -309,7 +232,7 @@ class MusicArrangerController extends Controller
                 'singer_id' => 'nullable|exists:singers,id',
                 'singer_name' => 'nullable|string|max:255',
                 'arrangement_notes' => 'nullable|string',
-                'file_link' => 'nullable|url|max:2048',
+                'arrangement_file_link' => 'nullable|url|max:2048',
             ]);
 
             if ($validator->fails()) {
@@ -352,7 +275,7 @@ class MusicArrangerController extends Controller
                 'singer_id' => $singerId,
                 'singer_name' => $singerName,
                 'arrangement_notes' => $request->arrangement_notes ?? $arrangement->arrangement_notes,
-                'file_link' => $request->file_link ?? $arrangement->file_link,
+                'file_link' => $request->arrangement_file_link ?? $arrangement->file_link,
             ];
 
             // If it was rejected, reset to appropriate submission status
@@ -377,69 +300,77 @@ class MusicArrangerController extends Controller
         }
     }
 
-    public function uploadFile(Request $request, $id): JsonResponse
+    /**
+     * Update Arrangement with Link
+     * POS /api/live-tv/roles/music-arranger/arrangements/{id}/input-link
+     */
+    public function inputLink(Request $request, $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            $arrangement = MusicArrangement::findOrFail($id);
-
-            // Validate Music Arranger is the creator
-            if ($arrangement->created_by !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: You can only update your own arrangements.'
-                ], 403);
+            if (!$user || $user->role !== 'Music Arranger') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // Validate file_link
             $validator = Validator::make($request->all(), [
-                'file_link' => 'required|url|max:2048'
+                'arrangement_file_link' => 'required|url'
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
-            
-            // VALIDASI: Hanya bisa upload file link jika song sudah approved atau arrangement rejected
-            $allowedStatusesForUpload = ['song_approved', 'arrangement_in_progress', 'arrangement_rejected', 'rejected'];
-            if (!in_array($arrangement->status, $allowedStatusesForUpload)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => "Cannot upload file link. Song proposal must be approved first by Producer. Current status: '{$arrangement->status}'.",
-                    'hint' => 'Wait for Producer to approve your song proposal before uploading arrangement file.'
-                ], 400);
+
+            $arrangement = MusicArrangement::findOrFail($id);
+
+            // Access check: only the Music Arranger who created this arrangement can input link
+            if ((int) $arrangement->created_by !== (int) $user->id) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access to this arrangement.'], 403);
             }
-            
-            // Determine new status based on current status
-            $newStatus = 'arrangement_in_progress'; // Default setelah upload file
-            if ($arrangement->status === 'song_approved') {
-                // Jika song sudah approved, set ke in_progress (perlu submit manual)
-                $newStatus = 'arrangement_in_progress';
-            } elseif (in_array($arrangement->status, ['arrangement_rejected', 'rejected'])) {
-                // Jika arrangement ditolak, setelah upload file status tetap rejected
-                // Music Arranger perlu submit ulang secara manual
-                $newStatus = 'arrangement_rejected'; // Tetap rejected sampai di-submit ulang
-            }
-            
+
             $arrangement->update([
-                'file_link' => $request->file_link,  // New: Store external link
-                'status' => $newStatus
+                'file_link' => $request->arrangement_file_link,
+                'status' => 'arrangement_submitted',
+                'submitted_at' => now()
             ]);
+
+            // Notify Producer for Review
+            $episode = Episode::with('program.productionTeam')->find($arrangement->episode_id);
+            $producer = $episode->program->productionTeam->producer ?? null;
+
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'arrangement_submitted',
+                    'title' => 'Arrangement Berhasil Di-submit',
+                    'message' => "Music Arranger telah mengirimkan link arrangement untuk Episode {$episode->episode_number}",
+                    'data' => [
+                        'arrangement_id' => $arrangement->id,
+                        'episode_id' => $episode->id,
+                        'file_link' => $request->arrangement_file_link
+                    ]
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
-                'message' => in_array($arrangement->status, ['arrangement_rejected', 'rejected']) 
-                    ? 'File link updated successfully. Please submit the arrangement again for Producer review.'
-                    : 'File link updated successfully.',
-                'data' => $arrangement->fresh()
+                'data' => $arrangement->load(['song', 'singer', 'episode']),
+                'message' => 'Arrangement link submitted successfully.'
             ]);
+
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Legacy File Upload Method (Disabled)
+     */
+    public function uploadFile(Request $request, $id)
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Physical file uploads are disabled. Please use the link submission endpoint.'
+        ], 405);
     }
 
     public function submitSongProposal(Request $request, $id): JsonResponse
