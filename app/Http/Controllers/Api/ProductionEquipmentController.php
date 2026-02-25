@@ -19,14 +19,25 @@ class ProductionEquipmentController extends Controller
     {
         $user = auth()->user();
         
-        if ($user->role !== 'Production') {
+        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'
             ], 403);
         }
 
-        $query = ProductionEquipment::with(['episode', 'requestedBy', 'approvedBy', 'assignedTo']);
+        $query = ProductionEquipment::with(['episode', 'requester', 'approver', 'assignedUser']);
+
+        // Filter: Production role sees all, team members see requests for their episodes or their own requests
+        if ($user->role !== 'Production') {
+            $query->where(function($q) use ($user) {
+                $q->where('requested_by', $user->id)
+                  ->orWhereHas('episode.teamAssignments.members', function($mq) use ($user) {
+                      $mq->where('user_id', $user->id)
+                         ->where('is_active', true);
+                  });
+            });
+        }
 
         // Filter by status
         if ($request->has('status')) {
@@ -53,7 +64,7 @@ class ProductionEquipmentController extends Controller
     {
         $user = auth()->user();
         
-        if ($user->role !== 'Production') {
+        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'
@@ -82,7 +93,7 @@ class ProductionEquipmentController extends Controller
     {
         $user = auth()->user();
         
-        if ($user->role !== 'Production') {
+        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'
@@ -196,7 +207,8 @@ class ProductionEquipmentController extends Controller
             $user = auth()->user();
             
             // Allow Production & Sound Engineer roles
-            if (!in_array($user->role, ['Production', 'Sound Engineer'])) {
+            // Allow Production & Sound Engineer roles OR users with music assignment
+            if (!in_array($user->role, ['Production', 'Sound Engineer']) && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -212,11 +224,12 @@ class ProductionEquipmentController extends Controller
                 ], 404);
             }
 
-            // Verify ownership or assignment
-            if ($equipment->requested_by !== $user->id && $equipment->assigned_to !== $user->id) {
+            // Verify ownership or assignment OR shooting team membership for episode
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $equipment->episode_id, 'shooting');
+            if ($equipment->requested_by !== $user->id && $equipment->assigned_to !== $user->id && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This equipment request is not associated with you.'
+                    'message' => 'Unauthorized: This equipment request is not associated with you and you are not in the shooting team for this episode.'
                 ], 403);
             }
 
@@ -275,7 +288,7 @@ class ProductionEquipmentController extends Controller
     {
         $user = auth()->user();
         
-        if ($user->role !== 'Production') {
+        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'
@@ -284,7 +297,8 @@ class ProductionEquipmentController extends Controller
 
         $equipment = ProductionEquipment::findOrFail($id);
 
-        if ($equipment->requested_by !== $user->id) {
+        $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $equipment->episode_id, 'shooting');
+        if ($equipment->requested_by !== $user->id && !$isShootingMember) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access to this equipment.'
@@ -355,7 +369,7 @@ class ProductionEquipmentController extends Controller
     {
         $user = auth()->user();
         
-        if ($user->role !== 'Production') {
+        if (!in_array($user->role, ['Production', 'Sound Engineer']) && !$user->hasAnyMusicTeamAssignment()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'
@@ -364,7 +378,8 @@ class ProductionEquipmentController extends Controller
 
         $equipment = ProductionEquipment::findOrFail($id);
 
-        if ($equipment->requested_by !== $user->id) {
+        $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $equipment->episode_id, 'shooting');
+        if ($equipment->requested_by !== $user->id && !$isShootingMember) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access to this equipment.'
@@ -391,6 +406,20 @@ class ProductionEquipmentController extends Controller
             'returned_at' => now()
         ]);
 
+        // Update EquipmentInventory if exists
+        $equipmentInventory = \App\Models\EquipmentInventory::where('episode_id', $equipment->episode_id)
+            ->where('equipment_name', is_array($equipment->equipment_list) ? $equipment->equipment_list[0] : ($equipment->equipment_list ?? $equipment->equipment_name))
+            ->where('status', 'assigned')
+            ->first();
+
+        if ($equipmentInventory) {
+            $equipmentInventory->update([
+                'status' => 'returned',
+                'return_condition' => $request->return_condition,
+                'return_notes' => $request->return_notes ?? null,
+                'returned_at' => now()
+            ]);
+        }
         // Notifikasi ke Art & Set Properti
         $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
         $equipmentListStr = is_array($equipment->equipment_list) 
@@ -425,7 +454,7 @@ class ProductionEquipmentController extends Controller
     {
         $user = auth()->user();
         
-        if ($user->role !== 'Production') {
+        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'

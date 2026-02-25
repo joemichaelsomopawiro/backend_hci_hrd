@@ -447,6 +447,148 @@ class ProducerController extends Controller
     }
 
     /**
+     * Get Sound Engineer Recording History (Reviewed & Rejected)
+     */
+    public function getSoundEngineerRecordingHistory(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $history = SoundEngineerRecording::whereIn('status', ['reviewed', 'rejected'])
+                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'musicArrangement', 'createdBy', 'reviewedBy'])
+                ->where(function ($q) use ($user) {
+                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    })
+                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    });
+                })
+                ->orderBy('reviewed_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $history,
+                'message' => 'Sound engineer recording history retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get sound engineer recording history',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get Sound Engineer Editing History (Approved & Rejected)
+     */
+    public function getSoundEngineerEditingHistory(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            // 1. Get records from sound_engineer_editing table
+            $editingRecords = SoundEngineerEditing::whereIn('status', ['approved', 'rejected'])
+                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'recording', 'soundEngineer', 'approvedBy', 'rejectedBy'])
+                ->where(function ($q) use ($user) {
+                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    })
+                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    });
+                })
+                ->get();
+
+            // 2. Get help records from music_arrangements table (where producer rejected and SE helped)
+            $helpRecords = MusicArrangement::whereNotNull('sound_engineer_helper_id')
+                ->whereIn('status', ['approved', 'arrangement_approved', 'rejected'])
+                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'soundEngineerHelper', 'reviewedBy'])
+                ->where(function ($q) use ($user) {
+                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    })
+                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id);
+                    });
+                })
+                ->get();
+
+            // 3. Normalize and merge
+            $history = [];
+
+            foreach ($editingRecords as $record) {
+                $history[] = [
+                    'id' => $record->id,
+                    'source_type' => 'editing_work',
+                    'episode_id' => $record->episode_id,
+                    'episode' => $record->episode,
+                    'sound_engineer' => $record->soundEngineer,
+                    'status' => $record->status,
+                    'notes' => $record->editing_notes ?? $record->submission_notes,
+                    'final_file_link' => $record->final_file_link,
+                    'final_file_path' => $record->final_file_path,
+                    'approved_at' => $record->approved_at,
+                    'rejected_at' => $record->rejected_at,
+                    'updated_at' => $record->updated_at,
+                ];
+            }
+
+            foreach ($helpRecords as $record) {
+                $history[] = [
+                    'id' => $record->id,
+                    'source_type' => 'arrangement_help',
+                    'episode_id' => $record->episode_id,
+                    'episode' => $record->episode,
+                    'sound_engineer' => $record->soundEngineerHelper,
+                    'status' => $record->status === 'rejected' ? 'rejected' : 'approved',
+                    'notes' => $record->sound_engineer_help_notes ?? $record->arrangement_notes,
+                    'final_file_link' => $record->sound_engineer_help_file_link ?? $record->file_link,
+                    'final_file_path' => $record->file_path,
+                    'approved_at' => $record->reviewed_at,
+                    'rejected_at' => $record->status === 'rejected' ? $record->reviewed_at : null,
+                    'updated_at' => $record->updated_at,
+                ];
+            }
+
+            // Sort by Date (updated_at desc)
+            usort($history, function($a, $b) {
+                return strtotime($b['updated_at']) - strtotime($a['updated_at']);
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $history,
+                'message' => 'Sound engineer editing history retrieved successfully (unified)'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get sound engineer editing history',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Approve item
      */
     public function approve(Request $request, int $id): JsonResponse
@@ -886,16 +1028,21 @@ class ProducerController extends Controller
                         ], 404);
                     }
                     
-                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
+                    $episodeTeam = $episode->productionTeam;
+                    $programTeam = $episode->program ? $episode->program->productionTeam : null;
                     
-                    if (!$productionTeam) {
+                    if (!$episodeTeam && !$programTeam) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Production team not found for this episode. Please assign a production team first.'
                         ], 404);
                     }
                     
-                    if ($productionTeam->producer_id !== $user->id) {
+                    // Check if producer matches EITHER episode's or program's production team
+                    $episodeMatch = $episodeTeam && $episodeTeam->producer_id === $user->id;
+                    $programMatch = $programTeam && $programTeam->producer_id === $user->id;
+                    
+                    if (!$episodeMatch && !$programMatch) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This editing work is not from your production team.'
@@ -1382,16 +1529,21 @@ class ProducerController extends Controller
                         ], 404);
                     }
                     
-                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
+                    $episodeTeam = $episode->productionTeam;
+                    $programTeam = $episode->program ? $episode->program->productionTeam : null;
                     
-                    if (!$productionTeam) {
+                    if (!$episodeTeam && !$programTeam) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Production team not found for this episode. Please assign a production team first.'
                         ], 404);
                     }
                     
-                    if ($productionTeam->producer_id !== $user->id) {
+                    // Check if producer matches EITHER episode's or program's production team
+                    $episodeMatch = $episodeTeam && $episodeTeam->producer_id === $user->id;
+                    $programMatch = $programTeam && $programTeam->producer_id === $user->id;
+                    
+                    if (!$episodeMatch && !$programMatch) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This editing work is not from your production team.'
@@ -2887,7 +3039,19 @@ class ProducerController extends Controller
 
             if ($scopeAll) {
                 // Semua user yang bisa ditugaskan: aktif, kecuali Program Manager & Distribution Manager
-                $excludedRoles = ['Program Manager', 'Manager Program', 'Distribution Manager'];
+                // Sesuai kriteria user: "Ambil semua crew Program Selain manager"
+                $excludedRoles = [
+                    'Program Manager', 
+                    'Manager Program', 
+                    'manager_program',
+                    'Distribution Manager', 
+                    'President Director', 
+                    'VP President', 
+                    'General Manager', 
+                    'GM', 
+                    'Administrator',
+                    'Admin'
+                ];
                 $users = \App\Models\User::where('is_active', true)
                     ->whereNotIn('role', $excludedRoles)
                     ->orderBy('name')
@@ -4596,11 +4760,12 @@ class ProducerController extends Controller
                 $createdTasks = [];
                 
                 // Create PromosiWork
+                $episodeTitleSuffix = $episode->title ? ": {$episode->title}" : "";
                 $promosiWork = \App\Models\PromotionWork::create([
                     'episode_id' => $episode->id,
                     'work_type' => 'bts_video',
-                    'title' => "BTS Video & Talent Photos - Episode {$episode->episode_number}",
-                    'description' => "Buat video BTS dan foto talent untuk Episode {$episode->episode_number}",
+                    'title' => "BTS Video & Talent Photos - {$program->name} - Episode {$episode->episode_number}{$episodeTitleSuffix}",
+                    'description' => "Buat video BTS dan foto talent untuk Program {$program->name} Episode {$episode->episode_number}{$episodeTitleSuffix}",
                     'shooting_date' => $creativeWork->shooting_schedule,
                     'status' => 'planning',
                     'created_by' => $user->id
@@ -4907,6 +5072,78 @@ class ProducerController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to get program team assignments',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get Semua Team Assignments untuk Producer (Semua Program)
+     * GET /api/live-tv/producer/all-team-assignments
+     * 
+     * Digunakan untuk melihat riwayat penugasan tim di seluruh program yang dikelola
+     */
+    public function getAllProducerAssignments(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || $user->role !== 'Producer') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            // Get all programs where this user is the producer
+            $programIds = Program::whereHas('productionTeam', function($q) use ($user) {
+                $q->where('producer_id', $user->id);
+            })->pluck('id')->toArray();
+
+            if (empty($programIds)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'data' => [],
+                        'total' => 0,
+                        'current_page' => 1,
+                        'last_page' => 1
+                    ],
+                    'message' => 'No programs assigned to you.'
+                ]);
+            }
+
+            // Get all episodes for these programs
+            $episodeIds = Episode::whereIn('program_id', $programIds)->pluck('id')->toArray();
+
+            // Get all team assignments for these episodes
+            $teamAssignments = \App\Models\ProductionTeamAssignment::whereIn('episode_id', $episodeIds)
+                ->with(['members.user', 'assigner', 'schedule', 'episode.program'])
+                ->orderBy('created_at', 'desc')
+                ->when($request->has('team_type') && $request->team_type !== 'all', function($query) use ($request) {
+                    return $query->where('team_type', $request->team_type);
+                })
+                ->when($request->has('search') && $request->search, function($query) use ($request) {
+                    $search = $request->search;
+                    return $query->whereHas('episode', function($q) use ($search) {
+                        $q->where('title', 'like', "%{$search}%")
+                          ->orWhereHas('program', function($pq) use ($search) {
+                              $pq->where('name', 'like', "%{$search}%");
+                          });
+                    });
+                })
+                ->paginate($request->input('per_page', 15));
+
+            return response()->json([
+                'success' => true,
+                'data' => $teamAssignments,
+                'message' => 'All producer team assignments retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get team assignments',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -5527,7 +5764,7 @@ class ProducerController extends Controller
                 // First, remove existing members for this specific assignment
                 \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)->delete();
 
-                // Add new members
+                // Add new members and notify them
                 foreach ($assignmentData['user_ids'] as $userId) {
                     \App\Models\ProductionTeamMember::create([
                         'production_team_id' => $productionTeam->id, // Associate with main team for reference
@@ -5537,6 +5774,26 @@ class ProducerController extends Controller
                         'is_active' => true,
                         'joined_at' => now(),
                         'status' => 'assigned'
+                    ]);
+
+                    // Notify the user
+                    $teamName = match($assignmentData['type']) {
+                        'shooting' => 'Tim Syuting',
+                        'setting' => 'Tim Setting',
+                        'recording' => 'Tim Rekam Vokal',
+                        default => 'Tim Produksi'
+                    };
+
+                    \App\Models\Notification::create([
+                        'user_id' => $userId,
+                        'type' => 'team_assigned',
+                        'title' => 'Penugasan Tim Baru',
+                        'message' => "Anda telah ditugaskan ke {$teamName} untuk Episode {$episode->episode_number} oleh Producer.",
+                        'data' => [
+                            'episode_id' => $episode->id,
+                            'team_type' => $assignmentData['type'],
+                            'assignment_id' => $assignment->id
+                        ]
                     ]);
                 }
             }
@@ -5870,29 +6127,97 @@ class ProducerController extends Controller
             }
         }
         
-        // 2. Notify Sound Engineer if Recording Schedule exists
+        // 2. Notify Sound Engineer / Recording Team if Recording Schedule exists
         if ($item->recording_schedule) {
-            // Logic to create/update sound engineer task could go here
-            // For now, we rely on Notification to SE
+            $episodeId = $item->episode_id;
+            
+            // A. Notify specific episode-based recording team members
+            $recordingMembers = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episodeId) {
+                $q->where('episode_id', $episodeId)->where('team_type', 'recording');
+            })->where('is_active', true)->get();
+
+            foreach ($recordingMembers as $member) {
+                Notification::create([
+                    'user_id' => $member->user_id,
+                    'type' => 'recording_schedule_set',
+                    'title' => 'Jadwal Rekaman Vokal',
+                    'message' => "Jadwal rekaman untuk Episode {$item->episode->episode_number} telah ditetapkan: " . $item->recording_schedule->format('d M Y H:i'),
+                    'data' => ['episode_id' => $item->episode_id]
+                ]);
+            }
+
+            // B. Also notify original production team sound engineers (fallback/default)
             $productionTeam = $item->episode->program->productionTeam;
             if ($productionTeam) {
                  $soundEngineers = $productionTeam->members()->where('role', 'sound_eng')->get();
                  foreach ($soundEngineers as $se) {
-                     Notification::create([
-                        'user_id' => $se->user_id,
-                        'type' => 'recording_schedule_set',
-                        'title' => 'Jadwal Rekaman Vokal',
-                        'message' => "Jadwal rekaman untuk Episode {$item->episode->episode_number} telah ditetapkan: " . $item->recording_schedule->format('d M Y H:i'),
-                        'data' => ['episode_id' => $item->episode_id]
-                     ]);
+                     // Avoid double notification if someone is in both
+                     if (!$recordingMembers->contains('user_id', $se->user_id)) {
+                        Notification::create([
+                            'user_id' => $se->user_id,
+                            'type' => 'recording_schedule_set',
+                            'title' => 'Jadwal Rekaman Vokal',
+                            'message' => "Jadwal rekaman untuk Episode {$item->episode->episode_number} telah ditetapkan: " . $item->recording_schedule->format('d M Y H:i'),
+                            'data' => ['episode_id' => $item->episode_id]
+                        ]);
+                     }
                  }
             }
         }
 
         // 3. Notify Shooting Team if Shooting Schedule exists
         if ($item->shooting_schedule) {
-             // Notify Production Team
-             // Implementation depends on team assignments...
+             $episodeId = $item->episode_id;
+             
+             // A. Notify specific episode-based shooting team members
+             $shootingMembers = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episodeId) {
+                 $q->where('episode_id', $episodeId)->where('team_type', 'shooting');
+             })->where('is_active', true)->get();
+
+             foreach ($shootingMembers as $member) {
+                 Notification::create([
+                    'user_id' => $member->user_id,
+                    'type' => 'shooting_schedule_set',
+                    'title' => 'Jadwal Syuting',
+                    'message' => "Jadwal syuting untuk Episode {$item->episode->episode_number} telah ditetapkan: " . $item->shooting_schedule->format('d M Y H:i'),
+                    'data' => ['episode_id' => $item->episode_id]
+                 ]);
+             }
+
+             // B. Notify original production team if no specialized shooting team assigned
+             if ($shootingMembers->isEmpty()) {
+                $productionTeam = $item->episode->program->productionTeam;
+                if ($productionTeam) {
+                    $prodMembers = $productionTeam->members()->whereIn('role', ['production', 'producer'])->get();
+                    foreach ($prodMembers as $pm) {
+                        Notification::create([
+                            'user_id' => $pm->user_id,
+                            'type' => 'shooting_schedule_set',
+                            'title' => 'Jadwal Syuting',
+                            'message' => "Jadwal syuting untuk Episode {$item->episode->episode_number} telah ditetapkan: " . $item->shooting_schedule->format('d M Y H:i'),
+                            'data' => ['episode_id' => $item->episode_id]
+                        ]);
+                    }
+                }
+             }
+        }
+
+        // 4. Notify Setting Team
+        if ($item->shooting_schedule) { // Usually setting happens before shooting
+            $episodeId = $item->episode_id;
+            $settingMembers = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episodeId) {
+                $q->where('episode_id', $episodeId)->where('team_type', 'setting');
+            })->where('is_active', true)->get();
+
+            foreach ($settingMembers as $member) {
+                Notification::create([
+                    'user_id' => $member->user_id,
+                    'type' => 'setting_prep_needed',
+                    'title' => 'Persiapan Setting & Properti',
+                    'message' => "Creative Work telah disetujui. Silakan persiapkan setting & properti untuk syuting Episode {$item->episode->episode_number} pada " . $item->shooting_schedule->format('d M Y'),
+                    'data' => ['episode_id' => $item->episode_id]
+                ]);
+            }
         }
     }
 }

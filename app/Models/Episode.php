@@ -154,6 +154,23 @@ class Episode extends Model
             'created_by' => auth()->id() ?? 1
         ]);
 
+        // Deadline Musik Arr & Sound Eng: 8 hari sebelum tayang
+        $this->deadlines()->create([
+            'role' => 'musik_arr',
+            'deadline_date' => $airDate->copy()->subDays(8),
+            'description' => 'Deadline music arrangement episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+
+        $this->deadlines()->create([
+            'role' => 'sound_eng',
+            'deadline_date' => $airDate->copy()->subDays(8),
+            'description' => 'Deadline sound engineering episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+
         // Notifikasi ke semua role yang terkait
         $this->notifyDeadlineCreation();
     }
@@ -338,6 +355,14 @@ class Episode extends Model
     public function budgets(): HasMany
     {
         return $this->hasMany(Budget::class);
+    }
+
+    /**
+     * Relationship dengan Team Assignments
+     */
+    public function teamAssignments(): HasMany
+    {
+        return $this->hasMany(ProductionTeamAssignment::class, 'episode_id');
     }
 
     /**

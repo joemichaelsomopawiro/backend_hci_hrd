@@ -25,18 +25,18 @@ class EquipmentInventory extends Model
         'location',
         'purchase_price',
         'purchase_date',
+        'last_maintenance',
+        'next_maintenance',
+        'maintenance_notes',
         'image_path',
         'is_active',
-        // 'episode_id', // Not in active migration schema
-        // 'assigned_to', // Not in active migration schema
-        // 'assigned_by', // Not in active migration schema
-        // 'assigned_at', // Not in active migration schema
-        // 'return_date', // Not in active migration schema
-        // 'returned_at', // Not in active migration schema
-        // 'return_condition', // Not in active migration schema
-        // 'return_notes', // Not in active migration schema
-        // 'notes', // Not in active migration schema
-        // 'created_by' // Not in active migration schema, relies on timestamps
+        'notes',
+        'assigned_to',
+        'assigned_by',
+        'assigned_at',
+        'episode_id',
+        'return_date',
+        'returned_at'
     ];
 
     protected $casts = [
@@ -57,7 +57,7 @@ class EquipmentInventory extends Model
     /**
      * Relationship dengan User yang assigned
      */
-    public function assignedTo(): BelongsTo
+    public function borrower(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_to');
     }
@@ -91,7 +91,7 @@ class EquipmentInventory extends Model
      */
     public function scopeAssigned($query)
     {
-        return $query->where('status', 'assigned');
+        return $query->where('status', 'in_use');
     }
 
     /**
@@ -149,7 +149,7 @@ class EquipmentInventory extends Model
     {
         $status = $this->status;
         
-        if ($this->status === 'assigned' && $this->isOverdue()) {
+        if ($this->status === 'in_use' && $this->isOverdue()) {
             $status = 'overdue';
         }
         

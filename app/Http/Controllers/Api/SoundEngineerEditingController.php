@@ -24,11 +24,24 @@ class SoundEngineerEditingController extends Controller
         }
         
         $role = strtolower($user->role ?? '');
-        // Sound Engineer adalah satu role, editing dan recording adalah tugasnya
-        return in_array($role, [
+        // Sound Engineer OR Production role OR anyone with a music team assignment (for dashboard visibility)
+        if (in_array($role, [
             'sound engineer',
-            'sound_engineer'
+            'sound_engineer',
+            'production'
+        ])) {
+            return true;
+        }
+
+        // Also allow if has any music team assignment (for visibility across dashboards)
+        $hasAssignment = $user->hasAnyMusicTeamAssignment();
+        \Illuminate\Support\Facades\Log::info('SoundEngineerEditing Access Check', [
+            'user_id' => $user->id,
+            'role' => $role,
+            'has_assignment' => $hasAssignment
         ]);
+        
+        return $hasAssignment;
     }
 
     /**
@@ -48,7 +61,7 @@ class SoundEngineerEditingController extends Controller
             ], 403);
         }
 
-        $query = SoundEngineerEditing::with(['episode', 'soundEngineer', 'recording']);
+        $query = SoundEngineerEditing::with(['episode.program', 'soundEngineer', 'recording']);
 
         // Filter by status
         if ($request->has('status')) {
@@ -140,7 +153,7 @@ class SoundEngineerEditingController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        $work = SoundEngineerEditing::with(['episode', 'soundEngineer', 'recording'])
+        $work = SoundEngineerEditing::with(['episode.program', 'soundEngineer', 'recording'])
             ->findOrFail($id);
 
         return response()->json([
@@ -168,7 +181,7 @@ class SoundEngineerEditingController extends Controller
                 ], 403);
             }
 
-            $work = SoundEngineerEditing::with(['episode', 'soundEngineer', 'recording'])->findOrFail($id);
+            $work = SoundEngineerEditing::with(['episode.program', 'soundEngineer', 'recording'])->findOrFail($id);
 
             // Check if work is assigned to this user or user is in the production team
             if ($work->sound_engineer_id !== $user->id) {
@@ -242,7 +255,7 @@ class SoundEngineerEditingController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Editing work accepted successfully. You can now proceed with editing.',
-                'data' => $work->fresh(['episode', 'soundEngineer', 'recording'])
+                'data' => $work->fresh(['episode.program', 'soundEngineer', 'recording'])
             ]);
 
         } catch (\Exception $e) {
@@ -274,9 +287,9 @@ class SoundEngineerEditingController extends Controller
 
         $validator = Validator::make($request->all(), [
             'vocal_file_path' => 'nullable|string', // Backward compatibility
-            'vocal_file_link' => 'nullable|url|max:2048', // New: External storage link
+            'vocal_file_link' => 'nullable|string|max:2048', // External storage link
             'final_file_path' => 'nullable|string', // Backward compatibility
-            'final_file_link' => 'nullable|url|max:2048', // New: External storage link
+            'final_file_link' => 'nullable|string|max:2048', // External storage link
             'editing_notes' => 'nullable|string',
             'estimated_completion' => 'nullable|date',
             'status' => 'nullable|in:in_progress,completed,revision_needed'
@@ -290,21 +303,34 @@ class SoundEngineerEditingController extends Controller
             ], 422);
         }
 
-        $work->update($request->only([
-            'vocal_file_path', // Backward compatibility
-            'vocal_file_link', // New: External storage link
-            'final_file_path', // Backward compatibility
-            'final_file_link', // New: External storage link
-            'editing_notes',
-            'estimated_completion',
-            'status'
-        ]));
+        try {
+            $updateData = $request->only([
+                'vocal_file_path',
+                'vocal_file_link',
+                'final_file_path',
+                'final_file_link',
+                'editing_notes',
+                'estimated_completion'
+            ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Sound engineer editing work updated successfully',
-            'data' => $work->load(['episode', 'soundEngineer'])
-        ]);
+            // Only update status if it's provided and not null
+            if ($request->has('status') && $request->status !== null) {
+                $updateData['status'] = $request->status;
+            }
+
+            $work->update($updateData);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Sound engineer editing work updated successfully',
+                'data' => $work->load(['episode.program', 'soundEngineer', 'recording'])
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error updating work: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -336,7 +362,7 @@ class SoundEngineerEditingController extends Controller
 
         $validator = Validator::make($request->all(), [
             'final_file_path' => 'nullable|string', // Backward compatibility
-            'final_file_link' => 'nullable|url|max:2048', // New: External storage link
+            'final_file_link' => 'nullable|string|max:2048', // External storage link
             'submission_notes' => 'nullable|string'
         ]);
         
@@ -414,7 +440,7 @@ class SoundEngineerEditingController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'vocal_file_link' => 'required|url|max:2048',
+                'vocal_file_link' => 'required|string|max:2048',
                 'vocal_file_name' => 'required|string|max:255',
                 'vocal_file_size' => 'nullable|integer'
             ]);

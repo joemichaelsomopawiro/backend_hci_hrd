@@ -130,4 +130,46 @@ class User extends Authenticatable
     {
         return $this->role === 'HR';
     }
+
+    /**
+     * Check if user is an active member of ANY production team
+     */
+    public function hasAnyMusicTeamAssignment(): bool
+    {
+        return $this->productionTeamMembers()
+            ->where('is_active', true)
+            ->whereHas('assignment', function ($q) {
+                $q->where('status', '!=', 'cancelled');
+            })->exists();
+    }
+
+    /**
+     * Check if user is an active member of a SPECIFIC team type
+     */
+    public function hasMusicTeamAssignment(string $teamType): bool
+    {
+        return $this->productionTeamMembers()
+            ->where('is_active', true)
+            ->whereHas('assignment', function ($q) use ($teamType) {
+                $q->where('team_type', $teamType)
+                    ->where('status', '!=', 'cancelled');
+            })->exists();
+    }
+
+    /**
+     * Get the name of the program the user is currently assigned to
+     */
+    public function getAssignedProgramName(): ?string
+    {
+        $activeMember = $this->productionTeamMembers()
+            ->where('is_active', true)
+            ->whereHas('assignment', function ($q) {
+                $q->where('status', '!=', 'cancelled');
+            })
+            ->with(['assignment.episode.program'])
+            ->latest('joined_at')
+            ->first();
+
+        return $activeMember?->assignment?->episode?->program?->name;
+    }
 }

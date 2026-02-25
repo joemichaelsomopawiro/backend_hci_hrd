@@ -244,7 +244,11 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'phone' => $user->phone,
                     'role' => $user->role,
-                    // Jangan expose password, token, dll
+                    'has_any_music_assignment' => $user->hasAnyMusicTeamAssignment(),
+                    'has_shooting_assignment' => $user->hasMusicTeamAssignment('shooting'),
+                    'has_setting_assignment' => $user->hasMusicTeamAssignment('setting'),
+                    'has_recording_assignment' => $user->hasMusicTeamAssignment('recording'),
+                    'assigned_program_name' => $user->getAssignedProgramName(),
                 ],
                 'token' => $token,
                 'token_type' => 'Bearer',
@@ -343,9 +347,17 @@ class AuthController extends Controller
             ], 401);
         }
 
+        // Add assignment flags
+        $userData = $user->toArray();
+        $userData['has_any_music_assignment'] = $user->hasAnyMusicTeamAssignment();
+        $userData['has_shooting_assignment'] = $user->hasMusicTeamAssignment('shooting');
+        $userData['has_setting_assignment'] = $user->hasMusicTeamAssignment('setting');
+        $userData['has_recording_assignment'] = $user->hasMusicTeamAssignment('recording');
+        $userData['assigned_program_name'] = $user->getAssignedProgramName();
+
         return response()->json([
             'success' => true,
-            'data' => $user
+            'data' => $userData
         ]);
     }
 
@@ -471,7 +483,11 @@ class AuthController extends Controller
                         'email' => $user->email,
                         'phone' => $user->phone,
                         'role' => $user->role,
-                        // Jangan expose password, token, dll
+                        'has_any_music_assignment' => $user->hasAnyMusicTeamAssignment(),
+                        'has_shooting_assignment' => $user->hasMusicTeamAssignment('shooting'),
+                        'has_setting_assignment' => $user->hasMusicTeamAssignment('setting'),
+                        'has_recording_assignment' => $user->hasMusicTeamAssignment('recording'),
+                        'assigned_program_name' => $user->getAssignedProgramName(),
                     ]
                 ]
             ]);

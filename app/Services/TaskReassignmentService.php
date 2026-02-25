@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\{
+    MusicArrangement,
     EditorWork,
     CreativeWork,
     PromotionWork,
@@ -30,6 +31,7 @@ class TaskReassignmentService
      * Task type to model mapping
      */
     protected static array $taskTypeMapping = [
+        'music_arrangement' => MusicArrangement::class,
         'editor_work' => EditorWork::class,
         'creative_work' => CreativeWork::class,
         'promotion_work' => PromotionWork::class,
@@ -348,6 +350,7 @@ class TaskReassignmentService
         // Some older or specific PR models might use 'user_id' but we found PrEditorWork uses created_by
         
         return match($taskType) {
+            'music_arrangement' => 'created_by',
             'creative_work' => 'created_by', // Verified
             'editor_work' => 'created_by',   // Verified
             'pr_editor_work' => 'created_by', // Verified
@@ -385,6 +388,7 @@ class TaskReassignmentService
     {
         // Map task types to required roles
         $roleMapping = [
+            'music_arrangement' => 'Music Arranger',
             'editor_work' => 'Editor',
             'pr_editor_work' => 'Editor',
             'creative_work' => 'Creative',

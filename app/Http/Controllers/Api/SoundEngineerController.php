@@ -30,7 +30,12 @@ class SoundEngineerController extends Controller
         }
         
         $role = $user->role;
-        return in_array(strtolower($role), ['sound engineer', 'sound_engineer']);
+        if (in_array(strtolower($role), ['sound engineer', 'sound_engineer', 'production'])) {
+            return true;
+        }
+
+        // Also allow if has any music team assignment (for dashboard visibility)
+        return $user->hasAnyMusicTeamAssignment();
     }
 
     /**
@@ -55,7 +60,8 @@ class SoundEngineerController extends Controller
                 'musicArrangement.song',
                 'musicArrangement.singer',
                 'createdBy',
-                'reviewedBy'
+                'reviewedBy',
+                'equipmentRequests.episode.program'
             ]);
             
             // Filter by episode
@@ -72,11 +78,30 @@ class SoundEngineerController extends Controller
             if ($request->has('created_by')) {
                 $query->where('created_by', $request->created_by);
             } else {
-                // Only show recordings created by current user
-                $query->where('created_by', $user->id);
+                // Show recordings created by user OR recordings for episodes where user is in recording team
+                $query->where(function($q) use ($user) {
+                    $q->where('created_by', $user->id)
+                      ->orWhereHas('episode.teamAssignments', function($aq) use ($user) {
+                          $aq->where('team_type', 'recording')
+                             ->where('status', '!=', 'cancelled')
+                             ->whereHas('members', function($mq) use ($user) {
+                                 $mq->where('user_id', $user->id)
+                                    ->where('is_active', true);
+                             });
+                      });
+                });
             }
             
             $recordings = $query->orderBy('created_at', 'desc')->paginate(15);
+
+            // Add convenience fields for frontend (episode_number 1-52, program_name, recording_link)
+            $recordings->getCollection()->transform(function ($recording) {
+                $recording->episode_number = $recording->episode->episode_number ?? null;
+                $recording->program_name = $recording->episode->program->name ?? null;
+                $recording->program_id = $recording->episode->program->id ?? null;
+                $recording->recording_link = $recording->file_link; // alias for frontend
+                return $recording;
+            });
             
             return response()->json([
                 'success' => true,
@@ -139,6 +164,12 @@ class SoundEngineerController extends Controller
                     ], 403);
                 }
             }
+
+            // Add convenience fields for frontend (episode_number 1-52, program_name, recording_link)
+            $recording->episode_number = $recording->episode->episode_number ?? null;
+            $recording->program_name = $recording->episode->program->name ?? null;
+            $recording->program_id = $recording->episode->program->id ?? null;
+            $recording->recording_link = $recording->file_link; // alias for frontend
             
             return response()->json([
                 'success' => true,
@@ -286,7 +317,9 @@ class SoundEngineerController extends Controller
             $validator = Validator::make($request->all(), [
                 'recording_notes' => 'nullable|string',
                 'equipment_used' => 'nullable|array',
-                'recording_schedule' => 'nullable|date'
+                'recording_schedule' => 'nullable|date',
+                'recording_link' => 'nullable|string|max:2048',
+                'file_link' => 'nullable|string|max:2048'
             ]);
             
             if ($validator->fails()) {
@@ -302,8 +335,14 @@ class SoundEngineerController extends Controller
                 'recording_notes',
                 'equipment_used',
                 'recording_schedule',
-                'file_link' // New: External storage link
+                'file_link'
             ]);
+            
+            // Map recording_link → file_link (frontend sends recording_link, DB column is file_link)
+            if ($request->has('recording_link') && !$request->has('file_link')) {
+                $updateData['file_link'] = $request->recording_link;
+            }
+            
             $recording->update($updateData);
             
             // Audit logging
@@ -428,8 +467,10 @@ class SoundEngineerController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'vocal_file_link' => 'required|url|max:2048',
-                'recording_notes' => 'nullable|string'
+                'recording_link' => 'nullable|string|max:2048',
+                'vocal_file_link' => 'nullable|string|max:2048',
+                'recording_notes' => 'nullable|string',
+                'completion_notes' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
@@ -440,12 +481,24 @@ class SoundEngineerController extends Controller
                 ], 422);
             }
             
+            // Resolve the recording link: accept multiple field names, fallback to existing
+            $recordingLink = $request->recording_link 
+                ?? $request->vocal_file_link 
+                ?? $recording->file_link;
+            
+            if (!$recordingLink) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Recording link is required. Please upload a recording link first.'
+                ], 422);
+            }
+            
             // Update recording with link and status
             $recording->update([
                 'status' => 'completed',
                 'recording_completed_at' => now(),
-                'file_link' => $request->vocal_file_link,
-                'recording_notes' => $request->recording_notes ?? $recording->recording_notes
+                'file_link' => $recordingLink,
+                'recording_notes' => $request->recording_notes ?? $request->completion_notes ?? $recording->recording_notes
             ]);
             
             // Auto-create Sound Engineer Editing task
@@ -458,9 +511,9 @@ class SoundEngineerController extends Controller
                     'episode_id' => $recording->episode_id,
                     'sound_engineer_recording_id' => $recording->id,
                     'sound_engineer_id' => $user->id,
-                    'vocal_file_path' => $recording->file_path ?? null, // Copy recording file path (backward compatibility)
-                    'vocal_file_link' => $request->vocal_file_link, // Use the new link
-                    'editing_notes' => "Editing task created automatically from completed recording. Recording notes: " . ($request->recording_notes ?? 'N/A'),
+                    'vocal_file_path' => $recording->file_path ?? null,
+                    'vocal_file_link' => $recordingLink,
+                    'editing_notes' => "Recording by: {$user->name}. Recording notes: " . ($request->recording_notes ?? 'N/A'),
                     'status' => 'in_progress',
                     'created_by' => $user->id
                 ]);
@@ -1629,6 +1682,7 @@ class SoundEngineerController extends Controller
             $validator = Validator::make($request->all(), [
                 'equipment_list' => 'required|array|min:1',
                 'equipment_list.*.equipment_name' => 'required|string|max:255',
+                'equipment_list.*.equipment_id' => 'nullable|integer|exists:equipment_inventory,id',
                 'equipment_list.*.quantity' => 'required|integer|min:1',
                 'equipment_list.*.return_date' => 'required|date|after_or_equal:today',
                 'equipment_list.*.notes' => 'nullable|string|max:1000',
@@ -1660,10 +1714,19 @@ class SoundEngineerController extends Controller
                 $equipmentName = $equipment['equipment_name'];
                 $quantity = $equipment['quantity'];
 
-                // Check if equipment is available (not in_use or assigned)
-            $availableCount = EquipmentInventory::where('name', $equipmentName)
-                ->whereIn('status', ['available'])
-                ->count();
+                // Use equipment_id for precise matching if provided, otherwise fall back to name
+                $query = EquipmentInventory::where('status', 'available');
+                if (!empty($equipment['equipment_id'])) {
+                    // Match by name of the selected inventory item (precise)
+                    $inventoryItem = EquipmentInventory::find($equipment['equipment_id']);
+                    if ($inventoryItem) {
+                        $equipmentName = $inventoryItem->name;
+                    }
+                    $query->where('name', $equipmentName);
+                } else {
+                    $query->where('name', $equipmentName);
+                }
+                $availableCount = $query->count();
 
 
 
@@ -1684,7 +1747,7 @@ class SoundEngineerController extends Controller
                     'episode_id' => $recording->episode_id,
                     'equipment_list' => array_fill(0, $quantity, $equipmentName),
                     'request_notes' => ($equipment['notes'] ?? '') . ($request->request_notes ? "\n" . $request->request_notes : ''),
-                    'status' => 'pending',
+                'status' => 'pending',
                     'requested_by' => $user->id,
                     'requested_at' => now()
                 ]);
@@ -1754,12 +1817,18 @@ class SoundEngineerController extends Controller
             ], 403);
         }
         
-        // Group by name to show total available quantity for each type/model
+        // Return individual items with aggregated available quantity per name
         $availableEquipment = EquipmentInventory::where('status', 'available')
-            ->select('name', 'category', \DB::raw('count(*) as available_quantity'))
-            ->groupBy('name', 'category')
+            ->select(
+                'id', 'name', 'category', 'brand', 'model', 
+                'serial_number', 'location',
+                \DB::raw('(SELECT count(*) FROM equipment_inventory ei WHERE ei.name = equipment_inventory.name AND ei.status = \'available\') as available_quantity')
+            )
             ->orderBy('name')
-            ->get();
+            ->orderBy('id')
+            ->get()
+            ->unique('name')
+            ->values();
             
         return response()->json([
             'success' => true,
@@ -2040,19 +2109,33 @@ class SoundEngineerController extends Controller
                 ]);
 
                 // Update EquipmentInventory if exists
-                $equipmentInventory = \App\Models\EquipmentInventory::where('episode_id', $equipment->episode_id)
-                    ->where('equipment_name', is_array($equipment->equipment_list) ? $equipment->equipment_list[0] : $equipment->equipment_list)
-                    ->where('status', 'assigned')
-                    ->where('assigned_to', $user->id)
-                    ->first();
+                $itemNames = is_array($equipment->equipment_list) ? $equipment->equipment_list : [$equipment->equipment_list];
+                foreach ($itemNames as $itemName) {
+                    $equipmentInventory = \App\Models\EquipmentInventory::where('name', $itemName)
+                        ->where('status', 'in_use')
+                        ->first();
 
-                if ($equipmentInventory) {
-                    $equipmentInventory->update([
-                        'status' => 'returned',
-                        'return_condition' => $conditionData['condition'],
-                        'return_notes' => $conditionData['notes'] ?? null,
-                        'returned_at' => now()
-                    ]);
+                    if ($equipmentInventory) {
+                        $newStatus = 'available';
+                        if (($conditionData['condition'] ?? 'good') === 'damaged') {
+                            $newStatus = 'broken';
+                        } elseif (($conditionData['condition'] ?? 'good') === 'lost') {
+                            $newStatus = 'broken';
+                        }
+                        
+                        try {
+                            $equipmentInventory->update([
+                                'status' => $newStatus,
+                                'assigned_to' => null,
+                                'episode_id' => null,
+                                'assigned_by' => null,
+                                'assigned_at' => null,
+                            ]);
+                        } catch (\Exception $e) {
+                            // Fallback: just update status
+                            $equipmentInventory->update(['status' => $newStatus]);
+                        }
+                    }
                 }
 
                 $returnedEquipment[] = $equipment->fresh();

@@ -24,7 +24,8 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            $allowedQCRoles = ['Quality Control', 'QC', 'Manager Broadcasting', 'Distribution Manager'];
+            if (!in_array($user->role, $allowedQCRoles)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -376,7 +377,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Quality Control') {
+            if (!in_array($user->role, ['Quality Control', 'QC'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -817,7 +818,7 @@ class QualityControlController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'qc_notes' => 'required|string|max:5000',
+                'qc_notes' => 'nullable|string|max:5000',
                 'quality_score' => 'nullable|integer|min:0|max:100',
                 'issues_found' => 'nullable|array',
                 'improvements_needed' => 'nullable|array',
@@ -835,11 +836,21 @@ class QualityControlController extends Controller
 
             $work = QualityControlWork::findOrFail($id);
 
-            if ($work->status !== 'in_progress') {
+            // Izinkan submit form ketika status masih pending / in_progress / completed
+            if (!in_array($work->status, ['pending', 'in_progress', 'completed'], true)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work must be in progress to submit QC form'
+                    'message' => 'Work must be in progress or pending to submit QC form'
                 ], 400);
+            }
+
+            // Jika masih pending, anggap QC baru mulai sekarang
+            if ($work->status === 'pending') {
+                $work->update([
+                    'status' => 'in_progress',
+                    'reviewed_by' => $user->id,
+                    'reviewed_at' => now(),
+                ]);
             }
 
             // Update work dengan form QC
@@ -943,144 +954,123 @@ class QualityControlController extends Controller
             }
         }
 
-        // Auto-create BroadcastingWork (hanya jika ada file dari Editor atau Design Grafis)
+        // Auto-create BroadcastingWork jika ada file dari Editor, Design Grafis, atau Editor Promosi (QC Promosi)
         $broadcastingUsers = \App\Models\User::where('role', 'Broadcasting')->get();
         $broadcastingWork = null;
+        $createForBroadcasting = $broadcastingUsers->isNotEmpty() && ($hasEditorFiles || $hasDesignGrafisFiles || $hasEditorPromosiFiles);
 
-        if ($broadcastingUsers->isNotEmpty() && ($hasEditorFiles || $hasDesignGrafisFiles)) {
-            // Get video file dari Editor
+        if ($createForBroadcasting) {
+            // Get video file dari Editor (main episode)
             $videoFilePath = null;
             if ($hasEditorFiles && isset($work->files_to_check[0]['file_path'])) {
                 $videoFilePath = $work->files_to_check[0]['file_path'];
             }
+            if ($videoFilePath === null && $hasEditorFiles && isset($work->files_to_check[0]['file_link'])) {
+                $videoFilePath = $work->files_to_check[0]['file_link'];
+            }
 
-            // Get thumbnail dari Design Grafis (prioritaskan thumbnail_youtube)
+            // Get thumbnail: Design Grafis (thumbnail YT/BTS) atau dari Editor Promosi
             $thumbnailPath = null;
             if ($hasDesignGrafisFiles) {
                 foreach ($work->design_grafis_file_locations as $designFile) {
-                    if (isset($designFile['work_type']) && $designFile['work_type'] === 'thumbnail_youtube') {
-                        $thumbnailPath = $designFile['file_path'] ?? null;
+                    if (isset($designFile['work_type']) && in_array($designFile['work_type'] ?? '', ['thumbnail_youtube', 'thumbnail_yt', 'thumbnail_bts'])) {
+                        $thumbnailPath = $designFile['file_path'] ?? $designFile['file_link'] ?? null;
                         break;
                     }
                 }
-                // Fallback ke design file pertama jika tidak ada thumbnail_youtube
                 if (!$thumbnailPath && isset($work->design_grafis_file_locations[0]['file_path'])) {
-                    $thumbnailPath = $work->design_grafis_file_locations[0]['file_path'];
+                    $thumbnailPath = $work->design_grafis_file_locations[0]['file_path'] ?? $work->design_grafis_file_locations[0]['file_link'] ?? null;
+                }
+            }
+            if (!$thumbnailPath && $hasEditorPromosiFiles) {
+                foreach ($work->editor_promosi_file_locations ?? [] as $epFile) {
+                    if (isset($epFile['work_type']) && (str_contains(strtolower($epFile['work_type'] ?? ''), 'thumbnail') || in_array($epFile['work_type'] ?? '', ['thumbnail_yt', 'thumbnail_bts']))) {
+                        $thumbnailPath = $epFile['file_path'] ?? $epFile['file_link'] ?? null;
+                        break;
+                    }
                 }
             }
 
+            // QC-approved work: status 'pending' agar Broadcasting bisa langsung Terima Pekerjaan (tanpa approval DM)
             $broadcastingWork = \App\Models\BroadcastingWork::create([
                 'episode_id' => $work->episode_id,
                 'work_type' => 'main_episode',
                 'title' => "Broadcasting Work - Episode {$episode->episode_number}",
-                'description' => "File materi dari QC yang telah disetujui",
+                'description' => "File materi dari QC (Manager Broadcasting) & thumbnail dari QC Promosi yang telah disetujui.",
                 'video_file_path' => $videoFilePath,
+                'file_link' => (is_string($videoFilePath) && (str_starts_with($videoFilePath, 'http://') || str_starts_with($videoFilePath, 'https://'))) ? $videoFilePath : null,
                 'thumbnail_path' => $thumbnailPath,
-                'status' => 'preparing',
+                'status' => 'pending',
                 'created_by' => $broadcastingUsers->first()->id
             ]);
 
-            // Notify Broadcasting
-            $broadcastMessage = "QC telah menyetujui materi untuk Episode {$episode->episode_number}.";
+            $broadcastMessage = "Terima File materi dari QC (Manager Broadcasting). Terima thumbnail dari QC Promosi. Episode #{$episode->episode_number} telah disetujui QC. Silakan Terima Pekerjaan → Proses → Jadwal Playlist, Upload YouTube (thumbnail, deskripsi, tag, judul SEO), Upload Website, input link YT, Selesaikan Pekerjaan.";
             $broadcastData = [
                 'broadcasting_work_id' => $broadcastingWork->id,
                 'episode_id' => $work->episode_id,
                 'qc_work_id' => $work->id,
                 'has_editor_files' => $hasEditorFiles,
                 'has_design_grafis_files' => $hasDesignGrafisFiles,
-                'has_editor_promosi_files' => $hasEditorPromosiFiles
+                'has_editor_promosi_files' => $hasEditorPromosiFiles,
+                'video_file_path' => $videoFilePath,
+                'thumbnail_path' => $thumbnailPath,
             ];
-            
-            if ($hasEditorFiles) {
-                $broadcastMessage .= " File materi dari Editor sudah tersedia.";
-                $broadcastData['video_file_path'] = $videoFilePath;
-            }
-            
-            if ($hasDesignGrafisFiles) {
-                $broadcastMessage .= " Thumbnail dari Design Grafis sudah tersedia.";
-                $broadcastData['thumbnail_path'] = $thumbnailPath;
-            }
-            
             if ($hasEditorPromosiFiles) {
-                $broadcastMessage .= " File dari Editor Promosi (BTS, Highlight, Iklan TV) juga sudah tersedia untuk referensi.";
-                $broadcastData['editor_promosi_work_types'] = array_unique(array_map(function($file) {
-                    return $file['work_type'] ?? null;
-                }, $work->editor_promosi_file_locations));
+                $broadcastData['editor_promosi_work_types'] = array_values(array_unique(array_filter(array_map(function ($f) {
+                    return $f['work_type'] ?? null;
+                }, $work->editor_promosi_file_locations ?? []))));
             }
-            
-            $broadcastMessage .= " Silakan proses upload ke YouTube dan website.";
 
-            $broadcastingNotifications = [];
-            $now = now();
             foreach ($broadcastingUsers as $broadcastingUser) {
-                $broadcastingNotifications[] = [
+                Notification::create([
                     'user_id' => $broadcastingUser->id,
                     'type' => 'broadcasting_work_assigned',
-                    'title' => 'Tugas Broadcasting Baru',
+                    'title' => 'Terima File materi dari QC (Manager Broadcasting) & Terima thumbnail dari QC Promosi',
                     'message' => $broadcastMessage,
-                    'data' => json_encode($broadcastData),
-                    'created_at' => $now,
-                    'updated_at' => $now
-                ];
-            }
-
-            if (!empty($broadcastingNotifications)) {
-                Notification::insert($broadcastingNotifications);
+                    'episode_id' => $work->episode_id,
+                    'data' => $broadcastData,
+                ]);
             }
         }
 
-        // Notify Promosi jika ada Editor Promosi files
+        // Notify Promosi – Terima Link YouTube/Website nanti setelah Broadcasting selesai
         if ($hasEditorPromosiFiles) {
-            $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
-            $promosiNotifications = [];
-            $now = now();
+            $promosiUsers = \App\Models\User::whereIn('role', ['Promotion', 'Promosi'])->get();
             foreach ($promosiUsers as $promosiUser) {
-                $promosiNotifications[] = [
+                Notification::create([
                     'user_id' => $promosiUser->id,
                     'type' => 'qc_approved_editor_promosi_ready',
-                    'title' => 'QC Approved - Editor Promosi Files Ready',
-                    'message' => "QC telah menyetujui file dari Editor Promosi untuk Episode {$episode->episode_number}. Setelah Broadcasting selesai upload, file ini siap untuk sharing.",
-                    'data' => json_encode([
+                    'title' => 'QC Promosi Disetujui – Siap Terima Link',
+                    'message' => "QC telah menyetujui file dari Editor Promosi untuk Episode #{$episode->episode_number}. Setelah Broadcasting selesai: Terima Link YouTube, Terima Link Website, Share ke Facebook/IG/WA.",
+                    'episode_id' => $work->episode_id,
+                    'data' => [
                         'episode_id' => $work->episode_id,
                         'qc_work_id' => $work->id,
                         'broadcasting_work_id' => $broadcastingWork->id ?? null,
-                        'editor_promosi_work_types' => array_unique(array_filter(array_map(function($file) {
-                            return $file['work_type'] ?? null;
-                        }, $work->editor_promosi_file_locations)))
-                    ]),
-                    'created_at' => $now,
-                    'updated_at' => $now
-                ];
-            }
-
-            if (!empty($promosiNotifications)) {
-                Notification::insert($promosiNotifications);
+                        'editor_promosi_work_types' => array_values(array_unique(array_filter(array_map(function ($f) {
+                            return $f['work_type'] ?? null;
+                        }, $work->editor_promosi_file_locations ?? [])))),
+                    ],
+                ]);
             }
         }
 
-        // Notify Produksi - Baca Hasil QC
-        $produksiUsers = \App\Models\User::where('role', 'Production')->get();
-        $produksiNotifications = [];
-        $now = now();
+        // Notify Produksi – Baca Hasil QC
+        $produksiUsers = \App\Models\User::whereIn('role', ['Production', 'Produksi'])->get();
         foreach ($produksiUsers as $produksiUser) {
-            $produksiNotifications[] = [
+            Notification::create([
                 'user_id' => $produksiUser->id,
                 'type' => 'qc_approved_produksi_notification',
-                'title' => 'QC Disetujui - Hasil QC Tersedia',
-                'message' => "QC telah menyetujui materi untuk Episode {$episode->episode_number}. Silakan baca hasil QC.",
-                'data' => json_encode([
+                'title' => 'QC Disetujui – Hasil QC Tersedia',
+                'message' => "QC telah menyetujui materi untuk Episode #{$episode->episode_number}. Silakan baca hasil QC.",
+                'episode_id' => $work->episode_id,
+                'data' => [
                     'episode_id' => $work->episode_id,
                     'qc_work_id' => $work->id,
                     'quality_score' => $work->quality_score ?? null,
-                    'qc_notes' => $work->qc_notes ?? null
-                ]),
-                'created_at' => $now,
-                'updated_at' => $now
-            ];
-        }
-
-        if (!empty($produksiNotifications)) {
-            Notification::insert($produksiNotifications);
+                    'qc_notes' => $work->qc_notes ?? null,
+                ],
+            ]);
         }
     }
 
@@ -1102,7 +1092,9 @@ class QualityControlController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'action' => 'required|in:approve,reject',
-                'notes' => 'nullable|string'
+                'notes' => 'nullable|string',
+                'review_notes' => 'nullable|string',
+                'rejection_reason' => 'nullable|string',
             ]);
 
             if ($validator->fails()) {
@@ -1113,22 +1105,34 @@ class QualityControlController extends Controller
                 ], 422);
             }
 
+            $notes = $request->notes ?? $request->review_notes ?? ($request->action === 'reject' ? $request->rejection_reason : null);
+
             $work = QualityControlWork::with(['episode'])->findOrFail($id);
 
-            if ($work->status !== 'completed') {
+            if (!in_array($work->status, ['completed', 'in_progress'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work must be completed before finalizing'
+                    'message' => 'Work must be in progress or completed before finalizing'
                 ], 400);
             }
 
+            // One-click Approve: jika status in_progress, set completed dulu lalu approve
+            if ($work->status === 'in_progress' && $request->action === 'approve') {
+                $work->update([
+                    'status' => 'completed',
+                    'qc_notes' => $notes ?? 'QC Approved',
+                    'reviewed_by' => $user->id,
+                    'reviewed_at' => now(),
+                ]);
+            }
+
             if ($request->action === 'approve') {
-                $this->performQCApproval($work, $user, $request->notes);
+                $this->performQCApproval($work, $user, $notes);
             } else {
-                // Reject - kembali ke role yang sesuai berdasarkan source file
+                // Reject - kembali ke Editor Promosi / Design Grafis
                 $work->markAsFailed();
                 $work->update([
-                    'review_notes' => $request->notes ?? 'QC Rejected',
+                    'review_notes' => $notes ?? 'QC Rejected',
                     'reviewed_at' => now(),
                     'status' => 'revision_needed'
                 ]);
@@ -1147,7 +1151,7 @@ class QualityControlController extends Controller
                         if ($editorWork) {
                             $editorWork->update([
                                 'status' => 'rejected',
-                                'qc_feedback' => $request->notes,
+                                'qc_feedback' => $notes,
                                 'reviewed_by' => $user->id,
                                 'reviewed_at' => now()
                             ]);
@@ -1162,12 +1166,12 @@ class QualityControlController extends Controller
                             'user_id' => $editorUser->id,
                             'type' => 'qc_rejected_revision_needed',
                             'title' => 'QC Ditolak - Perlu Revisi',
-                            'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                            'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: " . ($notes ?? ''),
                             'data' => json_encode([
                                 'episode_id' => $work->episode_id,
                                 'qc_work_id' => $work->id,
                                 'editor_work_id' => $editorFile['editor_work_id'] ?? null,
-                                'revision_notes' => $request->notes,
+                                'revision_notes' => $notes,
                                 'qc_notes' => $work->qc_notes ?? null,
                                 'source' => 'editor'
                             ]),
@@ -1190,7 +1194,7 @@ class QualityControlController extends Controller
                             if ($designGrafisWork) {
                                 $designGrafisWork->update([
                                     'status' => 'revision_needed', // Kembali ke Design Grafis untuk revisi
-                                    'qc_feedback' => $request->notes,
+                                    'qc_feedback' => $notes,
                                     'reviewed_by' => $user->id,
                                     'reviewed_at' => now()
                                 ]);
@@ -1206,11 +1210,11 @@ class QualityControlController extends Controller
                             'user_id' => $designUser->id,
                             'type' => 'qc_rejected_revision_needed',
                             'title' => 'QC Ditolak - Perlu Revisi',
-                            'message' => "QC telah menolak thumbnail untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}. Silakan perbaiki dan ajukan kembali ke QC.",
-                            'data' => json_encode([
-                                'episode_id' => $work->episode_id,
-                                'qc_work_id' => $work->id,
-                                'revision_notes' => $request->notes,
+'message' => "QC telah menolak thumbnail untuk Episode {$work->episode->episode_number}. Alasan: " . ($notes ?? '') . ". Silakan perbaiki dan ajukan kembali ke QC.",
+                    'data' => json_encode([
+                        'episode_id' => $work->episode_id,
+                        'qc_work_id' => $work->id,
+                        'revision_notes' => $notes,
                                 'source' => 'design_grafis',
                                 'design_grafis_work_ids' => array_map(function($file) {
                                     return $file['design_grafis_work_id'] ?? null;
@@ -1235,7 +1239,7 @@ class QualityControlController extends Controller
                             if ($promotionWork) {
                                 $promotionWork->update([
                                     'status' => 'editing', // Kembali ke Editor Promosi untuk revisi (status: editing)
-                                    'review_notes' => $request->notes,
+                                    'review_notes' => $notes,
                                     'reviewed_by' => $user->id,
                                     'reviewed_at' => now()
                                 ]);
@@ -1251,11 +1255,11 @@ class QualityControlController extends Controller
                             'user_id' => $editorUser->id,
                             'type' => 'qc_rejected_revision_needed',
                             'title' => 'QC Ditolak - Perlu Revisi',
-                            'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}. Silakan perbaiki dan ajukan kembali ke QC.",
+                            'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: " . ($notes ?? '') . ". Silakan perbaiki dan ajukan kembali ke QC.",
                             'data' => json_encode([
                                 'episode_id' => $work->episode_id,
                                 'qc_work_id' => $work->id,
-                                'revision_notes' => $request->notes,
+                                'revision_notes' => $notes,
                                 'source' => 'editor_promosi',
                                 'promotion_work_ids' => array_map(function($file) {
                                     return $file['promotion_work_id'] ?? null;
@@ -1279,11 +1283,11 @@ class QualityControlController extends Controller
                         'user_id' => $productionTeam->producer_id,
                         'type' => 'qc_rejected_producer_notification',
                         'title' => 'QC Ditolak - Perlu Revisi',
-                        'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: {$request->notes}",
+                        'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number}. Alasan: " . ($notes ?? ''),
                         'data' => [
                             'episode_id' => $work->episode_id,
                             'qc_work_id' => $work->id,
-                            'revision_notes' => $request->notes,
+                            'revision_notes' => $notes,
                             'qc_notes' => $work->qc_notes ?? null,
                             'quality_score' => $work->quality_score ?? null
                         ]
@@ -1297,12 +1301,12 @@ class QualityControlController extends Controller
                         'user_id' => $episode->program->manager_program_id,
                         'type' => 'qc_rejected_manager_notification',
                         'title' => 'QC Ditolak - Perlu Perbaikan',
-                        'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number} dari program '{$episode->program->name}'. Alasan: {$request->notes}. Anda dapat mengedit deadline jika diperlukan.",
+                        'message' => "QC telah menolak materi untuk Episode {$work->episode->episode_number} dari program '{$episode->program->name}'. Alasan: " . ($notes ?? '') . ". Anda dapat mengedit deadline jika diperlukan.",
                         'data' => [
                             'episode_id' => $work->episode_id,
                             'program_id' => $episode->program->id,
                             'qc_work_id' => $work->id,
-                            'revision_notes' => $request->notes,
+                            'revision_notes' => $notes,
                             'qc_notes' => $work->qc_notes ?? null,
                             'quality_score' => $work->quality_score ?? null,
                             'program_name' => $episode->program->name

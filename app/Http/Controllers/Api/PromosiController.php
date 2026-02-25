@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\PromotionWork;
 use App\Models\Notification;
 use App\Models\CreativeWork;
+use App\Models\DesignGrafisWork;
+use App\Models\Episode;
+use App\Models\PromotionActivityLog;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
 use App\Helpers\FileUploadHelper;
@@ -34,7 +37,8 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Promotion') {
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$isPromotionRole && $user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -94,7 +98,8 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promotion') {
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -154,7 +159,8 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promotion') {
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -203,6 +209,13 @@ class PromosiController extends Controller
 
             $work->update($updateData);
 
+            // Activity log
+            $this->logActivity($work, $user, 'schedule_accepted', 'Jadwal syuting diterima', [
+                'shooting_date' => $work->shooting_date,
+                'shooting_time' => $work->shooting_time,
+                'location_data' => $work->location_data
+            ]);
+
             // Audit logging
             ControllerSecurityHelper::logCrud('promosi_schedule_accepted', $work, [
                 'shooting_date' => $work->shooting_date,
@@ -235,7 +248,8 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promotion') {
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -264,6 +278,13 @@ class PromosiController extends Controller
             $work->update([
                 'status' => $newStatus,
                 'created_by' => $user->id
+            ]);
+
+            // Activity log
+            $this->logActivity($work, $user, 'work_accepted', 'Pekerjaan diterima oleh ' . $user->name, [
+                'old_status' => $oldData['status'],
+                'new_status' => 'shooting',
+                'work_type' => $work->work_type
             ]);
 
             // Audit logging
@@ -309,7 +330,8 @@ class PromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || $user->role !== 'Promotion') {
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -340,6 +362,11 @@ class PromosiController extends Controller
 
             $work->update(['file_links' => array_values($fileLinks)]);
 
+            // Activity log
+            $this->logActivity($work, $user, 'bts_video_uploaded', 'Link video BTS diunggah', [
+                'file_link' => $request->file_link
+            ]);
+
             return response()->json(['success' => true, 'message' => 'BTS video link submitted successfully.']);
 
         } catch (\Exception $e) {
@@ -355,7 +382,8 @@ class PromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || $user->role !== 'Promotion') {
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -388,6 +416,11 @@ class PromosiController extends Controller
 
             $work->update(['file_links' => array_values($fileLinks)]);
 
+            // Activity log
+            $this->logActivity($work, $user, 'talent_photos_uploaded', 'Foto talent diunggah (' . count($request->file_links) . ' foto)', [
+                'photo_count' => count($request->file_links)
+            ]);
+
             return response()->json(['success' => true, 'message' => 'Talent photo links submitted successfully.']);
 
         } catch (\Exception $e) {
@@ -418,7 +451,8 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Promotion') {
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -523,7 +557,7 @@ class PromosiController extends Controller
             $producer = $productionTeam ? $productionTeam->producer : null;
             
             if ($producer) {
-                Notification::create([
+                \App\Models\Notification::create([
                     'user_id' => $producer->id,
                     'type' => 'promosi_work_completed',
                     'title' => 'Pekerjaan Promosi Selesai',
@@ -581,12 +615,14 @@ class PromosiController extends Controller
             $finalBTSVideo = $btsVideoLink ?? $btsVideoPath;
             $finalTalentPhotos = !empty($talentPhotoLinks) ? $talentPhotoLinks : $talentPhotoPaths;
             
+            // 1. Thumbnail BTS
             if (!$existingThumbnailBTS && !empty($finalTalentPhotos)) {
+                $episodeTitleSuffix = $episode->title ? ": {$episode->title}" : "";
                 $designGrafisWork = \App\Models\DesignGrafisWork::create([
                     'episode_id' => $work->episode_id,
                     'work_type' => 'thumbnail_bts',
-                    'title' => "Thumbnail BTS - Episode {$episode->episode_number}",
-                    'description' => "Design thumbnail BTS untuk Episode {$episode->episode_number}. Foto talent dari Promosi sudah tersedia.",
+                    'title' => "Thumbnail BTS - Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}",
+                    'description' => "Design thumbnail BTS untuk Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}. Foto talent dari Promosi sudah tersedia.",
                     'status' => 'draft',
                     'source_files' => [
                         'promotion_work_id' => $work->id,
@@ -612,12 +648,12 @@ class PromosiController extends Controller
                         'user_id' => $designUser->id,
                         'type' => 'promosi_files_available_for_design',
                         'title' => 'File Promosi Tersedia untuk Design BTS',
-                        'message' => "Promosi telah mengupload foto talent untuk Episode {$episode->episode_number}. Design Grafis work untuk Thumbnail BTS sudah dibuat.",
+                        'message' => "Promosi telah mengupload foto talent untuk Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}. Design Grafis work untuk Thumbnail BTS sudah dibuat.",
                         'data' => json_encode([ // Encode data to JSON
                             'promotion_work_id' => $work->id,
                             'design_grafis_work_id' => $designGrafisWork->id,
                             'episode_id' => $work->episode_id,
-                            'talent_photos_count' => count($finalTalentPhotos),
+                            'talent_photos_count' => count($finalTalentPhotos ?? []),
                             'bts_video_available' => !empty($finalBTSVideo)
                         ]),
                         'created_at' => $now,
@@ -626,7 +662,7 @@ class PromosiController extends Controller
                 }
 
                 if (!empty($notificationsToInsert)) {
-                    Notification::insert($notificationsToInsert);
+                    \App\Models\Notification::insert($notificationsToInsert);
                 }
             } elseif ($existingThumbnailBTS && !empty($finalTalentPhotos)) {
                 // Update existing DesignGrafisWork dengan file terbaru dari Promosi
@@ -655,12 +691,12 @@ class PromosiController extends Controller
                         'user_id' => $designUser->id,
                         'type' => 'promosi_files_updated_for_design',
                         'title' => 'File Promosi Diperbarui untuk Design BTS',
-                        'message' => "Promosi telah mengupdate foto talent untuk Episode {$episode->episode_number}. Design Grafis work untuk Thumbnail BTS telah diperbarui.",
+                        'message' => "Promosi telah mengupdate foto talent untuk Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}. Design Grafis work untuk Thumbnail BTS telah diperbarui.",
                         'data' => json_encode([
                             'promotion_work_id' => $work->id,
                             'design_grafis_work_id' => $existingThumbnailBTS->id,
                             'episode_id' => $work->episode_id,
-                            'talent_photos_count' => count($finalTalentPhotos)
+                            'talent_photos_count' => count($finalTalentPhotos ?? [])
                         ]),
                         'created_at' => $now,
                         'updated_at' => $now
@@ -670,6 +706,70 @@ class PromosiController extends Controller
                 if (!empty($notificationsToInsert)) {
                     \App\Models\Notification::insert($notificationsToInsert);
                 }
+            }
+
+            // 2. Thumbnail Youtube
+            $existingThumbnailYoutube = \App\Models\DesignGrafisWork::where('episode_id', $work->episode_id)
+                ->where('work_type', 'thumbnail_youtube')
+                ->first();
+
+            if (!$existingThumbnailYoutube && !empty($finalTalentPhotos)) {
+                $episodeTitleSuffix = $episode->title ? ": {$episode->title}" : "";
+                $designGrafisWork = \App\Models\DesignGrafisWork::create([
+                    'episode_id' => $work->episode_id,
+                    'work_type' => 'thumbnail_youtube',
+                    'title' => "Thumbnail YouTube - Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}",
+                    'description' => "Design thumbnail YouTube untuk Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}. Foto talent dari Promosi sudah tersedia.",
+                    'status' => 'draft',
+                    'source_files' => [
+                        'promotion_work_id' => $work->id,
+                        'talent_photos' => $finalTalentPhotos,
+                        'talent_photo_paths' => $talentPhotoPaths,
+                        'talent_photo_links' => $talentPhotoLinks,
+                        'available' => true,
+                        'fetched_at' => now()->toDateTimeString()
+                    ],
+                    'created_by' => $user->id
+                ]);
+
+                // Notify Design Grafis
+                $designGrafisUsers = \App\Models\User::where('role', 'Graphic Design')->get();
+                $notificationsToInsert = [];
+                $now = now();
+
+                foreach ($designGrafisUsers as $designUser) {
+                    $notificationsToInsert[] = [
+                        'user_id' => $designUser->id,
+                        'type' => 'promosi_files_available_for_design_yt',
+                        'title' => 'File Promosi Tersedia untuk Design YouTube',
+                        'message' => "Promosi telah mengupload foto talent untuk Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}. Design Grafis work untuk Thumbnail YouTube sudah dibuat.",
+                        'data' => json_encode([
+                            'promotion_work_id' => $work->id,
+                            'design_grafis_work_id' => $designGrafisWork->id,
+                            'episode_id' => $work->episode_id,
+                            'talent_photos_count' => count($finalTalentPhotos ?? [])
+                        ]),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
+                }
+
+                if (!empty($notificationsToInsert)) {
+                    \App\Models\Notification::insert($notificationsToInsert);
+                }
+            } elseif ($existingThumbnailYoutube && !empty($finalTalentPhotos)) {
+                // Update existing DesignGrafisWork
+                $existingSourceFiles = $existingThumbnailYoutube->source_files ?? [];
+                $existingThumbnailYoutube->update([
+                    'source_files' => array_merge($existingSourceFiles, [
+                        'promotion_work_id' => $work->id,
+                        'talent_photos' => $finalTalentPhotos,
+                        'talent_photo_paths' => $talentPhotoPaths,
+                        'talent_photo_links' => $talentPhotoLinks,
+                        'updated_at' => now()->toDateTimeString()
+                    ]),
+                    'status' => 'draft' // Reset status so it can be re-accepted
+                ]);
             }
 
             // Auto-create PromotionWork untuk Editor Promosi (multiple work types)
@@ -713,11 +813,12 @@ class PromosiController extends Controller
                         }
                     }
 
+                    $episodeTitleSuffix = $episode->title ? ": {$episode->title}" : "";
                     $promotionWork = \App\Models\PromotionWork::create([
                         'episode_id' => $work->episode_id,
                         'work_type' => $workType,
-                        'title' => "{$titlePrefix} - Episode {$episode->episode_number}",
-                        'description' => "Editing task untuk {$titlePrefix}. File referensi dari Promosi (BTS) sudah tersedia.",
+                        'title' => "{$titlePrefix} - Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}",
+                        'description' => "Editing task untuk {$titlePrefix}. File referensi dari Promosi (BTS) sudah tersedia untuk Episode " . ($episode->episode_number ?? '') . "{$episodeTitleSuffix}.",
                         'status' => 'editing', // Siap untuk diterima Editor Promosi
                         'file_paths' => [
                             'promotion_work_id' => $work->id,
@@ -795,13 +896,13 @@ class PromosiController extends Controller
                     'user_id' => $editorPromosiUser->id,
                     'type' => 'promosi_bts_files_available',
                     'title' => 'File BTS dari Promosi Tersedia',
-                    'message' => "Promosi telah mengupload BTS video dan foto talent untuk Episode {$episode->episode_number}. PromotionWork untuk edit BTS, Highlight, dan Iklan TV sudah dibuat.",
+                    'message' => "Promosi telah mengupload BTS video dan foto talent untuk Episode " . ($episode->episode_number ?? '') . ". PromotionWork untuk edit BTS, Highlight, dan Iklan TV sudah dibuat.",
                     'data' => json_encode([
                         'promotion_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
                         'bts_files_available' => !empty($btsFiles) || !empty($btsFileLinks),
                         'bts_video_available' => !empty($finalBTSVideo),
-                        'talent_photos_count' => count($finalTalentPhotos),
+                        'talent_photos_count' => count($finalTalentPhotos ?? []),
                         'promotion_works' => array_map(function($pw) {
                             return [
                                 'id' => $pw->id,
@@ -818,6 +919,14 @@ class PromosiController extends Controller
             if (!empty($notificationsToInsert)) {
                 \App\Models\Notification::insert($notificationsToInsert);
             }
+
+            // Activity log
+            $this->logActivity($work, $user, 'work_completed', 'Pekerjaan diselesaikan dan dikirim ke tahap editing', [
+                'old_status' => $oldData['status'],
+                'new_status' => 'editing',
+                'bts_video_uploaded' => $hasBTSVideo,
+                'talent_photos_uploaded' => $hasTalentPhotos
+            ]);
 
             // Audit logging
             ControllerSecurityHelper::logCrud('promosi_work_completed', $work, [
@@ -980,6 +1089,12 @@ class PromosiController extends Controller
                 'status' => 'published'
             ]);
 
+            // Activity log
+            $this->logActivity($work, $user, 'shared_facebook', 'Link website dibagikan ke Facebook', [
+                'proof_link' => $request->proof_link,
+                'facebook_post_url' => $request->facebook_post_url
+            ]);
+
             return response()->json(['success' => true, 'message' => 'Facebook share proof link saved.']);
 
         } catch (\Exception $e) {
@@ -1026,6 +1141,12 @@ class PromosiController extends Controller
             $work->update([
                 'social_media_proof' => $socialProof,
                 'status' => 'published'
+            ]);
+
+            // Activity log
+            $this->logActivity($work, $user, 'story_ig_uploaded', 'Video highlight Story IG diunggah', [
+                'video_link' => $request->video_link,
+                'proof_link' => $request->proof_link
             ]);
 
             return response()->json(['success' => true, 'message' => 'Story IG links saved.']);
@@ -1076,6 +1197,12 @@ class PromosiController extends Controller
                 'status' => 'published'
             ]);
 
+            // Activity log
+            $this->logActivity($work, $user, 'reels_facebook_uploaded', 'Video highlight Reels Facebook diunggah', [
+                'video_link' => $request->video_link,
+                'proof_link' => $request->proof_link
+            ]);
+
             return response()->json(['success' => true, 'message' => 'Reels Facebook links saved.']);
 
         } catch (\Exception $e) {
@@ -1122,6 +1249,12 @@ class PromosiController extends Controller
                 'status' => 'published'
             ]);
 
+            // Activity log
+            $this->logActivity($work, $user, 'shared_wa_group', 'Link dibagikan ke grup WA', [
+                'proof_link' => $request->proof_link,
+                'group_name' => $request->group_name
+            ]);
+
             return response()->json(['success' => true, 'message' => 'WA Group proof link saved.']);
 
         } catch (\Exception $e) {
@@ -1156,5 +1289,74 @@ class PromosiController extends Controller
     {
         // Alias untuk completeWork
         return $this->completeWork($request, $id);
+    }
+
+    /**
+     * Get activity history for a promotion work
+     * GET /api/live-tv/promosi/works/{id}/history
+     */
+    public function getHistory(int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'User not authenticated.'], 401);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+
+            $history = PromotionActivityLog::with(['user:id,name,role'])
+                ->where('promotion_work_id', $id)
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(function ($log) {
+                    return [
+                        'id' => $log->id,
+                        'action' => $log->action,
+                        'description' => $log->description,
+                        'changes' => $log->changes,
+                        'user' => $log->user ? [
+                            'id' => $log->user->id,
+                            'name' => $log->user->name,
+                            'role' => $log->user->role
+                        ] : null,
+                        'created_at' => $log->created_at->toDateTimeString(),
+                        'time_ago' => $log->created_at->diffForHumans()
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'work_id' => $work->id,
+                    'work_title' => $work->title,
+                    'history' => $history
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Log an activity for a promotion work (private helper)
+     */
+    private function logActivity(PromotionWork $work, $user, string $action, string $description, ?array $changes = null): void
+    {
+        try {
+            PromotionActivityLog::create([
+                'promotion_work_id' => $work->id,
+                'episode_id' => $work->episode_id,
+                'user_id' => $user->id,
+                'action' => $action,
+                'description' => $description,
+                'changes' => $changes
+            ]);
+        } catch (\Exception $e) {
+            // Silent fail — logging should never break the main workflow
+            \Log::warning('Failed to log promotion activity: ' . $e->getMessage());
+        }
     }
 }
