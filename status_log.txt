@@ -1,0 +1,17 @@
+Checking latest QC Works...
+QC Work ID: 10, Episode ID: 1172, Status: pending
+  Checklist: []
+  -> No Linked Design Work found for Episode 1172
+---------------------------------------------------
+QC Work ID: 9, Episode ID: 1122, Status: pending
+  Checklist: {"bts_video":{"status":"approved","note":null,"checked_at":"2026-02-20T00:19:03+07:00","checked_by":"Quality Control User"},"tv_ad":{"status":"approved","note":null,"checked_at":"2026-02-20T00:20:53+07:00","checked_by":"Quality Control User"},"ig_highlight":{"status":"approved","note":null,"checked_at":"2026-02-20T00:20:55+07:00","checked_by":"Quality Control User"},"tv_highlight":{"status":"approved","note":null,"checked_at":"2026-02-20T00:20:56+07:00","checked_by":"Quality Control User"},"fb_highlight":{"status":"approved","note":null,"checked_at":"2026-02-20T00:20:57+07:00","checked_by":"Quality Control User"},"youtube_thumbnail":{"status":"approved","note":null,"checked_at":"2026-02-20T00:20:58+07:00","checked_by":"Quality Control User"},"bts_thumbnail":{"status":"revision","note":"ini masih kurang gambarannya","checked_at":"2026-02-20T00:25:16+07:00","checked_by":"Quality Control User"}}
+  -> Linked Design Work ID: 8, Status: 'needs_revision'
+  -> Note Count: 57
+  -> Notes excerpt: [QC Revision: bts_thumbnail] ini masih kurang gamb
+---------------------------------------------------
+QC Work ID: 8, Episode ID: 1119, Status: pending
+  Checklist: []
+  -> Linked Design Work ID: 6, Status: 'in_progress'
+  -> Note Count: 0
+  -> Notes excerpt: 
+---------------------------------------------------

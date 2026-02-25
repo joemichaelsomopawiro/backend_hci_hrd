@@ -31,6 +31,43 @@ class PrDesignGrafisController extends Controller
 
         $works = $query->orderBy('created_at', 'desc')->get();
 
+        // Add deadline calculation for each work and map file paths
+        $works->each(function ($work) {
+            if (!$work->deadline && $work->episode && $work->episode->air_date) {
+                $work->deadline = \Carbon\Carbon::parse($work->episode->air_date)->subDay();
+            }
+
+            // Map Production Video
+            if ($work->productionWork && $work->productionWork->shooting_file_links) {
+                $links = explode(',', $work->productionWork->shooting_file_links);
+                $work->productionWork->file_video_path = trim($links[0]);
+            }
+
+            // Map Promotion Talent Photo
+            if ($work->promotionWork && !empty($work->promotionWork->file_paths)) {
+                $files = $work->promotionWork->file_paths;
+                // Assuming it's an array from the model cast, allow for string if not cast correctly
+                if (is_string($files)) {
+                    // Attempt to decode if it's a JSON string, though model cast should handle it
+                    $decoded = json_decode($files, true);
+                    $files = is_array($decoded) ? $decoded : [$files];
+                }
+
+                if (is_array($files)) {
+                    if (isset($files['talent_photo'])) {
+                        $work->promotionWork->file_talent_photo = $files['talent_photo'];
+                    } elseif (isset($files[0])) {
+                        $work->promotionWork->file_talent_photo = $files[0];
+                    } else {
+                        // Fallback to first element if array is not empty
+                        $work->promotionWork->file_talent_photo = reset($files);
+                    }
+                } else {
+                    $work->promotionWork->file_talent_photo = $files;
+                }
+            }
+        });
+
         return response()->json([
             'success' => true,
             'data' => $works
@@ -44,17 +81,44 @@ class PrDesignGrafisController extends Controller
     {
         $work = PrDesignGrafisWork::with([
             'episode.program',
-            'productionWork.shootingSchedule',
-            'productionWork.files',
+            'productionWork',
             'promotionWork',
             'assignedUser'
         ])->findOrFail($id);
+
+        // Map Production Video
+        if ($work->productionWork && $work->productionWork->shooting_file_links) {
+            $links = explode(',', $work->productionWork->shooting_file_links);
+            $work->productionWork->file_video_path = trim($links[0]);
+        }
+
+        // Map Promotion Talent Photo
+        if ($work->promotionWork && !empty($work->promotionWork->file_paths)) {
+            $files = $work->promotionWork->file_paths;
+            if (is_string($files)) {
+                $decoded = json_decode($files, true);
+                $files = is_array($decoded) ? $decoded : [$files];
+            }
+
+            if (is_array($files)) {
+                if (isset($files['talent_photo'])) {
+                    $work->promotionWork->file_talent_photo = $files['talent_photo'];
+                } elseif (isset($files[0])) {
+                    $work->promotionWork->file_talent_photo = $files[0];
+                } else {
+                    $work->promotionWork->file_talent_photo = reset($files);
+                }
+            } else {
+                $work->promotionWork->file_talent_photo = $files;
+            }
+        }
 
         return response()->json([
             'success' => true,
             'data' => $work
         ]);
     }
+
 
     /**
      * Start working on an episode
@@ -88,6 +152,40 @@ class PrDesignGrafisController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to start work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Accept a design grafis work
+     */
+    public function acceptWork($id)
+    {
+        try {
+            $work = PrDesignGrafisWork::findOrFail($id);
+
+            if ($work->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be accepted when status is pending'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'in_progress',
+                'assigned_to' => Auth::id(),
+                'started_at' => now()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Work accepted successfully',
+                'data' => $work->fresh(['episode', 'productionWork', 'promotionWork'])
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to accept work: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -146,9 +244,46 @@ class PrDesignGrafisController extends Controller
             }
 
             $work->update([
-                'status' => 'completed',
-                'completed_at' => now()
+                'status' => 'pending_qc', // This relies on the migration being successful
+                'submitted_at' => now()
             ]);
+
+            // Create or update QC Work
+            $qcWork = \App\Models\PrQualityControlWork::firstOrCreate(
+                ['pr_episode_id' => $work->pr_episode_id],
+                ['status' => 'pending']
+            );
+
+            // Update QC Work with file locations
+            $qcWork->update([
+                'design_grafis_file_locations' => [
+                    'youtube_thumbnail' => $work->youtube_thumbnail_link,
+                    'bts_thumbnail' => $work->bts_thumbnail_link,
+                ]
+            ]);
+
+            // Update any 'revision' items in checklist to 'revised'
+            $checklist = $qcWork->qc_checklist;
+            if (is_array($checklist)) {
+                $designKeys = ['thumbnail_yt', 'thumbnail_bts', 'youtube_thumbnail', 'bts_thumbnail', 'tumneil_yt', 'tumneil_bts'];
+                $updated = false;
+                foreach ($checklist as $key => $item) {
+                    if (in_array($key, $designKeys) && isset($item['status']) && $item['status'] === 'revision') {
+                        $checklist[$key]['status'] = 'revised';
+                        $updated = true;
+                    }
+                }
+                if ($updated) {
+                    $qcWork->qc_checklist = $checklist;
+                    $qcWork->save();
+                }
+            }
+
+            // If QC Status is completed or approved, maybe we shouldn't reset it? 
+            // But if Design resubmits, QC needs to re-check.
+            if (in_array($qcWork->status, ['completed', 'approved', 'rejected'])) {
+                $qcWork->update(['status' => 'pending', 'qc_results' => null, 'quality_score' => null]);
+            }
 
             // Check if all Step 6 roles are completed
             $this->checkStep6Completion($work->pr_episode_id);
@@ -185,7 +320,7 @@ class PrDesignGrafisController extends Controller
             ->exists();
 
         $designGrafisCompleted = PrDesignGrafisWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
+            ->where('status', 'submitted')
             ->exists();
 
         // If all three are completed, mark Step 6 as completed

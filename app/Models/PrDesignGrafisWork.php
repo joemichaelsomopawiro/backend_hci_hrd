@@ -18,13 +18,15 @@ class PrDesignGrafisWork extends Model
         'youtube_thumbnail_link',
         'bts_thumbnail_link',
         'notes',
+        'deadline',
         'started_at',
-        'completed_at',
+        'submitted_at',
     ];
 
     protected $casts = [
         'started_at' => 'datetime',
-        'completed_at' => 'datetime',
+        'submitted_at' => 'datetime',
+        'deadline' => 'datetime',
     ];
 
     // Relationships
@@ -46,5 +48,23 @@ class PrDesignGrafisWork extends Model
     public function assignedUser()
     {
         return $this->belongsTo(User::class, 'assigned_to');
+    }
+
+    // Calculate deadline as 1 day before air_date
+    public function calculateDeadline()
+    {
+        if ($this->episode && $this->episode->air_date) {
+            $this->deadline = \Carbon\Carbon::parse($this->episode->air_date)->subDay();
+        }
+    }
+
+    // Boot method to auto-calculate deadline
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($work) {
+            $work->calculateDeadline();
+        });
     }
 }

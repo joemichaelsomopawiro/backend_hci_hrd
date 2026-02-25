@@ -1,0 +1,18 @@
+PHP Warning:  Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+PHP Warning:  Module "ftp" is already loaded in Unknown on line 0
+
+Warning: Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: Module "ftp" is already loaded in Unknown on line 0
+Testing PrProduksiWork query...
+Query successful. Count: 5
+Work ID: 8, Editor Work ID: 16, File Notes: ''
+Work ID: 9, Editor Work ID: 9, File Notes: ''
+Work ID: 10, Editor Work ID: 10, File Notes: ''
+Work ID: 11, Editor Work ID: 14, File Notes: 'y'
+Work ID: 12, Editor Work ID: 12, File Notes: 'inikurang banget actingnya'
+Work ID: 8, Editor Work ID: 16, File Notes: ''
+Work ID: 9, Editor Work ID: 9, File Notes: ''
+Work ID: 10, Editor Work ID: 10, File Notes: ''
+Work ID: 11, Editor Work ID: 14, File Notes: 'y'
+Work ID: 12, Editor Work ID: 12, File Notes: 'inikurang banget actingnya'

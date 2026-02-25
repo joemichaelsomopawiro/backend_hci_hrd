@@ -1,0 +1,8 @@
+PHP Warning:  Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+PHP Warning:  Module "ftp" is already loaded in Unknown on line 0
+
+Warning: Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: Module "ftp" is already loaded in Unknown on line 0
+Testing PrProduksiWork query...
+Query successful. Count: 5

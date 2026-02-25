@@ -68,6 +68,19 @@ class PrProduksiWork extends Model
         return $this->hasOne(EquipmentLoan::class, 'pr_produksi_work_id');
     }
 
+    public function editorWork()
+    {
+        return $this->hasOne(PrEditorWork::class, 'pr_production_work_id'); // Note: PrEditorWork has pr_production_work_id
+        // or cleaner: return $this->hasOne(PrEditorWork::class, 'pr_episode_id', 'pr_episode_id');
+        // Let's check PrEditorWork definition. It has pr_production_work_id.
+        // So this->hasOne(PrEditorWork::class, 'pr_production_work_id') is correct if PrEditorWork belongs to PrProduksiWork.
+        // But PrEditorWork belongsTo PrProduksiWork via pr_production_work_id?
+        // Let's check PrEditorWork.php again.
+        // It says: public function productionWork() { return $this->belongsTo(PrProduksiWork::class, 'pr_production_work_id'); }
+        // So yes, PrProduksiWork hasOne PrEditorWork.
+        return $this->hasOne(PrEditorWork::class, 'pr_production_work_id');
+    }
+
     // Helper Methods
     public function acceptWork(int $userId): void
     {
