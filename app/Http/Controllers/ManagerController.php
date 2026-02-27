@@ -15,7 +15,7 @@ class ManagerController extends Controller
     public function getSubordinates(Request $request): JsonResponse
     {
         $user = $request->user();
-        
+
         if (!$user->employee) {
             return response()->json([
                 'success' => false,
@@ -24,7 +24,7 @@ class ManagerController extends Controller
         }
 
         $subordinates = $user->employee->getSubordinatesByDepartment();
-        
+
         return response()->json([
             'success' => true,
             'data' => $subordinates->load(['user', 'leaveQuotas', 'attendances'])
@@ -37,7 +37,7 @@ class ManagerController extends Controller
     public function getSubordinateDetail(Request $request, $employeeId): JsonResponse
     {
         $user = $request->user();
-        
+
         if (!$user->canViewEmployee($employeeId)) {
             return response()->json([
                 'success' => false,
@@ -46,14 +46,14 @@ class ManagerController extends Controller
         }
 
         $employee = Employee::with([
-            'user', 
-            'documents', 
-            'employmentHistories', 
-            'promotionHistories', 
-            'trainings', 
-            'benefits', 
-            'leaveQuotas', 
-            'leaveRequests', 
+            'user',
+            'documents',
+            'employmentHistories',
+            'promotionHistories',
+            'trainings',
+            'benefits',
+            'leaveQuotas',
+            'leaveRequests',
             'attendances'
         ])->find($employeeId);
 
@@ -76,7 +76,7 @@ class ManagerController extends Controller
     public function getSubordinateLeaveRequests(Request $request): JsonResponse
     {
         $user = $request->user();
-        
+
         if (!$user->employee) {
             return response()->json([
                 'success' => false,
@@ -86,12 +86,12 @@ class ManagerController extends Controller
 
         $subordinates = $user->employee->getSubordinatesByDepartment();
         $subordinateIds = $subordinates->pluck('id');
-        
+
         $leaveRequests = LeaveRequest::with(['employee.user'])
             ->whereIn('employee_id', $subordinateIds)
             ->orderBy('created_at', 'desc')
             ->get();
-        
+
         return response()->json([
             'success' => true,
             'data' => $leaveRequests
@@ -154,7 +154,7 @@ class ManagerController extends Controller
     public function getSubordinateLeaveQuotas(Request $request): JsonResponse
     {
         $manager = auth()->user();
-        $currentYear = 2025; // Tetap gunakan tahun 2025 untuk konsistensi data
+        $currentYear = $request->input('year', date('Y'));
 
         if (!$manager->employee) {
             return response()->json([
@@ -182,7 +182,7 @@ class ManagerController extends Controller
 
         // Pastikan accessor 'current_status' tetap ditambahkan
         $subordinates->each->append('current_status');
-        
+
         return response()->json([
             'success' => true,
             'data' => $subordinates
