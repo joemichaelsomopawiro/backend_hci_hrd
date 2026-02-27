@@ -24,6 +24,9 @@ use App\Models\CreativeWork;
 use App\Models\SoundEngineerRecording;
 use App\Models\ProduksiWork;
 use App\Models\EditorWork;
+use App\Models\DesignGrafisWork;
+use App\Models\PromotionWork;
+use App\Models\BroadcastingWork;
 
 class EpisodeController extends Controller
 {
@@ -47,19 +50,10 @@ class EpisodeController extends Controller
             $perPage = $request->get('per_page', 15);
             $usePagination = !($perPage == 0 || $perPage === 'all');
             
-            // Build cache key based on request parameters (include per_page)
-            $cacheKey = 'episodes_index_' . md5(json_encode([
-                'program_id' => $request->get('program_id'),
-                'status' => $request->get('status'),
-                'workflow_state' => $request->get('workflow_state'),
-                'assigned_to_user' => $request->get('assigned_to_user'),
-                'search' => $request->get('search'),
-                'page' => $request->get('page', 1),
-                'per_page' => $perPage
-            ]));
+            // Jangan pakai cache saat minta semua episode (per_page=0) agar EP 1 & episode selesai selalu tampil
+            $skipCache = !$usePagination;
             
-            // Use cache with 5 minutes TTL
-            $episodes = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request, $perPage, $usePagination) {
+            $runQuery = function () use ($request, $perPage, $usePagination) {
                 // Optimize eager loading dengan nested relations - Tambahkan Program
                 $query = Episode::with([
                     'program', // Pastikan Program ter-load
@@ -109,10 +103,25 @@ class EpisodeController extends Controller
                 if ($usePagination) {
                     return $query->paginate((int)$perPage);
                 } else {
-                    // Return all episodes
+                    // Return all episodes (termasuk completed/aired supaya EP 1 dll tampil di Active Productions)
                     return $query->get();
                 }
-            });
+            };
+            
+            if ($skipCache) {
+                $episodes = $runQuery();
+            } else {
+                $cacheKey = 'episodes_index_' . md5(json_encode([
+                    'program_id' => $request->get('program_id'),
+                    'status' => $request->get('status'),
+                    'workflow_state' => $request->get('workflow_state'),
+                    'assigned_to_user' => $request->get('assigned_to_user'),
+                    'search' => $request->get('search'),
+                    'page' => $request->get('page', 1),
+                    'per_page' => $perPage
+                ]));
+                $episodes = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, $runQuery);
+            }
             
             // Handle response structure
             if ($usePagination) {
@@ -385,6 +394,171 @@ class EpisodeController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to complete episode',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get reassignable tasks for an episode (untuk modal Reassign Task - Producer / Manager Program)
+     */
+    public function reassignableTasks(int $id): JsonResponse
+    {
+        $episode = Episode::with([
+            'musicArrangements.createdBy',
+            'creativeWorks.createdBy',
+            'produksiWorks.createdBy',
+            'editorWorks.createdBy',
+            'designGrafisWorks.createdBy'
+        ])->findOrFail($id);
+
+        $tasks = [];
+        $completedStatuses = ['completed', 'approved', 'arrangement_approved'];
+
+        // Music Arrangement
+        foreach ($episode->musicArrangements as $work) {
+            if (!in_array($work->status ?? '', $completedStatuses)) {
+                $tasks[] = [
+                    'task_type' => 'music_arrangement',
+                    'task_id' => $work->id,
+                    'label' => 'Music Arrangement',
+                    'current_assignee_id' => $work->created_by,
+                    'current_assignee_name' => $work->createdBy->name ?? null,
+                ];
+            }
+        }
+        // Creative Work
+        foreach ($episode->creativeWorks as $work) {
+            if (!in_array($work->status ?? '', $completedStatuses)) {
+                $tasks[] = [
+                    'task_type' => 'creative_work',
+                    'task_id' => $work->id,
+                    'label' => 'Creative',
+                    'current_assignee_id' => $work->created_by,
+                    'current_assignee_name' => $work->createdBy->name ?? null,
+                ];
+            }
+        }
+        // Produksi Work
+        foreach ($episode->produksiWorks as $work) {
+            if (!in_array($work->status ?? '', $completedStatuses)) {
+                $tasks[] = [
+                    'task_type' => 'production_work',
+                    'task_id' => $work->id,
+                    'label' => 'Shooting / Production',
+                    'current_assignee_id' => $work->created_by,
+                    'current_assignee_name' => $work->createdBy->name ?? null,
+                ];
+            }
+        }
+        // Editor Work
+        foreach ($episode->editorWorks as $work) {
+            if (!in_array($work->status ?? '', $completedStatuses)) {
+                $tasks[] = [
+                    'task_type' => 'editor_work',
+                    'task_id' => $work->id,
+                    'label' => 'Editing',
+                    'current_assignee_id' => $work->created_by,
+                    'current_assignee_name' => $work->createdBy->name ?? null,
+                ];
+            }
+        }
+        // Design Grafis Work
+        foreach ($episode->designGrafisWorks as $work) {
+            if (!in_array($work->status ?? '', $completedStatuses)) {
+                $tasks[] = [
+                    'task_type' => 'design_grafis_work',
+                    'task_id' => $work->id,
+                    'label' => 'Design Grafis',
+                    'current_assignee_id' => $work->created_by,
+                    'current_assignee_name' => $work->createdBy->name ?? null,
+                ];
+            }
+        }
+        // Quality Control Work (by episode_id)
+        $qcWorks = QualityControlWork::where('episode_id', $episode->id)->whereNotIn('status', $completedStatuses)->with('createdBy')->get();
+        foreach ($qcWorks as $work) {
+            $tasks[] = [
+                'task_type' => 'quality_control_work',
+                'task_id' => $work->id,
+                'label' => 'QC',
+                'current_assignee_id' => $work->created_by,
+                'current_assignee_name' => $work->createdBy->name ?? null,
+            ];
+        }
+        // Broadcasting Work
+        $bcWorks = BroadcastingWork::where('episode_id', $episode->id)->whereNotIn('status', $completedStatuses)->with('createdBy')->get();
+        foreach ($bcWorks as $work) {
+            $tasks[] = [
+                'task_type' => 'broadcasting_work',
+                'task_id' => $work->id,
+                'label' => 'Broadcasting',
+                'current_assignee_id' => $work->created_by,
+                'current_assignee_name' => $work->createdBy->name ?? null,
+            ];
+        }
+        // Promotion Work
+        $promoWorks = PromotionWork::where('episode_id', $episode->id)->whereNotIn('status', $completedStatuses)->with('createdBy')->get();
+        foreach ($promoWorks as $work) {
+            $tasks[] = [
+                'task_type' => 'promotion_work',
+                'task_id' => $work->id,
+                'label' => 'Promo',
+                'current_assignee_id' => $work->created_by,
+                'current_assignee_name' => $work->createdBy->name ?? null,
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $tasks,
+            'message' => 'Reassignable tasks retrieved',
+        ]);
+    }
+
+    /**
+     * Handle revision request
+     */
+    public function handleRevision(Request $request, int $id): JsonResponse
+    {
+        $episode = Episode::findOrFail($id);
+        
+        $validator = Validator::make($request->all(), [
+            'revision_notes' => 'required|string|max:2000',
+            'target_state' => 'required|string',
+            'assigned_role' => 'required|string'
+        ]);
+        
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+        
+        try {
+            // Revert or update state to target revision state
+            $workflowState = $this->workflowStateService->updateWorkflowState(
+                $episode,
+                $request->target_state,
+                $request->assigned_role,
+                null, // No specific user assigned by default on revision
+                $request->revision_notes
+            );
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'episode' => $episode->fresh(),
+                    'workflow_state' => $workflowState
+                ],
+                'message' => 'Revision handled successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to handle revision',
                 'error' => $e->getMessage()
             ], 500);
         }

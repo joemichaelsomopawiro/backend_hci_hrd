@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PromotionWork;
 use App\Models\Episode;
+use App\Models\EditorWork;
+use App\Models\ProduksiWork;
 use App\Models\MediaFile;
 use App\Models\Notification;
 use App\Helpers\QueryOptimizer;
@@ -24,15 +26,10 @@ class EditorPromosiController extends Controller
     {
         try {
             $user = Auth::user();
+            $role = strtolower($user->role ?? '');
+            $allowedRoles = ['editor promotion', 'editor promosi', 'promotion editor'];
 
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'User not authenticated.'
-                ], 401);
-            }
-
-            if ($user->role !== 'Editor Promotion') {
+            if (!$user || !in_array($role, $allowedRoles)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -40,17 +37,27 @@ class EditorPromosiController extends Controller
             }
 
             // Get all works that are either:
-            // 1. Created by current user, OR
-            // 2. In draft/planning status (available for acceptance) for any Editor Promosi user
+            // 1. Created by current user (Accepted or manual), OR
+            // 2. Unclaimed auto-created works (created by non-Editor Promosi roles) in specific statuses
             $query = PromotionWork::with(['episode.program', 'createdBy', 'reviewedBy'])
                 ->where(function ($q) use ($user) {
                     $q->where('created_by', $user->id)
-                        ->orWhereIn('status', ['draft', 'planning']); // Draft/planning works are available for any Editor Promosi to accept
+                        ->orWhere(function ($sub) {
+                            $sub->whereIn('status', ['draft', 'planning', 'editing', 'review', 'rejected'])
+                                ->whereHas('createdBy', function ($roleQuery) {
+                                    $roleQuery->whereNotIn('role', ['Editor Promotion', 'Editor Promosi', 'Promotion Editor']);
+                                });
+                        });
                 });
 
             // Filter by status
             if ($request->has('status')) {
-                $query->where('status', $request->status);
+                $status = $request->status;
+                if (str_contains($status, ',')) {
+                    $query->whereIn('status', explode(',', $status));
+                } else {
+                    $query->where('status', $status);
+                }
             }
 
             // Filter by work type
@@ -59,6 +66,12 @@ class EditorPromosiController extends Controller
             }
 
             $works = $query->orderBy('created_at', 'desc')->paginate(15);
+
+            // Add explicit creator_role for frontend safety (handles naming collisions)
+            $works->getCollection()->transform(function ($work) {
+                $work->creator_role = $work->createdBy->role ?? '';
+                return $work;
+            });
 
             return response()->json([
                 'success' => true,
@@ -89,7 +102,7 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
 
-            if ($user->role !== 'Editor Promotion') {
+            if (!$user || !in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -264,7 +277,9 @@ class EditorPromosiController extends Controller
                 'files' => 'nullable|array',
                 'files.*' => 'nullable|file|mimes:mp4,avi,mov,jpg,jpeg,png,gif|max:1024000', // 1GB max
                 'file_links' => 'nullable|array',
-                'file_links.*' => 'nullable|url|max:2048' // Each link must be valid URL
+                'file_links.*.url' => 'required|url|max:2048',
+                'file_links.*.type' => 'required|string|max:50',
+                'file_links.*.label' => 'nullable|string|max:255'
             ]);
 
             // Require either files or file_links
@@ -297,12 +312,18 @@ class EditorPromosiController extends Controller
                 ], 405);
             }
 
-            // Handle file_links (new: external storage links)
+            // Handle file_links (new: external storage links with metadata)
             $fileLinks = $work->file_links ?? [];
             if ($request->has('file_links') && is_array($request->file_links)) {
-                foreach ($request->file_links as $link) {
+                foreach ($request->file_links as $linkData) {
+                    $url = is_array($linkData) ? ($linkData['url'] ?? null) : $linkData;
+                    
+                    if (!$url) continue;
+
                     $fileLinks[] = [
-                        'file_link' => $link,
+                        'file_link' => $url,
+                        'type' => $linkData['type'] ?? 'other',
+                        'label' => $linkData['label'] ?? null,
                         'uploaded_at' => now()->toDateTimeString(),
                         'uploaded_by' => $user->id
                     ];
@@ -313,7 +334,7 @@ class EditorPromosiController extends Controller
             $work->update([
                 'file_paths' => $filePaths,
                 'file_links' => $fileLinks,
-                'status' => 'completed'
+                'status' => 'review' // Change to 'review' as 'completed' is not in the enum
             ]);
 
             // Notify related roles
@@ -351,7 +372,7 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
 
-            if ($user->role !== 'Editor Promotion') {
+            if (!$user || !in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -435,16 +456,10 @@ class EditorPromosiController extends Controller
     {
         try {
             $user = Auth::user();
+            $role = strtolower($user->role ?? '');
+            $allowedRoles = ['editor promotion', 'editor promosi', 'promotion editor'];
 
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'User not authenticated.'
-                ], 401);
-            }
-
-
-            if ($user->role !== 'Editor Promotion') {
+            if (!$user || !in_array($role, $allowedRoles)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -503,10 +518,11 @@ class EditorPromosiController extends Controller
             ->get();
 
         foreach ($editorWorks as $editorWork) {
-            if ($editorWork->file_path) {
+            if ($editorWork->file_path || $editorWork->file_link) {
                 $sourceFiles['editor_files'][] = [
                     'editor_work_id' => $editorWork->id,
                     'file_path' => $editorWork->file_path,
+                    'file_link' => $editorWork->file_link,
                     'file_name' => $editorWork->file_name,
                     'file_size' => $editorWork->file_size,
                     'mime_type' => $editorWork->mime_type,
@@ -518,58 +534,75 @@ class EditorPromosiController extends Controller
         // Get files from Promosi (BTS video dan foto talent)
         $promotionWorks = PromotionWork::where('episode_id', $episodeId)
             ->whereIn('work_type', ['bts_video', 'bts_photo'])
-            ->whereIn('status', ['editing', 'review', 'approved', 'published'])
+            ->whereIn('status', ['editing', 'review', 'approved', 'published', 'completed']) // Include completed
             ->get();
 
         foreach ($promotionWorks as $promotionWork) {
+            // Check file_paths
+            $allFiles = [];
+            
             if ($promotionWork->file_paths) {
-                $filePaths = $promotionWork->file_paths;
-                if (is_string($filePaths)) {
-                    $filePaths = json_decode($filePaths, true);
-                }
-
-                if (!is_array($filePaths)) {
-                    $filePaths = [];
-                }
-
+                $filePaths = is_string($promotionWork->file_paths) ? json_decode($promotionWork->file_paths, true) : $promotionWork->file_paths;
                 if (is_array($filePaths)) {
                     foreach ($filePaths as $file) {
-                        // Filter hanya BTS video (bukan talent photos)
                         if (is_array($file)) {
-                            if (isset($file['type']) && $file['type'] === 'bts_video') {
-                                $sourceFiles['bts_files'][] = [
-                                    'promotion_work_id' => $promotionWork->id,
-                                    'work_type' => $promotionWork->work_type,
-                                    'file_type' => $file['type'],
-                                    'file_path' => $file['file_path'] ?? $file['url'] ?? null,
-                                    'file_name' => $file['file_name'] ?? basename($file['file_path'] ?? ''),
-                                    'file_size' => $file['file_size'] ?? null,
-                                    'mime_type' => $file['mime_type'] ?? null,
-                                    'url' => $file['url'] ?? null
-                                ];
-                            } elseif (isset($file['file_path']) && !isset($file['type'])) {
-                                // Fallback: jika tidak ada type tapi ada file_path, assume BTS video
-                                $sourceFiles['bts_files'][] = [
-                                    'promotion_work_id' => $promotionWork->id,
-                                    'work_type' => $promotionWork->work_type,
-                                    'file_path' => $file['file_path'],
-                                    'file_name' => $file['file_name'] ?? basename($file['file_path']),
-                                    'file_size' => $file['file_size'] ?? null,
-                                    'mime_type' => $file['mime_type'] ?? null
-                                ];
-                            }
+                            $allFiles[] = $file;
                         } elseif (is_string($file)) {
-                            // Handle simple string paths
-                            $sourceFiles['bts_files'][] = [
-                                'promotion_work_id' => $promotionWork->id,
-                                'work_type' => $promotionWork->work_type,
-                                'file_path' => $file,
-                                'file_name' => basename($file)
-                            ];
+                            $allFiles[] = ['file_path' => $file, 'type' => 'bts_video']; // Default to bts_video if string
                         }
                     }
                 }
             }
+
+            // Check file_links
+            if ($promotionWork->file_links) {
+                $fileLinks = is_string($promotionWork->file_links) ? json_decode($promotionWork->file_links, true) : $promotionWork->file_links;
+                if (is_array($fileLinks)) {
+                    foreach ($fileLinks as $link) {
+                        if (is_array($link)) {
+                            $allFiles[] = $link;
+                        }
+                    }
+                }
+            }
+
+            // Legacy fields fallback
+            if ($promotionWork->bts_video_path) {
+                $allFiles[] = ['file_path' => $promotionWork->bts_video_path, 'type' => 'bts_video', 'source' => 'legacy_path'];
+            }
+            if ($promotionWork->bts_video_link) {
+                $allFiles[] = ['file_path' => $promotionWork->bts_video_link, 'type' => 'bts_video', 'source' => 'legacy_link'];
+            }
+
+            foreach ($allFiles as $file) {
+                // Filter hanya BTS video (bukan talent photos)
+                if (isset($file['type']) && $file['type'] === 'bts_video') {
+                    $sourceFiles['bts_files'][] = [
+                        'promotion_work_id' => $promotionWork->id,
+                        'work_type' => $promotionWork->work_type,
+                        'file_type' => $file['type'],
+                        'file_path' => $file['file_path'] ?? $file['url'] ?? $file['file_link'] ?? null,
+                        'file_name' => $file['file_name'] ?? basename($file['file_path'] ?? ''),
+                        'file_size' => $file['file_size'] ?? null,
+                        'mime_type' => $file['mime_type'] ?? null,
+                        'url' => $file['url'] ?? $file['file_link'] ?? null
+                    ];
+                }
+            }
+        }
+
+        // Get files from Produksi (Shooting results for highlights)
+        $produksiWork = \App\Models\ProduksiWork::where('episode_id', $episodeId)
+            ->where('status', 'completed')
+            ->first();
+
+        if ($produksiWork) {
+            $sourceFiles['production_files'] = [
+                'produksi_work_id' => $produksiWork->id,
+                'shooting_files' => $produksiWork->shooting_files,
+                'shooting_file_links' => $produksiWork->shooting_file_links,
+                'run_sheet_id' => $produksiWork->run_sheet_id
+            ];
         }
 
         return $sourceFiles;
@@ -620,7 +653,7 @@ class EditorPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Editor Promotion') {
+            if (!$user || !in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -703,7 +736,7 @@ class EditorPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if ($user->role !== 'Editor Promotion') {
+            if (!$user || !in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -726,11 +759,11 @@ class EditorPromosiController extends Controller
                 ], 400);
             }
 
-            // Validasi status harus editing atau completed
-            if (!in_array($work->status, ['editing', 'completed', 'review'])) {
+            // Validasi status harus editing atau review
+            if (!in_array($work->status, ['editing', 'review'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Work must be in 'editing', 'completed', or 'review' status before submitting to QC. Current status: {$work->status}"
+                    'message' => "Work must be in 'editing' or 'review' status before submitting to QC. Current status: {$work->status}"
                 ], 400);
             }
 

@@ -28,8 +28,10 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
+            $role = strtolower($user->role ?? '');
+            $allowedRoles = ['graphic design', 'graphic designer', 'design grafis', 'graphis design'];
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($role, $allowedRoles)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -37,6 +39,15 @@ class DesignGrafisController extends Controller
             }
 
             $query = DesignGrafisWork::with(['episode.program', 'createdBy', 'reviewedBy']);
+
+            // If it's a Graphic Designer role, show works assigned to them OR works with no assignment (pending)
+            // Unless 'my_works' is specifically requested
+            if (!$request->boolean('all_works', false)) {
+                $query->where(function($q) use ($user) {
+                    $q->where('assigned_to', $user->id)
+                      ->orWhereNull('assigned_to');
+                });
+            }
 
             // Filter by status
             if ($request->has('status')) {
@@ -58,9 +69,9 @@ class DesignGrafisController extends Controller
                 $query->where('episode_id', $request->episode_id);
             }
 
-            // Show only current user's works
+            // Show only current user's assigned works
             if ($request->boolean('my_works', false)) {
-                $query->where('created_by', $user->id);
+                $query->where('assigned_to', $user->id);
             }
 
             $works = $query->orderBy('created_at', 'desc')->paginate(15);
@@ -88,7 +99,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -179,7 +190,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -188,14 +199,15 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode.program', 'createdBy', 'reviewedBy'])->findOrFail($id);
 
-            // Get source files from Produksi and Promosi
-            $sourceFiles = $this->getSourceFiles($work->episode_id);
+            // Refresh and save latest source files from Produksi and Promosi
+            $this->fetchSourceFiles($work);
+            $work->refresh();
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'work' => $work,
-                    'source_files' => $sourceFiles
+                    'source_files' => $work->source_files // Use refreshed data
                 ],
                 'message' => 'Design grafis work retrieved successfully'
             ]);
@@ -217,7 +229,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -237,8 +249,8 @@ class DesignGrafisController extends Controller
             $this->fetchSourceFiles($work);
 
             $work->update([
-                'status' => 'designing',
-                'created_by' => $user->id
+                'status' => 'in_progress',
+                'assigned_to' => $user->id
             ]);
 
             // Notify Producer
@@ -290,7 +302,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -335,7 +347,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -358,7 +370,7 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            if ($work->assigned_to !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
@@ -372,10 +384,11 @@ class DesignGrafisController extends Controller
                 ], 400);
             }
 
-            if ($work->status !== 'designing') {
+            $allowedStatuses = ['in_progress', 'completed', 'reviewed', 'revision_needed'];
+            if (!in_array($work->status, $allowedStatuses, true)) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Work must be in progress to upload thumbnail. Current status: {$work->status}"
+                    'message' => "Work must be in progress or under review to upload thumbnail. Current status: {$work->status}"
                 ], 400);
             }
 
@@ -424,13 +437,16 @@ class DesignGrafisController extends Controller
                 $request
             );
 
+            // Automate task completion and QC setup
+            $this->finalizeCompletion($work, $user, $request->design_notes ?? '');
+
             // Clear cache
             QueryOptimizer::clearAllIndexCaches();
 
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'YouTube thumbnail uploaded successfully. File path has been saved to system.'
+                'message' => 'YouTube thumbnail uploaded and task completed successfully.'
             ]);
 
         } catch (\Exception $e) {
@@ -450,7 +466,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -474,7 +490,7 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            if ($work->assigned_to !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
@@ -488,10 +504,11 @@ class DesignGrafisController extends Controller
                 ], 400);
             }
 
-            if ($work->status !== 'designing') {
+            $allowedStatuses = ['in_progress', 'completed', 'reviewed', 'revision_needed'];
+            if (!in_array($work->status, $allowedStatuses, true)) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Work must be in progress to upload thumbnail. Current status: {$work->status}"
+                    'message' => "Work must be in progress or under review to upload thumbnail. Current status: {$work->status}"
                 ], 400);
             }
 
@@ -540,13 +557,16 @@ class DesignGrafisController extends Controller
                 $request
             );
 
+            // Automate task completion and QC setup
+            $this->finalizeCompletion($work, $user, $request->design_notes ?? '');
+
             // Clear cache
             QueryOptimizer::clearAllIndexCaches();
 
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
-                'message' => 'BTS thumbnail uploaded successfully. File path has been saved to system.'
+                'message' => 'BTS thumbnail uploaded and task completed successfully.'
             ]);
 
         } catch (\Exception $e) {
@@ -566,7 +586,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -575,7 +595,7 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            if ($work->assigned_to !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
@@ -650,7 +670,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -671,14 +691,14 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            if ($work->assigned_to !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
                 ], 403);
             }
 
-            if ($work->status !== 'designing') {
+            if ($work->status !== 'in_progress') {
                 return response()->json([
                     'success' => false,
                     'message' => "Work cannot be completed. Current status: {$work->status}"
@@ -693,105 +713,8 @@ class DesignGrafisController extends Controller
                 ], 400);
             }
 
-            // Update work
-            $work->update([
-                'status' => 'completed',
-                'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') .
-                    "[Completed - " . now()->format('Y-m-d H:i:s') . "]\n" .
-                    ($request->completion_notes ?? '')
-            ]);
-
-            // Notify Producer
-            $episode = $work->episode;
-            $productionTeam = $episode->program->productionTeam;
-            $producer = $productionTeam ? $productionTeam->producer : null;
-
-            if ($producer) {
-                Notification::create([
-                    'user_id' => $producer->id,
-                    'type' => 'design_grafis_work_completed',
-                    'title' => 'Design Grafis Work Completed',
-                    'message' => "Design Grafis {$user->name} telah menyelesaikan pekerjaan {$work->work_type} untuk Episode {$episode->episode_number}.",
-                    'data' => [
-                        'design_grafis_work_id' => $work->id,
-                        'episode_id' => $work->episode_id,
-                        'work_type' => $work->work_type,
-                        'file_path' => $work->file_path,
-                        'completion_notes' => $request->completion_notes
-                    ]
-                ]);
-            }
-
-            // Audit logging
-            ControllerSecurityHelper::logUpdate($work, [], ['status' => 'completed'], $request);
-
-            // Clear cache
-            QueryOptimizer::clearAllIndexCaches();
-
-            // Create Quality Control Work
-            $qcTypeMap = [
-                'thumbnail_youtube' => 'thumbnail_yt',
-                'thumbnail_bts' => 'thumbnail_bts',
-                'graphics_ig' => 'highlight_ig',
-                'graphics_facebook' => 'highlight_facebook'
-            ];
-
-            if (isset($qcTypeMap[$work->work_type])) {
-                $qcType = $qcTypeMap[$work->work_type];
-
-                // Check if QC work already exists
-                $existingQCWork = \App\Models\QualityControlWork::where('episode_id', $work->episode_id)
-                    ->where('qc_type', $qcType)
-                    ->first();
-
-                if (!$existingQCWork) {
-                    $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
-
-                    $qcWork = \App\Models\QualityControlWork::create([
-                        'episode_id' => $work->episode_id,
-                        'qc_type' => $qcType,
-                        'title' => "QC {$work->title}",
-                        'description' => "Quality Control untuk {$work->work_type} dari Design Grafis",
-                        'files_to_check' => $this->prepareFilesToCheck($work),
-                        'design_grafis_file_locations' => $this->prepareFilesToCheck($work),
-                        'status' => 'pending',
-                        'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
-                    ]);
-
-                    // Notify QC
-                    foreach ($qcUsers as $qcUser) {
-                        Notification::create([
-                            'user_id' => $qcUser->id,
-                            'type' => 'design_grafis_submitted_to_qc',
-                            'title' => 'Design Grafis Work Submitted to QC',
-                            'message' => "Design Grafis telah mengajukan {$work->work_type} untuk QC Episode {$episode->episode_number}.",
-                            'data' => [
-                                'design_grafis_work_id' => $work->id,
-                                'qc_work_id' => $qcWork->id,
-                                'episode_id' => $work->episode_id,
-                                'work_type' => $work->work_type,
-                                'qc_type' => $qcType
-                            ]
-                        ]);
-                    }
-                } else {
-                    // Update existing QC work
-                    $existingLocations = $existingQCWork->design_grafis_file_locations ?? [];
-                    $newLocations = $this->prepareFilesToCheck($work);
-
-                    // Merge and unique based on file_path
-                    $existingLocations = array_merge($existingLocations, $newLocations);
-
-                    // Update files_to_check as well
-                    $existingFilesToCheck = $existingQCWork->files_to_check ?? [];
-                    $existingFilesToCheck = array_merge($existingFilesToCheck, $newLocations);
-
-                    $existingQCWork->update([
-                        'design_grafis_file_locations' => $existingLocations,
-                        'status' => 'pending'
-                    ]);
-                }
-            }
+            // Automate completion logic
+            $this->finalizeCompletion($work, $user, $request->completion_notes);
 
             return response()->json([
                 'success' => true,
@@ -816,7 +739,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -849,7 +772,7 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            if ($work->assigned_to !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
@@ -937,7 +860,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -946,17 +869,19 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            if ($work->assigned_to !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
                 ], 403);
             }
 
-            if ($work->status !== 'completed') {
+            // Allow submit / resubmit to QC from several end-states
+            $allowedStatuses = ['completed', 'reviewed', 'revision_needed'];
+            if (!in_array($work->status, $allowedStatuses, true)) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Work must be completed before submitting to QC. Current status: {$work->status}"
+                    'message' => "Work must be in one of the following statuses before submitting to QC: completed, reviewed, revision_needed. Current status: {$work->status}"
                 ], 400);
             }
 
@@ -978,20 +903,16 @@ class DesignGrafisController extends Controller
                 // Auto-create QualityControlWork
                 $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
                 if ($qcUsers->isNotEmpty()) {
+                    // Build file list from current Design Grafis work (supports multi-link)
+                    $designFiles = $this->prepareFilesToCheck($work);
+
                     $qcWork = \App\Models\QualityControlWork::create([
                         'episode_id' => $work->episode_id,
                         'qc_type' => $qcType,
                         'title' => "QC {$work->title}",
                         'description' => "Quality Control untuk {$work->work_type} dari Design Grafis",
-                        'design_grafis_file_locations' => [
-                            [
-                                'design_grafis_work_id' => $work->id,
-                                'file_path' => $work->file_path,
-                                'file_name' => $work->file_name,
-                                'work_type' => $work->work_type,
-                                'file_paths' => $work->file_paths
-                            ]
-                        ],
+                        'files_to_check' => $designFiles,
+                        'design_grafis_file_locations' => $designFiles,
                         'status' => 'pending',
                         'created_by' => $qcUsers->first()->id
                     ]);
@@ -1022,19 +943,27 @@ class DesignGrafisController extends Controller
                     }
                 }
             } else {
-                // Update existing QC work with latest design grafis file
+                // Update existing QC work with latest design grafis files (support resubmit)
                 $existingDesignFiles = $existingQCWork->design_grafis_file_locations ?? [];
-                $existingDesignFiles[] = [
-                    'design_grafis_work_id' => $work->id,
-                    'file_path' => $work->file_path,
-                    'file_name' => $work->file_name,
-                    'work_type' => $work->work_type,
-                    'file_paths' => $work->file_paths,
-                    'updated_at' => now()->toDateTimeString()
-                ];
+                if (is_string($existingDesignFiles)) {
+                    $decoded = json_decode($existingDesignFiles, true);
+                    $existingDesignFiles = is_array($decoded) ? $decoded : [];
+                }
+
+                $existingFilesToCheck = $existingQCWork->files_to_check ?? [];
+                if (is_string($existingFilesToCheck)) {
+                    $decodedFiles = json_decode($existingFilesToCheck, true);
+                    $existingFilesToCheck = is_array($decodedFiles) ? $decodedFiles : [];
+                }
+
+                $newLocations = $this->prepareFilesToCheck($work);
+
+                $mergedDesignFiles = array_merge($existingDesignFiles, $newLocations);
+                $mergedFilesToCheck = array_merge($existingFilesToCheck, $newLocations);
 
                 $existingQCWork->update([
-                    'design_grafis_file_locations' => $existingDesignFiles,
+                    'design_grafis_file_locations' => $mergedDesignFiles,
+                    'files_to_check' => $mergedFilesToCheck,
                     'status' => 'pending' // Reset to pending for re-review
                 ]);
 
@@ -1094,32 +1023,41 @@ class DesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
+            $role = strtolower($user->role ?? '');
+            $allowedRoles = ['graphic design', 'graphic designer', 'design grafis', 'graphis design'];
 
-            if (!$user || $user->role !== 'Graphic Design') {
+            if (!$user || !in_array($role, $allowedRoles)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            $userId = $request->get('user_id', $user->id);
+            $userId = $user->id;
 
-            $statusStats = DesignGrafisWork::where('created_by', $userId)
+            // Statiskit untuk pekerjaan yang di-assign ke user ini
+            $statusStats = DesignGrafisWork::where('assigned_to', $userId)
                 ->selectRaw('status, count(*) as count')
                 ->groupBy('status')
                 ->pluck('count', 'status');
 
-            $typeStats = DesignGrafisWork::where('created_by', $userId)
+            $typeStats = DesignGrafisWork::where('assigned_to', $userId)
                 ->selectRaw('work_type, count(*) as count')
                 ->groupBy('work_type')
                 ->pluck('count', 'work_type');
 
+            // Hitung juga yang belum di-assign (untuk Inbox)
+            $pendingUnassigned = DesignGrafisWork::whereNull('assigned_to')
+                ->whereIn('status', ['draft', 'pending'])
+                ->count();
+
             $stats = [
                 'total_works' => $statusStats->sum(),
+                'pending_tasks' => $pendingUnassigned, // Digunakan untuk Inbox alert
                 'draft' => $statusStats->get('draft', 0),
-                'in_progress' => $statusStats->get('designing', 0),
+                'in_progress' => $statusStats->get('in_progress', 0), // Status correct from model
                 'completed' => $statusStats->get('completed', 0),
-                'reviewed' => $statusStats->get('reviewed', 0),
+                'pending_approval' => $statusStats->get('reviewed', 0), // Map reviewed to pending_approval
                 'approved' => $statusStats->get('approved', 0),
                 'by_work_type' => [
                     'thumbnail_youtube' => $typeStats->get('thumbnail_youtube', 0),
@@ -1166,14 +1104,36 @@ class DesignGrafisController extends Controller
 
         // Get files from Produksi
         $produksiWork = ProduksiWork::where('episode_id', $episodeId)
-            ->where('status', 'completed')
+            ->whereIn('status', ['in_progress', 'completed'])
             ->first();
 
-        if ($produksiWork && !empty($produksiWork->shooting_files)) {
+        if ($produksiWork && (!empty($produksiWork->shooting_files) || !empty($produksiWork->shooting_file_links))) {
+            $links = $produksiWork->shooting_file_links;
+            if (is_string($links)) {
+                $links = explode(',', $links);
+            }
+
+            // Ensure we return an array of objects for the frontend if it was just primitive strings
+            $formattedLinks = [];
+            if (is_array($links)) {
+                foreach ($links as $link) {
+                    if (is_string($link)) {
+                        $formattedLinks[] = [
+                            'url' => $link,
+                            'label' => 'Shooting Result',
+                            'type' => 'video'
+                        ];
+                    } else {
+                        $formattedLinks[] = $link;
+                    }
+                }
+            }
+
             $sourceFiles['produksi_files'] = [
                 'produksi_work_id' => $produksiWork->id,
                 'files' => $produksiWork->shooting_files,
-                'file_links' => $produksiWork->shooting_file_links,
+                'file_links' => $formattedLinks,
+                'status' => $produksiWork->status,
                 'available' => true
             ];
         } else {
@@ -1183,44 +1143,71 @@ class DesignGrafisController extends Controller
             ];
         }
 
-        // Get files from Promosi (talent photos)
-        $promotionWork = PromotionWork::where('episode_id', $episodeId)
-            ->whereIn('status', ['editing', 'review', 'approved', 'published'])
-            ->first();
+        // Get files from Promosi (talent photos & BTS reference)
+        $promotionWorks = PromotionWork::where('episode_id', $episodeId)
+            ->whereIn('status', ['editing', 'review', 'approved', 'published', 'completed'])
+            ->get();
 
-        if ($promotionWork) {
-            $talentPhotos = [];
+        $talentPhotos = [];
+        $btsVideos = [];
 
-            // Check file_links (new strategy)
-            if (!empty($promotionWork->file_links)) {
-                $talentPhotos = array_filter($promotionWork->file_links, function ($file) {
-                    return isset($file['type']) && $file['type'] === 'talent_photo';
-                });
+        foreach ($promotionWorks as $work) {
+            // Check file_links
+            $links = is_string($work->file_links) ? json_decode($work->file_links, true) : ($work->file_links ?? []);
+            if (is_array($links)) {
+                foreach ($links as $link) {
+                    if (is_array($link)) {
+                        $type = $link['type'] ?? 'other';
+                        if ($type === 'talent_photo') {
+                            $talentPhotos[] = $link;
+                        } elseif ($type === 'bts_video') {
+                            $btsVideos[] = $link;
+                        } else {
+                            // Fallback for other linked files from promotion
+                            $talentPhotos[] = array_merge(['type' => 'other_promotion_file'], $link);
+                        }
+                    } elseif (is_string($link)) {
+                        $talentPhotos[] = [
+                            'file_link' => $link,
+                            'type' => 'promotion_link',
+                            'label' => 'Promotion Link'
+                        ];
+                    }
+                }
             }
 
-            // fallback to file_paths (old strategy)
-            if (empty($talentPhotos) && !empty($promotionWork->file_paths)) {
-                $talentPhotos = array_filter($promotionWork->file_paths, function ($file) {
-                    return isset($file['type']) && $file['type'] === 'talent_photo';
-                });
+            // Check file_paths
+            $paths = is_string($work->file_paths) ? json_decode($work->file_paths, true) : ($work->file_paths ?? []);
+            if (is_array($paths)) {
+                foreach ($paths as $path) {
+                    if (is_array($path)) {
+                        $type = $path['type'] ?? 'other';
+                        if ($type === 'talent_photo') {
+                            $talentPhotos[] = $path;
+                        } elseif ($type === 'bts_video') {
+                            $btsVideos[] = $path;
+                        } else {
+                            $talentPhotos[] = array_merge(['type' => 'other_promotion_file'], $path);
+                        }
+                    }
+                }
             }
+            
+            // Legacy fallbacks
+            if ($work->bts_video_link) $btsVideos[] = ['file_link' => $work->bts_video_link, 'url' => $work->bts_video_link, 'type' => 'bts_video', 'source' => 'legacy'];
+            if ($work->bts_video_path) $btsVideos[] = ['file_path' => $work->bts_video_path, 'type' => 'bts_video', 'source' => 'legacy'];
+        }
 
-            if (!empty($talentPhotos)) {
-                $sourceFiles['promosi_files'] = [
-                    'promotion_work_id' => $promotionWork->id,
-                    'talent_photos' => array_values($talentPhotos),
-                    'available' => true
-                ];
-            } else {
-                $sourceFiles['promosi_files'] = [
-                    'available' => false,
-                    'message' => 'Talent photos not available yet or no links found'
-                ];
-            }
+        if (!empty($talentPhotos) || !empty($btsVideos)) {
+            $sourceFiles['promosi_files'] = [
+                'talent_photos' => $talentPhotos,
+                'bts_videos' => $btsVideos,
+                'available' => true
+            ];
         } else {
             $sourceFiles['promosi_files'] = [
                 'available' => false,
-                'message' => 'Promotion work not found or not in progress'
+                'message' => 'Promotion materials (photos/BTS) not available yet'
             ];
         }
 
@@ -1268,5 +1255,109 @@ class DesignGrafisController extends Controller
         }
 
         return $files;
+    }
+    /**
+     * Finalize task completion: update status, notify producer, and setup QC.
+     */
+    private function finalizeCompletion($work, $user, $notes = '')
+    {
+        // Update work status and notes
+        $work->update([
+            'status' => 'completed',
+            'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') .
+                "[Completed - " . now()->format('Y-m-d H:i:s') . "]\n" .
+                ($notes ?? '')
+        ]);
+
+        // Notify Producer
+        $episode = $work->episode;
+        if ($episode) {
+            $productionTeam = $episode->program->productionTeam ?? null;
+            $producer = $productionTeam ? $productionTeam->producer : null;
+
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'design_grafis_work_completed',
+                    'title' => 'Design Grafis Work Completed',
+                    'message' => "Design Grafis {$user->name} telah menyelesaikan pekerjaan {$work->work_type} untuk Episode {$episode->episode_number}.",
+                    'data' => [
+                        'design_grafis_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
+                        'work_type' => $work->work_type,
+                        'file_path' => $work->file_path,
+                        'completion_notes' => $notes
+                    ]
+                ]);
+            }
+        }
+
+        // Audit logging
+        ControllerSecurityHelper::logUpdate($work, [], ['status' => 'completed'], request());
+
+        // Create Quality Control Work
+        $qcTypeMap = [
+            'thumbnail_youtube' => 'thumbnail_yt',
+            'thumbnail_bts' => 'thumbnail_bts',
+            'graphics_ig' => 'highlight_ig',
+            'graphics_facebook' => 'highlight_facebook'
+        ];
+
+        if (isset($qcTypeMap[$work->work_type])) {
+            $qcType = $qcTypeMap[$work->work_type];
+
+            // Check if QC work already exists
+            $existingQCWork = \App\Models\QualityControlWork::where('episode_id', $work->episode_id)
+                ->where('qc_type', $qcType)
+                ->first();
+
+            if (!$existingQCWork) {
+                $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
+
+                $qcWork = \App\Models\QualityControlWork::create([
+                    'episode_id' => $work->episode_id,
+                    'qc_type' => $qcType,
+                    'title' => "QC {$work->title}",
+                    'description' => "Quality Control untuk {$work->work_type} dari Design Grafis",
+                    'files_to_check' => $this->prepareFilesToCheck($work),
+                    'design_grafis_file_locations' => $this->prepareFilesToCheck($work),
+                    'status' => 'pending',
+                    'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
+                ]);
+
+                // Notify QC
+                foreach ($qcUsers as $qcUser) {
+                    Notification::create([
+                        'user_id' => $qcUser->id,
+                        'type' => 'design_grafis_submitted_to_qc',
+                        'title' => 'Design Grafis Work Submitted to QC',
+                        'message' => "Design Grafis telah mengajukan {$work->work_type} untuk QC Episode {$episode->episode_number}.",
+                        'data' => [
+                            'design_grafis_work_id' => $work->id,
+                            'qc_work_id' => $qcWork->id,
+                            'episode_id' => $work->episode_id,
+                            'work_type' => $work->work_type,
+                            'qc_type' => $qcType
+                        ]
+                    ]);
+                }
+            } else {
+                // Update existing QC work
+                $existingLocations = $existingQCWork->design_grafis_file_locations ?? [];
+                $newLocations = $this->prepareFilesToCheck($work);
+
+                // Merge and unique based on file_path
+                $existingLocations = array_merge($existingLocations, $newLocations);
+
+                // Update files_to_check as well
+                $existingFilesToCheck = $existingQCWork->files_to_check ?? [];
+                $existingFilesToCheck = array_merge($existingFilesToCheck, $newLocations);
+
+                $existingQCWork->update([
+                    'design_grafis_file_locations' => $existingLocations,
+                    'status' => 'pending'
+                ]);
+            }
+        }
     }
 }

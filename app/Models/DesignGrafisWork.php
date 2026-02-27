@@ -12,6 +12,7 @@ class DesignGrafisWork extends Model
 
     protected $fillable = [
         'episode_id',
+        'assigned_to',
         'work_type',
         'title',
         'description',
@@ -182,7 +183,7 @@ class DesignGrafisWork extends Model
      */
     public function scopeDesigning($query)
     {
-        return $query->where('status', 'designing');
+        return $query->where('status', 'in_progress');
     }
 
     /**

@@ -8,6 +8,7 @@ use App\Models\Episode;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
+use App\Services\ProgramWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -48,10 +49,10 @@ class BroadcastingController extends Controller
                 $query->where('work_type', $request->work_type);
             }
 
-            // Get works for current user or all preparing works (available for acceptance)
+            // Get works for current user or all pending/preparing works (available for acceptance)
             $query->where(function($q) use ($user) {
                 $q->where('created_by', $user->id)
-                  ->orWhere('status', 'preparing'); // Preparing works are available for any Broadcasting to accept
+                  ->orWhereIn('status', ['pending', 'preparing']); // Pending works from DM are available for acceptance
             });
 
             $works = $query->orderBy('created_at', 'desc')->paginate(15);
@@ -469,8 +470,22 @@ class BroadcastingController extends Controller
 
             $work->markAsPublished();
 
-            // Notify Manager Program
+            // Episode reference
             $episode = $work->episode;
+
+            // Mark episode as completed in global workflow once broadcasting has published
+            try {
+                /** @var ProgramWorkflowService $workflowService */
+                $workflowService = app(ProgramWorkflowService::class);
+                $workflowService->completeEpisode($episode);
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to auto-complete episode after broadcasting publish', [
+                    'episode_id' => $episode->id ?? null,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            // Notify Manager Program
             if ($episode->program && $episode->program->manager_program_id) {
                 Notification::create([
                     'user_id' => $episode->program->manager_program_id,
@@ -484,6 +499,27 @@ class BroadcastingController extends Controller
                         'website_url' => $work->website_url
                     ]
                 ]);
+            }
+
+            // Notify Promosi - Align with completeWork logic
+            $promosiUsers = \App\Models\User::where('role', 'Promotion')->get();
+            if ($promosiUsers->isNotEmpty()) {
+                $now = now();
+                foreach ($promosiUsers as $promosiUser) {
+                    Notification::create([
+                        'user_id' => $promosiUser->id,
+                        'type' => 'broadcasting_published_promosi_sharing',
+                        'title' => 'Video Dipublikasikan - Siap untuk Sharing',
+                        'message' => "Broadcasting telah mempublikasikan Episode {$episode->episode_number}. YouTube URL dan Website URL sudah tersedia untuk sharing.",
+                        'data' => [
+                            'broadcasting_work_id' => $work->id,
+                            'episode_id' => $episode->id,
+                            'youtube_url' => $work->youtube_url,
+                            'website_url' => $work->website_url,
+                            'thumbnail_path' => $work->thumbnail_path
+                        ]
+                    ]);
+                }
             }
 
             QueryOptimizer::clearAllIndexCaches();
@@ -583,15 +619,15 @@ class BroadcastingController extends Controller
 
             $work = BroadcastingWork::with(['episode'])->findOrFail($id);
 
-            // Check if work can be accepted (status should be preparing)
-            if ($work->status !== 'preparing') {
+            // Check if work can be accepted (status should be pending or preparing)
+            if (!in_array($work->status, ['pending', 'preparing'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Work cannot be accepted. Current status: {$work->status}. Work must be in 'preparing' status."
+                    'message' => "Work cannot be accepted. Current status: {$work->status}. Work must be in 'pending' or 'preparing' status."
                 ], 400);
             }
 
-            // Update work status to preparing and assign to user
+            // Update work status to preparing (sesuai UI: Proses pekerjaan) dan assign ke user
             $work->update([
                 'status' => 'preparing',
                 'created_by' => $user->id
@@ -646,16 +682,10 @@ class BroadcastingController extends Controller
                 ], 403);
             }
 
+            // Very relaxed validation: hanya pastikan title ada, lainnya opsional
             $validator = Validator::make($request->all(), [
-                'youtube_url' => 'required|url',
-                'youtube_video_id' => 'nullable|string|max:50',
                 'title' => 'required|string|max:255',
-                'description' => 'required|string|max:5000',
-                'tags' => 'nullable|array',
-                'tags.*' => 'string|max:50',
-                'thumbnail_path' => 'nullable|string',
-                'category_id' => 'nullable|string|max:50',
-                'privacy_status' => 'nullable|in:private,public,unlisted'
+                'description' => 'nullable|string',
             ]);
 
             if ($validator->fails()) {
@@ -675,7 +705,7 @@ class BroadcastingController extends Controller
                 ], 403);
             }
 
-            // Update work with YouTube data and SEO metadata
+            // Update work with YouTube SEO metadata
             $metadata = $work->metadata ?? [];
             $metadata['youtube'] = [
                 'title' => $request->title,
@@ -689,22 +719,29 @@ class BroadcastingController extends Controller
             // Use thumbnail from request or from work if available
             $thumbnailPath = $request->thumbnail_path ?? $work->thumbnail_path;
 
-            $work->update([
+            $updateData = [
                 'title' => $request->title, // Update title sesuai SEO
                 'description' => $request->description,
-                'youtube_url' => $request->youtube_url,
-                'youtube_video_id' => $request->youtube_video_id ?? $this->extractYouTubeVideoId($request->youtube_url),
                 'thumbnail_path' => $thumbnailPath,
                 'metadata' => $metadata,
-                'status' => 'uploading'
-            ]);
+                // Setelah metadata YouTube disimpan, anggap pekerjaan masuk fase uploading
+                'status' => 'uploading',
+            ];
 
-            // Notify Producer
+            // Jika YouTube URL disediakan, simpan juga URL & video_id
+            if ($request->filled('youtube_url')) {
+                $updateData['youtube_url'] = $request->youtube_url;
+                $updateData['youtube_video_id'] = $request->youtube_video_id ?? $this->extractYouTubeVideoId($request->youtube_url);
+            }
+
+            $work->update($updateData);
+
+            // Notify Producer hanya kalau ada YouTube URL (video benar‑benar sudah diupload)
             $episode = $work->episode;
             $productionTeam = $episode->program->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
             
-            if ($producer) {
+            if ($producer && $request->filled('youtube_url')) {
                 Notification::create([
                     'user_id' => $producer->id,
                     'type' => 'broadcasting_youtube_uploaded',
@@ -1151,8 +1188,17 @@ class BroadcastingController extends Controller
                 }
             }
 
-            // Update Episode status if needed
-            // You can add episode status update logic here if required
+            // Update Episode status in global workflow (mark as completed/finished)
+            try {
+                /** @var \App\Services\ProgramWorkflowService $workflowService */
+                $workflowService = app(\App\Services\ProgramWorkflowService::class);
+                $workflowService->completeEpisode($episode);
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to auto-complete episode after broadcasting completeWork', [
+                    'episode_id' => $episode->id ?? null,
+                    'error' => $e->getMessage(),
+                ]);
+            }
 
             QueryOptimizer::clearAllIndexCaches();
 

@@ -93,4 +93,25 @@ class ProductionTeamMember extends Model
     {
         return $query->where('production_team_id', $teamId);
     }
+
+    /**
+     * Static helper to check if a user is a member of specific team type(s) for an episode
+     */
+    public static function isMemberForEpisode(int $userId, int $episodeId, $teamTypes = []): bool
+    {
+        return self::where('user_id', $userId)
+            ->where('is_active', true)
+            ->whereHas('assignment', function ($q) use ($episodeId, $teamTypes) {
+                $q->where('episode_id', $episodeId)
+                    ->where('status', '!=', 'cancelled');
+                
+                if (!empty($teamTypes)) {
+                    if (is_array($teamTypes)) {
+                        $q->whereIn('team_type', (array)$teamTypes);
+                    } else {
+                        $q->where('team_type', $teamTypes);
+                    }
+                }
+            })->exists();
+    }
 }

@@ -195,6 +195,7 @@ class TaskVisibilityService
     protected static function getTaskTypeLabel(string $taskType): string
     {
         return match($taskType) {
+            'music_arrangement' => 'Music Arrangement',
             'editor_work', 'pr_editor_work' => 'Editor Work',
             'creative_work', 'pr_creative_work' => 'Creative Work',
             'promotion_work', 'pr_promotion_work' => 'Promotion Work',

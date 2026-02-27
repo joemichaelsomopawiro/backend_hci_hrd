@@ -50,7 +50,7 @@ class ProductionEquipment extends Model
     /**
      * Relationship dengan User yang request
      */
-    public function requestedBy(): BelongsTo
+    public function requester(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
     }
@@ -58,7 +58,7 @@ class ProductionEquipment extends Model
     /**
      * Relationship dengan User yang approve
      */
-    public function approvedBy(): BelongsTo
+    public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
     }
@@ -66,7 +66,7 @@ class ProductionEquipment extends Model
     /**
      * Relationship dengan User yang reject
      */
-    public function rejectedBy(): BelongsTo
+    public function rejecter(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rejected_by');
     }
@@ -74,7 +74,7 @@ class ProductionEquipment extends Model
     /**
      * Relationship dengan User yang assigned
      */
-    public function assignedTo(): BelongsTo
+    public function assignedUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_to');
     }

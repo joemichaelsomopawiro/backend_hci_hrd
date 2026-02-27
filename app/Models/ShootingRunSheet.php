@@ -19,6 +19,7 @@ class ShootingRunSheet extends Model
         'crew_list',
         'equipment_list',
         'shooting_notes',
+        'run_sheet_link',
         'status',
         'uploaded_files',
         'completion_notes',

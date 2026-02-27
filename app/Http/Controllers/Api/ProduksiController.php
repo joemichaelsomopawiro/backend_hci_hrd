@@ -38,13 +38,10 @@ class ProduksiController extends Controller
                 ], 401);
             }
             
-            // Only accept 'Production' role (English)
-            if ($user->role !== 'Production') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
-            }
+            // Allow if has 'Production' role OR is a member of Tim Syuting for any episode
+            $isProductionRole = $user->role === 'Production';
+            
+            // We'll check for shooting team membership in the query itself for index
 
             // Build cache key based on request parameters
             $cacheKey = 'produksi_index_' . md5(json_encode([
@@ -54,12 +51,25 @@ class ProduksiController extends Controller
             ]));
 
             // Use cache with 5 minutes TTL
-            $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request) {
+            $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request, $isProductionRole, $user) {
                 $query = ProduksiWork::with([
                     'episode.program.productionTeam', 
                     'creativeWork.latestApprovedMusicArrangement',
+                    'runSheet',
                     'createdBy'
                 ]);
+
+                // If not global Production role, only show works where the user is a member of the shooting team
+                if (!$isProductionRole) {
+                    $query->whereHas('episode.teamAssignments', function($q) use ($user) {
+                        $q->where('team_type', 'shooting')
+                          ->where('status', '!=', 'cancelled')
+                          ->whereHas('members', function($mq) use ($user) {
+                              $mq->where('user_id', $user->id)
+                                 ->where('is_active', true);
+                          });
+                    });
+                }
 
                 // Filter by status
                 if ($request->has('status')) {
@@ -100,6 +110,17 @@ class ProduksiController extends Controller
                 'runSheet'
             ])->findOrFail($id);
 
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                ], 403);
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $work,
@@ -128,15 +149,18 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
+            $work = ProduksiWork::findOrFail($id);
+
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
-
-            $work = ProduksiWork::findOrFail($id);
 
             // Idempotency check: If already accepted by this user, return success
             if ($work->status === 'in_progress' && $work->created_by === $user->id) {
@@ -189,12 +213,17 @@ class ProduksiController extends Controller
     {
         try {
             $user = Auth::user();
+
+            $work = ProduksiWork::findOrFail($id);
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -217,12 +246,6 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
-                ], 403);
-            }
 
             if ($work->status !== 'in_progress') {
                 return response()->json([
@@ -355,12 +378,17 @@ class ProduksiController extends Controller
     {
         try {
             $user = Auth::user();
+
+            $work = ProduksiWork::findOrFail($id);
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -381,13 +409,6 @@ class ProduksiController extends Controller
             }
 
             $work = ProduksiWork::findOrFail($id);
-
-            if ($work->created_by !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
-                ], 403);
-            }
 
             if ($work->status !== 'in_progress') {
                 return response()->json([
@@ -448,20 +469,16 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
-            }
-
             $work = ProduksiWork::findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -600,26 +617,32 @@ class ProduksiController extends Controller
     {
         try {
             $user = Auth::user();
+
+            $work = ProduksiWork::findOrFail($id);
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'shooting_date' => 'required|date|after:today',
+                'shooting_date' => 'required|date', // Removed after_or_equal:today to allow backdating
                 'location' => 'required|string|max:255',
-                'crew_list' => 'required|array|min:1',
+                'crew_list' => 'nullable|array', // Removed min:1
                 'crew_list.*.name' => 'required|string|max:255',
-                'crew_list.*.role' => 'required|string|max:100',
+                'crew_list.*.role' => 'nullable|string|max:100',
                 'crew_list.*.contact' => 'nullable|string|max:50',
-                'equipment_list' => 'required|array|min:1',
+                'equipment_list' => 'nullable|array', // Removed min:1
                 'equipment_list.*.name' => 'required|string|max:255',
                 'equipment_list.*.quantity' => 'required|integer|min:1',
-                'shooting_notes' => 'nullable|string|max:1000'
+                'shooting_notes' => 'nullable|string|max:1000',
+                'run_sheet_link' => 'nullable|string|max:255' // Changed from url to string for flexibility
             ]);
 
             if ($validator->fails()) {
@@ -631,13 +654,6 @@ class ProduksiController extends Controller
             }
 
             $work = ProduksiWork::findOrFail($id);
-
-            if ($work->created_by !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
-                ], 403);
-            }
 
             if ($work->status !== 'in_progress') {
                 return response()->json([
@@ -652,9 +668,10 @@ class ProduksiController extends Controller
                 'produksi_work_id' => $work->id,
                 'shooting_date' => $request->shooting_date,
                 'location' => $request->location,
-                'crew_list' => $request->crew_list,
-                'equipment_list' => $request->equipment_list,
+                'crew_list' => $request->crew_list ?? [],
+                'equipment_list' => $request->equipment_list ?? [],
                 'shooting_notes' => $request->shooting_notes,
+                'run_sheet_link' => $request->run_sheet_link,
                 'status' => 'planned',
                 'created_by' => $user->id
             ]);
@@ -699,12 +716,17 @@ class ProduksiController extends Controller
     {
         try {
             $user = Auth::user();
+
+            $work = ProduksiWork::findOrFail($id);
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -723,13 +745,6 @@ class ProduksiController extends Controller
             }
 
             $work = ProduksiWork::with(['episode', 'runSheet'])->findOrFail($id);
-
-            if ($work->created_by !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
-                ], 403);
-            }
 
             if ($work->status !== 'in_progress') {
                 return response()->json([
@@ -753,6 +768,13 @@ class ProduksiController extends Controller
                 
                 $uploadedFiles = [];
                 foreach ($filePaths as $link) {
+                    $link = trim($link); // Extra safety
+                    if ($link && strpos($link, 'http') !== 0) {
+                        if (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $link)) {
+                            $link = 'https://' . $link;
+                        }
+                    }
+                    
                     $uploadedFiles[] = [
                         'original_name' => 'Shooting Result Link',
                         'file_path' => $link,
@@ -763,9 +785,7 @@ class ProduksiController extends Controller
 
                 $work->update([
                     'shooting_files' => $uploadedFiles,
-                    'shooting_file_links' => is_array($request->shooting_file_links) 
-                        ? implode(',', $request->shooting_file_links) 
-                        : $request->shooting_file_links
+                    'shooting_file_links' => array_column($uploadedFiles, 'url')
                 ]);
             }
 
@@ -942,12 +962,17 @@ class ProduksiController extends Controller
     {
         try {
             $user = Auth::user();
+
+            $work = ProduksiWork::findOrFail($id);
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -969,17 +994,25 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::with(['episode.program'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
-                ], 403);
+            if ($work->status !== 'in_progress') {
+                // We'll allow link input even if not in_progress if needed, but let's stick to current status flow
             }
+
+            // Normalize links (ensure absolute URLs for external links)
+            $normalizedLinks = array_map(function($link) {
+                $url = $link['url'] ?? '';
+                if ($url && strpos($url, 'http') !== 0) {
+                    if (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $url)) {
+                        $link['url'] = 'https://' . $url;
+                    }
+                }
+                return $link;
+            }, $request->file_links);
 
             // Update work with file links
             $work->update([
-                'shooting_files' => $request->file_links,
-                'shooting_file_links' => implode(',', array_column($request->file_links, 'url'))
+                'shooting_files' => $normalizedLinks,
+                'shooting_file_links' => array_column($normalizedLinks, 'url')
             ]);
 
             // Auto-create EditorWork
@@ -1096,12 +1129,17 @@ class ProduksiController extends Controller
     {
         try {
             $user = Auth::user();
+
+            $work = ProduksiWork::findOrFail($id);
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -1145,7 +1183,7 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1202,7 +1240,7 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1225,10 +1263,14 @@ class ProduksiController extends Controller
 
             $produksiWork = ProduksiWork::with(['episode.program.productionTeam'])->findOrFail($produksiWorkId);
 
-            if ($produksiWork->created_by !== $user->id) {
+            // Authorization check (consistent with other methods)
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $produksiWork->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
+                    'message' => 'Unauthorized: You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -1312,12 +1354,17 @@ class ProduksiController extends Controller
     {
         try {
             $user = Auth::user();
+
+            $work = ProduksiWork::findOrFail($id);
             
-            // Only accept 'Production' role (English)
-            if (!$user || $user->role !== 'Production') {
+            // Authorization: Production role OR member of Tim Syuting for this episode
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -1342,10 +1389,10 @@ class ProduksiController extends Controller
             $work = ProduksiWork::with(['episode'])->findOrFail($id);
 
             // Check if user has access
-            if ($work->created_by !== $user->id) {
+            if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This work is not assigned to you.'
+                    'message' => 'Unauthorized: You are not assigned to the shooting team for this episode.'
                 ], 403);
             }
 
@@ -1375,11 +1422,11 @@ class ProduksiController extends Controller
                     continue;
                 }
 
-                // Verify equipment was requested by this user (or for this work)
-                if ($equipment->requested_by !== $user->id) {
+                // Verify equipment belongs to this user OR user is in the shooting team for this episode
+                if ($equipment->requested_by !== $user->id && !$isShootingMember) {
                     $failedEquipment[] = [
                         'equipment_request_id' => $equipmentRequestId,
-                        'reason' => 'Equipment request was not created by you'
+                        'reason' => 'Equipment request was not created by you and you are not assigned to this episode'
                     ];
                     continue;
                 }
@@ -1411,11 +1458,32 @@ class ProduksiController extends Controller
                     'returned_at' => now()
                 ]);
 
-                // Update EquipmentInventory if exists
-                if ($equipment->equipment_id) {
-                    $inventory = EquipmentInventory::find($equipment->equipment_id);
+                // Update EquipmentInventory if exists (search by name)
+                $itemNames = is_array($equipment->equipment_list) ? $equipment->equipment_list : [$equipment->equipment_list];
+                foreach ($itemNames as $itemName) {
+                    $inventory = EquipmentInventory::where('name', $itemName)
+                        ->where('status', 'in_use')
+                        ->first();
+
                     if ($inventory) {
-                        $inventory->update(['status' => 'available']);
+                        $newStatus = 'available';
+                        if (($conditionData['condition'] ?? 'good') === 'damaged') {
+                            $newStatus = 'broken';
+                        } elseif (($conditionData['condition'] ?? 'good') === 'lost') {
+                            $newStatus = 'broken';
+                        }
+                        
+                        try {
+                            $inventory->update([
+                                'status' => $newStatus,
+                                'assigned_to' => null,
+                                'episode_id' => null,
+                                'assigned_by' => null,
+                                'assigned_at' => null,
+                            ]);
+                        } catch (\Exception $e) {
+                            $inventory->update(['status' => $newStatus]);
+                        }
                     }
                 }
 
@@ -1481,6 +1549,40 @@ class ProduksiController extends Controller
                 'message' => 'Error returning equipment: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Get available equipment from inventory
+     * GET /api/live-tv/roles/produksi/equipment/available
+     */
+    public function getAvailableEquipment(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        
+        if (!$user || ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment())) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized access.'
+            ], 403);
+        }
+        
+        $availableEquipment = EquipmentInventory::where('status', 'available')
+            ->select(
+                'id', 'name', 'category', 'brand', 'model', 
+                'serial_number', 'location',
+                \DB::raw('(SELECT count(*) FROM equipment_inventory ei WHERE ei.name = equipment_inventory.name AND ei.status = \'available\') as available_quantity')
+            )
+            ->orderBy('name')
+            ->orderBy('id')
+            ->get()
+            ->unique('name')
+            ->values();
+            
+        return response()->json([
+            'success' => true,
+            'data' => $availableEquipment,
+            'message' => 'Available equipment retrieved successfully'
+        ]);
     }
 }
 

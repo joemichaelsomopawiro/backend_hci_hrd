@@ -10,6 +10,7 @@ use App\Models\Notification;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use App\Helpers\QueryOptimizer;
 
 class ProgramWorkflowService
 {
@@ -173,6 +174,9 @@ class ProgramWorkflowService
             
             // Send completion notifications
             $this->sendEpisodeCompletedNotifications($episode);
+
+            // Clear cached episode indexes so latest workflow_state appears in dashboards
+            QueryOptimizer::clearAllIndexCaches();
             
             return $episode;
         });

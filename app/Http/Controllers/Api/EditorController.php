@@ -8,6 +8,7 @@ use App\Models\Episode;
 use App\Models\ProduksiWork;
 use App\Models\ShootingRunSheet;
 use App\Models\SoundEngineerEditing;
+use App\Models\SoundEngineerRecording;
 use App\Models\Notification;
 use App\Helpers\FileUploadHelper;
 use App\Helpers\ControllerSecurityHelper;
@@ -178,9 +179,14 @@ class EditorController extends Controller
                 ->where('status', 'completed')
                 ->first();
 
-            // Get approved audio files (from Sound Engineer Editing)
+            // Get approved audio (Mix)
             $approvedAudio = SoundEngineerEditing::where('episode_id', $work->episode_id)
                 ->where('status', 'approved')
+                ->first();
+
+            // Get approved vocal (Recording)
+            $approvedVocal = SoundEngineerRecording::where('episode_id', $work->episode_id)
+                ->where('status', 'reviewed')
                 ->first();
 
             return response()->json([
@@ -195,7 +201,14 @@ class EditorController extends Controller
                     'approved_audio' => $approvedAudio ? [
                         'id' => $approvedAudio->id,
                         'final_file_path' => $approvedAudio->final_file_path,
+                        'final_file_link' => $approvedAudio->final_file_link ? (strpos($approvedAudio->final_file_link, 'http') === 0 ? $approvedAudio->final_file_link : 'https://' . $approvedAudio->final_file_link) : null,
                         'editing_notes' => $approvedAudio->editing_notes
+                    ] : null,
+                    'approved_vocal' => $approvedVocal ? [
+                        'id' => $approvedVocal->id,
+                        'file_path' => $approvedVocal->file_path,
+                        'file_link' => $approvedVocal->file_link ? (strpos($approvedVocal->file_link, 'http') === 0 ? $approvedVocal->file_link : 'https://' . $approvedVocal->file_link) : null,
+                        'review_notes' => $approvedVocal->review_notes
                     ] : null
                 ],
                 'message' => 'Editor work retrieved successfully'
@@ -227,7 +240,7 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            if (!in_array($work->status, ['draft', 'editing'])) {
+            if (!in_array($work->status, ['draft', 'editing', 'rejected'])) {
                 return response()->json([
                     'success' => false,
                     'message' => "Work cannot be accepted. Current status: {$work->status}"
@@ -315,14 +328,20 @@ class EditorController extends Controller
                 ], 403);
             }
 
-            // Get production files
+            // Get production files (Allow in_progress if links exist)
             $produksiWork = ProduksiWork::where('episode_id', $work->episode_id)
-                ->where('status', 'completed')
+                ->whereIn('status', ['completed', 'in_progress'])
+                ->orderBy('status', 'desc') // completed first
                 ->first();
 
-            // Get approved audio
+            // Get approved audio (Mixing/Editing)
             $approvedAudio = SoundEngineerEditing::where('episode_id', $work->episode_id)
                 ->where('status', 'approved')
+                ->first();
+            
+            // Get approved vocal (Recording)
+            $approvedVocal = SoundEngineerRecording::where('episode_id', $work->episode_id)
+                ->where('status', 'reviewed')
                 ->first();
 
             // Check completeness
@@ -340,65 +359,104 @@ class EditorController extends Controller
             
             // Jika audio available, tambahkan info audio ke source_files
             if ($hasAudio && $approvedAudio) {
+                $audioUrl = $approvedAudio->final_file_link;
+                if ($audioUrl) {
+                    if (strpos($audioUrl, 'http') !== 0) {
+                        $audioUrl = 'https://' . $audioUrl;
+                    }
+                } elseif ($approvedAudio->final_file_path) {
+                    $audioUrl = url('storage/' . $approvedAudio->final_file_path);
+                }
+
                 $sourceFiles['approved_audio'] = [
                     'editing_id' => $approvedAudio->id,
-                    'final_file_path' => $approvedAudio->final_file_path, // Backward compatibility
-                    'final_file_link' => $approvedAudio->final_file_link, // New: External storage link
+                    'final_file_path' => $approvedAudio->final_file_path,
+                    'final_file_link' => $audioUrl,
                     'editing_notes' => $approvedAudio->editing_notes,
                     'approved_at' => $approvedAudio->approved_at?->toDateTimeString()
+                ];
+            }
+
+            // Jika vocal recording available (yang sudah diapprove producer), tambambahkan ke source_files
+            if ($approvedVocal) {
+                $vocalUrl = $approvedVocal->file_link;
+                if ($vocalUrl) {
+                    if (strpos($vocalUrl, 'http') !== 0) {
+                        $vocalUrl = 'https://' . $vocalUrl;
+                    }
+                } elseif ($approvedVocal->file_path) {
+                    $vocalUrl = url('storage/' . $approvedVocal->file_path);
+                }
+
+                $sourceFiles['approved_vocal'] = [
+                    'recording_id' => $approvedVocal->id,
+                    'file_path' => $approvedVocal->file_path,
+                    'file_link' => $vocalUrl,
+                    'review_notes' => $approvedVocal->review_notes,
+                    'approved_at' => $approvedVocal->reviewed_at?->toDateTimeString()
                 ];
             }
             
             // Jika produksi files available, tambahkan info produksi
             if ($hasProductionFiles && $produksiWork) {
+                $links = $produksiWork->shooting_file_links ?? [];
+                
+                // Ensure all links are absolute
+                $formattedLinks = array_map(function($link) {
+                    $url = is_array($link) ? ($link['file_link'] ?? '') : $link;
+                    
+                    if ($url && strpos($url, 'http') !== 0) {
+                        // Case 1: Likely external link missing protocol (google.com, drive.google.com)
+                        if (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $url) && !preg_match('/^(shooting|audio|video|export|vocal)\//i', $url)) {
+                            $url = 'https://' . $url;
+                        } else {
+                            // Case 2: Likely local path
+                            $url = url('storage/' . ltrim($url, '/'));
+                        }
+                    }
+                    
+                    if (is_array($link)) {
+                        $link['file_link'] = $url;
+                        return $link;
+                    }
+                    
+                    return ['file_link' => $url];
+                }, $links);
+
                 $sourceFiles['produksi_work'] = [
                     'produksi_work_id' => $produksiWork->id,
-                    'shooting_files' => $produksiWork->shooting_files, // Backward compatibility
-                    'shooting_file_links' => $produksiWork->shooting_file_links // New: External storage links
+                    'shooting_files' => $produksiWork->shooting_files,
+                    'shooting_file_links' => $formattedLinks
                 ];
             }
             
             $work->update([
-                'file_complete' => $isComplete,
                 'source_files' => $sourceFiles
             ]);
 
-            $message = $isComplete 
-                ? 'Files are complete. You can proceed with editing.' 
-                : 'Files are not complete. Please report missing files to Producer.';
-
-            if (!$isComplete) {
-                $missingFiles = [];
-                if (!$hasProductionFiles) {
-                    $missingFiles[] = 'Production shooting files';
-                }
-                if (!$hasAudio) {
-                    $missingFiles[] = 'Approved audio file from Sound Engineer';
-                }
-
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'work' => $work->fresh(['episode']),
-                        'file_complete' => false,
-                        'missing_files' => $missingFiles,
-                        'has_production_files' => $hasProductionFiles,
-                        'has_audio' => $hasAudio
-                    ],
-                    'message' => $message
-                ]);
+            $missingFiles = [];
+            if (!$hasProductionFiles) {
+                $missingFiles[] = 'Production shooting files';
+            }
+            if (!$hasAudio) {
+                $missingFiles[] = 'Approved audio file from Sound Engineer';
             }
 
-            // If complete, automatically proceed to process work
-            $work->update(['status' => 'editing']);
+            $message = $isComplete 
+                ? 'All files are available. Please review each file and confirm completeness.' 
+                : 'Some files are missing. Please review and report issues to Producer.';
 
+            // Return files for manual review - do NOT auto-advance status
             return response()->json([
                 'success' => true,
                 'data' => [
                     'work' => $work->fresh(['episode']),
-                    'file_complete' => true,
+                    'file_complete' => $isComplete,
+                    'missing_files' => $missingFiles,
                     'has_production_files' => $hasProductionFiles,
-                    'has_audio' => $hasAudio
+                    'has_audio' => $hasAudio,
+                    'has_vocal' => !!$approvedVocal,
+                    'requires_manual_confirmation' => true
                 ],
                 'message' => $message
             ]);
@@ -502,6 +560,170 @@ class EditorController extends Controller
     }
 
     /**
+     * Confirm file completeness (manual verification by Editor)
+     * POST /api/live-tv/editor/works/{id}/confirm-file-completeness
+     */
+    public function confirmFileCompleteness(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Editor') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'file_status' => 'required|array',
+                'file_status.production_files' => 'required|in:ok,issue,missing',
+                'file_status.audio' => 'required|in:ok,issue,missing',
+                'file_status.vocal' => 'nullable|in:ok,issue,missing,not_applicable',
+                'notes' => 'nullable|string|max:5000',
+                'file_notes' => 'nullable|array',
+                'file_notes.production_files' => 'nullable|string|max:2000',
+                'file_notes.audio' => 'nullable|string|max:2000',
+                'file_notes.vocal' => 'nullable|string|max:2000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = EditorWork::with(['episode.program.productionTeam'])->findOrFail($id);
+
+            // Team-based authorization
+            $productionTeam = $work->episode->program->productionTeam;
+            $isTeamMember = false;
+            
+            if ($productionTeam) {
+                $isTeamMember = $productionTeam->members()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'editor')
+                    ->where('is_active', true)
+                    ->exists();
+            }
+            
+            if ($work->created_by !== $user->id && !$isTeamMember) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This work is not assigned to you or your production team.'
+                ], 403);
+            }
+
+            $fileStatus = $request->file_status;
+            $fileNotes = $request->file_notes ?? [];
+            
+            // Check if all required files are marked as OK
+            $allOk = ($fileStatus['production_files'] === 'ok') && ($fileStatus['audio'] === 'ok');
+
+            // Update source_files with manual check results
+            $sourceFiles = $work->source_files ?? [];
+            $sourceFiles['manual_check'] = [
+                'checked_by' => $user->id,
+                'checked_by_name' => $user->name,
+                'checked_at' => now()->toDateTimeString(),
+                'file_status' => $fileStatus,
+                'file_notes' => $fileNotes,
+                'overall_notes' => $request->notes,
+                'result' => $allOk ? 'complete' : 'incomplete'
+            ];
+
+            if ($allOk) {
+                // All files verified OK - advance to editing
+                $work->update([
+                    'file_complete' => true,
+                    'source_files' => $sourceFiles,
+                    'status' => 'editing'
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $work->fresh(['episode', 'createdBy']),
+                    'message' => 'File completeness confirmed. You can now proceed with editing.'
+                ]);
+            }
+
+            // Has issues - store notes and notify Producer
+            $issueNotes = "[File Check Report - " . now()->format('Y-m-d H:i:s') . "]\n";
+            $issueNotes .= "Checked by: {$user->name}\n\n";
+            
+            foreach ($fileStatus as $category => $status) {
+                if ($status !== 'ok') {
+                    $label = str_replace('_', ' ', ucfirst($category));
+                    $issueNotes .= "- {$label}: {$status}";
+                    if (!empty($fileNotes[$category])) {
+                        $issueNotes .= " — {$fileNotes[$category]}";
+                    }
+                    $issueNotes .= "\n";
+                }
+            }
+            
+            if ($request->notes) {
+                $issueNotes .= "\nAdditional Notes: {$request->notes}";
+            }
+
+            $work->update([
+                'file_complete' => false,
+                'file_notes' => ($work->file_notes ? $work->file_notes . "\n\n" : '') . $issueNotes,
+                'source_files' => $sourceFiles
+            ]);
+
+            // Notify Producer
+            $producer = $productionTeam ? $productionTeam->producer : null;
+            
+            if ($producer) {
+                $episode = $work->episode;
+                
+                // Build issue summary for notification
+                $issueSummary = [];
+                foreach ($fileStatus as $category => $status) {
+                    if ($status !== 'ok') {
+                        $label = str_replace('_', ' ', ucfirst($category));
+                        $note = !empty($fileNotes[$category]) ? ": {$fileNotes[$category]}" : '';
+                        $issueSummary[] = "{$label} ({$status}){$note}";
+                    }
+                }
+
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'editor_file_issues_reported',
+                    'title' => 'File Bermasalah - Perlu Tindakan',
+                    'message' => "Editor {$user->name} menemukan masalah file untuk Episode {$episode->episode_number}: " . implode('; ', $issueSummary),
+                    'data' => [
+                        'editor_work_id' => $work->id,
+                        'episode_id' => $work->episode_id,
+                        'file_status' => $fileStatus,
+                        'file_notes' => $fileNotes,
+                        'overall_notes' => $request->notes,
+                        'editor_id' => $user->id
+                    ]
+                ]);
+            }
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'File issues reported to Producer. Producer has been notified.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error confirming file completeness: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Process work (start editing)
      * POST /api/live-tv/editor/works/{id}/process-work
      */
@@ -598,10 +820,12 @@ class EditorController extends Controller
 
             $episode = Episode::findOrFail($id);
 
-            // Get run sheet from produksi work
+            // Get run sheet from produksi work (Allow in_progress if runSheet exists)
             $produksiWork = ProduksiWork::where('episode_id', $episode->id)
-                ->where('status', 'completed')
+                ->whereIn('status', ['completed', 'in_progress'])
+                ->whereNotNull('run_sheet_id')
                 ->with('runSheet')
+                ->orderBy('status', 'desc')
                 ->first();
 
             if (!$produksiWork || !$produksiWork->runSheet) {
@@ -625,7 +849,27 @@ class EditorController extends Controller
                     'produksi_work' => [
                         'id' => $produksiWork->id,
                         'status' => $produksiWork->status,
-                        'shooting_files' => $produksiWork->shooting_files
+                        'shooting_files' => $produksiWork->shooting_files,
+                        'shooting_file_links' => array_map(function($link) {
+                            $url = is_array($link) ? ($link['file_link'] ?? '') : $link;
+                            
+                            if ($url && strpos($url, 'http') !== 0) {
+                                // Case 1: Likely external link missing protocol
+                                if (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $url) && !preg_match('/^(shooting|audio|video|export|vocal)\//i', $url)) {
+                                    $url = 'https://' . $url;
+                                } else {
+                                    // Case 2: Likely local path
+                                    $url = url('storage/' . ltrim($url, '/'));
+                                }
+                            }
+                            
+                            if (is_array($link)) {
+                                $link['file_link'] = $url;
+                                return $link;
+                            }
+                            
+                            return ['file_link' => $url];
+                        }, $produksiWork->shooting_file_links ?? [])
                     ]
                 ],
                 'message' => 'Run sheet retrieved successfully'
@@ -764,7 +1008,7 @@ class EditorController extends Controller
             $validator = Validator::make($request->all(), [
                 'file_links' => 'required|array|min:1',
                 'file_links.*.url' => 'required|url',
-                'file_links.*.file_name' => 'required|string|max:255',
+                'file_links.*.file_name' => 'nullable|string|max:255',
                 'file_links.*.file_size' => 'nullable|integer',
                 'file_links.*.mime_type' => 'nullable|string|max:100',
                 'file_links.*.type' => 'nullable|string|max:50' // video, audio, etc
@@ -904,9 +1148,9 @@ class EditorController extends Controller
                 ], 400);
             }
 
-            // Update work
+            // Update work - Set status to 'submitted' (Waiting for QC/Producer approval)
             $work->update([
-                'status' => 'completed',
+                'status' => 'submitted',
                 'editing_notes' => ($work->editing_notes ? $work->editing_notes . "\n\n" : '') .
                     "[Submitted - " . now()->format('Y-m-d H:i:s') . "]\n" .
                     ($request->submission_notes ?? '')
@@ -1034,7 +1278,43 @@ class EditorController extends Controller
                 Notification::insert($promosiNotifications);
             }
 
-            // Auto-create QualityControlWork untuk QC
+            // ✨ NEW: Auto-create BroadcastingWork for Distribution Manager (Editor Approval) ✨
+            // Per user request: Distribution Manager performs QC for main episode editing.
+            $existingBroadcastingWork = \App\Models\BroadcastingWork::where('episode_id', $work->episode_id)
+                ->where('work_type', 'main_episode')
+                ->first();
+
+            $dmUsers = \App\Models\User::whereIn('role', ['Distribution Manager', 'Manager Broadcasting'])->get();
+            $broadcastingUsers = \App\Models\User::where('role', 'Broadcasting')->get();
+            
+            // We need a creator for the BroadcastingWork. If no broadcasting user exists, use a DM or system user.
+            $assignToId = $broadcastingUsers->first()?->id ?? ($dmUsers->first()?->id ?? $user->id);
+
+            if (!$existingBroadcastingWork) {
+                \App\Models\BroadcastingWork::create([
+                    'episode_id' => $work->episode_id,
+                    'editor_work_id' => $work->id,
+                    'work_type' => 'main_episode',
+                    'title' => "Broadcasting Work - Episode {$episode->episode_number}",
+                    'description' => "File dari Editor untuk QC & Approval. Menunggu persetujuan Distribution Manager.",
+                    'video_file_path' => $work->file_path,
+                    'file_link' => $work->file_link,
+                    'status' => 'pending_approval',
+                    'created_by' => $assignToId
+                ]);
+            } else {
+                // Update existing work with new files if it's still in approval or pending state
+                if (in_array($existingBroadcastingWork->status, ['pending_approval', 'pending', 'preparing', 'rejected'])) {
+                    $existingBroadcastingWork->update([
+                        'editor_work_id' => $work->id,
+                        'video_file_path' => $work->file_path,
+                        'file_link' => $work->file_link,
+                        'status' => 'pending_approval' // Reset to pending approval if updated
+                    ]);
+                }
+            }
+
+            // Auto-create QualityControlWork untuk QC (Optional / Legacy)
             $existingQCWork = \App\Models\QualityControlWork::where('episode_id', $work->episode_id)
                 ->where('qc_type', 'main_episode')
                 ->first();
@@ -1228,10 +1508,20 @@ class EditorController extends Controller
                         'title' => $episode->title
                     ],
                     'approved_audio_files' => $approvedAudio->map(function($audio) {
+                        $audioUrl = $audio->final_file_link;
+                        if ($audioUrl) {
+                            if (strpos($audioUrl, 'http') !== 0) {
+                                $audioUrl = 'https://' . $audioUrl;
+                            }
+                        } elseif ($audio->final_file_path) {
+                            $audioUrl = url('storage/' . $audio->final_file_path);
+                        }
+
                         return [
                             'id' => $audio->id,
-                            'final_file_path' => $audio->final_file_path, // Backward compatibility
-                            'final_file_link' => $audio->final_file_link, // New: External storage link
+                            'type' => 'editing_mix',
+                            'final_file_path' => $audio->final_file_path,
+                            'final_file_link' => $audioUrl,
                             'editing_notes' => $audio->editing_notes,
                             'submission_notes' => $audio->submission_notes,
                             'approved_at' => $audio->approved_at,
@@ -1240,7 +1530,34 @@ class EditorController extends Controller
                                 'name' => $audio->soundEngineer->name
                             ] : null
                         ];
-                    })
+                    })->toArray(),
+                    'approved_vocal_files' => SoundEngineerRecording::where('episode_id', $episodeId)
+                        ->where('status', 'reviewed')
+                        ->with(['createdBy'])
+                        ->get()
+                        ->map(function($vocal) {
+                            $vocalUrl = $vocal->file_link;
+                            if ($vocalUrl) {
+                                if (strpos($vocalUrl, 'http') !== 0) {
+                                    $vocalUrl = 'https://' . $vocalUrl;
+                                }
+                            } elseif ($vocal->file_path) {
+                                $vocalUrl = url('storage/' . $vocal->file_path);
+                            }
+
+                            return [
+                                'id' => $vocal->id,
+                                'type' => 'vocal_recording',
+                                'file_path' => $vocal->file_path,
+                                'file_link' => $vocalUrl,
+                                'review_notes' => $vocal->review_notes,
+                                'approved_at' => $vocal->reviewed_at,
+                                'sound_engineer' => $vocal->createdBy ? [
+                                    'id' => $vocal->createdBy->id,
+                                    'name' => $vocal->createdBy->name
+                                ] : null
+                            ];
+                        })->toArray()
                 ],
                 'message' => 'Approved audio files retrieved successfully'
             ]);
@@ -1249,6 +1566,59 @@ class EditorController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error retrieving approved audio files: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get editor statistics
+     * GET /api/live-tv/editor/works/statistics
+     */
+    public function statistics(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || $user->role !== 'Editor') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $query = EditorWork::where('created_by', $user->id);
+
+            // Total works for this editor
+            $totalWorks = (clone $query)->count();
+            
+            // Draft/Pending/Rejected works (Needs revision or initial)
+            $draftWorks = (clone $query)->whereIn('status', ['draft', 'pending', 'rejected'])->count();
+            
+            // In Progress/Editing works
+            $editingWorks = (clone $query)->whereIn('status', ['editing', 'in_progress'])->count();
+            
+            // Submitted works (waiting for QC/Producer)
+            $submittedWorks = (clone $query)->where('status', 'submitted')->count();
+
+            // Approved/Completed works (Final)
+            $approvedWorks = (clone $query)->whereIn('status', ['approved', 'completed'])->count();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total_works' => $totalWorks,
+                    'draft_works' => $draftWorks,
+                    'editing_works' => $editingWorks,
+                    'submitted_works' => $submittedWorks,
+                    'approved_works' => $approvedWorks
+                ],
+                'message' => 'Editor statistics retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving statistics: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -81,6 +81,14 @@ class SoundEngineerRecording extends Model
     }
 
     /**
+     * Relationship dengan Equipment Requests (via Episode)
+     */
+    public function equipmentRequests()
+    {
+        return $this->hasMany(ProductionEquipment::class, 'episode_id', 'episode_id');
+    }
+
+    /**
      * Scope untuk recording yang sudah direview
      */
     public function scopeReviewed($query)

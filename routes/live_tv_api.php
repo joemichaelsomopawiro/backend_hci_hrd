@@ -36,6 +36,7 @@ use App\Http\Controllers\Api\PublicDashboardController;
 use App\Http\Controllers\Api\ProgramProposalController;
 use App\Http\Controllers\Api\ManagerProgramController;
 use App\Http\Controllers\Api\ProgramMusicScheduleController;
+use App\Http\Controllers\Api\TaskReassignmentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -188,6 +189,7 @@ Route::prefix('episodes')->middleware('auth:sanctum')->group(function () {
     // Episode Workflow Routes
     Route::post('/{id}/workflow-state', [EpisodeController::class, 'updateWorkflowState']);
     Route::post('/{id}/complete', [EpisodeController::class, 'complete']);
+    Route::post('/{id}/handle-revision', [EpisodeController::class, 'handleRevision']);
     
     // Episode Data Routes
     Route::get('/{id}/workflow-history', [EpisodeController::class, 'workflowHistory']);
@@ -196,10 +198,22 @@ Route::prefix('episodes')->middleware('auth:sanctum')->group(function () {
     Route::get('/{id}/monitor-workflow', [EpisodeController::class, 'monitorWorkflow']);
     Route::get('/{id}/deadlines', [EpisodeController::class, 'deadlines']);
     Route::get('/{id}/media-files', [EpisodeController::class, 'mediaFiles']);
+    Route::get('/{id}/reassignable-tasks', [EpisodeController::class, 'reassignableTasks'])->middleware('throttle:60,1');
     
     // Episode Filter Routes
     Route::get('/workflow-state/{state}', [EpisodeController::class, 'byWorkflowState']);
     Route::get('/user/{userId}/tasks', [EpisodeController::class, 'userTasks']);
+});
+
+// Task Reassignment Routes (for Program Manager & Producer)
+Route::prefix('task-reassignment')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    Route::post('/reassign', [TaskReassignmentController::class, 'reassignTask'])->middleware('throttle:sensitive');
+    Route::get('/history/{taskType}/{taskId}', [TaskReassignmentController::class, 'getReassignmentHistory'])->middleware('throttle:60,1');
+});
+
+// Task Helper Routes (available users for a given task type)
+Route::prefix('tasks')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    Route::get('/available-users', [TaskReassignmentController::class, 'getAvailableUsers'])->middleware('throttle:60,1');
 });
 
 // Deadline Management Routes
@@ -385,16 +399,14 @@ Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->g
     Route::get('/arrangements/{id}/file-auth', [MusicArrangerController::class, 'downloadFile'])
         ->middleware(['auth:sanctum', 'throttle:60,1']);
 });
-
-// Role-Specific Routes
-Route::prefix('roles')->group(function () {
+    // Role-Specific Routes (Removed 'roles' prefix group for frontend compatibility)
     // Signed URL route untuk file download (tidak perlu auth, hanya perlu valid signature)
     Route::prefix('music-arranger')->group(function () {
         Route::get('/arrangements/{id}/file', [MusicArrangerController::class, 'downloadFile'])
             ->name('music-arrangement.file')
             ->middleware(['signed', 'throttle:60,1']);
     });
-    
+
     // Music Arranger Routes
     Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
         Route::get('/arrangements', [MusicArrangerController::class, 'index'])->middleware('throttle:60,1'); // 60 requests per minute
@@ -486,9 +498,11 @@ Route::prefix('roles')->group(function () {
     Route::prefix('editor')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
         Route::get('/works', [EditorController::class, 'index'])->middleware('throttle:60,1');
         Route::post('/works', [EditorController::class, 'store'])->middleware('throttle:sensitive');
+        Route::get('/works/statistics', [EditorController::class, 'statistics'])->middleware('throttle:60,1');
         Route::get('/works/{id}', [EditorController::class, 'show'])->middleware('throttle:60,1');
         Route::post('/works/{id}/accept-work', [EditorController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima pekerjaan
         Route::post('/works/{id}/check-file-completeness', [EditorController::class, 'checkFileCompleteness'])->middleware('throttle:sensitive'); // Cek kelengkapan file
+        Route::post('/works/{id}/confirm-file-completeness', [EditorController::class, 'confirmFileCompleteness'])->middleware('throttle:sensitive'); // Konfirmasi file lengkap manual
         Route::post('/works/{id}/report-missing-files', [EditorController::class, 'reportMissingFiles'])->middleware('throttle:sensitive'); // Buat catatan file kurang
         Route::post('/works/{id}/process-work', [EditorController::class, 'processWork'])->middleware('throttle:sensitive'); // Proses pekerjaan
         Route::put('/works/{id}', [EditorController::class, 'update'])->middleware('throttle:sensitive'); // Update work (upload edited files)
@@ -615,6 +629,7 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::get('/social-media', [PromosiController::class, 'getSocialMediaPosts'])->middleware('throttle:60,1');
         Route::post('/social-media/{id}/submit-proof', [PromosiController::class, 'submitSocialProof'])->middleware('throttle:sensitive');
         Route::get('/statistics', [PromosiController::class, 'statistics'])->middleware('throttle:60,1');
+        Route::get('/works/{id}/history', [PromosiController::class, 'getHistory'])->middleware('throttle:60,1'); // Riwayat aktivitas
         
         // New workflow methods (setelah QC/Broadcasting)
         Route::post('/episodes/{id}/receive-links', [PromosiController::class, 'receiveLinks'])->middleware('throttle:sensitive'); // Terima link YouTube dan website
@@ -642,6 +657,8 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::post('/works/{id}/upload-shooting-results', [ProduksiController::class, 'uploadShootingResults'])->middleware('throttle:uploads'); // Upload hasil syuting ke storage
         Route::post('/works/{id}/input-file-links', [ProduksiController::class, 'inputFileLinks'])->middleware('throttle:sensitive'); // Input link file di sistem
         Route::post('/works/{id}/complete-work', [ProduksiController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
+        Route::post('/works/{id}/return-equipment', [ProduksiController::class, 'returnEquipment'])->middleware('throttle:sensitive'); // Kembalikan alat ke Art & Set Properti
+        Route::get('/equipment/available', [ProduksiController::class, 'getAvailableEquipment'])->middleware('throttle:60,1'); // Cek stok alat
         // Equipment Return Notification
         Route::post('/equipment/{id}/notify-return', [ProductionEquipmentController::class, 'notifyReturn'])->middleware('throttle:sensitive');
         Route::get('/qc-results/{episode_id}', [ProduksiController::class, 'getQCResults'])->middleware('throttle:60,1'); // Baca hasil QC
@@ -657,6 +674,7 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::post('/schedules/{id}/reject', [ManagerBroadcastingController::class, 'rejectSchedule'])->middleware('throttle:sensitive');
         Route::post('/schedules/{id}/revise', [ManagerBroadcastingController::class, 'reviseSchedule'])->middleware('throttle:sensitive');
         Route::post('/works/{id}/approve', [ManagerBroadcastingController::class, 'approveWork'])->middleware('throttle:sensitive');
+        Route::post('/works/{id}/reject', [ManagerBroadcastingController::class, 'rejectWork'])->middleware('throttle:sensitive');
         Route::get('/schedule-options', [ManagerBroadcastingController::class, 'getScheduleOptions'])->middleware('throttle:60,1');
         Route::post('/schedule-options/{id}/approve', [ManagerBroadcastingController::class, 'approveScheduleOption'])->middleware('throttle:sensitive');
         Route::post('/schedule-options/{id}/reject', [ManagerBroadcastingController::class, 'rejectScheduleOption'])->middleware('throttle:sensitive');
@@ -733,7 +751,6 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::get('/statistics', [DistributionManagerController::class, 'statistics'])->middleware('throttle:60,1');
         Route::get('/dashboard', [DistributionManagerController::class, 'dashboard'])->middleware('throttle:60,1');
     });
-});
 
 // Program Music Schedule Routes (Accessible by ALL authenticated users)
 // MOVED OUTSIDE 'roles' prefix group
@@ -768,6 +785,10 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     // Song Proposal History
     Route::get('/song-proposals/history', [ProducerController::class, 'getSongProposalHistory'])->middleware('throttle:60,1');
     
+    // Recording & Editing History
+    Route::get('/recordings/history', [ProducerController::class, 'getSoundEngineerRecordingHistory'])->middleware('throttle:60,1');
+    Route::get('/editing/history', [ProducerController::class, 'getSoundEngineerEditingHistory'])->middleware('throttle:60,1');
+    
     // Edit arrangement song/singer sebelum approve
     Route::put('/arrangements/{arrangementId}/edit-song-singer', [ProducerController::class, 'editArrangementSongSinger']);
     
@@ -800,6 +821,7 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     Route::put('/team-assignments/{assignmentId}/replace-team', [ProducerController::class, 'replaceTeamMembers']); // Ganti tim syuting secara dadakan
     Route::get('/episodes/{episodeId}/team-assignments', [ProducerController::class, 'getEpisodeTeamAssignments'])->middleware('throttle:60,1'); // Lihat team assignments per episode
     Route::get('/programs/{programId}/team-assignments', [ProducerController::class, 'getProgramTeamAssignments'])->middleware('throttle:60,1'); // Lihat team assignments per program (untuk reuse)
+    Route::get('/all-team-assignments', [ProducerController::class, 'getAllProducerAssignments'])->middleware('throttle:60,1'); // Lihat semua team assignments producer
     Route::post('/episodes/{episodeId}/copy-team-assignment', [ProducerController::class, 'copyTeamAssignment'])->middleware('throttle:sensitive'); // Copy/reuse team assignment dari episode lain
     Route::get('/editor-missing-files', [ProducerController::class, 'getEditorMissingFiles'])->middleware('throttle:60,1'); // Get Editor missing files reports
     Route::post('/request-produksi-action', [ProducerController::class, 'requestProduksiAction'])->middleware('throttle:sensitive'); // Request Produksi action (reshoot/complete files/fix)
