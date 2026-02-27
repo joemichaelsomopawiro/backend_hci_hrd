@@ -8,6 +8,8 @@ use App\Models\EquipmentLoan;
 use App\Models\EquipmentLoanHistory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Auth;
+use App\Constants\Role;
 
 class PrArtController extends Controller
 {
@@ -17,6 +19,11 @@ class PrArtController extends Controller
      */
     public function getInventory(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $query = InventoryItem::query()->with('createdBy');
 
         // Filter by status if provided
@@ -38,6 +45,11 @@ class PrArtController extends Controller
      */
     public function createInventoryItem(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -71,6 +83,11 @@ class PrArtController extends Controller
      */
     public function updateInventoryItem(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $item = InventoryItem::findOrFail($id);
 
         $request->validate([
@@ -110,6 +127,11 @@ class PrArtController extends Controller
      */
     public function deleteInventoryItem($id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $item = InventoryItem::findOrFail($id);
 
         // Check if item is currently borrowed
@@ -144,6 +166,11 @@ class PrArtController extends Controller
      */
     public function getLoans(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $query = EquipmentLoan::with([
             'loanItems.inventoryItem',
             'borrower',
@@ -190,6 +217,11 @@ class PrArtController extends Controller
      */
     public function approveLoan(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $loan = EquipmentLoan::findOrFail($id);
 
         if ($loan->status !== 'pending') {
@@ -201,7 +233,7 @@ class PrArtController extends Controller
 
         $loan->update([
             'status' => 'approved',
-            'approver_id' => auth()->id(),
+            'approver_id' => $user->id,
             'approval_notes' => $request->input('approval_notes'),
         ]);
 
@@ -218,6 +250,11 @@ class PrArtController extends Controller
      */
     public function rejectLoan(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $loan = EquipmentLoan::findOrFail($id);
 
         if ($loan->status !== 'pending') {
@@ -314,6 +351,11 @@ class PrArtController extends Controller
      */
     public function getLoanHistory(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $query = EquipmentLoanHistory::with([
             'loan.loanItems.inventoryItem',
             'loan.produksiWork.episode.program',

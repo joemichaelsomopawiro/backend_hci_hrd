@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\PrTalent;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
+use App\Constants\Role;
 
 class PrTalentController extends Controller
 {
@@ -15,6 +17,11 @@ class PrTalentController extends Controller
      */
     public function index(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PRODUCTION, Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $query = PrTalent::query();
 
         if ($request->has('search')) {
@@ -44,6 +51,11 @@ class PrTalentController extends Controller
      */
     public function store(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PRODUCTION, Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'type' => 'required|in:host,guest,other',

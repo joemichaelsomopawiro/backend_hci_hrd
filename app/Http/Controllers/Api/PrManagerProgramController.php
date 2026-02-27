@@ -218,7 +218,7 @@ class PrManagerProgramController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'concept' => 'required|string',
+                'concept' => 'nullable|string',
                 'objectives' => 'nullable|string',
                 'target_audience' => 'nullable|string',
                 'content_outline' => 'nullable|string',
@@ -269,7 +269,7 @@ class PrManagerProgramController extends Controller
             $concept = PrProgramConcept::findOrFail($conceptId);
 
             $validator = Validator::make($request->all(), [
-                'concept' => 'required|string',
+                'concept' => 'nullable|string',
                 'objectives' => 'nullable|string',
                 'target_audience' => 'nullable|string',
                 'content_outline' => 'nullable|string',

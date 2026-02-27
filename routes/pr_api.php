@@ -11,6 +11,11 @@ use App\Http\Controllers\Api\Pr\PrBroadcastingController;
 use App\Http\Controllers\Api\PrProducerController;
 use App\Http\Controllers\Api\PrManagerProgramController;
 use App\Http\Controllers\Api\Pr\PrDistribusiController;
+use App\Http\Controllers\Api\Pr\PrDashboardController;
+use App\Http\Controllers\Api\Pr\PrNotificationController;
+use App\Http\Controllers\Api\Pr\PrArtController;
+use App\Http\Controllers\Api\Pr\PrEditorPromosiController;
+use App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,15 +30,20 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
 
     // ==================== CREATIVE ROUTES ====================
     // Creative Dashboard Highlights
-    Route::get('/creative/highlights', [\App\Http\Controllers\Api\Pr\PrCreativeController::class, 'getHighlights']);
+    Route::get('/creative/highlights', [PrCreativeController::class, 'getHighlights']);
 
     // ==================== NOTIFICATION ROUTES ====================
     Route::prefix('notifications')->group(function () {
-        Route::get('/unread-count', [\App\Http\Controllers\Api\Pr\PrNotificationController::class, 'unreadCount']);
-        Route::get('/', [\App\Http\Controllers\Api\Pr\PrNotificationController::class, 'index']);
-        Route::put('/{id}/read', [\App\Http\Controllers\Api\Pr\PrNotificationController::class, 'markAsRead']);
-        Route::put('/mark-all-read', [\App\Http\Controllers\Api\Pr\PrNotificationController::class, 'markAllAsRead']);
+        Route::get('/unread-count', [PrNotificationController::class, 'unreadCount']);
+        Route::get('/', [PrNotificationController::class, 'index']);
+        Route::put('/{id}/read', [PrNotificationController::class, 'markAsRead']);
+        Route::put('/mark-all-read', [PrNotificationController::class, 'markAllAsRead']);
     });
+
+    // ==================== DASHBOARD UTAMA ROUTES ====================
+    Route::get('/dashboard/schedules', [PrDashboardController::class, 'getSchedules']);
+    Route::post('/dashboard/calendar-events', [PrDashboardController::class, 'saveCalendarEvent']);
+    Route::delete('/dashboard/calendar-events/{id}', [PrDashboardController::class, 'deleteCalendarEvent']);
 
     Route::prefix('creative')->group(function () {
         Route::get('/episodes/available', [PrCreativeController::class, 'getAvailableEpisodes']);
@@ -55,6 +65,7 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/creative-works/{id}/approve-budget', [PrProducerController::class, 'approveCreativeWorkBudget']);
         Route::post('/creative-works/{id}/reject', [PrProducerController::class, 'rejectCreativeWork']);
         Route::post('/episodes/{id}/request-budget-approval', [PrProducerController::class, 'requestBudgetApproval']);
+        Route::get('/production-schedules', [PrProducerController::class, 'listProductionSchedules']);
         Route::post('/production-schedules', [PrProducerController::class, 'createProductionSchedule']);
         Route::put('/production-schedules/{id}', [PrProducerController::class, 'updateProductionSchedule']);
     });
@@ -72,19 +83,19 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
 
     // ==================== ART & SET PROPERTY ROUTES ====================
     Route::prefix('art')->group(function () {
-        Route::get('/inventory', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'getInventory']);
-        Route::post('/inventory', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'createInventoryItem']);
-        Route::put('/inventory/{id}', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'updateInventoryItem']);
-        Route::delete('/inventory/{id}', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'deleteInventoryItem']);
+        Route::get('/inventory', [PrArtController::class, 'getInventory']);
+        Route::post('/inventory', [PrArtController::class, 'createInventoryItem']);
+        Route::put('/inventory/{id}', [PrArtController::class, 'updateInventoryItem']);
+        Route::delete('/inventory/{id}', [PrArtController::class, 'deleteInventoryItem']);
 
-        Route::get('/loans', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'getLoans']);
-        Route::post('/loans/{id}/approve', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'approveLoan']);
-        Route::post('/loans/{id}/reject', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'rejectLoan']);
-        Route::post('/loans/{id}/borrow', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'markAsBorrowed']);
-        Route::post('/loans/{id}/return', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'markAsReturned']);
+        Route::get('/loans', [PrArtController::class, 'getLoans']);
+        Route::post('/loans/{id}/approve', [PrArtController::class, 'approveLoan']);
+        Route::post('/loans/{id}/reject', [PrArtController::class, 'rejectLoan']);
+        Route::post('/loans/{id}/borrow', [PrArtController::class, 'markAsBorrowed']);
+        Route::post('/loans/{id}/return', [PrArtController::class, 'markAsReturned']);
 
-        Route::get('/loan-history', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'getLoanHistory']);
-        Route::post('/loan-history/{id}/description', [\App\Http\Controllers\Api\Pr\PrArtController::class, 'updateHistoryDescription']);
+        Route::get('/loan-history', [PrArtController::class, 'getLoanHistory']);
+        Route::post('/loan-history/{id}/description', [PrArtController::class, 'updateHistoryDescription']);
     });
 
     // ==================== EDITOR ROUTES ====================
@@ -114,13 +125,13 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
 
     // ==================== EDITOR PROMOSI ROUTES ====================
     Route::prefix('editor-promosi')->group(function () {
-        Route::get('/works', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'index']);
-        Route::get('/works/{id}', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'show']);
-        Route::post('/works/{id}/accept-work', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'acceptWork']);
-        Route::put('/works/{id}', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'updateProgress']);
-        Route::post('/works/{id}/submit', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'submit']);
-        Route::post('/works/{id}/approve', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'approve']);
-        Route::get('/check-editor-status/{episodeId}', [\App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'checkEditorStatus']);
+        Route::get('/works', [PrEditorPromosiController::class, 'index']);
+        Route::get('/works/{id}', [PrEditorPromosiController::class, 'show']);
+        Route::post('/works/{id}/accept-work', [PrEditorPromosiController::class, 'acceptWork']);
+        Route::put('/works/{id}', [PrEditorPromosiController::class, 'updateProgress']);
+        Route::post('/works/{id}/submit', [PrEditorPromosiController::class, 'submit']);
+        Route::post('/works/{id}/approve', [PrEditorPromosiController::class, 'approve']);
+        Route::get('/check-editor-status/{episodeId}', [PrEditorPromosiController::class, 'checkEditorStatus']);
     });
 
     // ==================== DESIGN GRAFIS ROUTES ====================
@@ -146,11 +157,11 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
 
     // ==================== MANAGER DISTRIBUSI QC ROUTES ====================
     Route::prefix('manager-distribusi-qc')->group(function () {
-        Route::get('/works', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'index']);
-        Route::get('/works/{id}', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'show']);
-        Route::post('/works/{id}/accept-work', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'acceptWork']);
-        Route::put('/works/{id}/checklist', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'updateChecklistItem']);
-        Route::post('/works/{id}/finish', [\App\Http\Controllers\Api\Pr\PrManagerDistribusiQcController::class, 'finish']);
+        Route::get('/works', [PrManagerDistribusiQcController::class, 'index']);
+        Route::get('/works/{id}', [PrManagerDistribusiQcController::class, 'show']);
+        Route::post('/works/{id}/accept-work', [PrManagerDistribusiQcController::class, 'acceptWork']);
+        Route::put('/works/{id}/checklist', [PrManagerDistribusiQcController::class, 'updateChecklistItem']);
+        Route::post('/works/{id}/finish', [PrManagerDistribusiQcController::class, 'finish']);
     });
 
     // ==================== BROADCASTING ROUTES ====================

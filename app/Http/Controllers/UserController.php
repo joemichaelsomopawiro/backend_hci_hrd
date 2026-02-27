@@ -15,7 +15,7 @@ class UserController extends Controller
     {
         try {
             $query = $request->input('query');
-            
+
             if (empty($query) || strlen($query) < 2) {
                 return response()->json([
                     'success' => true,
@@ -26,7 +26,7 @@ class UserController extends Controller
             $users = User::where('name', 'like', "%{$query}%")
                 ->orWhere('email', 'like', "%{$query}%")
                 ->limit(20)
-                ->get(['id', 'name', 'email', 'role']);
+                ->get(['id', 'name', 'email', 'role', 'profile_picture']);
 
             return response()->json([
                 'success' => true,

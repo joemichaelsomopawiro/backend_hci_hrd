@@ -17,7 +17,7 @@ class PrQualityControlController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Quality Control') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -63,7 +63,7 @@ class PrQualityControlController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Quality Control') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -88,7 +88,7 @@ class PrQualityControlController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Quality Control') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -136,7 +136,7 @@ class PrQualityControlController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || $user->role !== 'Quality Control') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -222,7 +222,7 @@ class PrQualityControlController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || $user->role !== 'Quality Control') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 

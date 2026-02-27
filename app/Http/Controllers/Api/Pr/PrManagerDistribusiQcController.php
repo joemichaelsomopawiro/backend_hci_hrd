@@ -18,7 +18,7 @@ class PrManagerDistribusiQcController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program'])) {
+            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Producer', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program', 'producer'])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -64,7 +64,7 @@ class PrManagerDistribusiQcController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program'])) {
+            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Producer', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program', 'producer'])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -89,7 +89,7 @@ class PrManagerDistribusiQcController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program'])) {
+            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Producer', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program', 'producer'])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -115,7 +115,7 @@ class PrManagerDistribusiQcController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program'])) {
+            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Producer', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program', 'producer'])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -171,7 +171,7 @@ class PrManagerDistribusiQcController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program'])) {
+            if (!$user || !in_array($user->role, ['Manager Distribusi', 'Manager Program', 'Producer', 'Super Admin', 'distribution_manager', 'Distribution Manager', 'manager_distribusi', 'program_manager', 'manager_program', 'producer'])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 

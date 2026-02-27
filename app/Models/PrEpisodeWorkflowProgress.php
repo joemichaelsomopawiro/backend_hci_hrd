@@ -21,13 +21,15 @@ class PrEpisodeWorkflowProgress extends Model
         'status',
         'started_at',
         'completed_at',
+        'deadline_at',
         'notes'
     ];
 
     protected $casts = [
         'workflow_step' => 'integer',
         'started_at' => 'datetime',
-        'completed_at' => 'datetime'
+        'completed_at' => 'datetime',
+        'deadline_at' => 'datetime'
     ];
 
     /**

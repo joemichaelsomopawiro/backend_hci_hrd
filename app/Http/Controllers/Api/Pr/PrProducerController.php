@@ -8,6 +8,7 @@ use App\Models\PrEpisode;
 use App\Models\PrProduksiWork;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use App\Constants\Role;
 
 class PrProducerController extends Controller
 {
@@ -18,11 +19,11 @@ class PrProducerController extends Controller
     {
         $user = Auth::user();
 
-        if (!$user) {
+        if (!$user || !Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized'
-            ], 401);
+                'message' => 'Unauthorized access.'
+            ], 403);
         }
 
         $revisionNotes = PrEditorRevisionNote::with([
@@ -48,11 +49,11 @@ class PrProducerController extends Controller
     {
         $user = Auth::user();
 
-        if (!$user) {
+        if (!$user || !Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized'
-            ], 401);
+                'message' => 'Unauthorized access.'
+            ], 403);
         }
 
         $revisionNote = PrEditorRevisionNote::with(['episode', 'editorWork'])->find($id);

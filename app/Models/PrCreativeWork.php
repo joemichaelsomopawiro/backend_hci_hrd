@@ -38,6 +38,10 @@ class PrCreativeWork extends Model
         'special_budget_reason',
         'special_budget_approval_id',
         'special_budget_approved_at',
+        'budget_processed_by_ga',
+        'budget_processed_at',
+        'budget_processed_by',
+        'budget_processing_notes',
         'status',
         'created_by',
         'reviewed_by',
@@ -60,6 +64,8 @@ class PrCreativeWork extends Model
         'storyboard_approved_at' => 'datetime',
         'budget_approved_at' => 'datetime',
         'special_budget_approved_at' => 'datetime',
+        'budget_processed_by_ga' => 'boolean',
+        'budget_processed_at' => 'datetime',
         'reviewed_at' => 'datetime',
     ];
 
@@ -97,6 +103,11 @@ class PrCreativeWork extends Model
     public function specialBudgetApprover()
     {
         return $this->belongsTo(User::class, 'special_budget_approval_id');
+    }
+
+    public function budgetProcessedBy()
+    {
+        return $this->belongsTo(User::class, 'budget_processed_by');
     }
 
     // Helper Methods

@@ -19,14 +19,26 @@ class PrWorkflowService
     {
         DB::transaction(function () use ($episode) {
             $steps = WorkflowStep::getAllSteps();
+            $airDate = \Carbon\Carbon::parse($episode->air_date);
 
             foreach ($steps as $stepNumber => $stepInfo) {
+                // Determine deadline days based on role
+                // 9 days before: Kreatif (3), Produksi & Promosi (5), Promosi (10)
+                // 7 days before: Others
+                $daysBefore = 7;
+                if (in_array((int) $stepNumber, [3, 5, 10])) {
+                    $daysBefore = 9;
+                }
+
+                $deadlineAt = $airDate->copy()->subDays($daysBefore)->startOfDay();
+
                 PrEpisodeWorkflowProgress::create([
                     'episode_id' => $episode->id,
                     'workflow_step' => $stepNumber,
                     'step_name' => $stepInfo['name'],
                     'responsible_role' => $stepInfo['role'],
                     'status' => WorkflowStep::STATUS_PENDING,
+                    'deadline_at' => $deadlineAt
                 ]);
             }
 
@@ -572,6 +584,17 @@ class PrWorkflowService
                 'next_step' => $nextStepNumber,
                 'step_name' => $nextStep->step_name
             ]);
+
+            // Notify the role assignees that this step is ready for them
+            try {
+                app(\App\Services\PrNotificationService::class)->notifyWorkflowStepReady($episodeId, $nextStepNumber);
+            } catch (\Exception $e) {
+                Log::error('Failed to send workflow step ready notification', [
+                    'episode_id' => $episodeId,
+                    'step_number' => $nextStepNumber,
+                    'error' => $e->getMessage()
+                ]);
+            }
         }
     }
 

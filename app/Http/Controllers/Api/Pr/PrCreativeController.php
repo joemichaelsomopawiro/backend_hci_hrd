@@ -7,6 +7,7 @@ use App\Models\PrCreativeWork;
 use App\Models\PrEpisode;
 use App\Models\Notification;
 use App\Models\PrEpisodeWorkflowProgress;
+use App\Constants\Role;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -32,7 +33,7 @@ class PrCreativeController extends Controller
             $user = Auth::user();
 
             // Relaxed check for 'kreatif' or 'Creative'
-            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+            if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -80,7 +81,7 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+            if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -170,7 +171,7 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+            if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -249,7 +250,7 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+            if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -387,7 +388,7 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+            if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

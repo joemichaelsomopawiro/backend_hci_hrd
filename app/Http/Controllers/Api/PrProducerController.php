@@ -49,7 +49,7 @@ class PrProducerController extends Controller
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -58,15 +58,20 @@ class PrProducerController extends Controller
 
             $filterByRole = $request->query('filter_by_role');
 
-            // Start query for programs assigned to this Producer (either via producer_id OR via team member role)
-            $query = PrProgram::where(function ($q) use ($user) {
-                $q->where('producer_id', $user->id)
-                    ->orWhereHas('crews', function ($subQ) use ($user) {
-                        $subQ->where('user_id', $user->id)
-                            ->where('role', 'Producer');
-                    });
-            })
-                ->with(['managerProgram', 'producer', 'managerDistribusi', 'episodes.creativeWork']);
+            // Start query for programs
+            $query = PrProgram::query();
+
+            // Only filter by assignment if user is Producer (PM sees all)
+            if (Role::normalize($user->role) === Role::PRODUCER) {
+                $query->where(function ($q) use ($user) {
+                    $q->where('producer_id', $user->id)
+                        ->orWhereHas('crews', function ($subQ) use ($user) {
+                            $subQ->where('user_id', $user->id)
+                                ->where('role', 'Producer');
+                        });
+                });
+            }
+            $query->with(['managerProgram', 'producer', 'managerDistribusi', 'episodes.creativeWork']);
 
             // Role-based filtering
             if ($filterByRole && $filterByRole !== 'all') {
@@ -122,7 +127,7 @@ class PrProducerController extends Controller
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -131,14 +136,19 @@ class PrProducerController extends Controller
 
             $filterByRole = $request->query('filter_by_role');
 
-            // Base query for Producer's programs (either via producer_id OR via team member role)
-            $baseQuery = PrProgram::where(function ($q) use ($user) {
-                $q->where('producer_id', $user->id)
-                    ->orWhereHas('crews', function ($subQ) use ($user) {
-                        $subQ->where('user_id', $user->id)
-                            ->where('role', 'Producer');
-                    });
-            });
+            // Base query for Producer's programs
+            $baseQuery = PrProgram::query();
+
+            // Only filter by assignment if user is Producer (PM sees all)
+            if (Role::normalize($user->role) === Role::PRODUCER) {
+                $baseQuery->where(function ($q) use ($user) {
+                    $q->where('producer_id', $user->id)
+                        ->orWhereHas('crews', function ($subQ) use ($user) {
+                            $subQ->where('user_id', $user->id)
+                                ->where('role', 'Producer');
+                        });
+                });
+            }
 
             // Role-based filtering
             if ($filterByRole && $filterByRole !== 'all') {
@@ -155,11 +165,13 @@ class PrProducerController extends Controller
                 'unread_programs_count' => (clone $baseQuery)->unreadByProducer()->count(),
                 'total_programs_count' => (clone $baseQuery)->count(),
                 'review_episodes_count' => \App\Models\PrEpisode::whereHas('program', function ($q) use ($user) {
-                    $q->where('producer_id', $user->id)
-                        ->orWhereHas('crews', function ($subQ) use ($user) {
-                            $subQ->where('user_id', $user->id)
-                                ->where('role', 'Producer');
-                        });
+                    if (Role::normalize($user->role) === Role::PRODUCER) {
+                        $q->where('producer_id', $user->id)
+                            ->orWhereHas('crews', function ($subQ) use ($user) {
+                                $subQ->where('user_id', $user->id)
+                                    ->where('role', 'Producer');
+                            });
+                    }
                 })->whereHas('creativeWork', function ($q) {
                     $q->where('status', 'submitted');
                 })->count(),
@@ -191,7 +203,7 @@ class PrProducerController extends Controller
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -207,7 +219,7 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if (!$isAssigned) {
+            if (!$isAssigned && Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Program not assigned to you.'
@@ -248,7 +260,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $userRole = $user->role;
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -272,8 +284,8 @@ class PrProducerController extends Controller
                 // For now, just pass the filter information in response
             }
 
-            $concepts = $this->conceptService->getConceptsForApproval($user->id)
-                ->paginate($request->get('per_page', 15));
+            $query = $this->conceptService->getConceptsForApproval(Role::normalize($user->role) === Role::PRODUCER ? $user->id : null);
+            $concepts = $query->paginate($request->get('per_page', 15));
 
             return response()->json([
                 'success' => true,
@@ -301,7 +313,7 @@ class PrProducerController extends Controller
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -335,7 +347,7 @@ class PrProducerController extends Controller
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -366,7 +378,7 @@ class PrProducerController extends Controller
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -405,6 +417,43 @@ class PrProducerController extends Controller
     }
 
     /**
+     * List all production schedules
+     */
+    public function listProductionSchedules(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $query = PrProductionSchedule::with(['program', 'episode.creativeWork']);
+
+            if (Role::normalize($user->role) === Role::PRODUCER) {
+                $query->whereHas('program', function ($q) use ($user) {
+                    $q->where('producer_id', $user->id)
+                        ->orWhereHas('crews', function ($subQ) use ($user) {
+                            $subQ->where('user_id', $user->id)
+                                ->where('role', 'Producer');
+                        });
+                });
+            }
+
+            $schedules = $query->orderBy('scheduled_date', 'asc')->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $schedules
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Create jadwal produksi
      */
     public function createProductionSchedule(Request $request, $programId): JsonResponse
@@ -420,7 +469,14 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            if (Role::normalize($user->role) === Role::PRODUCER && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -478,7 +534,14 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            if (Role::normalize($user->role) === Role::PRODUCER && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -534,7 +597,14 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            if (Role::normalize($user->role) === Role::PRODUCER && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -600,7 +670,14 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            if (Role::normalize($user->role) === Role::PRODUCER && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -653,7 +730,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $schedule = PrProductionSchedule::findOrFail($scheduleId);
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -668,7 +745,7 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if ($schedule->created_by !== $user->id && !$isAssigned) {
+            if (Role::normalize($user->role) === Role::PRODUCER && $schedule->created_by !== $user->id && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -719,7 +796,7 @@ class PrProducerController extends Controller
             $user = Auth::user();
             $schedule = PrProductionSchedule::findOrFail($scheduleId);
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -733,7 +810,7 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if ($schedule->created_by !== $user->id && !$isAssigned) {
+            if (Role::normalize($user->role) === Role::PRODUCER && $schedule->created_by !== $user->id && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -772,15 +849,17 @@ class PrProducerController extends Controller
                     ->exists();
 
             if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
-                // Allow PM to override/test, or strict Producer. 
-                // Given the previous issue with getEpisodeCrews, let's allow PM if they are assigned or just PM.
-                // But let's stick to the existing logic but fix the 500 first.
-                // Actually, if I am PM, I might want to test this.
-                // But strictly, only Producer requests budget. PM APPROVES it.
-                // So allowing PM to REQUEST is weird.
-                // I will keep strict check but maybe loosen if user complains.
-                // Wait, strict check was: if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned)
-                // I will keep it but add the reason saving.
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            if (Role::normalize($user->role) === Role::PRODUCER && !$isAssigned) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
             }
 
             // Re-implementing strictly to match existing but with Reason.
@@ -863,7 +942,14 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            if (Role::normalize($user->role) === Role::PRODUCER && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -924,7 +1010,14 @@ class PrProducerController extends Controller
                     ->where('role', 'Producer')
                     ->exists();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER || !$isAssigned) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            if (Role::normalize($user->role) === Role::PRODUCER && !$isAssigned) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized'
@@ -1192,7 +1285,7 @@ class PrProducerController extends Controller
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
@@ -1265,7 +1358,7 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
@@ -1313,7 +1406,7 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
@@ -1339,21 +1432,27 @@ class PrProducerController extends Controller
         try {
             $user = Auth::user();
 
-            if (Role::normalize($user->role) !== Role::PRODUCER) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
             // Get episodes from assigned programs where creative work is submitted
-            $episodes = PrEpisode::whereHas('program', function ($q) use ($user) {
-                $q->where('producer_id', $user->id)
-                    ->orWhereHas('crews', function ($subQ) use ($user) {
-                        $subQ->where('user_id', $user->id)
-                            ->where('role', 'Producer');
-                    });
+            $query = PrEpisode::query();
+
+            // Only filter by assignment if user is Producer (PM sees all)
+            if (Role::normalize($user->role) === Role::PRODUCER) {
+                $query->whereHas('program', function ($q) use ($user) {
+                    $q->where('producer_id', $user->id)
+                        ->orWhereHas('crews', function ($subQ) use ($user) {
+                            $subQ->where('user_id', $user->id)
+                                ->where('role', 'Producer');
+                        });
+                });
+            }
+
+            $episodes = $query->whereHas('creativeWork', function ($q) {
+                $q->where('status', 'submitted');
             })
-                ->whereHas('creativeWork', function ($q) {
-                    $q->where('status', 'submitted');
-                })
                 ->with(['program', 'creativeWork.createdBy'])
                 ->orderBy('created_at', 'desc')
                 ->get();

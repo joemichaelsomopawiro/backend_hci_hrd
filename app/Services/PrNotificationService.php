@@ -198,4 +198,80 @@ class PrNotificationService
             ]);
         }
     }
+
+    /**
+     * Notify role assignees that a workflow step is ready for them
+     */
+    public function notifyWorkflowStepReady(int $episodeId, int $stepNumber): void
+    {
+        $episode = PrEpisode::with(['program.crews.user', 'workflowProgress'])->find($episodeId);
+        if (!$episode)
+            return;
+
+        $program = $episode->program;
+        if (!$program)
+            return;
+
+        $stepProgress = $episode->workflowProgress->firstWhere('workflow_step', $stepNumber);
+        if (!$stepProgress)
+            return;
+
+        $stepName = $stepProgress->step_name;
+        $roles = \App\Constants\WorkflowStep::getRolesForStep($stepNumber);
+
+        $usersToNotify = collect();
+
+        foreach ($roles as $role) {
+            // Check if there are crew members assigned to this role in this program
+            $crewMembers = $program->crews->filter(function ($crew) use ($role) {
+                return trim($crew->role) === trim($role);
+            });
+
+            if ($crewMembers->isNotEmpty()) {
+                foreach ($crewMembers as $crew) {
+                    if ($crew->user) {
+                        $usersToNotify->push($crew->user);
+                    }
+                }
+            } else {
+                // If no specific crew member is assigned, check standard program manager flags
+                if ($role === 'Producer' && $program->producer) {
+                    $usersToNotify->push($program->producer);
+                } else if ($role === 'Manager Program' && $program->managerProgram) {
+                    $usersToNotify->push($program->managerProgram);
+                } else if ($role === 'Manager Distribusi' && $program->managerDistribusi) {
+                    $usersToNotify->push($program->managerDistribusi);
+                } else {
+                    // Fallback to all users with that role
+                    $users = User::where('role', $role)->get();
+                    foreach ($users as $user) {
+                        $usersToNotify->push($user);
+                    }
+                }
+            }
+        }
+
+        $usersToNotify = $usersToNotify->unique('id');
+
+        foreach ($usersToNotify as $user) {
+            Notification::create([
+                'user_id' => $user->id,
+                'type' => 'pr_workflow_step_ready',
+                'title' => "Tugas Baru: {$stepName}",
+                'message' => "Episode '{$episode->episode_number} - {$episode->title}' dari program '{$program->name}' sudah siap di tahap '{$stepName}'. Silakan cek pekerjaan Anda.",
+                'data' => [
+                    'episode_id' => $episode->id,
+                    'program_id' => $program->id,
+                    'step_number' => $stepNumber,
+                    'step_name' => $stepName,
+                    'program_name' => $program->name,
+                    'episode_title' => $episode->title
+                ],
+                'related_type' => 'PrEpisode',
+                'related_id' => $episode->id,
+                'priority' => 'normal',
+                'status' => 'unread'
+            ]);
+        }
+    }
 }

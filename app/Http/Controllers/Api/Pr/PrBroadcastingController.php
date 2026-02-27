@@ -17,7 +17,7 @@ class PrBroadcastingController extends Controller
         try {
             $user = Auth::user();
 
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program'];
+            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
             if (!$user || !in_array($user->role, $allowedRoles)) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access. Role: ' . ($user->role ?? 'none')], 403);
             }
@@ -61,7 +61,7 @@ class PrBroadcastingController extends Controller
         try {
             $user = Auth::user();
 
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program'];
+            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
             if (!$user || !in_array($user->role, $allowedRoles)) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
@@ -89,7 +89,7 @@ class PrBroadcastingController extends Controller
         try {
             $user = Auth::user();
 
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program'];
+            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
             if (!$user || !in_array($user->role, $allowedRoles)) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
@@ -121,7 +121,7 @@ class PrBroadcastingController extends Controller
         try {
             $user = Auth::user();
 
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program'];
+            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
             if (!$user || !in_array($user->role, $allowedRoles)) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
@@ -153,7 +153,7 @@ class PrBroadcastingController extends Controller
         try {
             $user = Auth::user();
 
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program'];
+            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
             if (!$user || !in_array($user->role, $allowedRoles)) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
@@ -196,7 +196,7 @@ class PrBroadcastingController extends Controller
         try {
             $user = Auth::user();
 
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program'];
+            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
             if (!$user || !in_array($user->role, $allowedRoles)) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }

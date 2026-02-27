@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Constants\Role;
 
 class PrEditorPromosiController extends Controller
 {
@@ -18,6 +19,11 @@ class PrEditorPromosiController extends Controller
      */
     public function index(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::EDITOR_PROMOTION, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $query = PrEditorPromosiWork::with([
             'episode.program',
             'editorWork',
@@ -74,6 +80,11 @@ class PrEditorPromosiController extends Controller
      */
     public function show($id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::EDITOR_PROMOTION, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $work = PrEditorPromosiWork::with([
             'episode.program',
             'editorWork',
@@ -99,8 +110,12 @@ class PrEditorPromosiController extends Controller
     public function acceptWork(Request $request, $id)
     {
         try {
-            $work = PrEditorPromosiWork::findOrFail($id);
             $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::EDITOR_PROMOTION, Role::PRODUCER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $work = PrEditorPromosiWork::findOrFail($id);
 
             // Check availability again
             $editorReady = $work->editorWork && in_array($work->editorWork->status, ['pending_qc', 'completed']);
@@ -137,6 +152,11 @@ class PrEditorPromosiController extends Controller
      */
     public function updateProgress(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::EDITOR_PROMOTION, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $request->validate([
             'bts_video_link' => 'nullable|string',
             'tv_ad_link' => 'nullable|string',
@@ -178,6 +198,11 @@ class PrEditorPromosiController extends Controller
     public function submit($id)
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::EDITOR_PROMOTION, Role::PRODUCER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             DB::beginTransaction();
 
             $work = PrEditorPromosiWork::findOrFail($id);
@@ -278,6 +303,11 @@ class PrEditorPromosiController extends Controller
     public function approve($id)
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::EDITOR_PROMOTION, Role::PRODUCER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             DB::beginTransaction();
 
             $work = PrEditorPromosiWork::findOrFail($id);

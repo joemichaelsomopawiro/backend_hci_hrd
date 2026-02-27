@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Constants\Role;
 
 class PrDesignGrafisController extends Controller
 {
@@ -17,6 +18,11 @@ class PrDesignGrafisController extends Controller
      */
     public function index(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $query = PrDesignGrafisWork::with([
             'episode.program',
             'productionWork',
@@ -79,6 +85,11 @@ class PrDesignGrafisController extends Controller
      */
     public function show($id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $work = PrDesignGrafisWork::with([
             'episode.program',
             'productionWork',
@@ -126,6 +137,11 @@ class PrDesignGrafisController extends Controller
     public function start($episodeId)
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             $episode = PrEpisode::findOrFail($episodeId);
 
             $work = PrDesignGrafisWork::where('pr_episode_id', $episodeId)->first();
@@ -162,6 +178,11 @@ class PrDesignGrafisController extends Controller
     public function acceptWork($id)
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             $work = PrDesignGrafisWork::findOrFail($id);
 
             if ($work->status !== 'pending') {
@@ -195,6 +216,11 @@ class PrDesignGrafisController extends Controller
      */
     public function updateProgress(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $request->validate([
             'youtube_thumbnail_link' => 'nullable|string',
             'bts_thumbnail_link' => 'nullable|string',
@@ -231,6 +257,11 @@ class PrDesignGrafisController extends Controller
     public function submit($id)
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             DB::beginTransaction();
 
             $work = PrDesignGrafisWork::findOrFail($id);

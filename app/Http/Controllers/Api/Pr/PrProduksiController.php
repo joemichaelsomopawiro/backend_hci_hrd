@@ -17,6 +17,7 @@ use App\Models\InventoryItem;
 use App\Models\EquipmentLoan;
 use App\Models\EquipmentLoanItem;
 use App\Models\PrWorkflowStep;
+use App\Constants\Role;
 
 class PrProduksiController extends Controller
 {
@@ -25,7 +26,7 @@ class PrProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -85,7 +86,7 @@ class PrProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -109,7 +110,7 @@ class PrProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -161,7 +162,7 @@ class PrProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -236,7 +237,7 @@ class PrProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -313,7 +314,7 @@ class PrProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -354,7 +355,7 @@ class PrProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Production') {
+            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 

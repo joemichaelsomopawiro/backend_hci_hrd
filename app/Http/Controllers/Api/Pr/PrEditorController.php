@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Constants\Role;
 
 class PrEditorController extends Controller
 {
@@ -18,6 +19,11 @@ class PrEditorController extends Controller
      */
     public function index(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $query = PrEditorWork::with([
             'episode.program',
             'episode.productionWork',
@@ -49,6 +55,11 @@ class PrEditorController extends Controller
      */
     public function show($id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $work = PrEditorWork::with([
             'episode.program',
             'episode.creativeWork',
@@ -70,6 +81,11 @@ class PrEditorController extends Controller
     public function start($episodeId)
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             $episode = PrEpisode::findOrFail($episodeId);
 
             $work = PrEditorWork::where('pr_episode_id', $episodeId)->first();
@@ -105,6 +121,11 @@ class PrEditorController extends Controller
      */
     public function updateFileCheck(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $request->validate([
             'files_complete' => 'required|boolean'
         ]);
@@ -135,6 +156,11 @@ class PrEditorController extends Controller
      */
     public function requestFiles(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $request->validate([
             'notes' => 'required|string'
         ]);
@@ -206,6 +232,11 @@ class PrEditorController extends Controller
      */
     public function update(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $request->validate([
             'work_type' => 'nullable|string',
             'file_complete' => 'nullable|boolean',

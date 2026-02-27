@@ -33,6 +33,11 @@ class PrEpisode extends Model
         'production_date' => 'date'
     ];
 
+    protected $appends = [
+        'workflow_completion',
+        'display_status'
+    ];
+
     /**
      * Relationship dengan Program
      */
@@ -211,5 +216,27 @@ class PrEpisode extends Model
     public function isManagerApproved(): bool
     {
         return $this->status === 'manager_approved';
+    }
+
+    /**
+     * Check if creative has been approved (Step 3 completed)
+     */
+    public function isCreativeApproved(): bool
+    {
+        return $this->workflowProgress()
+            ->where('workflow_step', 3)
+            ->where('status', 'completed')
+            ->exists();
+    }
+
+    /**
+     * Get display status text for episode
+     */
+    public function getDisplayStatusAttribute(): string
+    {
+        if ($this->isCreativeApproved()) {
+            return 'scheduled';
+        }
+        return 'not_scheduled';
     }
 }

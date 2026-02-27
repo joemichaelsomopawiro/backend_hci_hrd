@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
+use App\Constants\Role;
 
 class PrDistribusiController extends Controller
 {
@@ -23,6 +24,11 @@ class PrDistribusiController extends Controller
     public function viewProgramConcept($id): JsonResponse
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::MANAGER_DISTRIBUSI, Role::PROGRAM_MANAGER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             $program = PrProgram::with([
                 'concepts' => function ($q) {
                     $q->latest()->limit(1);
@@ -41,6 +47,11 @@ class PrDistribusiController extends Controller
     public function viewProductionSchedules($id): JsonResponse
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::MANAGER_DISTRIBUSI, Role::PROGRAM_MANAGER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             $schedules = \App\Models\PrProductionSchedule::where('pr_program_id', $id)
                 ->orderBy('date_start', 'asc')
                 ->get();
@@ -57,14 +68,13 @@ class PrDistribusiController extends Controller
     public function viewShootingSchedule($episodeId): JsonResponse
     {
         try {
-            // Assuming Production Work holds the shooting schedule context or linked data
-            // For now, returning mock or real data if linked
-            // This matches the service call structure
-            $episode = PrEpisode::findOrFail($episodeId);
-            // Implementation depends on where shooting schedule is stored specifically
-            // Potentially in PrProduksiWork or separate table
+            $episode = PrEpisode::with(['creativeWork', 'productionSchedules'])->findOrFail($episodeId);
 
-            return response()->json(['success' => true, 'data' => null, 'message' => 'Shooting schedule retrieved']);
+            return response()->json([
+                'success' => true,
+                'data' => $episode,
+                'message' => 'Shooting schedule retrieved'
+            ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
@@ -98,6 +108,11 @@ class PrDistribusiController extends Controller
     public function createDistributionSchedule(Request $request, $programId): JsonResponse
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::MANAGER_DISTRIBUSI, Role::PROGRAM_MANAGER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             $validator = Validator::make($request->all(), [
                 'pr_episode_id' => 'required|exists:pr_episodes,id',
                 'air_date' => 'required|date',
@@ -186,6 +201,11 @@ class PrDistribusiController extends Controller
     public function createDistributionReport(Request $request, $programId): JsonResponse
     {
         try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::MANAGER_DISTRIBUSI, Role::PROGRAM_MANAGER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
             $validator = Validator::make($request->all(), [
                 'report_period' => 'required',
                 'metrics' => 'required|array',

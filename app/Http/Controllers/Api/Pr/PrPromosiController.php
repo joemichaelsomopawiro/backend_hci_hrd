@@ -17,7 +17,7 @@ class PrPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Promotion') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -136,7 +136,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || $user->role !== 'Promotion') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -163,7 +163,7 @@ class PrPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Promotion') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -198,7 +198,7 @@ class PrPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || $user->role !== 'Promotion') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -260,7 +260,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || $user->role !== 'Promotion') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -330,7 +330,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || $user->role !== 'Promotion') {
+            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 

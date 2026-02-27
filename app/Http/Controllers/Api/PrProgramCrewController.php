@@ -42,8 +42,8 @@ class PrProgramCrewController extends Controller
 
         $crews = PrProgramCrew::with([
             'user' => function ($query) {
-                // Select only relevant user fields, avoiding profile_picture if it doesn't exist
-                $query->select('id', 'name', 'email', 'role');
+                // Select only relevant user fields, adding profile_picture for avatar display
+                $query->select('id', 'name', 'email', 'role', 'profile_picture');
             }
         ])
             ->where('program_id', $programId)
@@ -142,7 +142,7 @@ class PrProgramCrewController extends Controller
                 // Transform response to include user details
                 $crew->load([
                     'user' => function ($query) {
-                        $query->select('id', 'name', 'email', 'role');
+                        $query->select('id', 'name', 'email', 'role', 'profile_picture');
                     }
                 ]);
 
