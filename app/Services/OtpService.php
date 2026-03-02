@@ -4,15 +4,14 @@ namespace App\Services;
 
 use App\Models\Otp;
 use Carbon\Carbon;
-use Illuminate\Support\Str;
 
 class OtpService
 {
-    private $fontteService;
+    private WhatsappBotService $whatsappBotService;
 
-    public function __construct(FontteService $fontteService)
+    public function __construct(WhatsappBotService $whatsappBotService)
     {
-        $this->fontteService = $fontteService;
+        $this->whatsappBotService = $whatsappBotService;
     }
 
     public function generateOtp($phone, $type)
@@ -25,7 +24,7 @@ class OtpService
 
         // Generate OTP 6 digit
         $otpCode = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        
+
         // Simpan OTP ke database
         $otp = Otp::create([
             'phone' => $phone,
@@ -34,8 +33,8 @@ class OtpService
             'expires_at' => Carbon::now()->addMinutes(5),
         ]);
 
-        // Kirim OTP via Fonnte
-        $sent = $this->fontteService->sendOtp($phone, $otpCode);
+        // Kirim OTP via WhatsApp Bot
+        $sent = $this->whatsappBotService->sendOtp($phone, $otpCode);
 
         return [
             'success' => $sent,

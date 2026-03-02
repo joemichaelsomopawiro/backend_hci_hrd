@@ -63,9 +63,17 @@ class PrProduksiWork extends Model
         return $this->belongsTo(ShootingRunSheet::class, 'run_sheet_id');
     }
 
+    public function equipmentLoans()
+    {
+        return $this->belongsToMany(EquipmentLoan::class, 'equipment_loan_produksi_work', 'pr_produksi_work_id', 'equipment_loan_id')->withTimestamps();
+    }
+
+    /**
+     * Convenience accessor for the latest/active equipment loan for this work.
+     */
     public function equipmentLoan()
     {
-        return $this->hasOne(EquipmentLoan::class, 'pr_produksi_work_id');
+        return $this->equipmentLoans()->latest('equipment_loan_produksi_work.created_at');
     }
 
     public function editorWork()

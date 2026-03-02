@@ -26,7 +26,8 @@ class AddCorsHeaders
             'http://127.0.0.1:8080',
             'http://127.0.0.1:5173',
             'http://localhost:8000',
-            'http://127.0.0.1:8000'
+            'http://127.0.0.1:8000',
+            'https://hopemedia.id'
         ];
 
         if ($request->isMethod('OPTIONS')) {
@@ -40,7 +41,7 @@ class AddCorsHeaders
         }
 
         $response = $next($request);
-        
+
         // Add CORS headers to all responses
         $origin = $request->header('Origin');
         $allowedOrigins = [
@@ -51,7 +52,8 @@ class AddCorsHeaders
             'http://127.0.0.1:8080',
             'http://127.0.0.1:5173',
             'http://localhost:8000',
-            'http://127.0.0.1:8000'
+            'http://127.0.0.1:8000',
+            'https://hopemedia.id'
         ];
 
         if (in_array($origin, $allowedOrigins)) {
@@ -60,11 +62,11 @@ class AddCorsHeaders
             // Fallback for security, or set to a default if appropriate
             $response->headers->set('Access-Control-Allow-Origin', $allowedOrigins[0]);
         }
-        
+
         $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN');
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
-        
+
         return $response;
     }
 }

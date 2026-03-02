@@ -19,7 +19,7 @@ class EquipmentLoanController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = EquipmentLoan::with(['loanItems.inventoryItem', 'borrower', 'produksiWork.episode', 'produksiWork.program']);
+            $query = EquipmentLoan::with(['loanItems.inventoryItem', 'borrower', 'produksiWorks.episode', 'produksiWorks.episode.program']);
 
             if ($request->has('status')) {
                 $query->where('status', $request->status);
@@ -56,7 +56,6 @@ class EquipmentLoanController extends Controller
             DB::beginTransaction();
 
             $loan = EquipmentLoan::create([
-                'pr_produksi_work_id' => $request->pr_produksi_work_id,
                 'borrower_id' => $user->id,
                 'status' => 'pending',
                 'loan_date' => $request->loan_date,
@@ -78,7 +77,10 @@ class EquipmentLoanController extends Controller
                 ]);
             }
 
-            // Also update the Production Work status
+            // Link to produksi work via pivot
+            $loan->produksiWorks()->sync([$request->pr_produksi_work_id]);
+
+            // Update the Production Work status
             PrProduksiWork::where('id', $request->pr_produksi_work_id)->update(['status' => 'equipment_requested']);
 
             DB::commit();
@@ -96,7 +98,7 @@ class EquipmentLoanController extends Controller
     {
         try {
             $user = Auth::user();
-            $loan = EquipmentLoan::with('loanItems')->findOrFail($id);
+            $loan = EquipmentLoan::with(['loanItems', 'produksiWorks'])->findOrFail($id);
 
             if ($loan->status !== 'pending') {
                 return response()->json(['success' => false, 'message' => 'Loan is not pending approval'], 400);
@@ -111,30 +113,19 @@ class EquipmentLoanController extends Controller
 
                 if ($inventoryItem->available_quantity < $loanItem->quantity) {
                     // Auto-reject (Delete request) if insufficient stock
-                    $prodWorkId = $loan->pr_produksi_work_id;
-                    $borrowerId = $loan->borrower_id;
-                    $programName = $loan->produksiWork->program->name;
-                    $episodeTitle = $loan->produksiWork->episode->title;
-
-                    // Delete the loan request entirely
-                    $loan->delete();
-
-                    // Revert Production Work status to 'pending'
-                    if ($prodWorkId) {
-                        PrProduksiWork::where('id', $prodWorkId)->update([
-                            'status' => 'pending',
-                            'equipment_requests' => null
-                        ]);
+                    // Revert ALL linked Production Works status to 'pending'
+                    foreach ($loan->produksiWorks as $work) {
+                        $work->update(['status' => 'pending', 'equipment_requests' => null]);
                     }
 
                     // Notify Borrower
                     \App\Models\Notification::create([
-                        'user_id' => $borrowerId,
+                        'user_id' => $loan->borrower_id,
                         'type' => 'equipment_rejected',
                         'title' => 'Equipment Request Returned',
-                        'message' => "Your request for {$programName} - {$episodeTitle} was returned due to insufficient stock for '{$inventoryItem->name}'. Please adjust your request.",
+                        'message' => "Your request was returned due to insufficient stock for '{$inventoryItem->name}'. Please adjust your request.",
                         'related_type' => PrProduksiWork::class,
-                        'related_id' => $prodWorkId,
+                        'related_id' => $loan->produksiWorks->first()?->id,
                         'priority' => 'high',
                         'status' => 'unread'
                     ]);
@@ -157,11 +148,9 @@ class EquipmentLoanController extends Controller
                 'approval_notes' => $request->approval_notes
             ]);
 
-            // Update associated Production Work status to in_progress (Sedang Syuting)
-            if ($loan->pr_produksi_work_id) {
-                PrProduksiWork::where('id', $loan->pr_produksi_work_id)->update([
-                    'status' => 'in_progress'
-                ]);
+            // Update ALL linked Production Work statuses to in_progress
+            foreach ($loan->produksiWorks as $work) {
+                $work->update(['status' => 'in_progress']);
             }
 
             DB::commit();
@@ -221,7 +210,7 @@ class EquipmentLoanController extends Controller
     public function returnLoan(Request $request, int $id): JsonResponse
     {
         try {
-            $loan = EquipmentLoan::with('loanItems')->findOrFail($id);
+            $loan = EquipmentLoan::with(['loanItems', 'produksiWorks'])->findOrFail($id);
 
             \Illuminate\Support\Facades\Log::info("Trying to return loan ID: {$id}. Status: {$loan->status}");
 
@@ -244,11 +233,10 @@ class EquipmentLoanController extends Controller
                 'return_date' => now()
             ]);
 
-            // Update associated Production Work status to completed
-            if ($loan->pr_produksi_work_id) {
-                PrProduksiWork::where('id', $loan->pr_produksi_work_id)->update([
-                    'status' => 'completed',
-                    'completed_at' => now(),
+            // Update ALL linked Production Works to finished_shooting
+            foreach ($loan->produksiWorks as $work) {
+                $work->update([
+                    'status' => 'finished_shooting',
                     'completion_notes' => 'Completed automatically upon Art & Set Property equipment return.'
                 ]);
             }

@@ -31,9 +31,17 @@ class EquipmentLoan extends Model
         return $this->hasMany(EquipmentLoanItem::class);
     }
 
+    public function produksiWorks()
+    {
+        return $this->belongsToMany(PrProduksiWork::class, 'equipment_loan_produksi_work', 'equipment_loan_id', 'pr_produksi_work_id')->withTimestamps();
+    }
+
+    /**
+     * Convenience accessor – returns first linked produksi work (for back-compat in some views).
+     */
     public function produksiWork()
     {
-        return $this->belongsTo(PrProduksiWork::class, 'pr_produksi_work_id');
+        return $this->produksiWorks()->oldest('equipment_loan_produksi_work.created_at');
     }
 
     public function borrower()

@@ -863,6 +863,9 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'update']);
         Route::post('/works/{id}/complete', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'uploadShootingResults']); // Simplify route for complete
         Route::post('/works/{id}/request-equipment', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'requestEquipment']);
+        // Coordinator actions
+        Route::post('/crews/{crewId}/attendance', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'markAttendance']);
+        Route::post('/equipment-loans/{id}/request-return', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'requestEquipmentReturn']);
     });
 
     // Promosi Routes
@@ -1115,3 +1118,14 @@ Route::get('/cleanup-step-6-test', function () {
 require __DIR__ . '/verification_step6_v3.php';
 require __DIR__ . '/verification_step6_v5.php';
 require __DIR__ . '/pr_api.php';
+
+// ===== WHATSAPP BOT ADMIN ROUTES =====
+// Hanya bisa diakses oleh Program Manager
+Route::prefix('admin/whatsapp-bot')->middleware(['auth:sanctum'])->group(function () {
+    // GET /api/admin/whatsapp-bot/status — status koneksi bot
+    Route::get('/status', [\App\Http\Controllers\Api\WhatsappBotController::class, 'status']);
+    // GET /api/admin/whatsapp-bot/qr — QR code untuk scan
+    Route::get('/qr', [\App\Http\Controllers\Api\WhatsappBotController::class, 'qr']);
+    // POST /api/admin/whatsapp-bot/logout — logout bot (hapus session)
+    Route::post('/logout', [\App\Http\Controllers\Api\WhatsappBotController::class, 'logout']);
+});

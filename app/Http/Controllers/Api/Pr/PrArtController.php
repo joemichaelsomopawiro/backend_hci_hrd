@@ -53,14 +53,24 @@ class PrArtController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'condition' => 'nullable|string',
+            'location' => 'nullable|string',
+            'position' => 'nullable|string',
+            'category' => 'nullable|string',
             'total_quantity' => 'required|integer|min:0',
             'status' => 'nullable|in:active,maintenance,damaged,lost',
             'photo' => 'nullable|image|max:5120', // 5MB max
         ]);
 
-        $data = $request->only(['name', 'description', 'total_quantity', 'status']);
+        $data = $request->only(['name', 'description', 'condition', 'location', 'position', 'category', 'total_quantity', 'status']);
         $data['created_by'] = auth()->id();
         $data['available_quantity'] = $request->total_quantity; // Initially all available
+
+        // Auto-generate equipment_id: ART-YYYYMMDD-XXXX
+        $date = now()->format('Ymd');
+        $count = InventoryItem::where('equipment_id', 'like', "ART-{$date}-%")->count();
+        $nextNumber = str_pad($count + 1, 4, '0', STR_PAD_LEFT);
+        $data['equipment_id'] = "ART-{$date}-{$nextNumber}";
 
         // Handle photo upload
         if ($request->hasFile('photo')) {
@@ -90,15 +100,23 @@ class PrArtController extends Controller
 
         $item = InventoryItem::findOrFail($id);
 
-        $request->validate([
+        $validator = \Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string',
+            'condition' => 'nullable|string',
+            'location' => 'nullable|string',
+            'position' => 'nullable|string',
+            'category' => 'nullable|string',
             'total_quantity' => 'sometimes|integer|min:0',
             'status' => 'sometimes|in:active,maintenance,damaged,lost',
             'photo' => 'nullable|image|max:5120',
         ]);
 
-        $data = $request->only(['name', 'description', 'total_quantity', 'status']);
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        $data = $request->only(['name', 'description', 'condition', 'location', 'position', 'category', 'total_quantity', 'status']);
 
         // Handle photo upload
         if ($request->hasFile('photo')) {

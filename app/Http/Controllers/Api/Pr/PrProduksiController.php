@@ -65,7 +65,8 @@ class PrProduksiController extends Controller
                 'episode.files', // Load files for the episode (scripts etc)
                 'creativeWork',
                 'createdBy',
-                'equipmentLoan.loanItems.inventoryItem',
+                'equipmentLoans.loanItems.inventoryItem',
+                'equipmentLoans.produksiWorks.episode',
                 'editorWork'
             ]);
             if ($request->has('status') && !empty($request->status)) {
@@ -169,68 +170,99 @@ class PrProduksiController extends Controller
             $validator = Validator::make($request->all(), [
                 'equipment_list' => 'required|array|min:1',
                 'equipment_list.*.inventory_item_id' => 'required|exists:inventory_items,id',
-                'equipment_list.*.quantity' => 'required|integer|min:1'
+                'equipment_list.*.quantity' => 'required|integer|min:1',
+                // Optional: additional episode IDs to bundle into the same loan
+                'additional_produksi_work_ids' => 'nullable|array',
+                'additional_produksi_work_ids.*' => 'integer|exists:pr_produksi_works,id',
+                'request_notes' => 'nullable|string',
             ]);
 
             if ($validator->fails()) {
                 return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
-            $work = PrProduksiWork::findOrFail($id);
+            // Primary work (the episode that triggered the request)
+            $primaryWork = PrProduksiWork::findOrFail($id);
 
-            // Access check: User must be creator or it's pending (or just Production role generally?)
-            // Allowing any Production generic user to edit for now as per role check above.
+            // Collect ALL produksi work IDs (primary + additional)
+            $additionalIds = $request->additional_produksi_work_ids ?? [];
+            $allWorkIds = array_unique(array_merge([$primaryWork->id], $additionalIds));
 
-            // Update Work Record
-            if ($work->created_by !== $user->id) {
-                $work->created_by = $user->id;
+            // Fetch all involved works
+            $allWorks = PrProduksiWork::whereIn('id', $allWorkIds)->get();
+
+            // Verify none of the works already has a pending/approved loan
+            foreach ($allWorks as $work) {
+                $activeLoan = $work->equipmentLoans()
+                    ->whereIn('status', ['pending', 'approved', 'active'])
+                    ->first();
+
+                if ($activeLoan) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Episode #{$work->pr_episode_id} sudah memiliki permintaan alat yang sedang aktif (ID Loan: {$activeLoan->id}). Harap selesaikan atau batalkan terlebih dahulu."
+                    ], 400);
+                }
             }
 
-            $work->equipment_list = $request->equipment_list; // Keep JSON for backup/legacy
-            $work->status = 'equipment_requested';
-            $work->save();
-
-            // Create or Update Equipment Loan
-            $loan = EquipmentLoan::firstOrNew(['pr_produksi_work_id' => $work->id]);
-
-            // Check if loan is already processed by Art
-            if ($loan->exists && $loan->status !== 'pending') {
-                // If Art already approved/rejected, we shouldn't modify the loan items freely.
-                // Ideally throw error or just notify. 
-                // For now, assuming "equipment_requested" typically happens before approval.
-                // If it's already approved, we might need a "Revision" flow.
-                // Let's assume we can't update if not pending.
-                DB::rollBack();
-                return response()->json(['success' => false, 'message' => 'Cannot update equipment request because loan status is ' . $loan->status], 400);
+            // Take ownership of primary work
+            if ($primaryWork->created_by !== $user->id) {
+                $primaryWork->created_by = $user->id;
             }
+            $primaryWork->equipment_list = $request->equipment_list;
+            $primaryWork->status = 'equipment_requested';
+            $primaryWork->save();
 
-            $loan->borrower_id = $user->id;
-            $loan->status = 'pending';
-            // Loan date/Return date are set by Art when picking up/returning
-            $loan->save();
+            // Create the shared Equipment Loan (no direct work FK anymore)
+            $loan = EquipmentLoan::create([
+                'borrower_id' => $user->id,
+                'status' => 'pending',
+                'request_notes' => $request->request_notes ?? null,
+            ]);
 
-            // Sync Items
-            // Delete existing items for this loan
-            EquipmentLoanItem::where('equipment_loan_id', $loan->id)->delete();
-
+            // Attach loan items
             foreach ($request->equipment_list as $item) {
                 EquipmentLoanItem::create([
                     'equipment_loan_id' => $loan->id,
                     'inventory_item_id' => $item['inventory_item_id'],
                     'quantity' => $item['quantity'],
-                    'notes' => $item['notes'] ?? null
+                    'notes' => $item['notes'] ?? null,
                 ]);
             }
 
+            // Associate ALL works to this loan via pivot and sync their status/equipment list
+            $pivotIds = [];
+            foreach ($allWorks as $work) {
+                $pivotIds[$work->id] = [
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+
+                // Sync equipment_list and status on each linked episode
+                if ($work->id !== $primaryWork->id) {
+                    $work->equipment_list = $request->equipment_list;
+                    $work->status = 'equipment_requested';
+                    $work->save();
+                }
+            }
+
+            $loan->produksiWorks()->sync($pivotIds);
+
             DB::commit();
 
-            return response()->json(['success' => true, 'data' => $work->fresh(['equipmentLoan.loanItems']), 'message' => 'Equipment requested successfully']);
+            return response()->json([
+                'success' => true,
+                'data' => $primaryWork->fresh(['equipmentLoans.loanItems']),
+                'message' => 'Equipment requested successfully for ' . count($allWorkIds) . ' episode(s)',
+            ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
+
 
     public function uploadShootingResults(Request $request, int $id): JsonResponse
     {

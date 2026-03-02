@@ -11,8 +11,13 @@ class InventoryItem extends Model
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
+        'equipment_id',
         'name',
         'description',
+        'condition',
+        'location',
+        'position',
+        'category',
         'photo_url',
         'total_quantity',
         'available_quantity',

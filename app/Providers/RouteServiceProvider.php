@@ -44,6 +44,10 @@ class RouteServiceProvider extends ServiceProvider
 
         // Rate limiting untuk authentication
         RateLimiter::for('auth', function (Request $request) {
+            if (app()->environment('local', 'testing')) {
+                // Unlimited di local/testing
+                return Limit::none();
+            }
             return Limit::perMinute(5)->by($request->ip());
         });
 
