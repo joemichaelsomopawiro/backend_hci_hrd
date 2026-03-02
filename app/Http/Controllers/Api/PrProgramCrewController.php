@@ -103,34 +103,28 @@ class PrProgramCrewController extends Controller
                 continue;
             }
 
-            // CRITICAL: Check if ROLE already exists in this program
-            // "Tidak boleh ada 2 role yang sama."
-            $roleExists = PrProgramCrew::where('program_id', $programId)
-                ->where('role', $memberData['role'])
-                ->exists();
+            // CRITICAL: Check if USER already has a ROLE in this program
+            // "Satu orang hanya boleh memegang 1 posisi (Role) per program."
+            $userRoleExists = PrProgramCrew::where('program_id', $programId)
+                ->where('user_id', $memberData['user_id'])
+                ->first();
 
-            if ($roleExists) {
+            if ($userRoleExists) {
                 // If it's the exact same user AND role, just skip (idempotent)
-                $exactMatch = PrProgramCrew::where('program_id', $programId)
-                    ->where('role', $memberData['role'])
-                    ->where('user_id', $memberData['user_id'])
-                    ->exists();
-
-                if ($exactMatch) {
+                if ($userRoleExists->role === $memberData['role']) {
                     continue; // Already exists, perfectly fine
                 }
 
-                // If role exists but handled by someone else (or even same person but caught by logic above)
-                // Actually constraint is "No 2 same roles".
+                // If the user already has a DIFFERENT role
                 $errors[] = [
                     'index' => $index,
-                    'message' => "Posisi '{$memberData['role']}' sudah terisi di program ini."
+                    'message' => "Anggota tim ini sudah memegang posisi '{$userRoleExists->role}' di program ini."
                 ];
                 continue;
             }
 
-            // Note: We DO NOT check if user_id exists anymore. 
-            // "Kalau nama Boleh sama" means one user can have multiple roles.
+            // Note: We DO NOT check if role exists anymore. 
+            // "Satu posisi boleh diisi lebih dari 1 orang" means multiple people can hold the same role.
 
             try {
                 $crew = PrProgramCrew::create([

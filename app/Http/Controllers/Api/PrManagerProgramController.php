@@ -551,7 +551,9 @@ class PrManagerProgramController extends Controller
                 'start_date' => 'sometimes|date',
                 'air_time' => 'sometimes|date_format:H:i',
                 'duration_minutes' => 'nullable|integer|min:1',
-                'broadcast_channel' => 'nullable|string|max:255'
+                'broadcast_channel' => 'nullable|string|max:255',
+                'apply_from_episode' => 'nullable|integer|min:1|max:53',
+                'new_episode_date' => 'nullable|date'
             ]);
 
             if ($validator->fails()) {
@@ -570,6 +572,27 @@ class PrManagerProgramController extends Controller
                 'duration_minutes',
                 'broadcast_channel'
             ]));
+
+            // Apply schedule changes to episodes if requested
+            if ($request->has('apply_from_episode') && $request->apply_from_episode) {
+                $startEpisodeNumber = (int) $request->apply_from_episode;
+                $episodes = $program->episodes()->where('episode_number', '>=', $startEpisodeNumber)->orderBy('episode_number', 'asc')->get();
+
+                $newAirTime = $request->input('air_time', $program->air_time);
+                $baseDate = null;
+                if ($request->has('new_episode_date') && $request->new_episode_date) {
+                    $baseDate = \Carbon\Carbon::parse($request->new_episode_date);
+                }
+
+                foreach ($episodes as $episode) {
+                    $episode->air_time = $newAirTime;
+                    if ($baseDate) {
+                        $weeksToAdd = $episode->episode_number - $startEpisodeNumber;
+                        $episode->air_date = $baseDate->copy()->addWeeks($weeksToAdd);
+                    }
+                    $episode->save();
+                }
+            }
 
             return response()->json([
                 'success' => true,
