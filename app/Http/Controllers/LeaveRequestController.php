@@ -104,6 +104,10 @@ class LeaveRequestController extends Controller
                 $query->where('leave_type', $request->leave_type);
             }
 
+            if ($request->filled('year')) {
+                $query->whereYear('leave_requests.start_date', $request->input('year'));
+            }
+
             // ========== BAGIAN 3: EKSEKUSI QUERY ========== 
             $requests = $query->orderBy('leave_requests.created_at', 'desc')->get();
 
