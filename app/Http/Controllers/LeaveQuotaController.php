@@ -12,17 +12,17 @@ class LeaveQuotaController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = LeaveQuota::with('employee');
-        
+
         if ($request->has('employee_id')) {
             $query->where('employee_id', $request->employee_id);
         }
-        
+
         if ($request->has('year')) {
             $query->where('year', $request->year);
         }
-        
+
         $quotas = $query->get();
-        
+
         return response()->json([
             'success' => true,
             'data' => $quotas
@@ -45,9 +45,9 @@ class LeaveQuotaController extends Controller
 
         // PEMBATASAN: Cek apakah employee sudah memiliki jatah cuti untuk tahun tersebut
         $existingQuota = LeaveQuota::where('employee_id', $request->employee_id)
-                                  ->where('year', $request->year)
-                                  ->first();
-        
+            ->where('year', $request->year)
+            ->first();
+
         if ($existingQuota) {
             return response()->json([
                 'success' => false,
@@ -56,7 +56,7 @@ class LeaveQuotaController extends Controller
         }
 
         $quota = LeaveQuota::create($request->all());
-        
+
         return response()->json([
             'success' => true,
             'message' => 'Jatah cuti berhasil ditambahkan',
@@ -68,12 +68,12 @@ class LeaveQuotaController extends Controller
     public function getEmployeesWithoutQuota(Request $request): JsonResponse
     {
         $year = $request->get('year', date('Y'));
-        
-        $employeesWithoutQuota = \App\Models\Employee::whereDoesntHave('leaveQuotas', function($query) use ($year) {
+
+        $employeesWithoutQuota = \App\Models\Employee::whereDoesntHave('leaveQuotas', function ($query) use ($year) {
             $query->where('year', $year);
         })->select('id', 'nama_lengkap', 'jabatan_saat_ini')
-          ->get();
-        
+            ->get();
+
         return response()->json([
             'success' => true,
             'message' => 'Daftar karyawan yang belum memiliki jatah cuti',
@@ -84,7 +84,7 @@ class LeaveQuotaController extends Controller
     public function show($id): JsonResponse
     {
         $quota = LeaveQuota::with('employee')->findOrFail($id);
-        
+
         return response()->json([
             'success' => true,
             'data' => $quota
@@ -94,7 +94,7 @@ class LeaveQuotaController extends Controller
     public function update(Request $request, $id): JsonResponse
     {
         $quota = LeaveQuota::findOrFail($id);
-        
+
         $request->validate([
             'annual_leave_quota' => 'integer|min:0',
             'sick_leave_quota' => 'integer|min:0',
@@ -113,7 +113,7 @@ class LeaveQuotaController extends Controller
         ]);
 
         $quota->update($request->all());
-        
+
         return response()->json([
             'success' => true,
             'message' => 'Jatah cuti berhasil diperbarui',
@@ -125,7 +125,7 @@ class LeaveQuotaController extends Controller
     {
         $quota = LeaveQuota::findOrFail($id);
         $quota->delete();
-        
+
         return response()->json([
             'success' => true,
             'message' => 'Jatah cuti berhasil dihapus'
@@ -149,7 +149,7 @@ class LeaveQuotaController extends Controller
         ]);
 
         $updatedQuotas = [];
-        
+
         foreach ($request->updates as $update) {
             $quota = LeaveQuota::updateOrCreate(
                 [
@@ -160,7 +160,7 @@ class LeaveQuotaController extends Controller
             );
             $updatedQuotas[] = $quota->load('employee');
         }
-        
+
         return response()->json([
             'success' => true,
             'message' => 'Jatah cuti berhasil diperbarui secara bulk',
@@ -185,7 +185,7 @@ class LeaveQuotaController extends Controller
 
         $employees = Employee::all();
         $createdQuotas = [];
-        
+
         foreach ($employees as $employee) {
             $quotaData = array_merge(
                 $request->default_quotas,
@@ -201,7 +201,7 @@ class LeaveQuotaController extends Controller
                     'bereavement_leave_used' => 0,
                 ]
             );
-            
+
             $quota = LeaveQuota::updateOrCreate(
                 [
                     'employee_id' => $employee->id,
@@ -209,10 +209,10 @@ class LeaveQuotaController extends Controller
                 ],
                 $quotaData
             );
-            
+
             $createdQuotas[] = $quota->load('employee');
         }
-        
+
         return response()->json([
             'success' => true,
             'message' => 'Jatah cuti tahunan berhasil direset untuk semua karyawan',
@@ -265,7 +265,7 @@ class LeaveQuotaController extends Controller
     {
         // 1. Ambil user yang terotentikasi
         $user = auth()->user();
-        
+
         // 2. Lakukan pengecekan paling penting di awal
         if (!$user || !$user->employee_id) {
             // Jika tidak ada user atau user tidak punya employee_id, langsung hentikan
@@ -274,35 +274,41 @@ class LeaveQuotaController extends Controller
                 'message' => 'Sesi tidak valid atau user tidak terhubung dengan data karyawan.'
             ], 401); // 401 Unauthorized lebih tepat
         }
-        
+
         // 3. Tentukan tahun dari parameter request atau gunakan tahun berjalan sebagai default
         $year = $request->input('year', date('Y'));
-        
+
         // Validasi tahun jika diberikan
         if ($request->has('year')) {
             $request->validate([
                 'year' => 'integer|min:2020|max:2030'
             ]);
         }
-        
+
         // 4. Jalankan query ke database
         $quota = LeaveQuota::where('employee_id', $user->employee_id)
-                          ->where('year', $year)
-                          ->first();
-        
+            ->where('year', $year)
+            ->first();
+
         // 5. Jika query tidak menemukan data, kembalikan response yang jelas
         if (!$quota) {
             return response()->json([
                 'success' => false,
                 'message' => 'Data jatah cuti untuk Anda di tahun ' . $year . ' belum diatur oleh HR.'
-            ], 404); // 404 Not Found
+            ], 404)->withHeaders([
+                        'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma' => 'no-cache',
+                    ]);
         }
-        
+
         // 6. Jika semua berhasil, kembalikan data yang ditemukan
         return response()->json([
             'success' => true,
             'data' => $quota
-        ]);
+        ])->withHeaders([
+                    'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                    'Pragma' => 'no-cache',
+                ]);
     }
 
     // Endpoint untuk mendapatkan ringkasan penggunaan cuti
@@ -314,17 +320,17 @@ class LeaveQuotaController extends Controller
         ]);
 
         $query = LeaveQuota::with('employee');
-        
+
         if ($request->has('year')) {
             $query->where('year', $request->year);
         }
-        
+
         if ($request->has('employee_id')) {
             $query->where('employee_id', $request->employee_id);
         }
-        
+
         $quotas = $query->get();
-        
+
         $summary = [
             'total_employees' => $quotas->count(),
             'leave_types_summary' => [
@@ -365,7 +371,7 @@ class LeaveQuotaController extends Controller
                 ]
             ]
         ];
-        
+
         return response()->json([
             'success' => true,
             'data' => $quotas,
