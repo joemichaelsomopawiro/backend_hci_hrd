@@ -22,10 +22,11 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -120,7 +121,8 @@ class ArtSetPropertiController extends Controller
 
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -197,7 +199,8 @@ class ArtSetPropertiController extends Controller
 
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -255,7 +258,8 @@ class ArtSetPropertiController extends Controller
 
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -265,7 +269,7 @@ class ArtSetPropertiController extends Controller
             }
 
             $equipment = EquipmentInventory::findOrFail($id);
-            
+
             // Soft delete logic: change status to retired and set is_active false
             $equipment->update([
                 'status' => 'retired',
@@ -293,10 +297,11 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -306,32 +311,29 @@ class ArtSetPropertiController extends Controller
             }
 
             // Get equipment requests with program info
-    $query = ProductionEquipment::with(['episode.program', 'requester'])
-        ->orderBy('created_at', 'desc');
+            $query = ProductionEquipment::with(['episode.program', 'requester'])
+                ->orderBy('created_at', 'desc');
 
-        // Allow filtering by status
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        } else {
-            // Default to pending if no status provided
-        $query->where('status', 'pending');
+            // Allow filtering by status
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+
+            $requests = $query->paginate(15);
+
+            return response()->json([
+                'success' => true,
+                'data' => $requests,
+                'message' => 'Equipment requests retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving equipment requests: ' . $e->getMessage()
+            ], 500);
         }
-
-        $requests = $query->paginate(15);
-
-        return response()->json([
-            'success' => true,
-            'data' => $requests,
-            'message' => 'Equipment requests retrieved successfully'
-        ]);
-
-    } catch (\Exception $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Error retrieving equipment requests: ' . $e->getMessage()
-        ], 500);
     }
-}
     /**
      * Approve equipment request
      */
@@ -339,10 +341,11 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -394,13 +397,13 @@ class ArtSetPropertiController extends Controller
                         'error_code' => 'EQUIPMENT_UNAVAILABLE'
                     ], 409);
                 }
-                
+
                 $inventoryItemsToAssign[] = $item;
             }
 
             // Verify we have enough items (redundant check but safe)
             if (count($inventoryItemsToAssign) !== count($requestedItems)) {
-                 return response()->json([
+                return response()->json([
                     'success' => false,
                     'message' => "Insufficient equipment quantity available.",
                 ], 409);
@@ -450,10 +453,11 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -510,10 +514,11 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -537,9 +542,9 @@ class ArtSetPropertiController extends Controller
 
             // Find ProductionEquipment (The Request Ticket)
             $productionEquipment = ProductionEquipment::find($id);
-            
+
             if (!$productionEquipment) {
-                 return response()->json([
+                return response()->json([
                     'success' => false,
                     'message' => 'Production Equipment Request not found.'
                 ], 404);
@@ -551,7 +556,7 @@ class ArtSetPropertiController extends Controller
                     'message' => 'Equipment request is not in valid status for return (must be approved/in_use).'
                 ], 400);
             }
-            
+
             // 1. Update ProductionEquipment status
             $productionEquipment->update([
                 'status' => 'returned',
@@ -562,14 +567,15 @@ class ArtSetPropertiController extends Controller
 
             // 2. Update Inventory Items
             $items = $productionEquipment->equipment_list;
-            if (!is_array($items)) $items = json_decode($items, true) ?? [];
+            if (!is_array($items))
+                $items = json_decode($items, true) ?? [];
 
             foreach ($items as $itemName) {
                 // Find one 'in_use' item with this name
                 $inventoryItem = EquipmentInventory::where('name', $itemName)
                     ->where('status', 'in_use')
                     ->first();
-                
+
                 if ($inventoryItem) {
                     $newStatus = 'available';
                     if ($request->return_condition === 'damaged') {
@@ -577,7 +583,7 @@ class ArtSetPropertiController extends Controller
                     } elseif ($request->return_condition === 'needs_maintenance') {
                         $newStatus = 'maintenance';
                     }
-                    
+
                     try {
                         $inventoryItem->update([
                             'status' => $newStatus,
@@ -599,7 +605,7 @@ class ArtSetPropertiController extends Controller
 
             // 3. AUTOMATION: Check if ALL equipment for this Episode is returned
             $episodeId = $productionEquipment->episode_id;
-            
+
             // Count pending or in_use requests for this episode
             $activeRequestsCount = ProductionEquipment::where('episode_id', $episodeId)
                 ->whereIn('status', ['pending', 'approved', 'in_use'])
@@ -615,7 +621,7 @@ class ArtSetPropertiController extends Controller
                 if ($episode && $episode->status === 'production') {
                     $episode->update(['status' => 'editing']);
                     $episodeUpdated = true;
-                    
+
                     // Notify Editor/Producer that shooting is done
                     // (Optional: add notification logic here)
                 }
@@ -656,10 +662,11 @@ class ArtSetPropertiController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function($q) { $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'setting'); })->exists();
 
             if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
                 return response()->json([
@@ -705,7 +712,8 @@ class ArtSetPropertiController extends Controller
      */
     private function notifyEquipmentApproved($equipment): void
     {
-        if (!$equipment->requested_by) return;
+        if (!$equipment->requested_by)
+            return;
 
         Notification::create([
             'user_id' => $equipment->requested_by,
@@ -724,7 +732,8 @@ class ArtSetPropertiController extends Controller
      */
     private function notifyEquipmentRejected($equipment, string $reason): void
     {
-        if (!$equipment->requested_by) return;
+        if (!$equipment->requested_by)
+            return;
 
         Notification::create([
             'user_id' => $equipment->requested_by,

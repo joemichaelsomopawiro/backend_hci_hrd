@@ -112,8 +112,9 @@ class User extends Authenticatable
 
     public function canViewEmployee($employeeId)
     {
-        if (!$this->employee) return false;
-        
+        if (!$this->employee)
+            return false;
+
         $subordinates = $this->employee->getSubordinatesByDepartment();
         return $subordinates->contains('id', $employeeId);
     }
@@ -171,5 +172,15 @@ class User extends Authenticatable
             ->first();
 
         return $activeMember?->assignment?->episode?->program?->name;
+    }
+
+    /**
+     * Check if user is assigned as a production crew for Program Regular episodes
+     */
+    public function hasProductionAssignment(): bool
+    {
+        return \App\Models\PrEpisodeCrew::where('user_id', $this->id)
+            ->whereIn('role', ['produksi', 'setting_syuting', 'production', 'setting', 'syuting'])
+            ->exists();
     }
 }

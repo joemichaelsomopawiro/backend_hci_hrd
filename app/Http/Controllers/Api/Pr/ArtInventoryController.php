@@ -41,6 +41,10 @@ class ArtInventoryController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'condition' => 'nullable|string|max:100',
+            'location' => 'nullable|string|max:255',
+            'position' => 'nullable|string|max:255',
+            'category' => 'nullable|string|max:100',
             'total_quantity' => 'required|integer|min:0',
             'status' => 'required|in:active,maintenance,lost,damaged,available',
             'photo_link' => 'nullable|url' // Strict Link Only
@@ -56,7 +60,7 @@ class ArtInventoryController extends Controller
 
         DB::beginTransaction();
         try {
-            $data = $request->only(['name', 'description', 'total_quantity']);
+            $data = $request->only(['name', 'description', 'condition', 'location', 'position', 'category', 'total_quantity']);
 
             // Map frontend status to database enum if needed, or just use as is
             // Enum in DB: active, maintenance, lost. Frontend uses 'available' which maps to 'active' usually?
@@ -111,6 +115,10 @@ class ArtInventoryController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string',
+            'condition' => 'nullable|string|max:100',
+            'location' => 'nullable|string|max:255',
+            'position' => 'nullable|string|max:255',
+            'category' => 'nullable|string|max:100',
             'total_quantity' => 'sometimes|integer|min:0',
             'status' => 'sometimes|in:active,maintenance,lost,damaged,available',
             'photo_link' => 'nullable|url'
@@ -126,7 +134,7 @@ class ArtInventoryController extends Controller
 
         DB::beginTransaction();
         try {
-            $data = $request->only(['name', 'description', 'total_quantity', 'status']);
+            $data = $request->only(['name', 'description', 'condition', 'location', 'position', 'category', 'total_quantity', 'status']);
 
             // Handle status mapping
             if (isset($data['status']) && $data['status'] === 'available') {

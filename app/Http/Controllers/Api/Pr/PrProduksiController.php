@@ -16,32 +16,50 @@ use Illuminate\Support\Facades\DB;
 use App\Models\InventoryItem;
 use App\Models\EquipmentLoan;
 use App\Models\EquipmentLoanItem;
-use App\Models\PrWorkflowStep;
 use App\Constants\Role;
+use App\Models\PrEditorWork;
+use App\Models\PrDesignGrafisWork;
+use App\Models\PrEditorPromosiWork;
+use App\Services\PrWorkflowService;
+use App\Services\PrActivityLogService;
+use App\Services\PrNotificationService;
+use App\Models\PrEpisodeWorkflowProgress;
+use App\Models\PrCreativeWork;
+use App\Models\PrEpisodeCrew;
+use App\Models\PrWorkflowStep;
+use Illuminate\Support\Facades\Log;
 
 class PrProduksiController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
     public function index(Request $request): JsonResponse
     {
         try {
             $user = Auth::user();
 
-            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized.'], 401);
             }
 
             // AUTO-SYNC: Ensure all episodes with completed Step 4 have a Produksi Work
             // This matches the same logic in PrPromosiController
             $eligibleEpisodes = \App\Models\PrEpisodeWorkflowProgress::where('workflow_step', 4)
                 ->where('status', 'completed')
-                ->pluck('episode_id');
+                ->pluck('episode_id')->toArray();
 
-            foreach ($eligibleEpisodes as $episodeId) {
-                try {
-                    // Check if produksi work exists
-                    $exists = PrProduksiWork::where('pr_episode_id', $episodeId)->exists();
+            if (!empty($eligibleEpisodes)) {
+                $existingWorks = PrProduksiWork::whereIn('pr_episode_id', $eligibleEpisodes)
+                    ->pluck('pr_episode_id')->toArray();
 
-                    if (!$exists) {
+                $missingEpisodes = array_diff($eligibleEpisodes, $existingWorks);
+
+                foreach ($missingEpisodes as $episodeId) {
+                    try {
                         // Get creative work to link if available
                         $creativeWork = \App\Models\PrCreativeWork::where('pr_episode_id', $episodeId)
                             ->orderBy('created_at', 'desc')
@@ -54,28 +72,132 @@ class PrProduksiController extends Controller
                             'created_by' => $user->id,
                             'shooting_notes' => 'Auto-created from dashboard sync'
                         ]);
+                    } catch (\Exception $e) {
+                        \Illuminate\Support\Facades\Log::error("Auto-sync failed for episode $episodeId: " . $e->getMessage());
                     }
-                } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error("Auto-sync failed for episode $episodeId: " . $e->getMessage());
                 }
             }
 
             $query = PrProduksiWork::with([
                 'episode.program',
+                'episode.workflowProgress', // Add this to check step 4 for locking logic
                 'episode.files', // Load files for the episode (scripts etc)
+                'episode.creativeWork', // Load the fallback creative work data from the episode
+                'episode.crews.user', // Load episode crew assignments with coordinator flag
                 'creativeWork',
                 'createdBy',
                 'equipmentLoans.loanItems.inventoryItem',
                 'equipmentLoans.produksiWorks.episode',
                 'editorWork'
             ]);
-            if ($request->has('status') && !empty($request->status)) {
+
+            // Check if user is a producer (sees all), or has access as a crew member
+            $userRoleStr = strtolower($user->role ?? '');
+            $isProducer = in_array($userRoleStr, ['producer']) || Role::inArray($user->role, [Role::PRODUCER]);
+            $isProgramManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER]);
+            $isProductionStaff = in_array($userRoleStr, ['produksi', 'production']) || Role::inArray($user->role, [Role::PRODUCTION]);
+
+            // Check if user is assigned as crew member (shooting_team or setting_team) in any episode
+            $isAssignedCrew = \App\Models\PrEpisodeCrew::where('user_id', $user->id)->exists();
+
+            // Auth: allow all authenticated users
+            // (non-assigned users will simply get an empty list via the filter below)
+
+            // bundle_mode=1: skip crew filter, return ALL non-completed works
+            // (used by equipment loan bundling to let coordinators pick any episode)
+            $bundleMode = $request->boolean('bundle_mode');
+
+            if ($bundleMode) {
+                $query->whereNotIn('status', ['completed']);
+            } elseif (!$isProducer && !$isProgramManager && !$isProductionStaff) {
+                // Filter to episodes where the user is assigned as crew (any role)
+                $assignedEpisodeIds = \App\Models\PrEpisodeCrew::where('user_id', $user->id)
+                    ->pluck('episode_id');
+
+                $query->whereIn('pr_episode_id', $assignedEpisodeIds);
+            }
+
+            // ONLY show works if the episode has completed Step 4
+            $query->whereHas('episode.workflowProgress', function ($q) {
+                $q->where('workflow_step', 4)
+                    ->where('status', 'completed');
+            });
+
+            if ($request->has('status') && !empty($request->status) && !$bundleMode) {
+
                 $query->where('status', $request->status);
             }
 
-            $works = $query->orderBy('created_at', 'desc')->paginate(15);
+            if ($request->has('program_id') && !empty($request->program_id)) {
+                $query->whereHas('episode', function ($q) use ($request) {
+                    $q->where('program_id', $request->program_id);
+                });
+            }
+
+            $perPage = min((int) ($request->per_page ?? 15), 500);
+            $works = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
             return response()->json(['success' => true, 'data' => $works, 'message' => 'Produksi works retrieved successfully']);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get all episodes eligible for equipment bundling.
+     * Queries PrEpisode directly (not PrProduksiWork) so episodes without
+     * an existing produksi work record are also included.
+     * Auto-creates a PrProduksiWork for any episode that doesn't have one yet.
+     */
+    public function getBundleEpisodes(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized.'], 401);
+            }
+
+            // Exclude the current work's episode if provided
+            $excludeWorkId = (int) ($request->exclude_work_id ?? 0);
+            $excludeEpisodeId = null;
+            if ($excludeWorkId) {
+                $excludeEpisodeId = PrProduksiWork::find($excludeWorkId)?->pr_episode_id;
+            }
+
+            $query = \App\Models\PrProduksiWork::with(['episode.program', 'equipmentLoans', 'episode.creativeWork'])
+                ->where('status', '!=', 'completed')
+                ->whereHas('episode', function ($q) {
+                    $q->whereNull('deleted_at');
+                })
+                ->whereHas('episode.workflowProgress', function ($q) {
+                    $q->where('workflow_step', 4)->where('status', 'completed');
+                });
+
+            if ($excludeEpisodeId) {
+                $query->where('pr_episode_id', '!=', $excludeEpisodeId);
+            }
+
+            $works = $query->get();
+
+            // Format response to match previous structure
+            $results = $works->map(function ($work) {
+                return [
+                    'id' => $work->id,
+                    'status' => $work->status,
+                    'pr_episode_id' => $work->pr_episode_id,
+                    'episode' => [
+                        'id' => $work->episode->id,
+                        'episode_number' => $work->episode->episode_number,
+                        'title' => $work->episode->title,
+                        'program_id' => $work->episode->program_id,
+                        'program' => $work->episode->program ? ['id' => $work->episode->program->id, 'name' => $work->episode->program->name] : null,
+                    ],
+                    'equipment_loans' => $work->equipmentLoans ?? [],
+                ];
+            });
+
+            return response()->json(['success' => true, 'data' => $results]);
 
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
@@ -110,14 +232,26 @@ class PrProduksiController extends Controller
     {
         try {
             $user = Auth::user();
-
-            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
-
             $work = PrProduksiWork::findOrFail($id);
 
-            // Relaxed ownership check: Allow any Production user to update.
+            $isStaff = Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            $isCoordinator = false;
+
+            if (!$isStaff && $user) {
+                $crew = \App\Models\PrEpisodeCrew::where('episode_id', $work->pr_episode_id)
+                    ->where('user_id', $user->id)
+                    ->where('is_coordinator', true)
+                    ->first();
+                if ($crew) {
+                    $isCoordinator = true;
+                }
+            }
+
+            if (!$user || (!$isStaff && !$isCoordinator)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. Only coordinators or production staff can edit.'], 403);
+            }
+
+            // Relaxed ownership check: Allow any Production user or Coordinator to update.
             // If we want to track who updated, we could add updated_by field later.
             // For now, if user has role 'Production', they can edit.
 
@@ -134,7 +268,11 @@ class PrProduksiController extends Controller
             // We should replicate that check here if it's a completion update.
 
             if ($request->has('shooting_file_links') && !empty($request->shooting_file_links) && $work->status !== 'completed') {
-                $work->update(['status' => 'completed']);
+                $work->update([
+                    'status' => 'completed',
+                    'completed_at' => now(),
+                    'completed_by' => $user->id
+                ]);
 
                 // Auto-complete Step 5 in workflow
                 $workflowStep = PrWorkflowStep::where('pr_episode_id', $work->pr_episode_id)
@@ -163,8 +301,19 @@ class PrProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 401);
+            }
+
+            // Allow staff roles OR any crew coordinator for this episode
+            $isStaff = Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            if (!$isStaff) {
+                // Check if user is a coordinator on this specific work's episode
+                $work = PrProduksiWork::with('episode.crews')->find($id);
+                $crew = $work?->episode?->crews?->where('user_id', $user->id)->first();
+                if (!$crew || !$crew->is_coordinator) {
+                    return response()->json(['success' => false, 'message' => 'Hanya koordinator atau staff produksi yang dapat mengajukan peminjaman alat.'], 403);
+                }
             }
 
             $validator = Validator::make($request->all(), [
@@ -249,6 +398,48 @@ class PrProduksiController extends Controller
 
             $loan->produksiWorks()->sync($pivotIds);
 
+            // Log activity for EACH episode involved
+            foreach ($allWorks as $w) {
+                $this->activityLogService->logEpisodeActivity(
+                    $w->episode,
+                    'equipment_request',
+                    "Equipment requested for production (Loan ID: {$loan->id}). Items: " . count($request->equipment_list),
+                    ['step' => 5, 'loan_id' => $loan->id]
+                );
+            }
+
+            // ── Auto-copy crew from primary episode to each bundled episode ──
+            // So the bundled episodes appear in every crew member's work list.
+            $primaryEpisodeId = $primaryWork->pr_episode_id;
+            $primaryCrews = \App\Models\PrEpisodeCrew::where('episode_id', $primaryEpisodeId)->get();
+
+            foreach ($allWorks as $work) {
+                if ($work->id === $primaryWork->id)
+                    continue; // skip primary
+
+                $targetEpisodeId = $work->pr_episode_id;
+
+                foreach ($primaryCrews as $crew) {
+                    // Only insert if this user is not already assigned to the target episode
+                    $alreadyExists = \App\Models\PrEpisodeCrew::where('episode_id', $targetEpisodeId)
+                        ->where('user_id', $crew->user_id)
+                        ->exists();
+
+                    if (!$alreadyExists) {
+                        \App\Models\PrEpisodeCrew::create([
+                            'episode_id' => $targetEpisodeId,
+                            'user_id' => $crew->user_id,
+                            'role' => $crew->role,
+                            'is_coordinator' => $crew->is_coordinator,
+                        ]);
+                    }
+                }
+            }
+
+            // Notify Art & Set staff
+            $notificationService = app(\App\Services\PrNotificationService::class);
+            $notificationService->notifyArtSetLoanRequested($loan);
+
             DB::commit();
 
             return response()->json([
@@ -322,10 +513,20 @@ class PrProduksiController extends Controller
             $updateData = [
                 'shooting_file_links' => $finalLinksString,
                 'shooting_notes' => $request->shooting_notes,
-                'status' => 'completed'
+                'status' => 'completed',
+                'completed_at' => now(),
+                'completed_by' => $user->id
             ];
 
             $work->update($updateData);
+
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'upload_shooting_results',
+                "Shooting results uploaded by coordinator.",
+                ['step' => 5, 'work_id' => $work->id]
+            );
 
             // Access PrEditorWork to update its status if it was in revision
             $this->ensureEditorWorkReady($work->pr_episode_id, $user->id);
@@ -386,16 +587,29 @@ class PrProduksiController extends Controller
         DB::beginTransaction();
         try {
             $user = Auth::user();
-
-            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
-
             $work = PrProduksiWork::with('episode')->findOrFail($id);
 
-            if ($work->created_by !== $user->id && $work->status !== 'pending') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            $isStaff = Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            $isCoordinator = false;
+
+            if (!$isStaff && $user) {
+                $crew = \App\Models\PrEpisodeCrew::where('episode_id', $work->pr_episode_id)
+                    ->where('user_id', $user->id)
+                    ->where('is_coordinator', true)
+                    ->first();
+                if ($crew) {
+                    $isCoordinator = true;
+                }
             }
+
+            if (!$user || (!$isStaff && !$isCoordinator)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. Only coordinators or production staff can complete.'], 403);
+            }
+
+            // If not a coordinator and not staff, deny. But we already checked that above.
+            // if ($work->created_by !== $user->id && $work->status !== 'pending') {
+            //     return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            // }
 
             // Validate that shooting files have been uploaded
             if (empty($work->shooting_file_links)) {
@@ -408,9 +622,18 @@ class PrProduksiController extends Controller
             // Mark work as completed
             $work->completeWork($user->id, $request->input('completion_notes'));
 
-            // Check if both production and promotion are complete, then update workflow step 5
-            $this->checkAndUpdateWorkflowStep5($work->episode);
+            // Log Final Production Completion
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'production_completed',
+                "Production phase completed and shots submitted to editing.",
+                ['step' => 5, 'work_id' => $work->id]
+            );
 
+            // Check if both production and promotion are complete, then
+            if ($work->status === 'completed') {
+                app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
+            }
             // Auto-create PrEditorWork for next step
             $this->ensureEditorWorkReady($work->pr_episode_id, $user->id);
 
@@ -456,73 +679,155 @@ class PrProduksiController extends Controller
         }
     }
 
+
     /**
-     * Check if both promotion and production are complete for an episode,
-     * and update workflow step 5 accordingly. Also create Step 6 work records.
+     * POST /api/pr/produksi/works/{id}/attendance
+     * Submit attendance data (only Coordinator can do this)
      */
-    private function checkAndUpdateWorkflowStep5($episode)
+    public function submitAttendance(Request $request, int $id): JsonResponse
     {
-        if (!$episode)
-            return;
-
-        // Check if promotion work is complete
-        $promotionWork = \App\Models\PrPromotionWork::where('pr_episode_id', $episode->id)
-            ->where('status', 'completed')
-            ->first();
-
-        // Check if production work is complete
-        $productionWork = PrProduksiWork::where('pr_episode_id', $episode->id)
-            ->where('status', 'completed')
-            ->first();
-
-        // If both are complete, update workflow step 5 and create Step 6 records
-        if ($promotionWork && $productionWork) {
-            $progress = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episode->id)
-                ->where('workflow_step', 5)
-                ->first();
-
-            if ($progress) {
-                $progress->update([
-                    'status' => 'completed',
-                    'completed_at' => now()
-                ]);
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 401);
             }
 
-            // Auto-sync: Create Step 6 work records (Editor, Editor Promosi, Design Grafis)
-            // Only create if they don't already exist
+            $work = PrProduksiWork::with('episode.crews')->findOrFail($id);
 
-            // 1. Create Editor work
-            \App\Models\PrEditorWork::firstOrCreate(
-                ['pr_episode_id' => $episode->id],
-                [
-                    'pr_production_work_id' => $productionWork->id,
-                    'assigned_to' => null, // Can be assigned later
-                    'status' => 'pending',
-                    'files_complete' => false
-                ]
-            );
+            // Check coordinator status
+            $crew = $work->episode->crews->where('user_id', $user->id)->first();
+            if (!$crew || !$crew->is_coordinator) {
+                if (!Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+                    return response()->json(['success' => false, 'message' => 'Hanya koordinator yang dapat mengisi absen.'], 403);
+                }
+            }
 
-            // 2. Create Editor Promosi work
-            \App\Models\PrEditorPromosiWork::firstOrCreate(
-                ['pr_episode_id' => $episode->id],
-                [
-                    'pr_editor_work_id' => null, // Will be linked when Editor work is created
-                    'pr_promotion_work_id' => $promotionWork->id,
-                    'assigned_to' => null,
-                    'status' => 'pending'
-                ]
-            );
+            $validator = Validator::make($request->all(), [
+                'attendances' => 'required|array',
+                'attendances.*.user_id' => 'required|integer|exists:users,id',
+                'attendances.*.status' => 'required|in:hadir,telat,tidak_hadir',
+                // clock_in wajib diisi untuk status hadir atau telat
+                'attendances.*.clock_in' => 'required_if:attendances.*.status,hadir,telat|nullable|string',
+            ], [
+                'attendances.*.clock_in.required_if' => 'Jam masuk wajib diisi untuk anggota yang hadir atau telat.',
+            ]);
 
-            // 3. Create Design Grafis work
-            \App\Models\PrDesignGrafisWork::firstOrCreate(
-                ['pr_episode_id' => $episode->id],
-                [
-                    'pr_production_work_id' => $productionWork->id,
-                    'pr_promotion_work_id' => $promotionWork->id,
-                    'assigned_to' => null,
-                    'status' => 'pending'
-                ]
-            );
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            $existing = $work->crew_attendances ?? [];
+            foreach ($request->attendances as $att) {
+                $existing[$att['user_id']] = [
+                    'clock_in' => $att['clock_in'] ?? null,
+                    'status' => $att['status'],
+                    'recorded_by' => $user->id,
+                    'recorded_at' => now()->toISOString(),
+                ];
+            }
+
+            $work->update(['crew_attendances' => $existing]);
+
+            return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Absen berhasil disimpan.']);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/pr/produksi/works/{id}/request-return
+     * Request equipment return (only Coordinator can do this)
+     */
+    public function requestReturn(Request $request, int $id): JsonResponse
+    {
+        DB::beginTransaction();
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 401);
+            }
+
+            $work = PrProduksiWork::with(['episode.crews', 'equipmentLoans'])->findOrFail($id);
+
+            // Check coordinator status
+            $crew = $work->episode->crews->where('user_id', $user->id)->first();
+            if (!$crew || !$crew->is_coordinator) {
+                if (!Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+                    return response()->json(['success' => false, 'message' => 'Hanya koordinator yang dapat mengajukan pengembalian barang.'], 403);
+                }
+            }
+
+            // Find the active loan
+            $activeLoan = $work->equipmentLoans
+                ->where('status', 'active')
+                ->first();
+
+            if (!$activeLoan) {
+                return response()->json(['success' => false, 'message' => 'Tidak ada peminjaman alat yang aktif untuk episode ini.'], 400);
+            }
+
+            $activeLoan->update([
+                'status' => 'return_requested',
+                'return_notes' => $request->input('return_notes'),
+            ]);
+
+            // Notify Art & Set staff
+            $notificationService = app(\App\Services\PrNotificationService::class);
+            $notificationService->notifyArtSetReturnRequested($activeLoan);
+
+            DB::commit();
+            return response()->json(['success' => true, 'data' => $activeLoan->fresh(), 'message' => 'Permintaan pengembalian barang berhasil diajukan.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/pr/produksi/works/{id}/cancel-loan
+     * Cancel a pending equipment loan (only coordinator or producer/program manager)
+     */
+    public function cancelLoan(Request $request, int $id): JsonResponse
+    {
+        DB::beginTransaction();
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 401);
+            }
+
+            $work = PrProduksiWork::with(['episode.crews', 'equipmentLoans.loanItems'])->findOrFail($id);
+
+            // Check coordinator status
+            $crew = $work->episode->crews->where('user_id', $user->id)->first();
+            if (!$crew || !$crew->is_coordinator) {
+                if (!Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+                    return response()->json(['success' => false, 'message' => 'Hanya koordinator yang dapat membatalkan peminjaman alat.'], 403);
+                }
+            }
+
+            // Only cancel loans that are pending or return_requested (not active/completed)
+            $cancelableLoan = $work->equipmentLoans
+                ->whereIn('status', ['pending', 'return_requested'])
+                ->first();
+
+            if (!$cancelableLoan) {
+                return response()->json(['success' => false, 'message' => 'Tidak ada peminjaman yang bisa dibatalkan. Hanya status Menunggu Persetujuan yang bisa dibatalkan.'], 400);
+            }
+
+            // Restore stock for each item in the loan
+            foreach ($cancelableLoan->loanItems as $loanItem) {
+                \App\Models\InventoryItem::where('id', $loanItem->inventory_item_id)
+                    ->increment('available_quantity', $loanItem->quantity);
+            }
+
+            $cancelableLoan->update(['status' => 'cancelled']);
+
+            DB::commit();
+            return response()->json(['success' => true, 'data' => $work->fresh(['equipmentLoans']), 'message' => 'Peminjaman alat berhasil dibatalkan.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 }

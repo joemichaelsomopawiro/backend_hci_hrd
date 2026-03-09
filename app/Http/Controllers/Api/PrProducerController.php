@@ -23,21 +23,25 @@ use App\Constants\Role;
 use App\Models\PrProduksiWork;
 use App\Models\Notification;
 use App\Services\RoleHierarchyService;
+use App\Services\PrActivityLogService;
 
 class PrProducerController extends Controller
 {
     protected $conceptService;
     protected $productionService;
     protected $notificationService;
+    protected $activityLogService;
 
     public function __construct(
         PrConceptService $conceptService,
         PrProductionService $productionService,
-        PrNotificationService $notificationService
+        PrNotificationService $notificationService,
+        PrActivityLogService $activityLogService
     ) {
         $this->conceptService = $conceptService;
         $this->productionService = $productionService;
         $this->notificationService = $notificationService;
+        $this->activityLogService = $activityLogService;
     }
 
     /**
@@ -1181,6 +1185,14 @@ class PrProducerController extends Controller
                 'data' => ['creative_work_id' => $work->id]
             ]);
 
+            // Log Activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'approve_creative_script',
+                "Creative script/naskah approved by Producer",
+                ['step' => 4, 'work_id' => $work->id]
+            );
+
             \Illuminate\Support\Facades\DB::commit();
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Script approved successfully']);
@@ -1266,6 +1278,14 @@ class PrProducerController extends Controller
                 'data' => ['creative_work_id' => $work->id]
             ]);
 
+            // Log Activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'approve_creative_budget',
+                "Creative budget approved by Producer",
+                ['step' => 4, 'work_id' => $work->id]
+            );
+
             \Illuminate\Support\Facades\DB::commit();
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Budget approved successfully']);
@@ -1319,6 +1339,14 @@ class PrProducerController extends Controller
                 'data' => ['creative_work_id' => $work->id, 'reason' => $request->reason]
             ]);
 
+            // Log Activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'reject_creative',
+                "Creative work REJECTED by Producer. Reason: {$request->reason}",
+                ['step' => 4, 'work_id' => $work->id, 'reason' => $request->reason]
+            );
+
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Creative work rejected']);
 
         } catch (\Exception $e) {
@@ -1347,6 +1375,48 @@ class PrProducerController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Helper to sync crew member changes to bundled episodes (if they share an equipment loan)
+     */
+    private function syncCrewToBundledEpisodes($episodeId, $userId, $role, $isCoordinator, $action = 'add')
+    {
+        $primaryWork = \App\Models\PrProduksiWork::where('pr_episode_id', $episodeId)->first();
+        if (!$primaryWork)
+            return;
+
+        $loans = $primaryWork->equipmentLoans()->get();
+        if ($loans->isEmpty())
+            return;
+
+        foreach ($loans as $loan) {
+            $bundledWorks = $loan->produksiWorks()->get();
+            foreach ($bundledWorks as $bundledWork) {
+                if ($bundledWork->id === $primaryWork->id)
+                    continue;
+
+                $targetEpisodeId = $bundledWork->pr_episode_id;
+
+                if ($action === 'add' || $action === 'update') {
+                    if ($isCoordinator) {
+                        \App\Models\PrEpisodeCrew::where('episode_id', $targetEpisodeId)
+                            ->where('role', $role)
+                            ->where('user_id', '!=', $userId)
+                            ->update(['is_coordinator' => false]);
+                    }
+                    \App\Models\PrEpisodeCrew::updateOrCreate(
+                        ['episode_id' => $targetEpisodeId, 'user_id' => $userId, 'role' => $role],
+                        ['is_coordinator' => $isCoordinator]
+                    );
+                } elseif ($action === 'remove') {
+                    \App\Models\PrEpisodeCrew::where('episode_id', $targetEpisodeId)
+                        ->where('user_id', $userId)
+                        ->where('role', $role)
+                        ->delete();
+                }
+            }
         }
     }
 
@@ -1384,8 +1454,15 @@ class PrProducerController extends Controller
             $crew = PrEpisodeCrew::create([
                 'episode_id' => $episodeId,
                 'user_id' => $request->user_id,
-                'role' => $request->role
+                'role' => $request->role,
+                'is_coordinator' => $request->boolean('is_coordinator', false)
             ]);
+
+            // Notify crew member
+            $this->notificationService->notifyCrewAssigned($crew);
+
+            // Sync to bundled episodes
+            $this->syncCrewToBundledEpisodes($episodeId, $request->user_id, $request->role, $request->boolean('is_coordinator', false), 'add');
 
             return response()->json([
                 'success' => true,
@@ -1411,11 +1488,62 @@ class PrProducerController extends Controller
             }
 
             $crew = PrEpisodeCrew::where('episode_id', $episodeId)->findOrFail($crewId);
+            $userId = $crew->user_id;
+            $role = $crew->role;
+            $isCoordinator = $crew->is_coordinator;
+
             $crew->delete();
+
+            $this->syncCrewToBundledEpisodes($episodeId, $userId, $role, $isCoordinator, 'remove');
 
             return response()->json([
                 'success' => true,
                 'message' => 'Crew removed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Update Episode Crew (Toggle Coordinator)
+     * PATCH /api/pr/producer/episodes/{id}/crews/{crewId}
+     */
+    public function updateEpisodeCrew(Request $request, $episodeId, $crewId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $crew = PrEpisodeCrew::where('episode_id', $episodeId)->findOrFail($crewId);
+
+            $isCoordinator = $request->boolean('is_coordinator', false);
+
+            // If setting as coordinator, unset any existing coordinator in the same team role
+            if ($isCoordinator) {
+                PrEpisodeCrew::where('episode_id', $episodeId)
+                    ->where('role', $crew->role)
+                    ->where('id', '!=', $crewId)
+                    ->update(['is_coordinator' => false]);
+            }
+
+            $crew->is_coordinator = $isCoordinator;
+            $crew->save();
+
+            // Notify crew member if they are now a coordinator
+            if ($isCoordinator) {
+                $this->notificationService->notifyCrewAssigned($crew);
+            }
+
+            $this->syncCrewToBundledEpisodes($episodeId, $crew->user_id, $crew->role, $isCoordinator, 'update');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Crew updated successfully',
+                'data' => $crew->load('user')
             ]);
 
         } catch (\Exception $e) {
@@ -1545,7 +1673,7 @@ class PrProducerController extends Controller
             \App\Models\PrPromotionWork::firstOrCreate(
                 ['pr_episode_id' => $episode->id],
                 [
-                    'work_type' => 'general',
+                    'work_type' => 'bts_video',
                     'status' => 'planning',
                     'created_by' => $work->created_by,
                     'shooting_date' => $work->shooting_schedule ?? null,
@@ -1575,6 +1703,9 @@ class PrProducerController extends Controller
                 'message' => "Episode {$episode->episode_number} has been fully approved by Producer.",
                 'data' => ['episode_id' => $episode->id]
             ]);
+
+            // 5. Notify Setting Coordinator
+            $this->notificationService->notifySettingStart($episode);
 
             \Illuminate\Support\Facades\DB::commit();
 

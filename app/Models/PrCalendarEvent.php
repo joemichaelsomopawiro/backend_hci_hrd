@@ -16,6 +16,7 @@ class PrCalendarEvent extends Model
         'event_date',
         'color',
         'reminder_time',
+        'is_public',
     ];
 
     public function user()

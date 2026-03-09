@@ -14,7 +14,12 @@ class PrEpisodeCrew extends Model
     protected $fillable = [
         'episode_id',
         'user_id',
-        'role'
+        'role',
+        'is_coordinator'
+    ];
+
+    protected $casts = [
+        'is_coordinator' => 'boolean',
     ];
 
     public function episode()

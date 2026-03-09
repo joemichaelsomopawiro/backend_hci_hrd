@@ -11,9 +11,18 @@ use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Constants\Role;
+use App\Services\PrActivityLogService;
+use App\Services\PrWorkflowService;
+use Illuminate\Http\JsonResponse;
 
 class PrEditorController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
     /**
      * Get list of editor works with filters
      */
@@ -208,6 +217,14 @@ class PrEditorController extends Controller
                 'status' => 'revision_requested'
             ]);
 
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'file_request_editor',
+                "Editor requested missing files: " . $request->notes,
+                ['step' => 6, 'work_id' => $work->id, 'reason' => $request->notes]
+            );
+
             DB::commit();
 
             return response()->json([
@@ -285,13 +302,20 @@ class PrEditorController extends Controller
                         $qcWork->save();
                     }
                 }
+
+                // Log submission for QC
+                $this->activityLogService->logEpisodeActivity(
+                    $work->episode,
+                    'editor_submitted',
+                    "Video editing submitted for QC review.",
+                    ['step' => 6, 'work_id' => $work->id]
+                );
             }
 
             $work->update($updateData);
 
-            if ($work->status === 'completed') {
-                $this->checkStep6Completion($work->pr_episode_id);
-            }
+            // Centralized logic for step 6 completion
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 6);
 
             DB::commit();
 
@@ -309,31 +333,4 @@ class PrEditorController extends Controller
         }
     }
 
-    /**
-     * Check if all Step 6 works are completed
-     */
-    private function checkStep6Completion($episodeId)
-    {
-        $episode = PrEpisode::findOrFail($episodeId);
-
-        $editorCompleted = PrEditorWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
-            ->exists();
-
-        $editorPromosiCompleted = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
-            ->exists();
-
-        $designGrafisCompleted = \App\Models\PrDesignGrafisWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
-            ->exists();
-
-        // If all three are completed, mark Step 6 as completed
-        if ($editorCompleted && $editorPromosiCompleted && $designGrafisCompleted) {
-            $episode->update([
-                'workflow_step' => 7, // Move to next step
-                'status' => 'step_6_completed'
-            ]);
-        }
-    }
 }

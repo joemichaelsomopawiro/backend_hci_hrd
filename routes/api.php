@@ -735,6 +735,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         // Episode Crews Management (Shooting & Setting Team)
         Route::get('/episodes/{id}/crews', [PrManagerProgramController::class, 'getEpisodeCrews']);
         Route::post('/episodes/{id}/crews', [PrManagerProgramController::class, 'addEpisodeCrew']);
+        Route::patch('/episodes/{id}/crews/{crewId}', [PrManagerProgramController::class, 'updateEpisodeCrew']); // Update is_coordinator
         Route::delete('/episodes/{id}/crews/{crewId}', [PrManagerProgramController::class, 'removeEpisodeCrew']);
 
     });
@@ -771,6 +772,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         // Episode Crew & Final Review
         Route::get('/episodes/{id}/crews', [PrProducerController::class, 'getEpisodeCrews']);
         Route::post('/episodes/{id}/crews', [PrProducerController::class, 'addEpisodeCrew']);
+        Route::patch('/episodes/{id}/crews/{crewId}', [PrProducerController::class, 'updateEpisodeCrew']); // Update is_coordinator
         Route::delete('/episodes/{id}/crews/{crewId}', [PrProducerController::class, 'removeEpisodeCrew']);
         Route::post('/episodes/{id}/approve', [PrProducerController::class, 'approveEpisode']);
 
@@ -836,6 +838,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/loans/{id}/respond', [App\Http\Controllers\Api\Pr\EquipmentLoanController::class, 'respond']); // Approve/Reject
         Route::post('/loans/{id}/pickup', [App\Http\Controllers\Api\Pr\EquipmentLoanController::class, 'pickup']); // Mark as Picked Up
         Route::post('/loans/{id}/return', [App\Http\Controllers\Api\Pr\EquipmentLoanController::class, 'processReturn']); // Process Return
+        Route::post('/loans/{id}/approve-return', [App\Http\Controllers\Api\Pr\PrArtController::class, 'approveReturn']); // Approve return from coordinator
     });
 
     // Talent Routes
@@ -859,13 +862,15 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
     // Produksi Routes
     Route::prefix('produksi')->group(function () {
         Route::get('/works', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'index']);
-        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'show']); // Add show method if missing, or use index
+        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'show']);
         Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'update']);
-        Route::post('/works/{id}/complete', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'uploadShootingResults']); // Simplify route for complete
+        Route::post('/works/{id}/complete', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'uploadShootingResults']);
         Route::post('/works/{id}/request-equipment', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'requestEquipment']);
-        // Coordinator actions
-        Route::post('/crews/{crewId}/attendance', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'markAttendance']);
-        Route::post('/equipment-loans/{id}/request-return', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'requestEquipmentReturn']);
+        // Bundle: semua episode belum selesai syuting (untuk pilihan syuting sekaligus)
+        Route::get('/bundle-episodes', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'getBundleEpisodes']);
+        // Coordinator actions (new)
+        Route::post('/works/{id}/attendance', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'submitAttendance']);
+        Route::post('/works/{id}/request-return', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'requestReturn']);
     });
 
     // Promosi Routes
@@ -897,9 +902,18 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::get('/works', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'index']);
         Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'show']);
         Route::get('/works/check-editor/{episodeId}', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'checkEditorStatus']);
-        Route::post('/works/{episodeId}/start', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'start']);
+        Route::post('/works/{id}/accept-work', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'acceptWork']);
         Route::put('/works/{id}/progress', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'updateProgress']);
         Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrEditorPromosiController::class, 'submit']);
+    });
+    // Design Grafis Routes (Step 6)
+    Route::prefix('design-grafis')->group(function () {
+        Route::get('/works', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'index']);
+        Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'show']);
+        Route::post('/works/{episodeId}/start', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'start']);
+        Route::post('/works/{id}/accept-work', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'acceptWork']);
+        Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'updateProgress']);
+        Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'submit']);
     });
 
 

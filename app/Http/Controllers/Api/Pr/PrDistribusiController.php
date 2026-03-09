@@ -15,9 +15,17 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 use App\Constants\Role;
+use App\Services\PrActivityLogService;
 
 class PrDistribusiController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
+
     /**
      * View Program Concept
      */
@@ -187,6 +195,15 @@ class PrDistribusiController extends Controller
             $schedule = PrDistributionSchedule::where('pr_episode_id', $episodeId)->latest()->first();
             if ($schedule) {
                 $schedule->update(['status' => 'aired']);
+
+                // Log activity
+                $this->activityLogService->logEpisodeActivity(
+                    $episode,
+                    'distribusi_aired',
+                    "Episode marked as aired on platform: {$schedule->platform}",
+                    ['platform' => $schedule->platform, 'air_date' => $schedule->air_date],
+                    null
+                );
             }
 
             return response()->json(['success' => true, 'message' => 'Episode marked as aired']);

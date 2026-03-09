@@ -5,13 +5,23 @@ namespace App\Http\Controllers\Api\Pr;
 use App\Http\Controllers\Controller;
 use App\Models\PrBroadcastingWork;
 use App\Models\Notification;
+use App\Models\PrEpisode;
+use App\Services\PrWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use App\Services\PrActivityLogService;
 
 class PrBroadcastingController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
+
     public function index(Request $request): JsonResponse
     {
         try {
@@ -226,11 +236,17 @@ class PrBroadcastingController extends Controller
                 ->first();
 
             if ($stepProgress && $stepProgress->status !== 'completed') {
-                $stepProgress->update([
-                    'status' => 'completed',
-                    'completed_at' => now(),
-                    'completed_by' => $user->id
-                ]);
+                // We'll let PrWorkflowService handle the status update and logging
+                app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 9);
+
+                // Log activity
+                $this->activityLogService->logEpisodeActivity(
+                    $work->episode,
+                    'broadcasting_finish',
+                    "Episode published to YouTube: {$request->youtube_url}",
+                    ['step' => 9, 'youtube_url' => $request->youtube_url],
+                    $work->id
+                );
             }
 
             // Mark episode as broadcasting_complete so Step 9 shows green checkmark in progress banner

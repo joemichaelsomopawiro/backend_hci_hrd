@@ -32,6 +32,7 @@ class Role
     public const OFFICE_ASSISTANT = 'Office Assistant';
     public const PROGRAM_MANAGER = 'Program Manager';
     public const DISTRIBUTION_MANAGER = 'Distribution Manager';
+    public const MANAGER_DISTRIBUSI = 'Distribution Manager'; // Alias for DISTRIBUTION_MANAGER
     public const VP_PRESIDENT = 'VP President';
     public const PRESIDENT_DIRECTOR = 'President Director';
 
@@ -49,6 +50,7 @@ class Role
     public const SOCIAL_MEDIA = 'Social Media';
     public const PROMOTION = 'Promotion';
     public const GRAPHIC_DESIGN = 'Graphic Design';
+    public const DESIGN_GRAFIS = 'Graphic Design'; // Alias for GRAPHIC_DESIGN
     public const HOPELINE_CARE = 'Hopeline Care';
     public const BROADCASTING = 'Broadcasting';
 
@@ -293,6 +295,8 @@ class Role
             // Graphic Design variations
             'graphic design' => self::GRAPHIC_DESIGN,
             'graphic_design' => self::GRAPHIC_DESIGN,
+            'design grafis' => self::DESIGN_GRAFIS,
+            'design_grafis' => self::DESIGN_GRAFIS,
 
             // Hopeline Care variations
             'hopeline care' => self::HOPELINE_CARE,
@@ -313,6 +317,8 @@ class Role
             'distribution_manager' => self::DISTRIBUTION_MANAGER,
             'manager distribusi' => self::DISTRIBUTION_MANAGER,
             'manager_distribusi' => self::DISTRIBUTION_MANAGER,
+            'manager_distribusy' => self::DISTRIBUTION_MANAGER, // Handle typo
+            'manager distribusy' => self::DISTRIBUTION_MANAGER, // Handle typo
 
             // Program Manager variations
             'program manager' => self::PROGRAM_MANAGER,

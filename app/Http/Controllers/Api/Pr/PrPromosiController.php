@@ -5,115 +5,113 @@ namespace App\Http\Controllers\Api\Pr;
 use App\Http\Controllers\Controller;
 use App\Models\PrPromotionWork;
 use App\Models\Notification;
+use App\Constants\WorkflowStep;
+use App\Services\PrWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
+use App\Services\PrActivityLogService;
+use App\Models\PrEpisodeWorkflowProgress;
+use App\Models\PrCreativeWork;
+use App\Models\PrProduksiWork;
+use App\Models\PrEpisode;
+use App\Models\PrEditorPromosiWork;
+use App\Models\PrEditorWork;
+use App\Models\PrDesignGrafisWork;
+use App\Constants\Role;
 
 class PrPromosiController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
+
     public function index(Request $request): JsonResponse
     {
         try {
             $user = Auth::user();
 
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // AUTO-SYNC: Ensure all episodes with completed Step 4 have a Promotion Work
-            // detailed logic to handle "lazy creation"
-            $eligibleEpisodes = \App\Models\PrEpisodeWorkflowProgress::where('workflow_step', 4)
+            // AUTO-SYNC & SELF-HEALING: Ensure all episodes with completed Step 4 have a Promotion Work
+            // We use a more careful approach to avoid overwriting existing status/data
+            $eligibleEpisodes = PrEpisodeWorkflowProgress::where('workflow_step', 4)
                 ->where('status', 'completed')
-                ->pluck('episode_id');
+                ->pluck('episode_id')
+                ->unique();
 
             foreach ($eligibleEpisodes as $episodeId) {
                 try {
-                    // Check if promotion work exists
-                    $exists = PrPromotionWork::where('pr_episode_id', $episodeId)->exists();
-
-                    if (!$exists) {
-                        // Get creative work to copy shooting date if possible, but for sync we keep it simple
-                        // Best effort: try to find creative work associated
-                        $creativeWork = \App\Models\PrCreativeWork::where('pr_episode_id', $episodeId)->orderBy('created_at', 'desc')->first();
-
-                        PrPromotionWork::create([
-                            'pr_episode_id' => $episodeId,
-                            'work_type' => 'bts_video', // Reverted to bts_video
-                            'status' => 'planning',
-                            'created_by' => $user->id,
-                            'shooting_date' => $creativeWork ? $creativeWork->shooting_schedule : null,
-                            'shooting_notes' => 'Auto-created from dashboard sync'
-                        ]);
-                    }
-                } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error("Auto-sync failed for episode $episodeId: " . $e->getMessage());
-                }
-            }
-
-            // SELF-HEALING: Fix inconsistencies where Production Work exists (implying approval)
-            // but Promotion Work is missing OR Step 4 is not marked completed.
-            try {
-                // Get all episodes IDs that have Production Work
-                $prodWorkEpisodeIds = \App\Models\PrProduksiWork::pluck('pr_episode_id')->unique();
-
-                // Get all episodes IDs that have Promotion Work
-                $promoWorkEpisodeIds = PrPromotionWork::whereIn('pr_episode_id', $prodWorkEpisodeIds)
-                    ->pluck('pr_episode_id')
-                    ->toArray();
-
-                // Find missing ones
-                $missingPromoEpisodeIds = $prodWorkEpisodeIds->diff($promoWorkEpisodeIds);
-
-                foreach ($missingPromoEpisodeIds as $episodeId) {
-
-                    // Create Missing Promotion Work
-                    $creativeWork = \App\Models\PrCreativeWork::where('pr_episode_id', $episodeId)->orderBy('created_at', 'desc')->first();
-
-                    PrPromotionWork::create([
-                        'pr_episode_id' => $episodeId,
-                        'work_type' => 'bts_video',
-                        'status' => 'planning',
-                        'created_by' => $user->id,
-                        'shooting_date' => $creativeWork ? $creativeWork->shooting_schedule : null,
-                        'shooting_notes' => 'Auto-created from self-healing sync'
-                    ]);
-
-                    // Verify and Fix Step 4 Status
-                    $step4 = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
-                        ->where('workflow_step', 4)
+                    $creativeWork = PrCreativeWork::where('pr_episode_id', $episodeId)
+                        ->orderBy('created_at', 'desc')
                         ->first();
 
-                    if ($step4 && $step4->status !== 'completed') {
-                        $step4->update([
-                            'status' => 'completed',
-                            'completed_at' => now(),
-                            'notes' => 'Auto-completed via self-healing'
+                    $work = PrPromotionWork::where('pr_episode_id', $episodeId)->first();
+
+                    if (!$work) {
+                        PrPromotionWork::create([
+                            'pr_episode_id' => $episodeId,
+                            'work_type' => 'bts_video',
+                            'status' => 'planning',
+                            'created_by' => $creativeWork ? $creativeWork->created_by : $user->id,
+                            'shooting_date' => $creativeWork ? $creativeWork->shooting_schedule : null,
+                            'shooting_notes' => 'Auto-synced from Stage 4 completion'
                         ]);
+                    } else {
+                        // RECOVERY & UPDATE: If record exists, only update metadata if missing, and RECOVER status if lost
+                        $updateData = [];
+
+                        if (!$work->created_by && $creativeWork) {
+                            $updateData['created_by'] = $creativeWork->created_by;
+                        }
+
+                        if (!$work->shooting_date && $creativeWork) {
+                            $updateData['shooting_date'] = $creativeWork->shooting_schedule;
+                        }
+
+                        // RECOVERY: If status was reset to 'planning' but it was actually finished
+                        $isFinished = ($work->episode && $work->episode->status === 'promoted') || !empty($work->sharing_proof);
+                        if ($isFinished && $work->status === 'planning') {
+                            $updateData['status'] = 'completed';
+                            if (!$work->completed_at) {
+                                $updateData['completed_at'] = now();
+                            }
+                        }
+
+                        if (!empty($updateData)) {
+                            $work->update($updateData);
+                        }
                     }
+                } catch (\Exception $e) {
+                    Log::error("Sync failed for episode $episodeId: " . $e->getMessage());
                 }
-
-                // ALSO: Check episodes with Production Work where Step 4 is NOT completed (even if Promo work exists)
-                $incompleteStep4Episodes = \App\Models\PrEpisodeWorkflowProgress::whereIn('episode_id', $prodWorkEpisodeIds)
-                    ->where('workflow_step', 4)
-                    ->where('status', '!=', 'completed')
-                    ->pluck('episode_id');
-
-                foreach ($incompleteStep4Episodes as $episodeId) {
-                    \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
-                        ->where('workflow_step', 4)
-                        ->update([
-                            'status' => 'completed',
-                            'completed_at' => now(),
-                            'notes' => 'Auto-completed via self-healing (Production exists)'
-                        ]);
-                }
-
-            } catch (\Exception $e) {
-                \Illuminate\Support\Facades\Log::error("Self-healing sync failed: " . $e->getMessage());
             }
 
-            $query = PrPromotionWork::with(['episode.program', 'episode.creativeWork', 'createdBy']);
+
+            // MAIN QUERY: Only show works that have passed Step 4 (Budget Approval)
+            $query = PrPromotionWork::with(['episode.program', 'episode.creativeWork', 'createdBy'])
+                ->whereHas('episode.workflowProgress', function ($q) {
+                    $q->where('workflow_step', 4)->where('status', 'completed');
+                });
+
+            // ROLE-BASED FILTERING: Matching PrProduksiController logic
+            // Only allow designated roles to see all, others only see assigned
+            $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER]);
+            $isPromosiFull = Role::normalize($user->role) === Role::PROMOTION;
+
+            if (!$isManager && !$isPromosiFull) {
+                // If they are specific promotion crew (e.g. from Episode Crew), filter by their assignment
+                $query->whereHas('episode.crews', function ($q) use ($user) {
+                    $q->where('user_id', $user->id);
+                });
+            }
 
             if ($request->has('status') && $request->status !== '') {
                 $query->where('status', $request->status);
@@ -123,7 +121,14 @@ class PrPromosiController extends Controller
                 $query->where('work_type', $request->work_type);
             }
 
-            $works = $query->orderBy('created_at', 'desc')->paginate(15);
+            // Apply program filter if exists
+            if ($request->has('program_id') && $request->program_id !== '') {
+                $query->whereHas('episode', function ($q) use ($request) {
+                    $q->where('program_id', $request->program_id);
+                });
+            }
+
+            $works = $query->orderBy('created_at', 'desc')->get();
 
             return response()->json(['success' => true, 'data' => $works, 'message' => 'Promotion works retrieved successfully']);
 
@@ -136,7 +141,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -163,7 +168,7 @@ class PrPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -186,6 +191,9 @@ class PrPromosiController extends Controller
                 'status' => 'completed'
             ]);
 
+            // Sync Step 5 progress (Shooting phase transition to Editing/Design)
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
+
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Content uploaded successfully']);
 
         } catch (\Exception $e) {
@@ -198,7 +206,7 @@ class PrPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -228,6 +236,12 @@ class PrPromosiController extends Controller
                 'sharing_proof' => $sharingProof,
                 'status' => 'completed'
             ]);
+
+            // Sync Step 5 progress (Shooting phase transition to Editing/Design)
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
+
+            // Sync Step 10 progress
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 10);
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Content shared successfully']);
 
@@ -260,7 +274,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -312,7 +326,7 @@ class PrPromosiController extends Controller
 
             // Check workflow progress if completed
             if ($work->status === 'completed') {
-                $this->checkAndUpdateWorkflowStep5($work->episode);
+                app(\App\Services\PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
             }
 
             return response()->json([
@@ -330,7 +344,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::PROMOTION, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -341,15 +355,37 @@ class PrPromosiController extends Controller
 
             $work->update([
                 'status' => 'completed',
-                'completion_notes' => request('notes', $work->completion_notes)
+                'completion_notes' => request('completion_notes', request('notes', $work->completion_notes))
             ]);
 
-            $this->checkAndUpdateWorkflowStep5($work->episode);
+            Log::info("Promotion Work [{$id}] completed. Syncing Step 5 for Episode [{$work->pr_episode_id}]");
+            app(\App\Services\PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
+
+            // AUTO-CREATE PrEditorPromosiWork when Promotion completes
+            $exists = PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->exists();
+
+            if (!$exists) {
+                // Find the main_episode editor work (may or may not be ready)
+                $mainEditorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
+                    ->where('work_type', 'main_episode')
+                    ->first();
+
+                $editorReady = $mainEditorWork && in_array($mainEditorWork->status, ['pending_qc', 'completed']);
+
+                PrEditorPromosiWork::create([
+                    'pr_episode_id' => $work->pr_episode_id,
+                    'pr_promotion_work_id' => $work->id,
+                    'pr_editor_work_id' => $mainEditorWork ? $mainEditorWork->id : null,
+                    'status' => $editorReady ? 'pending' : 'waiting_editor',
+                ]);
+
+                Log::info("Auto-created PrEditorPromosiWork for Episode [{$work->pr_episode_id}], status: " . ($editorReady ? 'pending' : 'waiting_editor'));
+            }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Work marked as completed.',
-                'data' => $work
+                'data' => $work,
             ]);
 
         } catch (\Exception $e) {
@@ -371,7 +407,7 @@ class PrPromosiController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
-            $episodes = \App\Models\PrEpisode::with(['program', 'promotionWork', 'broadcastingWork', 'editorPromosiWork'])
+            $episodes = PrEpisode::with(['program', 'promotionWork', 'broadcastingWork', 'editorPromosiWork'])
                 ->whereHas('promotionWork')
                 ->whereHas('workflowProgress', function ($query) {
                     $query->where('workflow_step', 8)->where('status', 'completed');
@@ -422,7 +458,7 @@ class PrPromosiController extends Controller
             $tasks = $sharingProof['share_konten_tasks'] ?? null;
 
             // Load highlight links from EditorPromosiWork
-            $editorPromosi = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)->first();
+            $editorPromosi = PrEditorPromosiWork::where('pr_episode_id', $episodeId)->first();
             $igHighlightLink = $editorPromosi?->ig_highlight_link ?? null;
             $fbHighlightLink = $editorPromosi?->fb_highlight_link ?? null;
 
@@ -465,7 +501,7 @@ class PrPromosiController extends Controller
             }
 
             $tasks = $request->input('tasks');
-
+            $finalize = $request->boolean('finalize', true); // Default to true if not provided (old behavior)
             // Merge into sharing_proof under dedicated key to avoid overwriting other data
             $sharingProof = $promotionWork->sharing_proof ?? [];
             $sharingProof['share_konten_tasks'] = $tasks;
@@ -473,8 +509,16 @@ class PrPromosiController extends Controller
             $promotionWork->sharing_proof = $sharingProof;
             $promotionWork->save();
 
+            if (!$finalize) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Share Konten tasks saved automatically',
+                    'data' => $tasks
+                ]);
+            }
+
             // Mark Step 10 as completed
-            $stepProgress = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+            $stepProgress = PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
                 ->where('workflow_step', 10)
                 ->first();
 
@@ -483,6 +527,15 @@ class PrPromosiController extends Controller
                     'status' => 'completed',
                     'completed_at' => now()
                 ]);
+
+                // Log activity
+                $this->activityLogService->logEpisodeActivity(
+                    $promotionWork->episode,
+                    'share_konten_finish',
+                    "Share Konten tasks completed.",
+                    ['step' => 10, 'status' => 'completed'],
+                    $promotionWork->id
+                );
             }
 
             // Mark episode and program as promoted so Step 10 shows green checkmark
@@ -501,73 +554,6 @@ class PrPromosiController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
-        }
-    }
-
-    private function checkAndUpdateWorkflowStep5($episode)
-    {
-        if (!$episode)
-            return;
-
-        // Check if promotion work is complete
-        $promotionWork = PrPromotionWork::where('pr_episode_id', $episode->id)
-            ->where('status', 'completed')
-            ->first();
-
-        // Check if production work is complete - Using PrProduksiWork model name corrected
-        $productionWork = \App\Models\PrProduksiWork::where('pr_episode_id', $episode->id)
-            ->where('status', 'completed')
-            ->first();
-
-        // If both are complete, update workflow step 5 and create Step 6 records
-        if ($promotionWork && $productionWork) {
-            // Fix: Use PrEpisodeWorkflowProgress instead of PrWorkflowStep
-            $progress = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episode->id)
-                ->where('workflow_step', 5)
-                ->first();
-
-            if ($progress) {
-                $progress->update([
-                    'status' => 'completed',
-                    'completed_at' => now()
-                ]);
-            }
-
-            // Auto-sync: Create Step 6 work records (Editor, Editor Promosi, Design Grafis)
-            // Only create if they don't already exist
-
-            // 1. Create Editor work
-            \App\Models\PrEditorWork::firstOrCreate(
-                ['pr_episode_id' => $episode->id],
-                [
-                    'pr_production_work_id' => $productionWork->id,
-                    'assigned_to' => null, // Can be assigned later
-                    'status' => 'pending',
-                    'files_complete' => false
-                ]
-            );
-
-            // 2. Create Editor Promosi work
-            \App\Models\PrEditorPromosiWork::firstOrCreate(
-                ['pr_episode_id' => $episode->id],
-                [
-                    'pr_editor_work_id' => null, // Will be linked when Editor work is created
-                    'pr_promotion_work_id' => $promotionWork->id,
-                    'assigned_to' => null,
-                    'status' => 'pending'
-                ]
-            );
-
-            // 3. Create Design Grafis work
-            \App\Models\PrDesignGrafisWork::firstOrCreate(
-                ['pr_episode_id' => $episode->id],
-                [
-                    'pr_production_work_id' => $productionWork->id,
-                    'pr_promotion_work_id' => $promotionWork->id,
-                    'assigned_to' => null,
-                    'status' => 'pending'
-                ]
-            );
         }
     }
 }

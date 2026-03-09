@@ -68,6 +68,13 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/production-schedules', [PrProducerController::class, 'listProductionSchedules']);
         Route::post('/production-schedules', [PrProducerController::class, 'createProductionSchedule']);
         Route::put('/production-schedules/{id}', [PrProducerController::class, 'updateProductionSchedule']);
+
+        // Episode Crews Management
+        Route::get('/episodes/{id}/crews', [PrProducerController::class, 'getEpisodeCrews']);
+        Route::post('/episodes/{id}/crews', [PrProducerController::class, 'addEpisodeCrew']);
+        Route::patch('/episodes/{id}/crews/{crewId}', [PrProducerController::class, 'updateEpisodeCrew']);
+        Route::delete('/episodes/{id}/crews/{crewId}', [PrProducerController::class, 'removeEpisodeCrew']);
+        Route::post('/episodes/{id}/approve', [PrProducerController::class, 'approveEpisode']);
     });
 
     // ==================== PRODUKSI ROUTES ====================
@@ -79,6 +86,10 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/works/{id}/upload-shooting-results', [PrProduksiController::class, 'uploadShootingResults']);
         Route::get('/available-equipment', [PrProduksiController::class, 'getAvailableEquipment']);
         Route::post('/works/{id}/complete', [PrProduksiController::class, 'completeWork']);
+        Route::post('/works/{id}/attendance', [PrProduksiController::class, 'submitAttendance']); // Coordinator submits attendance
+        Route::post('/works/{id}/request-return', [PrProduksiController::class, 'requestReturn']); // Coordinator requests equipment return
+        Route::post('/works/{id}/cancel-loan', [PrProduksiController::class, 'cancelLoan']); // Cancel pending loan
+        Route::get('/bundle-episodes', [PrProduksiController::class, 'getBundleEpisodes']); // All non-completed episodes for bundle selection
     });
 
     // ==================== ART & SET PROPERTY ROUTES ====================
@@ -93,6 +104,7 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/loans/{id}/reject', [PrArtController::class, 'rejectLoan']);
         Route::post('/loans/{id}/borrow', [PrArtController::class, 'markAsBorrowed']);
         Route::post('/loans/{id}/return', [PrArtController::class, 'markAsReturned']);
+        Route::post('/loans/{id}/approve-return', [PrArtController::class, 'approveReturn']);
 
         Route::get('/loan-history', [PrArtController::class, 'getLoanHistory']);
         Route::post('/loan-history/{id}/description', [PrArtController::class, 'updateHistoryDescription']);
@@ -116,7 +128,7 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/works', [PrPromosiController::class, 'store']); // Create new work
         Route::get('/works/{id}', [PrPromosiController::class, 'show']); // Get work detail
         Route::put('/works/{id}', [PrPromosiController::class, 'update']); // Update work
-        Route::post('/works/{id}/accept', [PrPromosiController::class, 'acceptWork']); // Accept work
+        Route::post('/works/{id}/accept-work', [PrPromosiController::class, 'acceptWork']); // Accept work
         Route::post('/works/{id}/complete', [PrPromosiController::class, 'complete']); // Complete work
         Route::post('/works/{id}/upload-content', [PrPromosiController::class, 'uploadContent']);
         Route::post('/works/{id}/share-content', [PrPromosiController::class, 'shareContent']);
@@ -138,7 +150,7 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
     Route::prefix('design-grafis')->group(function () {
         Route::get('/works', [PrDesignGrafisController::class, 'index']);
         Route::get('/works/{id}', [PrDesignGrafisController::class, 'show']);
-        Route::post('/works/{id}/accept', [PrDesignGrafisController::class, 'acceptWork']);
+        Route::post('/works/{id}/accept-work', [PrDesignGrafisController::class, 'acceptWork']);
         Route::put('/works/{id}', [PrDesignGrafisController::class, 'updateProgress']);
         Route::post('/works/{id}/submit', [PrDesignGrafisController::class, 'submit']);
     });

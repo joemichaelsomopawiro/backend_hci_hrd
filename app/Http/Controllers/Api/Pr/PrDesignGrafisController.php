@@ -4,15 +4,28 @@ namespace App\Http\Controllers\Api\Pr;
 
 use App\Models\PrDesignGrafisWork;
 use App\Models\PrEditorWork;
+use App\Models\PrEditorPromosiWork;
 use App\Models\PrEpisode;
+use App\Models\PrEpisodeWorkflowProgress;
+use App\Constants\WorkflowStep;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use App\Constants\Role;
+use App\Services\PrActivityLogService;
+use App\Services\PrWorkflowService;
 
 class PrDesignGrafisController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
     /**
      * Get list of design grafis works with filters
      */
@@ -21,6 +34,29 @@ class PrDesignGrafisController extends Controller
         $user = Auth::user();
         if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
+        // SELF-HEALING: Ensure all episodes with completed Step 5 have a Design Grafis Work
+        $eligibleEpisodes = PrEpisodeWorkflowProgress::where('workflow_step', 5)
+            ->where('status', 'completed')
+            ->pluck('episode_id')
+            ->unique();
+
+        foreach ($eligibleEpisodes as $episodeId) {
+            $work = PrDesignGrafisWork::where('pr_episode_id', $episodeId)->first();
+            if (!$work) {
+                $produksiWork = \App\Models\PrProduksiWork::where('pr_episode_id', $episodeId)->first();
+                $promosiWork = \App\Models\PrPromotionWork::where('pr_episode_id', $episodeId)->first();
+
+                if ($produksiWork && $promosiWork) {
+                    PrDesignGrafisWork::create([
+                        'pr_episode_id' => $episodeId,
+                        'pr_production_work_id' => $produksiWork->id,
+                        'pr_promotion_work_id' => $promosiWork->id,
+                        'status' => 'pending'
+                    ]);
+                }
+            }
         }
 
         $query = PrDesignGrafisWork::with([
@@ -279,45 +315,17 @@ class PrDesignGrafisController extends Controller
                 'submitted_at' => now()
             ]);
 
-            // Create or update QC Work
-            $qcWork = \App\Models\PrQualityControlWork::firstOrCreate(
-                ['pr_episode_id' => $work->pr_episode_id],
-                ['status' => 'pending']
+
+            // Log submission for QC
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'design_grafis_submitted',
+                "Design Grafis (Thumbnail) submitted for QC review.",
+                ['step' => 6, 'work_id' => $work->id]
             );
 
-            // Update QC Work with file locations
-            $qcWork->update([
-                'design_grafis_file_locations' => [
-                    'youtube_thumbnail' => $work->youtube_thumbnail_link,
-                    'bts_thumbnail' => $work->bts_thumbnail_link,
-                ]
-            ]);
-
-            // Update any 'revision' items in checklist to 'revised'
-            $checklist = $qcWork->qc_checklist;
-            if (is_array($checklist)) {
-                $designKeys = ['thumbnail_yt', 'thumbnail_bts', 'youtube_thumbnail', 'bts_thumbnail', 'tumneil_yt', 'tumneil_bts'];
-                $updated = false;
-                foreach ($checklist as $key => $item) {
-                    if (in_array($key, $designKeys) && isset($item['status']) && $item['status'] === 'revision') {
-                        $checklist[$key]['status'] = 'revised';
-                        $updated = true;
-                    }
-                }
-                if ($updated) {
-                    $qcWork->qc_checklist = $checklist;
-                    $qcWork->save();
-                }
-            }
-
-            // If QC Status is completed or approved, maybe we shouldn't reset it? 
-            // But if Design resubmits, QC needs to re-check.
-            if (in_array($qcWork->status, ['completed', 'approved', 'rejected'])) {
-                $qcWork->update(['status' => 'pending', 'qc_results' => null, 'quality_score' => null]);
-            }
-
-            // Check if all Step 6 roles are completed
-            $this->checkStep6Completion($work->pr_episode_id);
+            // Centralized logic for step 6 completion
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 6);
 
             DB::commit();
 
@@ -335,31 +343,4 @@ class PrDesignGrafisController extends Controller
         }
     }
 
-    /**
-     * Check if all Step 6 works are completed
-     */
-    private function checkStep6Completion($episodeId)
-    {
-        $episode = PrEpisode::findOrFail($episodeId);
-
-        $editorCompleted = PrEditorWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
-            ->exists();
-
-        $editorPromosiCompleted = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
-            ->exists();
-
-        $designGrafisCompleted = PrDesignGrafisWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'submitted')
-            ->exists();
-
-        // If all three are completed, mark Step 6 as completed
-        if ($editorCompleted && $editorPromosiCompleted && $designGrafisCompleted) {
-            $episode->update([
-                'workflow_step' => 7, // Move to next step
-                'status' => 'step_6_completed'
-            ]);
-        }
-    }
 }

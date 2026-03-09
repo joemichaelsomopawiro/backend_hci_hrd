@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\PrProductionSchedule;
 use App\Models\PrEpisode;
 use App\Models\PrCalendarEvent;
+use App\Constants\Role;
 use Illuminate\Support\Facades\Log;
 
 class PrDashboardController extends Controller
@@ -22,22 +23,28 @@ class PrDashboardController extends Controller
     {
         try {
             // 1. Get Shooting Schedules
-            // We consider a schedule "approved" if it has been created and is not essentially just a draft/cancelled state.
-            // Production schedules are created by/for producers.
+            // A. From Production Schedules (Official/Final)
             $shootingSchedules = PrProductionSchedule::with(['program', 'episode.creativeWork'])
-                ->whereNotIn('status', ['cancelled']) // Assuming we want everything that's actively planned or done
+                ->whereNotIn('status', ['cancelled'])
                 ->orderBy('scheduled_date', 'asc')
                 ->get();
 
+            // B. From Creative Works (Proposed/Planned by creative)
+            $creativeShootingSchedules = \App\Models\PrCreativeWork::with(['episode.program', 'episode.productionSchedules'])
+                ->whereNotNull('shooting_schedule')
+                ->get();
+
             // 2. Get Broadcast Schedules
-            // We get episodes that have an air_date set
             $broadcastSchedules = PrEpisode::with(['program'])
                 ->whereNotNull('air_date')
                 ->orderBy('air_date', 'asc')
                 ->get();
 
-            // 3. Get Custom Events for the logged-in user
-            $userEvents = PrCalendarEvent::where('user_id', auth()->id())
+            // 3. Get Custom Events (Personal Reminders OR Public Schedules)
+            $userEvents = PrCalendarEvent::where(function ($query) {
+                $query->where('user_id', auth()->id())
+                    ->orWhere('is_public', true);
+            })
                 ->orderBy('event_date', 'asc')
                 ->get();
 
@@ -45,6 +52,7 @@ class PrDashboardController extends Controller
                 'success' => true,
                 'data' => [
                     'shooting_schedules' => $shootingSchedules,
+                    'creative_shooting_schedules' => $creativeShootingSchedules,
                     'broadcast_schedules' => $broadcastSchedules,
                     'custom_events' => $userEvents
                 ]
@@ -69,7 +77,19 @@ class PrDashboardController extends Controller
                 'event_date' => 'required|date',
                 'color' => 'nullable|string|max:20',
                 'reminder_time' => 'nullable|date_format:H:i',
+                'is_public' => 'nullable|boolean',
             ]);
+
+            $isPublic = $request->boolean('is_public', false);
+
+            // Only Program Manager, Distribution Manager, and Producer can make it public
+            $allowedRoles = [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER];
+            if ($isPublic && !Role::inArray(auth()->user()->role, $allowedRoles)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: Only Managers and Producers can create public schedules.'
+                ], 403);
+            }
 
             $event = PrCalendarEvent::create([
                 'user_id' => auth()->id(),
@@ -78,6 +98,7 @@ class PrDashboardController extends Controller
                 'event_date' => $request->event_date,
                 'color' => $request->color ?? '#3b82f6',
                 'reminder_time' => $request->reminder_time,
+                'is_public' => $isPublic,
             ]);
 
             return response()->json([
@@ -99,9 +120,19 @@ class PrDashboardController extends Controller
     public function deleteCalendarEvent($id)
     {
         try {
-            $event = PrCalendarEvent::where('id', $id)
-                ->where('user_id', auth()->id())
-                ->firstOrFail();
+            $event = PrCalendarEvent::findOrFail($id);
+
+            // Access Control: Owner OR (Event is public AND User is Manager/Producer)
+            $isOwner = $event->user_id === auth()->id();
+            $allowedRoles = [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER];
+            $isManager = Role::inArray(auth()->user()->role, $allowedRoles);
+
+            if (!$isOwner && !($event->is_public && $isManager)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized deletion'
+                ], 403);
+            }
 
             $event->delete();
 

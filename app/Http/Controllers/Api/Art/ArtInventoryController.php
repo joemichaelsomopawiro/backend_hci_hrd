@@ -43,8 +43,12 @@ class ArtInventoryController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
+                'condition' => 'nullable|string|max:100',
+                'location' => 'nullable|string|max:255',
+                'position' => 'nullable|string|max:255',
+                'category' => 'nullable|string|max:100',
                 'total_quantity' => 'required|integer|min:0',
-                'status' => 'required|in:active,maintenance,lost',
+                'status' => 'required|in:active,maintenance,lost,damaged',
                 'photo_link' => 'nullable|url', // Strict Link Only
             ]);
 
@@ -85,8 +89,12 @@ class ArtInventoryController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'sometimes|required|string|max:255',
                 'description' => 'nullable|string',
+                'condition' => 'nullable|string|max:100',
+                'location' => 'nullable|string|max:255',
+                'position' => 'nullable|string|max:255',
+                'category' => 'nullable|string|max:100',
                 'total_quantity' => 'sometimes|required|integer|min:0',
-                'status' => 'sometimes|required|in:active,maintenance,lost',
+                'status' => 'sometimes|required|in:active,maintenance,lost,damaged',
                 'photo_link' => 'nullable|url',
             ]);
 

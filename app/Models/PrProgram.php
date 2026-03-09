@@ -25,6 +25,7 @@ class PrProgram extends Model
         'duration_minutes',
         'broadcast_channel',
         'program_year',
+        'target_audience',
         'producer_id',
         'manager_distribusi_id',
         'read_by_producer',

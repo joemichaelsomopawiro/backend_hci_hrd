@@ -30,6 +30,7 @@ class PrProgramService
                 'air_time' => $data['air_time'],
                 'duration_minutes' => $data['duration_minutes'] ?? 60,
                 'broadcast_channel' => $data['broadcast_channel'] ?? null,
+                'target_audience' => $data['target_audience'] ?? null,
                 'program_year' => $data['program_year'],
                 'status' => 'draft'
             ]);

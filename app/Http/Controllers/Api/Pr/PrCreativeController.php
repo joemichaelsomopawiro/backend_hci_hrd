@@ -15,14 +15,17 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\PrProgramCrew;
 use App\Models\PrProgramFile;
 use App\Services\PrNotificationService;
+use App\Services\PrActivityLogService;
 
 class PrCreativeController extends Controller
 {
     protected $notificationService;
+    protected $activityLogService;
 
-    public function __construct(PrNotificationService $notificationService)
+    public function __construct(PrNotificationService $notificationService, PrActivityLogService $activityLogService)
     {
         $this->notificationService = $notificationService;
+        $this->activityLogService = $activityLogService;
     }
     /**
      * Get episodes available for creating new creative work
@@ -432,6 +435,14 @@ class PrCreativeController extends Controller
 
             // Notify Producer via Service
             $this->notificationService->notifyCreativeWorkSubmitted($work);
+
+            // Log Activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'submit_creative',
+                "Creative script/naskah submitted for review",
+                ['step' => 3, 'work_id' => $work->id]
+            );
 
             // Automate Workflow Step 3 Completion: Creative Submits to Producer
             $workflowProgress = PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)

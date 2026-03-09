@@ -10,9 +10,17 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
 use App\Constants\Role;
+use App\Services\PrActivityLogService;
 
 class PrArtController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
+
     /**
      * GET /api/pr/art/inventory
      * List all inventory items with availability status
@@ -193,8 +201,8 @@ class PrArtController extends Controller
             'loanItems.inventoryItem',
             'borrower',
             'approver',
-            'produksiWork.episode.program',
-            'produksiWork.episode'
+            'produksiWorks.episode.program',
+            'produksiWorks.episode'
         ]);
 
         // Filter by status if provided
@@ -209,11 +217,13 @@ class PrArtController extends Controller
             'data' => $loans->map(function ($loan) {
                 return [
                     'id' => $loan->id,
-                    'produksi_work' => [
-                        'id' => $loan->produksiWork->id ?? null,
-                        'program' => $loan->produksiWork->episode->program ?? null,
-                        'episode' => $loan->produksiWork->episode ?? null,
-                    ],
+                    'produksi_works' => $loan->produksiWorks->map(function ($work) {
+                        return [
+                            'id' => $work->id,
+                            'program' => $work->episode->program ?? null,
+                            'episode' => $work->episode ?? null,
+                        ];
+                    }),
                     'borrower' => $loan->borrower,
                     'approver' => $loan->approver,
                     'status' => $loan->status,
@@ -250,10 +260,23 @@ class PrArtController extends Controller
         }
 
         $loan->update([
-            'status' => 'approved',
+            'status' => 'active',
             'approver_id' => $user->id,
             'approval_notes' => $request->input('approval_notes'),
         ]);
+
+        // Log activity for each associated episode
+        foreach ($loan->produksiWorks as $work) {
+            if ($work->episode) {
+                $this->activityLogService->logEpisodeActivity(
+                    $work->episode,
+                    'approve_loan',
+                    "Equipment loan approved: " . ($request->input('approval_notes') ?? 'No notes provided'),
+                    ['step' => 4, 'loan_id' => $loan->id],
+                    $work->id
+                );
+            }
+        }
 
         return response()->json([
             'success' => true,
@@ -283,10 +306,23 @@ class PrArtController extends Controller
         }
 
         $loan->update([
-            'status' => 'rejected',
+            'status' => 'cancelled',
             'approver_id' => auth()->id(),
             'approval_notes' => $request->input('approval_notes'),
         ]);
+
+        // Log activity for each associated episode
+        foreach ($loan->produksiWorks as $work) {
+            if ($work->episode) {
+                $this->activityLogService->logEpisodeActivity(
+                    $work->episode,
+                    'reject_loan',
+                    "Equipment loan rejected: " . ($request->input('approval_notes') ?? 'No reason provided'),
+                    ['step' => 4, 'loan_id' => $loan->id],
+                    $work->id
+                );
+            }
+        }
 
         return response()->json([
             'success' => true,
@@ -316,9 +352,17 @@ class PrArtController extends Controller
                 $request->input('description')
             );
 
+            // Notify Shooting Coordinator for each associated episode
+            $notificationService = app(\App\Services\PrNotificationService::class);
+            foreach ($loan->produksiWorks as $work) {
+                if ($work->episode) {
+                    $notificationService->notifyShootingStart($work->episode);
+                }
+            }
+
             return response()->json([
                 'success' => true,
-                'message' => 'Equipment marked as borrowed successfully',
+                'message' => 'Equipment marked as borrowed successfully. Shooting team notified.',
                 'data' => $loan->fresh()
             ]);
         } catch (\Exception $e) {
@@ -376,7 +420,9 @@ class PrArtController extends Controller
 
         $query = EquipmentLoanHistory::with([
             'loan.loanItems.inventoryItem',
-            'loan.produksiWork.episode.program',
+            'loan.produksiWorks.episode.program',
+            'loan.produksiWorks.episode.crews.user', // Untuk daftar crew Print
+            'loan.borrower', // Untuk nama Koordinator (Crew Leader)
             'performedBy'
         ]);
 
@@ -413,6 +459,70 @@ class PrArtController extends Controller
             'success' => true,
             'message' => 'History description updated',
             'data' => $history->fresh()
+        ]);
+    }
+
+    /**
+     * POST /api/pr/art/loans/{id}/approve-return
+     * Art & Set staff approves the return request from the coordinator.
+     */
+    public function approveReturn(Request $request, int $id)
+    {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
+        $loan = EquipmentLoan::with('loanItems.inventoryItem')->findOrFail($id);
+
+        if ($loan->status !== 'return_requested') {
+            return response()->json(['success' => false, 'message' => 'Loan is not in return_requested status.'], 422);
+        }
+
+        // Update loan status to completed (unlocks Syuting coordinator's Notes/Files)
+        $loan->update([
+            'status' => 'completed',
+            'return_date' => now(),
+        ]);
+
+        // Restore inventory availability for each item
+        foreach ($loan->loanItems as $loanItem) {
+            if ($loanItem->inventoryItem) {
+                $item = $loanItem->inventoryItem;
+                $newAvailable = $item->available_quantity + $loanItem->quantity;
+                $item->update([
+                    'available_quantity' => min($newAvailable, $item->total_quantity),
+                    'status' => 'active',
+                ]);
+            }
+        }
+
+        // Log history
+        EquipmentLoanHistory::create([
+            'equipment_loan_id' => $loan->id,
+            'action' => 'returned',
+            'action_date' => now(),
+            'performed_by' => $user->id,
+            'description' => 'Return approved by Art & Set staff.',
+        ]);
+
+        // Log activity for each associated episode
+        foreach ($loan->produksiWorks as $work) {
+            if ($work->episode) {
+                $this->activityLogService->logEpisodeActivity(
+                    $work->episode,
+                    'approve_return',
+                    "Equipment return approved: Items are back in inventory.",
+                    ['step' => 4, 'loan_id' => $loan->id],
+                    $work->id
+                );
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pengembalian barang berhasil dikonfirmasi.',
+            'data' => $loan->fresh(['loanItems.inventoryItem']),
         ]);
     }
 }

@@ -10,9 +10,20 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Services\PrActivityLogService;
+use App\Models\PrBroadcastingWork;
+use App\Models\PrEpisode;
+use App\Services\PrWorkflowService;
 
 class PrManagerDistribusiQcController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
+
     public function index(Request $request): JsonResponse
     {
         try {
@@ -141,6 +152,24 @@ class PrManagerDistribusiQcController extends Controller
             // Handle Revision Logic
             if ($request->status === 'revision') {
                 $this->handleRevisionRequest($work, $request->item_key, $request->note);
+
+                // Log revision
+                $this->activityLogService->logEpisodeActivity(
+                    $work->episode,
+                    'qc_revision',
+                    "Revision requested for {$request->item_key}: {$request->note}",
+                    ['step' => 7, 'item' => $request->item_key, 'note' => $request->note],
+                    $work->id
+                );
+            } else {
+                // Log partial approval
+                $this->activityLogService->logEpisodeActivity(
+                    $work->episode,
+                    'qc_item_approved',
+                    "QC Item approved: {$request->item_key}",
+                    ['step' => 7, 'item' => $request->item_key],
+                    $work->id
+                );
             }
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Item updated']);
@@ -208,14 +237,26 @@ class PrManagerDistribusiQcController extends Controller
             if ($editorWork) {
                 $editorWork->update(['status' => 'completed']);
 
-                // Check if step 6 is totally finished
-                $this->checkStep6Completion($editorWork->pr_episode_id);
+                // Centralized logic for step 6 completion
+                app(PrWorkflowService::class)->syncStepProgress($editorWork->pr_episode_id, 6);
             }
 
+            // Sync Step 7 progress
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 7);
+
             // Auto-create Broadcasting work so it shows up in broadcasting dashboard
-            \App\Models\PrBroadcastingWork::firstOrCreate(
+            PrBroadcastingWork::firstOrCreate(
                 ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'main_episode'],
                 ['status' => 'preparing']
+            );
+
+            // Log final approval
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'qc_finish',
+                "Manager Distribusi Quality Check Completed: All items approved.",
+                ['step' => 7, 'status' => 'completed'],
+                $work->id
             );
 
             DB::commit();
@@ -228,28 +269,4 @@ class PrManagerDistribusiQcController extends Controller
         }
     }
 
-    private function checkStep6Completion($episodeId)
-    {
-        $episode = \App\Models\PrEpisode::findOrFail($episodeId);
-
-        $editorCompleted = \App\Models\PrEditorWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
-            ->exists();
-
-        $editorPromosiCompleted = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
-            ->exists();
-
-        $designGrafisCompleted = \App\Models\PrDesignGrafisWork::where('pr_episode_id', $episodeId)
-            ->where('status', 'completed')
-            ->exists();
-
-        // If all three are completed, mark Step 6 as completed
-        if ($editorCompleted && $editorPromosiCompleted && $designGrafisCompleted) {
-            $episode->update([
-                'workflow_step' => 7, // Move to next step
-                'status' => 'step_6_completed'
-            ]);
-        }
-    }
 }

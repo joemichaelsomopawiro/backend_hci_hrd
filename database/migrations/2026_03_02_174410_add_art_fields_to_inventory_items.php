@@ -11,11 +11,21 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('inventory_items', function (Blueprint $table) {
-            $table->string('equipment_id', 50)->nullable()->unique()->after('id');
-            $table->string('condition')->nullable()->after('description');
-            $table->string('location')->nullable()->after('condition');
-            $table->string('position')->nullable()->after('location');
-            $table->string('category')->nullable()->after('position');
+            if (!Schema::hasColumn('inventory_items', 'equipment_id')) {
+                $table->string('equipment_id', 50)->nullable()->unique()->after('id');
+            }
+            if (!Schema::hasColumn('inventory_items', 'condition')) {
+                $table->string('condition')->nullable()->after('description');
+            }
+            if (!Schema::hasColumn('inventory_items', 'location')) {
+                $table->string('location')->nullable()->after('condition');
+            }
+            if (!Schema::hasColumn('inventory_items', 'position')) {
+                $table->string('position')->nullable()->after('location');
+            }
+            if (!Schema::hasColumn('inventory_items', 'category')) {
+                $table->string('category')->nullable()->after('position');
+            }
         });
     }
 

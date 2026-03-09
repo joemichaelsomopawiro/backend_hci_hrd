@@ -9,9 +9,20 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use App\Services\PrActivityLogService;
+use App\Models\PrEpisode;
+use App\Models\PrEpisodeWorkflowProgress;
+use App\Constants\WorkflowStep;
+use App\Services\PrWorkflowService;
 
 class PrQualityControlController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
     public function index(Request $request): JsonResponse
     {
         try {
@@ -21,29 +32,50 @@ class PrQualityControlController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // Sync: Find episodes that have completed Step 6 (Editor & Editor Promosi)
-            // but don't have a QC work entry yet.
-            $completedStep6Episodes = \App\Models\PrEpisodeWorkflowProgress::where('workflow_step', 6)
+            // Fetch episodes that are officially marked as Step 6 completed
+            $progressRecords = \App\Models\PrEpisodeWorkflowProgress::with('episode')
+                ->where('workflow_step', 6)
                 ->where('status', 'completed')
-                ->pluck('episode_id');
+                ->get();
 
-            foreach ($completedStep6Episodes as $episodeId) {
-                // Check if QC work exists
-                $exists = PrQualityControlWork::where('pr_episode_id', $episodeId)->exists();
+            $validEpisodeIds = [];
+            $workflowService = app(\App\Services\PrWorkflowService::class);
 
-                if (!$exists) {
-                    // Create QC Work
-                    PrQualityControlWork::create([
-                        'pr_episode_id' => $episodeId,
-                        'status' => 'pending',
-                        'recieved_at' => now(), // Mark when it entered QC
-                        // 'created_by' => system? or null. nullable in migration?
-                        // Assuming nullable or we can set it to a system user if needed, but better leave null if not strictly required
-                    ]);
+            foreach ($progressRecords as $progress) {
+                // IMPORTANT: Skip if episode is missing (e.g., soft deleted)
+                if (!$progress->episode) {
+                    continue;
+                }
+
+                // Double check if roles are actually done according to current logic
+                // This handles episodes that were prematurely marked completed by old buggy code
+                $roleCompletions = $workflowService->getRoleCompletions($progress->episode, 6);
+
+                $allDone = true;
+                foreach ($roleCompletions as $isDone) {
+                    if (!$isDone) {
+                        $allDone = false;
+                        break;
+                    }
+                }
+
+                if ($allDone) {
+                    $validEpisodeIds[] = $progress->episode_id;
+
+                    // Ensure QC work exists if it's truly done
+                    PrQualityControlWork::firstOrCreate(
+                        ['pr_episode_id' => $progress->episode_id],
+                        ['status' => 'pending']
+                    );
+                } else {
+                    // REPAIR: If it's not all done but marked as completed, revert it!
+                    $progress->update(['status' => 'in_progress']);
                 }
             }
 
-            $query = PrQualityControlWork::with(['episode.program', 'createdBy', 'reviewedBy']);
+            // Fetch entries where QC work already exists and match valid episodes
+            $query = PrQualityControlWork::with(['episode.program', 'createdBy', 'reviewedBy'])
+                ->whereIn('pr_episode_id', $validEpisodeIds);
 
             if ($request->has('status')) {
                 $query->where('status', $request->status);
@@ -216,6 +248,22 @@ class PrQualityControlController extends Controller
                 ]);
             }
         }
+
+        // Reset Step 6 workflow progress to in_progress so it can be re-triggered later
+        \App\Models\PrEpisodeWorkflowProgress::where('pr_episode_id', $work->pr_episode_id)
+            ->where('workflow_step', 6)
+            ->update(['status' => \App\Constants\WorkflowStep::STATUS_IN_PROGRESS]);
+
+        // Log Revision Activity
+        $episode = PrEpisode::find($work->pr_episode_id);
+        if ($episode) {
+            $this->activityLogService->logEpisodeActivity(
+                $episode,
+                'qc_revision',
+                "QC Revision requested for: {$itemKey}. Note: {$note}",
+                ['step' => 7, 'work_id' => $work->id, 'item' => $itemKey, 'reason' => $note]
+            );
+        }
     }
 
     public function finish(int $id): JsonResponse
@@ -255,10 +303,20 @@ class PrQualityControlController extends Controller
                 'reviewed_by' => $user->id
             ]);
 
-            // Auto-create Broadcasting work
             \App\Models\PrBroadcastingWork::firstOrCreate(
                 ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'main_episode'],
                 ['status' => 'preparing', 'created_by' => $user->id]
+            );
+
+            // Sync Step 8 progress
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 8);
+
+            // Log Final QC Approval
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'qc_approved',
+                "Episode passed QC review. Ready for broadcasting.",
+                ['step' => 8, 'work_id' => $work->id]
             );
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'QC Work Finished']);

@@ -11,9 +11,18 @@ use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Constants\Role;
+use App\Services\PrActivityLogService;
+use App\Services\PrWorkflowService;
+use Illuminate\Http\JsonResponse;
 
 class PrEditorPromosiController extends Controller
 {
+    protected $activityLogService;
+
+    public function __construct(PrActivityLogService $activityLogService)
+    {
+        $this->activityLogService = $activityLogService;
+    }
     /**
      * Get list of editor promosi works with filters
      */
@@ -48,25 +57,15 @@ class PrEditorPromosiController extends Controller
         // Given the requirement: "episode itu di editor statusnya sudah Sedang Proses QC ... link promosi selesai"
 
         $filteredWorks = $works->filter(function ($work) use ($request) {
-            // If specific status requested (e.g. in_progress, completed), return true
-            if ($request->has('status') && !in_array($request->status, ['pending', 'waiting_editor'])) {
+            // For works already in progress/submitted/completed, always show
+            if (!in_array($work->status, ['pending', 'waiting_editor'])) {
                 return true;
             }
 
-            // If user wants 'pending' works, we only show those ready to be picked up
-            if ($work->status === 'pending' || $work->status === 'waiting_editor' || !$request->has('status')) {
-                $editorReady = $work->editorWork && in_array($work->editorWork->status, ['pending_qc', 'completed']);
-                $promotionReady = $work->promotionWork && $work->promotionWork->status === 'completed';
-
-                // If work is already assigned/started, show it. If not, check conditions.
-                if ($work->status !== 'pending' && $work->status !== 'waiting_editor') {
-                    return true;
-                }
-
-                return $editorReady && $promotionReady;
-            }
-
-            return true;
+            // For pending/waiting_editor: only require Promotion to be completed.
+            // editorReady is informational only (shown as badge on frontend).
+            $promotionReady = $work->promotionWork && $work->promotionWork->status === 'completed';
+            return $promotionReady;
         });
 
         return response()->json([
@@ -240,45 +239,16 @@ class PrEditorPromosiController extends Controller
                 'submitted_at' => now()
             ]);
 
-            // Create or update QC Work
-            $qcWork = \App\Models\PrQualityControlWork::firstOrCreate(
-                ['pr_episode_id' => $work->pr_episode_id],
-                ['status' => 'pending']
+            // Centralized logic for step 6 completion
+            app(\App\Services\PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 6);
+
+            // Log submission for QC
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'editor_promosi_submitted',
+                "Editor Promosi material submitted for QC review.",
+                ['step' => 6, 'work_id' => $work->id]
             );
-
-            // Update QC Work with file locations
-            $qcWork->update([
-                'editor_promosi_file_locations' => [
-                    'bts_video' => $work->bts_video_link,
-                    'tv_ad' => $work->tv_ad_link,
-                    'ig_highlight' => $work->ig_highlight_link,
-                    'tv_highlight' => $work->tv_highlight_link,
-                    'fb_highlight' => $work->fb_highlight_link,
-                ],
-            ]);
-
-            // Update any 'revision' items in checklist to 'revised'
-            $checklist = $qcWork->qc_checklist;
-            if (is_array($checklist)) {
-                $editorKeys = ['video_bts', 'iklan_tv', 'highlight_ig', 'highlight_tv', 'highlight_face', 'bts_video', 'tv_ad', 'ig_highlight', 'tv_highlight', 'fb_highlight'];
-                $updated = false;
-                foreach ($checklist as $key => $item) {
-                    if (in_array($key, $editorKeys) && isset($item['status']) && $item['status'] === 'revision') {
-                        $checklist[$key]['status'] = 'revised';
-                        $updated = true;
-                    }
-                }
-                if ($updated) {
-                    $qcWork->qc_checklist = $checklist;
-                    $qcWork->save();
-                }
-            }
-
-            // If QC Status is completed or approved, maybe we shouldn't reset it? 
-            // But if Editor resubmits, QC needs to re-check.
-            if (in_array($qcWork->status, ['completed', 'approved', 'rejected'])) {
-                $qcWork->update(['status' => 'pending', 'qc_results' => null, 'quality_score' => null]);
-            }
 
             DB::commit();
 
@@ -324,8 +294,8 @@ class PrEditorPromosiController extends Controller
                 'completed_at' => now()
             ]);
 
-            // Check if workflow can proceed
-            // $this->checkStep6Completion($work->pr_episode_id);
+            // Centralized logic for step 6 completion
+            app(\App\Services\PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 6);
 
             DB::commit();
 

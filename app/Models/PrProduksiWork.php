@@ -21,6 +21,7 @@ class PrProduksiWork extends Model
         'shooting_files',
         'shooting_file_links',
         'shooting_notes',
+        'crew_attendances',
         'status',
         'created_by',
         'completed_by',
@@ -34,6 +35,7 @@ class PrProduksiWork extends Model
         'needs_list' => 'array',
         'needs_requests' => 'array',
         'shooting_files' => 'array',
+        'crew_attendances' => 'array',
         'completed_at' => 'datetime',
     ];
 

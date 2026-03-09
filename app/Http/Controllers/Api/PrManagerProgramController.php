@@ -74,6 +74,7 @@ class PrManagerProgramController extends Controller
                 'air_time' => 'required|date_format:H:i',
                 'duration_minutes' => 'nullable|integer|min:1',
                 'broadcast_channel' => 'nullable|string|max:255',
+                'target_audience' => 'nullable|string|max:255',
                 'program_year' => 'nullable|integer|min:2020|max:2100'
             ]);
 
@@ -552,6 +553,7 @@ class PrManagerProgramController extends Controller
                 'air_time' => 'sometimes|date_format:H:i',
                 'duration_minutes' => 'nullable|integer|min:1',
                 'broadcast_channel' => 'nullable|string|max:255',
+                'target_audience' => 'nullable|string|max:255',
                 'apply_from_episode' => 'nullable|integer|min:1|max:53',
                 'new_episode_date' => 'nullable|date'
             ]);
@@ -570,7 +572,8 @@ class PrManagerProgramController extends Controller
                 'start_date',
                 'air_time',
                 'duration_minutes',
-                'broadcast_channel'
+                'broadcast_channel',
+                'target_audience'
             ]));
 
             // Apply schedule changes to episodes if requested
@@ -998,6 +1001,9 @@ class PrManagerProgramController extends Controller
                 'role' => $request->role
             ]);
 
+            // Notify crew member
+            $this->notificationService->notifyCrewAssigned($crew);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Crew added successfully',
@@ -1026,6 +1032,49 @@ class PrManagerProgramController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Crew removed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Update Episode Crew (Toggle Coordinator) - Manager Action
+     * PATCH /api/pr/manager-program/episodes/{id}/crews/{crewId}
+     */
+    public function updateEpisodeCrew(Request $request, $episodeId, $crewId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $crew = \App\Models\PrEpisodeCrew::where('episode_id', $episodeId)->findOrFail($crewId);
+
+            $isCoordinator = $request->boolean('is_coordinator', false);
+
+            // If setting as coordinator, unset existing coordinator in same team role
+            if ($isCoordinator) {
+                \App\Models\PrEpisodeCrew::where('episode_id', $episodeId)
+                    ->where('role', $crew->role)
+                    ->where('id', '!=', $crewId)
+                    ->update(['is_coordinator' => false]);
+            }
+
+            $crew->is_coordinator = $isCoordinator;
+            $crew->save();
+
+            // Notify crew member if they are now a coordinator
+            if ($isCoordinator) {
+                $this->notificationService->notifyCrewAssigned($crew);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Crew updated successfully',
+                'data' => $crew->load('user')
             ]);
 
         } catch (\Exception $e) {

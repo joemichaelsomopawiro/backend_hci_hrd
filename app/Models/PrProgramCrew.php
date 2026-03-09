@@ -15,7 +15,8 @@ class PrProgramCrew extends Model
     protected $fillable = [
         'program_id',
         'user_id',
-        'role'
+        'role',
+        'is_coordinator'
     ];
 
     /**

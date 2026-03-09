@@ -103,7 +103,7 @@ class AuthController extends Controller
                         $fail('Nama tersebut belum terdaftar sebagai karyawan. Silakan hubungi HR untuk mendaftarkan data karyawan terlebih dahulu.');
                         return;
                     }
-                    
+
                     // Cek apakah employee sudah terhubung dengan user lain
                     $linkedUser = \App\Models\User::where('employee_id', $existingEmployee->id)->first();
                     if ($linkedUser) {
@@ -138,7 +138,7 @@ class AuthController extends Controller
 
         // Cari employee berdasarkan nama
         $employee = \App\Models\Employee::where('nama_lengkap', $request->name)->first();
-        
+
         // Buat user dan hubungkan dengan employee
         $user = User::create([
             'name' => $request->name,
@@ -149,13 +149,13 @@ class AuthController extends Controller
             'employee_id' => $employee->id,
             'role' => $employee->jabatan_saat_ini, // Set role sesuai jabatan
         ]);
-    
+
         // AUTO-CREATE JATAH CUTI DEFAULT
         $currentYear = date('Y');
         $existingQuota = \App\Models\LeaveQuota::where('employee_id', $employee->id)
-                                          ->where('year', $currentYear)
-                                          ->first();
-        
+            ->where('year', $currentYear)
+            ->first();
+
         if (!$existingQuota) {
             \App\Models\LeaveQuota::create([
                 'employee_id' => $employee->id,
@@ -176,12 +176,12 @@ class AuthController extends Controller
                 'bereavement_leave_used' => 0,
             ]);
         }
-    
+
         // 🔥 AUTO-SYNC: Sinkronisasi otomatis untuk user yang baru register
         $syncResult = \App\Services\EmployeeSyncService::autoSyncUserRegistration($request->name);
 
         $token = $user->createToken('auth_token')->plainTextToken;
-    
+
         return response()->json([
             'success' => true,
             'message' => 'Registrasi berhasil dan jatah cuti telah dibuat',
@@ -210,7 +210,7 @@ class AuthController extends Controller
         }
 
         $loginField = filter_var($request->login, FILTER_VALIDATE_EMAIL) ? 'email' : 'phone';
-        
+
         $user = User::where($loginField, $request->login)->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
@@ -228,9 +228,9 @@ class AuthController extends Controller
         $maxExpiration = config('sanctum.max_expiration', 86400); // Default 24 jam
         $expirationSeconds = max(60, min($expirationSeconds, $maxExpiration)); // minimal 60 detik
         $expiresAt = now()->addSeconds($expirationSeconds);
-        
+
         $token = $user->createToken('auth_token', ['*'], $expiresAt)->plainTextToken;
-        
+
         // Get token model untuk response
         $tokenModel = $user->tokens()->latest()->first();
 
@@ -248,6 +248,7 @@ class AuthController extends Controller
                     'has_shooting_assignment' => $user->hasMusicTeamAssignment('shooting'),
                     'has_setting_assignment' => $user->hasMusicTeamAssignment('setting'),
                     'has_recording_assignment' => $user->hasMusicTeamAssignment('recording'),
+                    'has_production_assignment' => $user->hasProductionAssignment(),
                     'assigned_program_name' => $user->getAssignedProgramName(),
                 ],
                 'token' => $token,
@@ -307,7 +308,7 @@ class AuthController extends Controller
         }
 
         $otpResult = $this->otpService->verifyOtp($request->phone, $request->otp_code, 'forgot_password');
-        
+
         if (!$otpResult['success']) {
             return response()->json([
                 'success' => false,
@@ -339,7 +340,7 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $user = Auth::user();
-        
+
         if (!$user) {
             return response()->json([
                 'success' => false,
@@ -353,6 +354,7 @@ class AuthController extends Controller
         $userData['has_shooting_assignment'] = $user->hasMusicTeamAssignment('shooting');
         $userData['has_setting_assignment'] = $user->hasMusicTeamAssignment('setting');
         $userData['has_recording_assignment'] = $user->hasMusicTeamAssignment('recording');
+        $userData['has_production_assignment'] = $user->hasProductionAssignment();
         $userData['assigned_program_name'] = $user->getAssignedProgramName();
 
         return response()->json([
@@ -366,7 +368,7 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'profile_picture' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048'
         ]);
-    
+
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
@@ -374,44 +376,44 @@ class AuthController extends Controller
                 'errors' => $validator->errors()
             ], 422);
         }
-    
+
         try {
             $user = Auth::user();
-    
+
             // Debug: Log user details
             \Illuminate\Support\Facades\Log::info('User object', [
                 'user' => $user,
                 'class' => is_object($user) ? get_class($user) : 'null',
                 'is_user_model' => $user instanceof \App\Models\User
             ]);
-    
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Pengguna tidak terautentikasi'
                 ], 401);
             }
-    
+
             if (!$user instanceof \App\Models\User) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User object is not an instance of User model'
                 ], 500);
             }
-    
+
             // Delete old photo if exists
             if ($user->profile_picture) {
                 Storage::disk('public')->delete($user->profile_picture);
             }
-    
+
             // Upload new photo
             $file = $request->file('profile_picture');
             $filename = time() . '_' . $user->id . '.' . $file->getClientOriginalExtension();
             $path = $file->storeAs('profile_pictures', $filename, 'public');
-    
+
             // Update user
             $user->update(['profile_picture' => $path]);
-    
+
             return response()->json([
                 'success' => true,
                 'message' => 'Foto profil berhasil diunggah',
@@ -428,7 +430,7 @@ class AuthController extends Controller
             ], 500);
         }
     }
-    
+
     /**
      * Refresh Token - Generate new token untuk user yang sudah authenticated
      * POST /api/auth/refresh
@@ -437,7 +439,7 @@ class AuthController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
@@ -447,7 +449,7 @@ class AuthController extends Controller
 
             // Get current token
             $currentToken = $request->user()->currentAccessToken();
-            
+
             // Revoke current token
             $currentToken->delete();
 
@@ -456,7 +458,7 @@ class AuthController extends Controller
             $maxExpiration = config('sanctum.max_expiration', 86400); // Default 24 jam
             $expirationSeconds = max(60, min($expirationSeconds, $maxExpiration)); // minimal 60 detik
             $expiresAt = now()->addSeconds($expirationSeconds);
-            
+
             $token = $user->createToken('auth_token', ['*'], $expiresAt)->plainTextToken;
 
             // Log audit
@@ -487,6 +489,7 @@ class AuthController extends Controller
                         'has_shooting_assignment' => $user->hasMusicTeamAssignment('shooting'),
                         'has_setting_assignment' => $user->hasMusicTeamAssignment('setting'),
                         'has_recording_assignment' => $user->hasMusicTeamAssignment('recording'),
+                        'has_production_assignment' => $user->hasProductionAssignment(),
                         'assigned_program_name' => $user->getAssignedProgramName(),
                     ]
                 ]
@@ -514,7 +517,7 @@ class AuthController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
@@ -566,46 +569,46 @@ class AuthController extends Controller
     {
         try {
             $user = Auth::user();
-    
+
             // Debug: Log user details
             \Illuminate\Support\Facades\Log::info('User object', [
                 'user' => $user,
                 'class' => is_object($user) ? get_class($user) : 'null',
                 'is_user_model' => $user instanceof \App\Models\User
             ]);
-    
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Pengguna tidak terautentikasi'
                 ], 401);
             }
-    
+
             if (!$user instanceof \App\Models\User) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User object is not an instance of User model'
                 ], 500);
             }
-    
+
             if (!$user->profile_picture) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Tidak ada foto profil untuk dihapus'
                 ], 404);
             }
-    
+
             // Delete file from storage
             if (Storage::disk('public')->delete($user->profile_picture)) {
                 // Update user
                 $user->update(['profile_picture' => null]);
-    
+
                 return response()->json([
                     'success' => true,
                     'message' => 'Foto profil berhasil dihapus'
                 ]);
             }
-    
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menghapus foto profil dari penyimpanan'
@@ -683,11 +686,11 @@ class AuthController extends Controller
             'message' => 'Gagal mengirim ulang kode OTP. Silakan coba lagi.'
         ], 500);
     }
-    
+
     public function getProfile(Request $request)
     {
         $user = $request->user()->load('employee');
-        
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -707,7 +710,7 @@ class AuthController extends Controller
     {
         try {
             $user = $request->user();
-            
+
             if (!$user) {
                 return response()->json([
                     'success' => false,
@@ -715,7 +718,7 @@ class AuthController extends Controller
                     'code' => 'USER_NOT_FOUND'
                 ], 401);
             }
-            
+
             // Log untuk debugging
             Log::info('Checking employee status', [
                 'user_id' => $user->id,
@@ -723,7 +726,7 @@ class AuthController extends Controller
                 'user_role' => $user->role,
                 'employee_id' => $user->employee_id
             ]);
-            
+
             // Cek apakah employee_id null
             if (is_null($user->employee_id)) {
                 Log::warning('User has no employee_id', [
@@ -731,7 +734,7 @@ class AuthController extends Controller
                     'user_email' => $user->email,
                     'user_role' => $user->role
                 ]);
-                
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Akun Anda belum terhubung dengan data karyawan. Silakan hubungi HR untuk menghubungkan akun Anda.',
@@ -743,10 +746,10 @@ class AuthController extends Controller
                     ]
                 ], 403);
             }
-            
+
             // Cek apakah user masih ada di tabel employee
             $employee = Employee::where('id', $user->employee_id)->first();
-            
+
             if (!$employee) {
                 Log::warning('Employee not found', [
                     'user_id' => $user->id,
@@ -755,10 +758,10 @@ class AuthController extends Controller
                     'employee_id' => $user->employee_id,
                     'attempted_employee_id' => $user->employee_id
                 ]);
-                
+
                 // Coba cari employee dengan nama yang sama (untuk debugging)
                 $employeeByName = Employee::where('nama_lengkap', $user->name)->first();
-                
+
                 $debugInfo = [
                     'user_id' => $user->id,
                     'user_email' => $user->email,
@@ -771,7 +774,7 @@ class AuthController extends Controller
                         'jabatan' => $employeeByName->jabatan_saat_ini
                     ] : null
                 ];
-                
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Maaf, Anda sudah tidak terdaftar sebagai karyawan Hope Channel Indonesia. Akun Anda telah dinonaktifkan. Silakan hubungi HR untuk informasi lebih lanjut.',
@@ -779,14 +782,14 @@ class AuthController extends Controller
                     'debug' => $debugInfo
                 ], 403);
             }
-            
+
             Log::info('Employee found', [
                 'user_id' => $user->id,
                 'employee_id' => $employee->id,
                 'employee_name' => $employee->nama_lengkap,
                 'jabatan' => $employee->jabatan_saat_ini
             ]);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -800,14 +803,14 @@ class AuthController extends Controller
                     'manager_id' => $employee->manager_id
                 ]
             ]);
-            
+
         } catch (\Exception $e) {
             Log::error('Error checking employee status', [
                 'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengecek status employee',

@@ -107,6 +107,133 @@ class PrNotificationService
     }
 
     /**
+     * Notify Crew member when assigned to an episode
+     */
+    public function notifyCrewAssigned(\App\Models\PrEpisodeCrew $crew): void
+    {
+        $episode = $crew->episode;
+        $program = $episode->program;
+        $roleName = $crew->role === 'shooting_team' ? 'Tim Syuting' : 'Tim Setting';
+
+        Notification::create([
+            'user_id' => $crew->user_id,
+            'type' => 'pr_crew_assigned',
+            'title' => 'Penugasan Tim Produksi',
+            'message' => "Anda telah ditugaskan sebagai {$roleName} untuk episode {$episode->episode_number} program '{$program->name}'",
+            'data' => [
+                'episode_id' => $episode->id,
+                'program_id' => $program->id,
+                'role' => $crew->role,
+                'is_coordinator' => $crew->is_coordinator
+            ],
+            'related_type' => 'PrEpisode',
+            'related_id' => $episode->id,
+            'priority' => 'high',
+            'status' => 'unread'
+        ]);
+    }
+
+    /**
+     * Notify Setting Coordinator to start setting (after approval)
+     */
+    public function notifySettingStart(PrEpisode $episode): void
+    {
+        $coordinator = $episode->crews()->where('role', 'setting_team')->where('is_coordinator', true)->first();
+        if (!$coordinator)
+            return;
+
+        Notification::create([
+            'user_id' => $coordinator->user_id,
+            'type' => 'pr_setting_start',
+            'title' => 'Mulai Persiapan (Setting)',
+            'message' => "Episode {$episode->episode_number} program '{$episode->program->name}' telah disetujui. Silakan lakukan persiapan dan peminjaman alat.",
+            'data' => [
+                'episode_id' => $episode->id,
+                'program_id' => $episode->program_id
+            ],
+            'related_type' => 'PrEpisode',
+            'related_id' => $episode->id,
+            'priority' => 'high',
+            'status' => 'unread'
+        ]);
+    }
+
+    /**
+     * Notify Art & Set staff about equipment request
+     */
+    public function notifyArtSetLoanRequested(\App\Models\EquipmentLoan $loan): void
+    {
+        $artSetStaff = User::where('role', \App\Constants\Role::ART_SET_PROPERTI)->get();
+        $borrower = $loan->borrower->name ?? 'Tim Produksi';
+
+        foreach ($artSetStaff as $staff) {
+            Notification::create([
+                'user_id' => $staff->id,
+                'type' => 'pr_equipment_loan_requested',
+                'title' => 'Permintaan Pinjam Alat',
+                'message' => "{$borrower} mengajukan peminjaman alat untuk produksi PR.",
+                'data' => [
+                    'loan_id' => $loan->id
+                ],
+                'related_type' => 'EquipmentLoan',
+                'related_id' => $loan->id,
+                'priority' => 'high',
+                'status' => 'unread'
+            ]);
+        }
+    }
+
+    /**
+     * Notify Shooting Coordinator that items are picked up and shooting can start
+     */
+    public function notifyShootingStart(PrEpisode $episode): void
+    {
+        $coordinator = $episode->crews()->where('role', 'shooting_team')->where('is_coordinator', true)->first();
+        if (!$coordinator)
+            return;
+
+        Notification::create([
+            'user_id' => $coordinator->user_id,
+            'type' => 'pr_shooting_start',
+            'title' => 'Mulai Syuting',
+            'message' => "Alat untuk episode {$episode->episode_number} program '{$episode->program->name}' telah diambil. Silakan mulai proses syuting.",
+            'data' => [
+                'episode_id' => $episode->id,
+                'program_id' => $episode->program_id
+            ],
+            'related_type' => 'PrEpisode',
+            'related_id' => $episode->id,
+            'priority' => 'high',
+            'status' => 'unread'
+        ]);
+    }
+
+    /**
+     * Notify Art & Set staff about return request
+     */
+    public function notifyArtSetReturnRequested(\App\Models\EquipmentLoan $loan): void
+    {
+        $artSetStaff = User::where('role', \App\Constants\Role::ART_SET_PROPERTI)->get();
+        $borrower = $loan->borrower->name ?? 'Tim Produksi';
+
+        foreach ($artSetStaff as $staff) {
+            Notification::create([
+                'user_id' => $staff->id,
+                'type' => 'pr_equipment_return_requested',
+                'title' => 'Permintaan Kembali Alat',
+                'message' => "{$borrower} mengajukan pengembalian alat. Silakan verifikasi barang.",
+                'data' => [
+                    'loan_id' => $loan->id
+                ],
+                'related_type' => 'EquipmentLoan',
+                'related_id' => $loan->id,
+                'priority' => 'high',
+                'status' => 'unread'
+            ]);
+        }
+    }
+
+    /**
      * Notify Manager Distribusi tentang program yang disubmit
      */
     public function notifyProgramSubmittedToDistribusi(PrProgram $program): void
