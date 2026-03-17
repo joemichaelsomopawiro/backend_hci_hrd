@@ -20,6 +20,7 @@ class PrProgramConcept extends Model
         'target_audience',
         'content_outline',
         'format_description',
+        'external_link',
         'status',
         'approved_by',
         'approved_at',

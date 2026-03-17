@@ -139,7 +139,7 @@ class PrWorkflowService
             // Auto-create/Sync next phase work records (even if step status was already completed)
             if ($stepNumber === 5) {
                 $this->createStep6WorkRecords($episode);
-            } elseif ($stepNumber === 6) {
+            } elseif ($stepNumber === 7) {
                 $this->createStep8WorkRecord($episode);
             }
 
@@ -165,6 +165,25 @@ class PrWorkflowService
                     "Completed workflow step {$stepNumber}: {$progress->step_name} (All roles finished)",
                     ['step' => $stepNumber, 'status' => 'completed']
                 );
+
+                // Trigger Notifications for the NEXT step
+                $nextStep = $stepNumber + 1;
+                if ($nextStep <= 10) {
+                    app(PrNotificationService::class)->notifyWorkflowStepReady($episodeId, $nextStep);
+                }
+            }
+        } else {
+            // SPECIAL LOGIC: Partial completion triggers for Step 6
+            if ($stepNumber === 6) {
+                // If Editor is done, trigger Step 7 QC (Manager Distribusi)
+                if ($roleCompletions['Editor'] ?? false) {
+                    $this->createStep7WorkRecord($episode);
+                }
+
+                // If Editor Promosi AND Design Grafis are both done, trigger Step 8 QC (QC Final)
+                if (($roleCompletions['Editor Promosi'] ?? false) && ($roleCompletions['Design Grafis'] ?? false)) {
+                    $this->createStep8WorkRecord($episode);
+                }
             }
         }
     }
@@ -335,10 +354,11 @@ class PrWorkflowService
             }
 
             // 1. Create Editor work
-            PrEditorWork::firstOrCreate(
+            $editorWork = PrEditorWork::firstOrCreate(
                 ['pr_episode_id' => $episode->id],
                 [
                     'pr_production_work_id' => $produksiWork->id,
+                    'work_type' => 'main_episode',
                     'status' => 'pending',
                     'files_complete' => false
                 ]
@@ -348,6 +368,7 @@ class PrWorkflowService
             PrEditorPromosiWork::firstOrCreate(
                 ['pr_episode_id' => $episode->id],
                 [
+                    'pr_editor_work_id' => $editorWork->id,
                     'pr_promotion_work_id' => $promosiWork->id,
                     'status' => 'pending'
                 ]
@@ -366,6 +387,52 @@ class PrWorkflowService
             Log::info('Step 6 work records created successfully', ['episode_id' => $episode->id]);
         } catch (\Exception $e) {
             Log::error('Failed to create Step 6 work records', [
+                'episode_id' => $episode->id,
+                'message' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Create Manager Distribusi QC (Step 7) work record
+     */
+    protected function createStep7WorkRecord(PrEpisode $episode): void
+    {
+        try {
+            // Find Editor's work (main episode)
+            // Be flexible: try main_episode first, then fallback to first available if work_type is null
+            $editorWork = PrEditorWork::where('pr_episode_id', $episode->id)
+                ->where('work_type', 'main_episode')
+                ->first() ?? PrEditorWork::where('pr_episode_id', $episode->id)->first();
+
+            if (!$editorWork) {
+                Log::warning('Cannot create Step 7 records: Editor work not found', ['episode_id' => $episode->id]);
+                return;
+            }
+
+            // Create or Update QC Work
+            $qcWork = PrManagerDistribusiQcWork::where('pr_episode_id', $episode->id)->first();
+            
+            if (!$qcWork) {
+                PrManagerDistribusiQcWork::create([
+                    'pr_episode_id' => $episode->id,
+                    'status' => 'pending',
+                    'recieved_at' => now(),
+                ]);
+            } else {
+                // If it already exists, make sure it's back to pending for review
+                // unless it was already completed (safety check)
+                if ($qcWork->status !== 'completed') {
+                    $qcWork->update([
+                        'status' => 'pending',
+                        'recieved_at' => now(), // Refresh received time
+                    ]);
+                }
+            }
+
+            Log::info('Step 7 work record created successfully', ['episode_id' => $episode->id]);
+        } catch (\Exception $e) {
+            Log::error('Failed to create Step 7 work record', [
                 'episode_id' => $episode->id,
                 'message' => $e->getMessage()
             ]);

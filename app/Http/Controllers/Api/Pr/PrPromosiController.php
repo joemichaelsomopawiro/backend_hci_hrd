@@ -72,8 +72,23 @@ class PrPromosiController extends Controller
                             $updateData['created_by'] = $creativeWork->created_by;
                         }
 
-                        if (!$work->shooting_date && $creativeWork) {
-                            $updateData['shooting_date'] = $creativeWork->shooting_schedule;
+                        // ALWAYS SYNC: If shooting_date or shooting_time differs from creativeWork, update it
+                        if ($creativeWork) {
+                            $cwDate = $creativeWork->shooting_schedule ? date('Y-m-d', strtotime($creativeWork->shooting_schedule)) : null;
+                            $cwTime = $creativeWork->shooting_schedule ? date('H:i:s', strtotime($creativeWork->shooting_schedule)) : null;
+
+                            $pwDate = $work->shooting_date ? $work->shooting_date->format('Y-m-d') : null;
+                            $pwTime = $work->shooting_time;
+
+                            if ($cwDate !== $pwDate) {
+                                $updateData['shooting_date'] = $cwDate;
+                            }
+                            if ($cwTime !== $pwTime) {
+                                $updateData['shooting_time'] = $cwTime;
+                            }
+                            if ($creativeWork->shooting_location !== $work->location_data) {
+                                $updateData['location_data'] = $creativeWork->shooting_location;
+                            }
                         }
 
                         // RECOVERY: If status was reset to 'planning' but it was actually finished

@@ -7,6 +7,12 @@ use App\Models\PrProgram;
 use App\Models\PrProgramConcept;
 use App\Models\PrEpisode;
 use App\Models\User;
+use App\Models\PrEpisodeCrew;
+use App\Models\EquipmentLoan;
+use App\Models\PrCreativeWork;
+use App\Models\PrProgramCrew;
+use App\Constants\Role;
+use App\Constants\WorkflowStep;
 
 class PrNotificationService
 {
@@ -398,6 +404,58 @@ class PrNotificationService
                 'related_id' => $episode->id,
                 'priority' => 'normal',
                 'status' => 'unread'
+            ]);
+        }
+    }
+
+    /**
+     * Notify Editor or Designer about QC Revision request
+     */
+    public function notifyQcRevisionRequested(PrEpisode $episode, string $itemLabel, string $note, User $assignedUser): void
+    {
+        Notification::create([
+            'user_id' => $assignedUser->id,
+            'type' => 'pr_qc_revision_requested',
+            'title' => 'Permintaan Revisi QC',
+            'message' => "Episode {$episode->episode_number} program '{$episode->program->name}' memerlukan revisi pada bagian '{$itemLabel}'. Catatan: {$note}",
+            'data' => [
+                'episode_id' => $episode->id,
+                'program_id' => $episode->program_id,
+                'item_label' => $itemLabel,
+                'revision_note' => $note,
+                'program_name' => $episode->program->name,
+                'episode_number' => $episode->episode_number
+            ],
+            'related_type' => 'PrEpisode',
+            'related_id' => $episode->id,
+            'priority' => 'high',
+            'status' => 'unread'
+        ]);
+    }
+
+    /**
+     * Notify Quality Control about work resubmission
+     */
+    public function notifyQcResubmission(PrEpisode $episode, string $type, int $workId): void
+    {
+        $qcUsers = User::whereIn('role', [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER])->get();
+        $typeName = str_replace('_', ' ', ucwords($type, '_'));
+
+        foreach ($qcUsers as $qcUser) {
+            Notification::create([
+                'user_id' => $qcUser->id,
+                'type' => 'qc_resubmission',
+                'title' => 'Revision Completed: ' . $typeName,
+                'message' => "{$typeName} has resubmitted materials for " . ($episode->program->name ?? 'Program') . " EP " . ($episode->episode_number ?? ''),
+                'status' => 'unread',
+                'priority' => 'high',
+                'related_type' => 'PrEpisode',
+                'related_id' => $episode->id,
+                'data' => [
+                    'work_id' => $workId,
+                    'type' => $type,
+                    'episode_title' => $episode->title ?? ''
+                ]
             ]);
         }
     }

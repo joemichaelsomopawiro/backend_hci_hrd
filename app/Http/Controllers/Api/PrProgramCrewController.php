@@ -103,23 +103,15 @@ class PrProgramCrewController extends Controller
                 continue;
             }
 
-            // CRITICAL: Check if USER already has a ROLE in this program
-            // "Satu orang hanya boleh memegang 1 posisi (Role) per program."
-            $userRoleExists = PrProgramCrew::where('program_id', $programId)
+            // NEW: Support multiple roles per person
+            // "Satu orang boleh memegang banyak posisi (Role) per program."
+            $duplicateAssignment = PrProgramCrew::where('program_id', $programId)
                 ->where('user_id', $memberData['user_id'])
+                ->where('role', $memberData['role'])
                 ->first();
 
-            if ($userRoleExists) {
-                // If it's the exact same user AND role, just skip (idempotent)
-                if ($userRoleExists->role === $memberData['role']) {
-                    continue; // Already exists, perfectly fine
-                }
-
-                // If the user already has a DIFFERENT role
-                $errors[] = [
-                    'index' => $index,
-                    'message' => "Anggota tim ini sudah memegang posisi '{$userRoleExists->role}' di program ini."
-                ];
+            if ($duplicateAssignment) {
+                // Exact same person and role already exists, just skip or inform
                 continue;
             }
 
@@ -173,7 +165,7 @@ class PrProgramCrewController extends Controller
         // Define all required roles for Step 1 completion
         $requiredRoles = [
             'Producer',
-            'Kreatif',
+            'Creative',
             'Produksi',
             'Editor',
             'Editor Promosi',

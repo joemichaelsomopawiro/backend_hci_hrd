@@ -262,6 +262,7 @@ class PrEditorController extends Controller
             'file_path' => 'nullable|string',
             'file_name' => 'nullable|string',
             'file_size' => 'nullable|integer',
+            'status' => 'nullable|string'
         ]);
 
         try {
@@ -276,12 +277,12 @@ class PrEditorController extends Controller
                 'editing_notes',
                 'file_path',
                 'file_name',
-                'file_size'
+                'file_size',
+                'status'
             ]);
 
-            // If file_path is provided, update status to pending_qc (for QC review)
-            if ($request->has('file_path') && !empty($request->file_path)) {
-                $updateData['status'] = 'pending_qc';
+            // If status is specifically set to pending_qc
+            if (($request->status ?? '') === 'pending_qc') {
                 $updateData['submitted_at'] = now();
 
                 // Find associated Manager Distribusi QC Work and update checklist

@@ -92,23 +92,41 @@ class UnifiedNotificationService
      */
     private function getMainNotifications(int $userId, array $filters): array
     {
-        $query = Notification::where('user_id', $userId);
-
-        if (isset($filters['status'])) {
-            $query->where('status', $filters['status']);
-        }
-
-        if (isset($filters['type'])) {
-            $query->where('type', $filters['type']);
-        }
-
-        if (isset($filters['priority'])) {
-            $query->where('priority', $filters['priority']);
-        }
-
-        $notifications = $query->orderBy('created_at', 'desc')
+        $notifications = Notification::where('user_id', $userId)
+            ->when(isset($filters['status']), function ($q) use ($filters) {
+                return $q->where('status', $filters['status']);
+            })
+            ->when(isset($filters['type']), function ($q) use ($filters) {
+                return $q->where('type', $filters['type']);
+            })
+            ->when(isset($filters['priority']), function ($q) use ($filters) {
+                return $q->where('priority', $filters['priority']);
+            })
+            ->orderBy('created_at', 'desc')
             ->limit($filters['limit'] ?? 100)
             ->get();
+
+        // Filter out stale PR workflow notifications
+        $notifications = $notifications->filter(function ($notification) {
+            if ($notification->type === 'pr_workflow_step_ready') {
+                try {
+                    $data = $notification->data;
+                    $stepInNotification = $data['step_number'] ?? null;
+                    $episodeId = $notification->episode_id;
+                    
+                    if ($stepInNotification && $episodeId) {
+                        // Get current episode step
+                        $episode = \App\Models\PrEpisode::find($episodeId);
+                        if ($episode && $episode->workflow_step > $stepInNotification) {
+                            return false; // Stale
+                        }
+                    }
+                } catch (\Exception $e) {
+                    // Fail safe: show if error
+                }
+            }
+            return true;
+        });
 
         return $notifications->map(function ($notification) {
             return [

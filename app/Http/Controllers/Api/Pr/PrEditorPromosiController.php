@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Api\Pr;
 use App\Models\PrEditorPromosiWork;
 use App\Models\PrEditorWork;
 use App\Models\PrPromotionWork;
+use App\Models\PrQualityControlWork;
+use App\Models\Notification;
+use App\Models\User;
 use App\Models\PrEpisode;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
@@ -13,15 +16,20 @@ use Illuminate\Support\Facades\DB;
 use App\Constants\Role;
 use App\Services\PrActivityLogService;
 use App\Services\PrWorkflowService;
+use App\Services\PrNotificationService;
 use Illuminate\Http\JsonResponse;
 
 class PrEditorPromosiController extends Controller
 {
     protected $activityLogService;
+    protected $notificationService;
 
-    public function __construct(PrActivityLogService $activityLogService)
-    {
+    public function __construct(
+        PrActivityLogService $activityLogService,
+        PrNotificationService $notificationService
+    ) {
         $this->activityLogService = $activityLogService;
+        $this->notificationService = $notificationService;
     }
     /**
      * Get list of editor promosi works with filters
@@ -249,6 +257,30 @@ class PrEditorPromosiController extends Controller
                 "Editor Promosi material submitted for QC review.",
                 ['step' => 6, 'work_id' => $work->id]
             );
+
+            // Update QC checklist status from 'revision' to 'revised' if it exists
+            $qcWork = PrQualityControlWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            if ($qcWork && $qcWork->qc_checklist) {
+                $checklist = $qcWork->qc_checklist;
+                $updated = false;
+                foreach ($checklist as $key => $item) {
+                    if (isset($item['status']) && $item['status'] === 'revision') {
+                        $checklist[$key]['status'] = 'revised';
+                        $updated = true;
+                    }
+                }
+                if ($updated) {
+                    $qcWork->qc_checklist = $checklist;
+                    // Reset status to pending so QC knows to check again if it was rejected
+                    if ($qcWork->status !== 'completed') {
+                        $qcWork->status = 'pending';
+                    }
+                    $qcWork->save();
+                }
+            }
+
+            // Notify Quality Control Users
+            $this->notificationService->notifyQcResubmission($work->episode, 'editor_promosi', $work->id);
 
             DB::commit();
 

@@ -6,7 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\InventoryItem;
 use App\Models\EquipmentLoan;
 use App\Models\EquipmentLoanHistory;
+use App\Models\EquipmentPreset;
+use App\Models\EquipmentPresetItem;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
 use App\Constants\Role;
@@ -250,7 +253,7 @@ class PrArtController extends Controller
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
-        $loan = EquipmentLoan::findOrFail($id);
+        $loan = EquipmentLoan::with(['loanItems.inventoryItem', 'produksiWorks.episode'])->findOrFail($id);
 
         if ($loan->status !== 'pending') {
             return response()->json([
@@ -259,30 +262,51 @@ class PrArtController extends Controller
             ], 400);
         }
 
-        $loan->update([
-            'status' => 'active',
-            'approver_id' => $user->id,
-            'approval_notes' => $request->input('approval_notes'),
-        ]);
-
-        // Log activity for each associated episode
-        foreach ($loan->produksiWorks as $work) {
-            if ($work->episode) {
-                $this->activityLogService->logEpisodeActivity(
-                    $work->episode,
-                    'approve_loan',
-                    "Equipment loan approved: " . ($request->input('approval_notes') ?? 'No notes provided'),
-                    ['step' => 4, 'loan_id' => $loan->id],
-                    $work->id
-                );
+        DB::beginTransaction();
+        try {
+            // Deduct available_quantity for each item
+            foreach ($loan->loanItems as $loanItem) {
+                $inventoryItem = InventoryItem::lockForUpdate()->find($loanItem->inventory_item_id);
+                if (!$inventoryItem || $inventoryItem->available_quantity < $loanItem->quantity) {
+                    DB::rollBack();
+                    $name = $inventoryItem->name ?? 'barang ini';
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Stok tidak mencukupi untuk '{$name}'. Permintaan tidak dapat disetujui."
+                    ], 400);
+                }
+                $inventoryItem->decrement('available_quantity', $loanItem->quantity);
             }
-        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Loan approved successfully',
-            'data' => $loan->fresh()
-        ]);
+            $loan->update([
+                'status' => 'approved',
+                'approver_id' => $user->id,
+                'approval_notes' => $request->input('approval_notes'),
+            ]);
+
+            // Log activity for each associated episode
+            foreach ($loan->produksiWorks as $work) {
+                if ($work->episode) {
+                    $this->activityLogService->logEpisodeActivity(
+                        $work->episode,
+                        'approve_loan',
+                        "Equipment loan approved: " . ($request->input('approval_notes') ?? 'No notes provided'),
+                        ['step' => 4, 'loan_id' => $loan->id]
+                    );
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Loan approved successfully',
+                'data' => $loan->fresh()
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -318,8 +342,7 @@ class PrArtController extends Controller
                     $work->episode,
                     'reject_loan',
                     "Equipment loan rejected: " . ($request->input('approval_notes') ?? 'No reason provided'),
-                    ['step' => 4, 'loan_id' => $loan->id],
-                    $work->id
+                    ['step' => 4, 'loan_id' => $loan->id]
                 );
             }
         }
@@ -513,8 +536,7 @@ class PrArtController extends Controller
                     $work->episode,
                     'approve_return',
                     "Equipment return approved: Items are back in inventory.",
-                    ['step' => 4, 'loan_id' => $loan->id],
-                    $work->id
+                    ['step' => 4, 'loan_id' => $loan->id]
                 );
             }
         }
@@ -524,5 +546,95 @@ class PrArtController extends Controller
             'message' => 'Pengembalian barang berhasil dikonfirmasi.',
             'data' => $loan->fresh(['loanItems.inventoryItem']),
         ]);
+    }
+
+    // ==================== PRESET ENDPOINTS ====================
+
+    public function getPresets()
+    {
+        $presets = EquipmentPreset::with(['items.inventoryItem', 'createdBy'])
+            ->orderBy('name')
+            ->get();
+        return response()->json(['success' => true, 'data' => $presets]);
+    }
+
+    public function createPreset(Request $request)
+    {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
+        }
+        $request->validate([
+            'name'                     => 'required|string|max:255',
+            'description'              => 'nullable|string',
+            'items'                    => 'required|array|min:1',
+            'items.*.inventory_item_id'=> 'required|exists:inventory_items,id',
+            'items.*.quantity'         => 'required|integer|min:1',
+        ]);
+        DB::beginTransaction();
+        try {
+            $preset = EquipmentPreset::create([
+                'name'        => $request->name,
+                'description' => $request->description,
+                'created_by'  => $user->id,
+            ]);
+            foreach ($request->items as $item) {
+                EquipmentPresetItem::create([
+                    'equipment_preset_id' => $preset->id,
+                    'inventory_item_id'   => $item['inventory_item_id'],
+                    'quantity'            => $item['quantity'],
+                ]);
+            }
+            DB::commit();
+            return response()->json(['success' => true, 'data' => $preset->load('items.inventoryItem'), 'message' => 'Preset created.'], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    public function updatePreset(Request $request, $id)
+    {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
+        }
+        $request->validate([
+            'name'                     => 'sometimes|string|max:255',
+            'description'              => 'nullable|string',
+            'items'                    => 'sometimes|array|min:1',
+            'items.*.inventory_item_id'=> 'required_with:items|exists:inventory_items,id',
+            'items.*.quantity'         => 'required_with:items|integer|min:1',
+        ]);
+        $preset = EquipmentPreset::findOrFail($id);
+        DB::beginTransaction();
+        try {
+            $preset->update($request->only(['name', 'description']));
+            if ($request->has('items')) {
+                $preset->items()->delete();
+                foreach ($request->items as $item) {
+                    EquipmentPresetItem::create([
+                        'equipment_preset_id' => $preset->id,
+                        'inventory_item_id'   => $item['inventory_item_id'],
+                        'quantity'            => $item['quantity'],
+                    ]);
+                }
+            }
+            DB::commit();
+            return response()->json(['success' => true, 'data' => $preset->fresh('items.inventoryItem'), 'message' => 'Preset updated.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    public function deletePreset($id)
+    {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
+        }
+        EquipmentPreset::findOrFail($id)->delete();
+        return response()->json(['success' => true, 'message' => 'Preset deleted.']);
     }
 }

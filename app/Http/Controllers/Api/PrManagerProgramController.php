@@ -223,7 +223,8 @@ class PrManagerProgramController extends Controller
                 'objectives' => 'nullable|string',
                 'target_audience' => 'nullable|string',
                 'content_outline' => 'nullable|string',
-                'format_description' => 'nullable|string'
+                'format_description' => 'nullable|string',
+                'external_link' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
@@ -269,12 +270,19 @@ class PrManagerProgramController extends Controller
 
             $concept = PrProgramConcept::findOrFail($conceptId);
 
+            \Illuminate\Support\Facades\Log::info('Update Concept Request', [
+                'program_id' => $programId,
+                'concept_id' => $conceptId,
+                'payload' => $request->all()
+            ]);
+
             $validator = Validator::make($request->all(), [
                 'concept' => 'nullable|string',
                 'objectives' => 'nullable|string',
                 'target_audience' => 'nullable|string',
                 'content_outline' => 'nullable|string',
-                'format_description' => 'nullable|string'
+                'format_description' => 'nullable|string',
+                'external_link' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
@@ -493,13 +501,42 @@ class PrManagerProgramController extends Controller
     public function viewSchedules(Request $request, $id): JsonResponse
     {
         try {
-            $program = PrProgram::with(['productionSchedules', 'distributionSchedules'])->findOrFail($id);
+            $program = PrProgram::with([
+                'productionSchedules.episode',
+                'episodes.creativeWork',
+            ])->findOrFail($id);
+
+            // Syuting Rencana: episodes that have a shooting_schedule in creativeWork
+            $creativeShootingSchedules = $program->episodes
+                ->filter(fn($ep) => $ep->creativeWork && $ep->creativeWork->shooting_schedule)
+                ->map(fn($ep) => [
+                    'id' => $ep->creativeWork->id,
+                    'episode_number' => $ep->episode_number,
+                    'title' => $ep->title,
+                    'shooting_schedule' => $ep->creativeWork->shooting_schedule,
+                    'shooting_location' => $ep->creativeWork->shooting_location,
+                    'status' => $ep->status,
+                ])->values();
+
+            // Tayang: episodes that have an air_date, include air_time
+            $tayangEpisodes = $program->episodes
+                ->filter(fn($ep) => $ep->air_date)
+                ->sortBy('air_date')
+                ->map(fn($ep) => [
+                    'id' => $ep->id,
+                    'episode_number' => $ep->episode_number,
+                    'title' => $ep->title,
+                    'air_date' => $ep->air_date,
+                    'air_time' => $ep->air_time,
+                    'status' => $ep->status,
+                ])->values();
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'production_schedules' => $program->productionSchedules,
-                    'distribution_schedules' => $program->distributionSchedules
+                    'creative_shooting_schedules' => $creativeShootingSchedules,
+                    'tayang_episodes' => $tayangEpisodes,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -508,6 +545,7 @@ class PrManagerProgramController extends Controller
                 'message' => 'Error: ' . $e->getMessage()
             ], 500);
         }
+
     }
 
     /**
@@ -637,6 +675,32 @@ class PrManagerProgramController extends Controller
                 'success' => false,
                 'message' => 'Error: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Get episode detail
+     */
+    public function getEpisode($episodeId): JsonResponse
+    {
+        try {
+            $episode = PrEpisode::with([
+                'program.producer',
+                'program.managerProgram',
+                'program.managerDistribusi',
+                'creativeWork',
+                'crews.user'
+            ])->findOrFail($episodeId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $episode
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Episode tidak ditemukan'
+            ], 404);
         }
     }
 

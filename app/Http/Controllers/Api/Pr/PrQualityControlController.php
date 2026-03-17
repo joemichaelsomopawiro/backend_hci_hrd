@@ -13,65 +13,55 @@ use App\Services\PrActivityLogService;
 use App\Models\PrEpisode;
 use App\Models\PrEpisodeWorkflowProgress;
 use App\Constants\WorkflowStep;
+use App\Constants\Role;
 use App\Services\PrWorkflowService;
+use App\Models\PrEditorPromosiWork;
+use App\Models\PrDesignGrafisWork;
+use App\Models\PrBroadcastingWork;
+use Illuminate\Support\Facades\Log;
+use App\Services\PrNotificationService;
 
 class PrQualityControlController extends Controller
 {
     protected $activityLogService;
+    protected $notificationService;
 
-    public function __construct(PrActivityLogService $activityLogService)
+    public function __construct(PrActivityLogService $activityLogService, PrNotificationService $notificationService)
     {
         $this->activityLogService = $activityLogService;
+        $this->notificationService = $notificationService;
     }
     public function index(Request $request): JsonResponse
     {
         try {
             $user = Auth::user();
 
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [Role::QUALITY_CONTROL, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // Fetch episodes that are officially marked as Step 6 completed
-            $progressRecords = \App\Models\PrEpisodeWorkflowProgress::with('episode')
-                ->where('workflow_step', 6)
-                ->where('status', 'completed')
+            // We want to show:
+            // 1. Episodes where CURRENT workflow step is 7 or 8 (Ready for QC or at QC)
+            // 2. Episodes that have an existing QC work record (even if workflow step was reverted for revision)
+            
+            // First, find all episode IDs that already have a QC record
+            $existingQcEpisodeIds = PrQualityControlWork::pluck('pr_episode_id')->toArray();
+
+            // Next, find episodes where step 7 (QC Awal) or step 8 (QC Final) is active or completed
+            $progressRecords = PrEpisodeWorkflowProgress::with('episode')
+                ->whereIn('workflow_step', [7, 8])
+                ->where(function($q) use ($existingQcEpisodeIds) {
+                    $q->whereIn('status', ['pending', 'in_progress', 'completed'])
+                      ->orWhereIn('episode_id', $existingQcEpisodeIds);
+                })
                 ->get();
 
-            $validEpisodeIds = [];
-            $workflowService = app(\App\Services\PrWorkflowService::class);
+            $validEpisodeIds = array_unique(array_merge(
+                $existingQcEpisodeIds,
+                $progressRecords->pluck('episode_id')->toArray()
+            ));
 
-            foreach ($progressRecords as $progress) {
-                // IMPORTANT: Skip if episode is missing (e.g., soft deleted)
-                if (!$progress->episode) {
-                    continue;
-                }
-
-                // Double check if roles are actually done according to current logic
-                // This handles episodes that were prematurely marked completed by old buggy code
-                $roleCompletions = $workflowService->getRoleCompletions($progress->episode, 6);
-
-                $allDone = true;
-                foreach ($roleCompletions as $isDone) {
-                    if (!$isDone) {
-                        $allDone = false;
-                        break;
-                    }
-                }
-
-                if ($allDone) {
-                    $validEpisodeIds[] = $progress->episode_id;
-
-                    // Ensure QC work exists if it's truly done
-                    PrQualityControlWork::firstOrCreate(
-                        ['pr_episode_id' => $progress->episode_id],
-                        ['status' => 'pending']
-                    );
-                } else {
-                    // REPAIR: If it's not all done but marked as completed, revert it!
-                    $progress->update(['status' => 'in_progress']);
-                }
-            }
+            $workflowService = app(PrWorkflowService::class);
 
             // Fetch entries where QC work already exists and match valid episodes
             $query = PrQualityControlWork::with(['episode.program', 'createdBy', 'reviewedBy'])
@@ -86,6 +76,10 @@ class PrQualityControlController extends Controller
             return response()->json(['success' => true, 'data' => $works, 'message' => 'QC works retrieved successfully']);
 
         } catch (\Exception $e) {
+            Log::error('QC Dashboard Index Error: ' . $e->getMessage(), [
+                'exception' => $e,
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
@@ -120,39 +114,32 @@ class PrQualityControlController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $work = PrQualityControlWork::with(['episode.program', 'createdBy', 'reviewedBy'])->findOrFail($id);
 
             // Fetch related works to populate file locations
-            $editorWork = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->first();
-            $designWork = \App\Models\PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            $editorWork = PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            $designWork = PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->first();
 
+            // Update locations with standardized keys
             $editorLocations = [];
             if ($editorWork) {
-                if ($editorWork->bts_video_link)
-                    $editorLocations['video_bts'] = $editorWork->bts_video_link;
-                if ($editorWork->tv_ad_link)
-                    $editorLocations['tv_ad'] = $editorWork->tv_ad_link;
-                if ($editorWork->ig_highlight_link)
-                    $editorLocations['ig_highlight'] = $editorWork->ig_highlight_link;
-                if ($editorWork->tv_highlight_link)
-                    $editorLocations['tv_highlight'] = $editorWork->tv_highlight_link;
-                if ($editorWork->fb_highlight_link)
-                    $editorLocations['fb_highlight'] = $editorWork->fb_highlight_link;
+                if ($editorWork->bts_video_link) $editorLocations['bts_video'] = $editorWork->bts_video_link;
+                if ($editorWork->tv_ad_link) $editorLocations['tv_ad'] = $editorWork->tv_ad_link;
+                if ($editorWork->ig_highlight_link) $editorLocations['ig_highlight'] = $editorWork->ig_highlight_link;
+                if ($editorWork->tv_highlight_link) $editorLocations['tv_highlight'] = $editorWork->tv_highlight_link;
+                if ($editorWork->fb_highlight_link) $editorLocations['fb_highlight'] = $editorWork->fb_highlight_link;
             }
 
             $designLocations = [];
             if ($designWork) {
-                if ($designWork->youtube_thumbnail_link)
-                    $designLocations['youtube_thumbnail'] = $designWork->youtube_thumbnail_link;
-                if ($designWork->bts_thumbnail_link)
-                    $designLocations['bts_thumbnail'] = $designWork->bts_thumbnail_link;
+                if ($designWork->youtube_thumbnail_link) $designLocations['youtube_thumbnail'] = $designWork->youtube_thumbnail_link;
+                if ($designWork->bts_thumbnail_link) $designLocations['bts_thumbnail'] = $designWork->bts_thumbnail_link;
             }
 
-            // Update locations
             $work->editor_promosi_file_locations = $editorLocations;
             $work->design_grafis_file_locations = $designLocations;
             $work->save();
@@ -168,7 +155,7 @@ class PrQualityControlController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -193,6 +180,18 @@ class PrQualityControlController extends Controller
             ];
 
             $work->qc_checklist = $checklist;
+            
+            // Auto update work status to in_progress if it was pending
+            if ($work->status === 'pending') {
+                $work->status = 'in_progress';
+                $work->reviewed_by = $user->id;
+                
+                // Sync status to episode workflow progress for Step 7
+                PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
+                    ->where('workflow_step', 7)
+                    ->update(['status' => 'in_progress']);
+            }
+            
             $work->save();
 
             // Handle Revision Logic
@@ -209,60 +208,100 @@ class PrQualityControlController extends Controller
 
     private function handleRevisionRequest(PrQualityControlWork $work, string $itemKey, ?string $note)
     {
-        // Identify source based on item_key
-        $editorItems = ['bts_video', 'tv_ad', 'ig_highlight', 'tv_highlight', 'fb_highlight', 'highlight_face']; // Adjust based on user request
-        $designItems = ['youtube_thumbnail', 'bts_thumbnail', 'tumneil_yt', 'tumneil_bts'];
+        $editorKeys = ['bts_video', 'tv_ad', 'ig_highlight', 'tv_highlight', 'fb_highlight'];
+        $designKeys = ['youtube_thumbnail', 'bts_thumbnail'];
 
-        // Map user readable keys to internal keys if needed. 
-        // User said: QC Video BTS, QC Iklan Episode TV, QC Highlight Episode IG, QC Highlignt Episode TV, QC Highligt Episode Face, QC Tumneil YT, QC Tumneil BTS
+        $episode = PrEpisode::with('program')->find($work->pr_episode_id);
+        if (!$episode) return;
 
-        // I should stick to consistent keys.
-        // Let's assume keys passed from FE are: 
-        // 'video_bts', 'iklan_tv', 'highlight_ig', 'highlight_tv', 'highlight_face', 'thumbnail_yt', 'thumbnail_bts'
-
-        $editorKeys = ['video_bts', 'iklan_tv', 'highlight_ig', 'highlight_tv', 'highlight_face', 'bts_video', 'tv_ad', 'ig_highlight', 'tv_highlight', 'fb_highlight'];
-        $designKeys = ['thumbnail_yt', 'thumbnail_bts', 'youtube_thumbnail', 'bts_thumbnail', 'tumneil_yt', 'tumneil_bts'];
+        $itemLabel = str_replace('_', ' ', $itemKey);
+        $newNote = "[QC Revision: " . $itemKey . "] " . $note;
 
         if (in_array($itemKey, $editorKeys)) {
-            // Update Editor Promosi Work
-            $editorWork = \App\Models\PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            $editorWork = PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->first();
             if ($editorWork) {
-                $newNote = "[QC Revision: " . $itemKey . "] " . $note;
+                // Check if already in needs_revision, if so just append note
                 $currentNotes = $editorWork->notes ? $editorWork->notes . "\n" : "";
-
                 $editorWork->update([
                     'status' => 'needs_revision',
                     'notes' => $currentNotes . $newNote
                 ]);
+
+                if ($editorWork->assignedUser) {
+                    $this->notificationService->notifyQcRevisionRequested($episode, $itemLabel, $note, $editorWork->assignedUser);
+                }
             }
         } elseif (in_array($itemKey, $designKeys)) {
-            // Update Design Grafis Work
-            $designWork = \App\Models\PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            $designWork = PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->first();
             if ($designWork) {
-                $newNote = "[QC Revision: " . $itemKey . "] " . $note;
                 $currentNotes = $designWork->notes ? $designWork->notes . "\n" : "";
-
                 $designWork->update([
                     'status' => 'needs_revision',
                     'notes' => $currentNotes . $newNote
                 ]);
+
+                if ($designWork->assignedUser) {
+                    $this->notificationService->notifyQcRevisionRequested($episode, $itemLabel, $note, $designWork->assignedUser);
+                }
             }
         }
 
-        // Reset Step 6 workflow progress to in_progress so it can be re-triggered later
-        \App\Models\PrEpisodeWorkflowProgress::where('pr_episode_id', $work->pr_episode_id)
+        PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
             ->where('workflow_step', 6)
-            ->update(['status' => \App\Constants\WorkflowStep::STATUS_IN_PROGRESS]);
+            ->update(['status' => WorkflowStep::STATUS_IN_PROGRESS]);
 
-        // Log Revision Activity
-        $episode = PrEpisode::find($work->pr_episode_id);
-        if ($episode) {
-            $this->activityLogService->logEpisodeActivity(
-                $episode,
-                'qc_revision',
-                "QC Revision requested for: {$itemKey}. Note: {$note}",
-                ['step' => 7, 'work_id' => $work->id, 'item' => $itemKey, 'reason' => $note]
-            );
+        $this->activityLogService->logEpisodeActivity(
+            $episode,
+            'qc_revision',
+            "QC Revision requested for: {$itemKey}. Note: {$note}",
+            ['step' => 7, 'work_id' => $work->id, 'item' => $itemKey, 'reason' => $note]
+        );
+    }
+
+    public function cancelRevision(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::QUALITY_CONTROL, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::DISTRIBUTION_MANAGER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $request->validate(['item_key' => 'required|string']);
+            $work = PrQualityControlWork::findOrFail($id);
+            $checklist = $work->qc_checklist ?? [];
+
+            if (!isset($checklist[$request->item_key]) || $checklist[$request->item_key]['status'] !== 'revision') {
+                return response()->json(['success' => false, 'message' => 'Item is not in revision status.'], 400);
+            }
+
+            // Remove from checklist or reset status
+            unset($checklist[$request->item_key]);
+            $work->qc_checklist = $checklist;
+            $work->save();
+
+            // Check if any other revisions left for this source
+            $editorKeys = ['bts_video', 'tv_ad', 'ig_highlight', 'tv_highlight', 'fb_highlight'];
+            $designKeys = ['youtube_thumbnail', 'bts_thumbnail'];
+            
+            $otherRevisions = false;
+            foreach ($checklist as $key => $item) {
+                if ($item['status'] === 'revision') {
+                    if (in_array($request->item_key, $editorKeys) && in_array($key, $editorKeys)) $otherRevisions = true;
+                    if (in_array($request->item_key, $designKeys) && in_array($key, $designKeys)) $otherRevisions = true;
+                }
+            }
+
+            if (!$otherRevisions) {
+                if (in_array($request->item_key, $editorKeys)) {
+                    PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'submitted']);
+                } elseif (in_array($request->item_key, $designKeys)) {
+                    PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'submitted']);
+                }
+            }
+
+            return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Revision cancelled successfully']);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 
@@ -270,7 +309,7 @@ class PrQualityControlController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
+            if (!$user || !Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -278,23 +317,25 @@ class PrQualityControlController extends Controller
             $checklist = $work->qc_checklist ?? [];
 
             // Define required items (based on user request)
-            $requiredItems = ['video_bts', 'iklan_tv', 'highlight_ig', 'highlight_tv', 'highlight_face', 'thumbnail_yt', 'thumbnail_bts'];
+            $requiredItems = ['bts_video', 'tv_ad', 'ig_highlight', 'fb_highlight', 'tv_highlight', 'youtube_thumbnail', 'bts_thumbnail'];
 
-            // Check if all are approved. 
-            // Note: Keys might vary, so we need to be careful. Ideally frontend sends consistent keys.
-            // For now, checks if ALL items in checklist are approved? Or check against required list?
-            // Let's rely on the fact that if they click "Selesai", they should have approved everything visible.
+            // Identify currently present file keys to avoid failing on stale checklist items
+            $presentKeys = array_merge(
+                array_keys($work->editor_promosi_file_locations ?? []),
+                array_keys($work->design_grafis_file_locations ?? [])
+            );
 
+            // Check if all present items are approved
             $allApproved = true;
-            foreach ($checklist as $item) {
-                if (($item['status'] ?? '') !== 'approved') {
+            foreach ($presentKeys as $key) {
+                if (($checklist[$key]['status'] ?? '') !== 'approved') {
                     $allApproved = false;
                     break;
                 }
             }
 
-            if (!$allApproved || empty($checklist)) {
-                return response()->json(['success' => false, 'message' => 'All items must be approved before finishing.'], 400);
+            if (!$allApproved || empty($presentKeys)) {
+                return response()->json(['success' => false, 'message' => 'All present items must be approved before finishing.'], 400);
             }
 
             $work->update([
@@ -303,7 +344,7 @@ class PrQualityControlController extends Controller
                 'reviewed_by' => $user->id
             ]);
 
-            \App\Models\PrBroadcastingWork::firstOrCreate(
+            PrBroadcastingWork::firstOrCreate(
                 ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'main_episode'],
                 ['status' => 'preparing', 'created_by' => $user->id]
             );

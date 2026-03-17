@@ -33,27 +33,7 @@ class PrManagerDistribusiQcController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // Sync: Find episodes where Editor has completed editing (status is pending_qc)
-            // But actually editor changes status to pending_qc upon submit.
-            // Let's create QC works for editor works that are pending_qc or completed 
-            // but don't have a QC work entry yet.
-            $editorWorks = PrEditorWork::whereIn('status', ['pending_qc', 'completed'])
-                ->where('work_type', 'main_episode')
-                ->get();
 
-            foreach ($editorWorks as $editorWork) {
-                // Check if QC work exists
-                $exists = PrManagerDistribusiQcWork::where('pr_episode_id', $editorWork->pr_episode_id)->exists();
-
-                if (!$exists) {
-                    // Create QC Work
-                    PrManagerDistribusiQcWork::create([
-                        'pr_episode_id' => $editorWork->pr_episode_id,
-                        'status' => 'pending',
-                        'recieved_at' => now(), // Mark when it entered QC
-                    ]);
-                }
-            }
 
             $query = PrManagerDistribusiQcWork::with(['episode.program', 'createdBy', 'reviewedBy']);
 
@@ -62,6 +42,18 @@ class PrManagerDistribusiQcController extends Controller
             }
 
             $works = $query->orderBy('created_at', 'desc')->paginate(15);
+
+            $works->getCollection()->transform(function ($work) {
+                // Fetch Editor's work (main episode) to provide links
+                $editorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
+                    ->where('work_type', 'main_episode')
+                    ->first();
+
+                if ($editorWork) {
+                    $work->setAttribute('editor_file_path', $editorWork->file_path);
+                }
+                return $work;
+            });
 
             return response()->json(['success' => true, 'data' => $works, 'message' => 'Manager Distribusi QC works retrieved successfully']);
 
@@ -112,7 +104,7 @@ class PrManagerDistribusiQcController extends Controller
                 ->first();
 
             if ($editorWork) {
-                $work->editor_file_path = $editorWork->file_path; // Frontend can use this link
+                $work->setAttribute('editor_file_path', $editorWork->file_path); // Frontend can use this link
             }
 
             return response()->json(['success' => true, 'data' => $work]);
@@ -207,19 +199,29 @@ class PrManagerDistribusiQcController extends Controller
             $work = PrManagerDistribusiQcWork::findOrFail($id);
             $checklist = $work->qc_checklist ?? [];
 
-            // Define required items (based on user request, Manager Distribusi checks Video Episode)
+            // Define required items for Manager Distribusi
             $requiredItems = ['video_episode'];
 
+            // Identify present items - Manager Distribusi primarily checks the main episode video
+            $editorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
+                ->where('work_type', 'main_episode')
+                ->first();
+
+            $presentKeys = [];
+            if ($editorWork && $editorWork->file_path) {
+                $presentKeys[] = 'video_episode';
+            }
+
             $allApproved = true;
-            foreach ($checklist as $item) {
-                if (($item['status'] ?? '') !== 'approved') {
+            foreach ($presentKeys as $key) {
+                if (($checklist[$key]['status'] ?? '') !== 'approved') {
                     $allApproved = false;
                     break;
                 }
             }
 
-            if (!$allApproved || empty($checklist)) {
-                return response()->json(['success' => false, 'message' => 'All items must be approved before finishing.'], 400);
+            if (!$allApproved || empty($presentKeys)) {
+                return response()->json(['success' => false, 'message' => 'Video episode must be approved before finishing.'], 400);
             }
 
             DB::beginTransaction();
@@ -265,6 +267,22 @@ class PrManagerDistribusiQcController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get count of pending QC works
+     */
+    public function pendingCount(): JsonResponse
+    {
+        try {
+            $count = PrManagerDistribusiQcWork::where('status', 'pending')->count();
+            return response()->json([
+                'success' => true,
+                'count' => $count
+            ]);
+        } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }

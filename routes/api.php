@@ -722,6 +722,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::get('/programs/{id}/schedules', [PrManagerProgramController::class, 'viewSchedules']); // View jadwal
         Route::get('/programs/{id}/distribution-reports', [PrManagerProgramController::class, 'viewDistributionReports']); // View laporan distribusi
         Route::get('/programs/{id}/revision-history', [PrManagerProgramController::class, 'viewRevisionHistory']); // View revision history
+        Route::get('/episodes/{id}', [PrManagerProgramController::class, 'getEpisode']); // Get episode detail
         Route::put('/episodes/{id}', [PrManagerProgramController::class, 'updateEpisode']); // Update episode
         Route::delete('/episodes/{id}', [PrManagerProgramController::class, 'deleteEpisode']); // Delete episode
         Route::post('/episodes/{id}/approve-budget', [PrManagerProgramController::class, 'approveBudget']); // Approve special budget
@@ -753,6 +754,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/programs/{id}/production-schedules', [PrProducerController::class, 'createProductionSchedule']); // Create jadwal produksi
         Route::put('/production-schedules/{id}', [PrProducerController::class, 'updateProductionSchedule']); // Update jadwal produksi
         Route::delete('/production-schedules/{id}', [PrProducerController::class, 'deleteProductionSchedule']); // Delete jadwal produksi
+        Route::post('/production-schedules/{id}/reschedule', [PrProducerController::class, 'rescheduleProductionSchedule']); // Reschedule jadwal produksi
         Route::put('/episodes/{id}/status', [PrProducerController::class, 'updateEpisodeStatus']); // Update status episode
         Route::put('/episodes/{id}', [PrProducerController::class, 'updateEpisode']); // Update episode
         Route::delete('/episodes/{id}', [PrProducerController::class, 'deleteEpisode']); // Delete episode
@@ -824,6 +826,12 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::delete('/episodes/{id}/files/{fileId}', [PrCreativeController::class, 'deleteFile']);
     });
 
+    // General Affairs Routes
+    Route::prefix('ga')->group(function () {
+        Route::get('/budgets', [\App\Http\Controllers\Api\Pr\PrGaController::class, 'getBudgets']);
+        Route::post('/budgets/{id}/transfer', [\App\Http\Controllers\Api\Pr\PrGaController::class, 'processTransfer']);
+    });
+
     // Art & Set Property Routes
     Route::prefix('art')->group(function () {
         // Inventory Management
@@ -864,7 +872,6 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::get('/works', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'index']);
         Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'show']);
         Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'update']);
-        Route::post('/works/{id}/complete', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'uploadShootingResults']);
         Route::post('/works/{id}/request-equipment', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'requestEquipment']);
         // Bundle: semua episode belum selesai syuting (untuk pilihan syuting sekaligus)
         Route::get('/bundle-episodes', [App\Http\Controllers\Api\Pr\PrProduksiController::class, 'getBundleEpisodes']);
@@ -930,6 +937,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::get('/works/{id}', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'show']);
         Route::post('/works/{id}/accept', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'acceptWork']);
         Route::post('/works/{id}/checklist', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'updateChecklistItem']);
+        Route::post('/works/{id}/cancel-revision', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'cancelRevision']);
         Route::post('/works/{id}/finish', [App\Http\Controllers\Api\Pr\PrQualityControlController::class, 'finish']);
     });
 });

@@ -491,6 +491,7 @@ class PrProducerController extends Controller
                 'episode_id' => 'nullable|exists:pr_episodes,id',
                 'scheduled_date' => 'required|date',
                 'scheduled_time' => 'nullable|date_format:H:i',
+                'scheduled_location' => 'nullable|string',
                 'schedule_notes' => 'nullable|string'
             ]);
 
@@ -759,6 +760,7 @@ class PrProducerController extends Controller
             $validator = Validator::make($request->all(), [
                 'scheduled_date' => 'sometimes|date',
                 'scheduled_time' => 'nullable|date_format:H:i',
+                'scheduled_location' => 'nullable|string',
                 'schedule_notes' => 'nullable|string',
                 'status' => 'sometimes|in:draft,confirmed,in_progress,completed,cancelled'
             ]);
@@ -774,9 +776,15 @@ class PrProducerController extends Controller
             $schedule->update($request->only([
                 'scheduled_date',
                 'scheduled_time',
+                'scheduled_location',
                 'schedule_notes',
                 'status'
             ]));
+
+            // Sync to episode and creative work if it has an episode
+            if ($schedule->episode_id) {
+                $this->productionService->syncScheduleToEpisodeAndCreativeWork($schedule);
+            }
 
             return response()->json([
                 'success' => true,
@@ -1722,4 +1730,78 @@ class PrProducerController extends Controller
     }
 
 
+    /**
+     * Reschedule production schedule
+     * POST /api/program-regular/producer/production-schedules/{id}/reschedule
+     */
+    public function rescheduleProductionSchedule(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $oldSchedule = PrProductionSchedule::findOrFail($id);
+
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            // Check assignment
+            $program = $oldSchedule->program;
+            $isAssigned = $program->producer_id === $user->id ||
+                $program->crews()
+                    ->where('user_id', $user->id)
+                    ->where('role', 'Producer')
+                    ->exists();
+
+            if (Role::normalize($user->role) === Role::PRODUCER && !$isAssigned) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'scheduled_date' => 'required|date',
+                'scheduled_time' => 'nullable|date_format:H:i',
+                'scheduled_location' => 'nullable|string',
+                'schedule_notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $newSchedule = $this->productionService->rescheduleProductionSchedule(
+                $oldSchedule,
+                $request->all(),
+                $user->id
+            );
+
+            // Log activity
+            if ($oldSchedule->episode) {
+                $this->activityLogService->logEpisodeActivity(
+                    $oldSchedule->episode,
+                    'schedule_rescheduled',
+                    "Shooting schedule rescheduled from {$oldSchedule->scheduled_date} to {$newSchedule->scheduled_date}",
+                    ['old_schedule_id' => $oldSchedule->id, 'new_schedule_id' => $newSchedule->id],
+                    null
+                );
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Jadwal produksi berhasil direschedule',
+                'data' => $newSchedule->load(['program', 'episode', 'creator'])
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
 }

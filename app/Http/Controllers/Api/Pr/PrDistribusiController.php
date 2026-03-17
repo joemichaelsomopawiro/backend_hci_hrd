@@ -80,7 +80,10 @@ class PrDistribusiController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $episode,
+                'data' => [
+                    'episode' => $episode,
+                    'shooting_schedules' => $episode->productionSchedules
+                ],
                 'message' => 'Shooting schedule retrieved'
             ]);
         } catch (\Exception $e) {

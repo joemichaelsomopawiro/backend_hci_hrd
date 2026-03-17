@@ -305,7 +305,7 @@ class PrManagerDistribusiController extends Controller
     public function viewShootingSchedule(Request $request, $episodeId): JsonResponse
     {
         try {
-            $episode = PrEpisode::with(['productionSchedules'])->findOrFail($episodeId);
+            $episode = PrEpisode::with(['productionSchedules', 'creativeWork'])->findOrFail($episodeId);
 
             return response()->json([
                 'success' => true,

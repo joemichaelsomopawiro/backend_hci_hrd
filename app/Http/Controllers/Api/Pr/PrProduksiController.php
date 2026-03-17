@@ -280,8 +280,16 @@ class PrProduksiController extends Controller
                     ->first();
 
                 if ($workflowStep && !$workflowStep->is_completed) {
-                    $workflowStep->markAsCompleted($user->id, 'Produksi completed with file upload');
+                    $workflowStep->markAsCompleted($user->id, 'Produksi completed with links');
                 }
+
+                // Log activity
+                $this->activityLogService->logEpisodeActivity(
+                    $work->episode,
+                    'upload_shooting_results',
+                    "Shooting results submitted via links.",
+                    ['step' => 5, 'work_id' => $work->id]
+                );
             }
 
             // Always ensure Editor work is ready when Production work is updated
@@ -455,88 +463,6 @@ class PrProduksiController extends Controller
     }
 
 
-    public function uploadShootingResults(Request $request, int $id): JsonResponse
-    {
-        try {
-            $user = Auth::user();
-
-            if (!$user || !Role::inArray($user->role, [Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
-
-            $validator = Validator::make($request->all(), [
-                'shooting_file_links' => 'nullable|string', // Links are optional if files are provided
-                'files.*' => 'nullable|file|max:10240', // 10MB max per file? Adjust as needed.
-                'files' => 'nullable|array'
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
-            }
-
-            $work = PrProduksiWork::findOrFail($id);
-
-            if ($work->created_by !== $user->id && $work->status !== 'pending') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
-            }
-
-            if ($work->created_by !== $user->id) {
-                $work->created_by = $user->id;
-            }
-
-            // Handle File Uploads
-            $uploadedPaths = [];
-            if ($request->hasFile('files')) {
-                foreach ($request->file('files') as $file) {
-                    $path = $file->store('shooting_results/' . $work->id, 'public');
-                    // Create full URL or relative path? Ideally full URL for frontend.
-                    // But storage path is relative to storage/app/public.
-                    // Use Storage::url($path) to get web accessible URL.
-                    $uploadedPaths[] = \Illuminate\Support\Facades\Storage::url($path);
-                }
-            }
-
-            // Combine with existing links
-            $existingLinks = $request->shooting_file_links ? explode(',', $request->shooting_file_links) : [];
-            // Clean/Trim
-            $existingLinks = array_map('trim', $existingLinks);
-            $existingLinks = array_filter($existingLinks);
-
-            $allLinks = array_merge($existingLinks, $uploadedPaths);
-            $finalLinksString = implode(', ', $allLinks);
-
-            // Require at least one file or link
-            if (empty($finalLinksString)) {
-                return response()->json(['success' => false, 'message' => 'Please provide at least one link or upload a file.'], 422);
-            }
-
-            $updateData = [
-                'shooting_file_links' => $finalLinksString,
-                'shooting_notes' => $request->shooting_notes,
-                'status' => 'completed',
-                'completed_at' => now(),
-                'completed_by' => $user->id
-            ];
-
-            $work->update($updateData);
-
-            // Log activity
-            $this->activityLogService->logEpisodeActivity(
-                $work->episode,
-                'upload_shooting_results',
-                "Shooting results uploaded by coordinator.",
-                ['step' => 5, 'work_id' => $work->id]
-            );
-
-            // Access PrEditorWork to update its status if it was in revision
-            $this->ensureEditorWorkReady($work->pr_episode_id, $user->id);
-
-            return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Shooting results uploaded successfully']);
-
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
-        }
-    }
 
     /**
      * GET /api/pr/produksi/available-equipment
@@ -757,9 +683,9 @@ class PrProduksiController extends Controller
                 }
             }
 
-            // Find the active loan
+            // Find the active loan (approved or active)
             $activeLoan = $work->equipmentLoans
-                ->where('status', 'active')
+                ->whereIn('status', ['approved', 'active'])
                 ->first();
 
             if (!$activeLoan) {

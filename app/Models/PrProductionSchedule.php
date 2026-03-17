@@ -18,6 +18,7 @@ class PrProductionSchedule extends Model
         'episode_id',
         'scheduled_date',
         'scheduled_time',
+        'scheduled_location',
         'schedule_notes',
         'status',
         'created_by'

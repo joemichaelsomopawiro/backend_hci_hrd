@@ -52,7 +52,7 @@ class FixStep6Works extends Command
                 if ($productionWork && $promotionWork) {
                     // 1. Create Editor work
                     if (!$editorWork) {
-                        \App\Models\PrEditorWork::create([
+                        $editorWork = \App\Models\PrEditorWork::create([
                             'pr_episode_id' => $episodeId,
                             'pr_production_work_id' => $productionWork->id,
                             'assigned_to' => null,
@@ -66,7 +66,7 @@ class FixStep6Works extends Command
                     if (!$editorPromosiWork) {
                         \App\Models\PrEditorPromosiWork::create([
                             'pr_episode_id' => $episodeId,
-                            'pr_editor_work_id' => null, // Will be linked when Editor work is created/updated
+                            'pr_editor_work_id' => $editorWork->id,
                             'pr_promotion_work_id' => $promotionWork->id,
                             'assigned_to' => null,
                             'status' => 'pending'

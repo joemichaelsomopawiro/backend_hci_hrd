@@ -26,6 +26,7 @@ class PrConceptService
                 'target_audience' => $data['target_audience'] ?? null,
                 'content_outline' => $data['content_outline'] ?? null,
                 'format_description' => $data['format_description'] ?? null,
+                'external_link' => $data['external_link'] ?? null,
                 'status' => 'pending_approval',
                 'created_by' => $createdBy
             ]);
@@ -107,6 +108,7 @@ class PrConceptService
             'target_audience' => $data['target_audience'] ?? null,
             'content_outline' => $data['content_outline'] ?? null,
             'format_description' => $data['format_description'] ?? null,
+            'external_link' => $data['external_link'] ?? null,
         ]);
 
         return $concept->fresh();

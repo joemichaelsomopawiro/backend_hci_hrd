@@ -108,6 +108,11 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
 
         Route::get('/loan-history', [PrArtController::class, 'getLoanHistory']);
         Route::post('/loan-history/{id}/description', [PrArtController::class, 'updateHistoryDescription']);
+
+        Route::get('/presets', [PrArtController::class, 'getPresets']);
+        Route::post('/presets', [PrArtController::class, 'createPreset']);
+        Route::put('/presets/{id}', [PrArtController::class, 'updatePreset']);
+        Route::delete('/presets/{id}', [PrArtController::class, 'deletePreset']);
     });
 
     // ==================== EDITOR ROUTES ====================
@@ -163,12 +168,13 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/works/{id}/submit-qc-form', [PrQualityControlController::class, 'submitQCForm']);
         Route::post('/works/{id}/approve', [PrQualityControlController::class, 'approve']);
         Route::post('/works/{id}/reject', [PrQualityControlController::class, 'reject']);
-        Route::put('/works/{id}/checklist', [PrQualityControlController::class, 'updateChecklistItem']);
+        Route::post('/works/{id}/checklist', [PrQualityControlController::class, 'updateChecklistItem']);
         Route::post('/works/{id}/finish', [PrQualityControlController::class, 'finish']);
     });
 
     // ==================== MANAGER DISTRIBUSI QC ROUTES ====================
     Route::prefix('manager-distribusi-qc')->group(function () {
+        Route::get('/pending-count', [PrManagerDistribusiQcController::class, 'pendingCount']);
         Route::get('/works', [PrManagerDistribusiQcController::class, 'index']);
         Route::get('/works/{id}', [PrManagerDistribusiQcController::class, 'show']);
         Route::post('/works/{id}/accept-work', [PrManagerDistribusiQcController::class, 'acceptWork']);
@@ -216,6 +222,7 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/programs/{programId}/concepts', [PrManagerProgramController::class, 'createConcept']);
         Route::put('/concepts/{id}', [PrManagerProgramController::class, 'updateConcept']);
         Route::delete('/concepts/{id}', [PrManagerProgramController::class, 'deleteConcept']);
+        Route::get('/episodes/{id}', [PrManagerProgramController::class, 'getEpisode']);
         Route::put('/episodes/{id}', [PrManagerProgramController::class, 'updateEpisode']);
         Route::delete('/episodes/{id}', [PrManagerProgramController::class, 'deleteEpisode']);
 

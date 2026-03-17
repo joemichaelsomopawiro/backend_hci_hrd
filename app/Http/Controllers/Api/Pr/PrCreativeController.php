@@ -43,24 +43,28 @@ class PrCreativeController extends Controller
                 ], 403);
             }
 
-            // Get programs where current user is assigned as Kreatif crew
-            // Checking for both 'kreatif' and 'Creative' roles in crew assignment
-            $assignedProgramIds = PrProgramCrew::where('user_id', $user->id)
-                ->whereIn('role', ['kreatif', 'Creative', 'creative'])
-                ->pluck('program_id')
-                ->toArray();
+            $isSuperAdmin = $request->boolean('all_programs') && Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER]);
 
-            // Get episodes from assigned programs that don't have a creative work yet
             $existingEpisodeIds = PrCreativeWork::pluck('pr_episode_id')->toArray();
 
-            $episodes = PrEpisode::whereIn('program_id', $assignedProgramIds)
-                ->whereNotIn('id', $existingEpisodeIds)
+            $query = PrEpisode::whereNotIn('id', $existingEpisodeIds)
                 ->whereHas('program', function ($q) {
                     $q->where('read_by_producer', true);
                 })
-                ->with('program')
-                ->orderBy('created_at', 'desc')
-                ->get();
+                ->with('program');
+
+            if (!$isSuperAdmin) {
+                // Get programs where current user is assigned as Kreatif crew
+                // Checking for both 'kreatif' and 'Creative' roles in crew assignment
+                $assignedProgramIds = PrProgramCrew::where('user_id', $user->id)
+                    ->whereIn('role', ['kreatif', 'Creative', 'creative'])
+                    ->pluck('program_id')
+                    ->toArray();
+
+                $query->whereIn('program_id', $assignedProgramIds);
+            }
+
+            $episodes = $query->orderBy('created_at', 'desc')->get();
 
             return response()->json([
                 'success' => true,
@@ -91,17 +95,22 @@ class PrCreativeController extends Controller
                 ], 403);
             }
 
-            // Get programs where current user is assigned as Kreatif crew
-            $assignedProgramIds = \App\Models\PrProgramCrew::where('user_id', $user->id)
-                ->whereIn('role', ['kreatif', 'Creative', 'creative'])
-                ->pluck('program_id')
-                ->toArray();
+            $isSuperAdmin = $request->boolean('all_programs') && Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER]);
 
             // Start query with episode relationship for program filtering
-            $query = PrCreativeWork::with(['episode.program', 'createdBy'])
-                ->whereHas('episode', function ($q) use ($assignedProgramIds) {
+            $query = PrCreativeWork::with(['episode.program', 'createdBy']);
+
+            if (!$isSuperAdmin) {
+                // Get programs where current user is assigned as Kreatif crew
+                $assignedProgramIds = \App\Models\PrProgramCrew::where('user_id', $user->id)
+                    ->whereIn('role', ['kreatif', 'Creative', 'creative'])
+                    ->pluck('program_id')
+                    ->toArray();
+
+                $query->whereHas('episode', function ($q) use ($assignedProgramIds) {
                     $q->whereIn('program_id', $assignedProgramIds);
                 });
+            }
 
             // Filter by status (only if not empty)
             if ($request->filled('status')) {
@@ -653,21 +662,26 @@ class PrCreativeController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
-            // Get latest drafts (status 'draft')
-            $drafts = \App\Models\PrCreativeWork::with(['episode.program'])
-                ->where('created_by', $user->id)
-                ->where('status', 'draft')
-                ->orderBy('updated_at', 'desc')
-                ->take(3)
-                ->get();
+            $isSuperAdmin = $request->boolean('all_programs') && Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER]);
 
-            // Get rejected works (status 'rejected')
-            $rejected = \App\Models\PrCreativeWork::with(['episode.program'])
-                ->where('created_by', $user->id)
+            $draftsQuery = \App\Models\PrCreativeWork::with(['episode.program'])
+                ->where('status', 'draft')
+                ->orderBy('updated_at', 'desc');
+
+            $rejectedQuery = \App\Models\PrCreativeWork::with(['episode.program'])
                 ->where('status', 'rejected')
-                ->orderBy('updated_at', 'desc')
-                ->take(5)
-                ->get();
+                ->orderBy('updated_at', 'desc');
+
+            if (!$isSuperAdmin) {
+                $draftsQuery->where('created_by', $user->id);
+                $rejectedQuery->where('created_by', $user->id);
+            }
+
+            // Get latest drafts
+            $drafts = $draftsQuery->take(5)->get();
+
+            // Get rejected works
+            $rejected = $rejectedQuery->take(5)->get();
 
             return response()->json([
                 'success' => true,
