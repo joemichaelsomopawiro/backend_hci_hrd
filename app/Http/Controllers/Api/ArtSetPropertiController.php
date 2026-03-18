@@ -337,32 +337,6 @@ class ArtSetPropertiController extends Controller
                 ], 403);
             }
 
-<<<<<<< HEAD
-            // Get equipment requests with program info
-            $query = ProductionEquipment::with(['episode.program', 'requester'])
-                ->orderBy('created_at', 'desc');
-
-            // Allow filtering by status
-            if ($request->has('status')) {
-                $query->where('status', $request->status);
-            }
-
-            $requests = $query->paginate(15);
-
-            return response()->json([
-                'success' => true,
-                'data' => $requests,
-                'message' => 'Equipment requests retrieved successfully'
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error retrieving equipment requests: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-=======
             // Get equipment requests with program, crew, requester
             $query = ProductionEquipment::with([
                 'episode.program',
@@ -385,21 +359,19 @@ class ArtSetPropertiController extends Controller
 
             $requests = $query->paginate($request->integer('per_page', 15));
 
-        return response()->json([
-            'success' => true,
-            'data' => $requests,
-            'message' => 'Equipment requests retrieved successfully'
-        ]);
+            return response()->json([
+                'success' => true,
+                'data' => $requests,
+                'message' => 'Equipment requests retrieved successfully'
+            ]);
 
-    } catch (\Exception $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Error retrieving equipment requests: ' . $e->getMessage()
-        ], 500);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving equipment requests: ' . $e->getMessage()
+            ], 500);
+        }
     }
-    }
-
->>>>>>> e794181 (update sistemnya lebih sesuai)
     /**
      * Approve equipment request
      */
@@ -626,13 +598,8 @@ class ArtSetPropertiController extends Controller
                     'message' => 'Equipment request is not in valid status for return (must be approved/in_use).'
                 ], 400);
             }
-<<<<<<< HEAD
-
-            // 1. Update ProductionEquipment status
-=======
             
             // 1. Update ProductionEquipment status (returned_by = tim syuting yang mengembalikan)
->>>>>>> e794181 (update sistemnya lebih sesuai)
             $productionEquipment->update([
                 'status' => 'returned',
                 'returned_at' => now(),
