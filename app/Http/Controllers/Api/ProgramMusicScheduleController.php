@@ -17,14 +17,17 @@ class ProgramMusicScheduleController extends Controller
                 ->with(['episode.program'])
                 ->get()
                 ->map(function ($work) {
+                    $ep = $work->episode;
                     return [
                         'id' => 'creative_shooting_' . $work->id,
-                        'title' => 'Syuting: ' . ($work->episode->program->name ?? 'Unknown') . ' Ep ' . ($work->episode->episode_number ?? ''),
+                        'title' => 'Syuting: ' . ($ep->program->name ?? 'Unknown') . ' Ep ' . ($ep->episode_number ?? ''),
                         'start' => $work->shooting_schedule,
                         'type' => 'shooting',
                         'location' => $work->shooting_location ?? 'Studio',
                         'status' => $work->status,
-                        'color' => '#3b82f6' // Blue
+                        'color' => '#3b82f6',
+                        'episode_id' => $ep->id ?? null,
+                        'episode_number' => $ep->episode_number ?? null,
                     ];
                 });
 
@@ -35,14 +38,17 @@ class ProgramMusicScheduleController extends Controller
                 ->get()
                 ->map(function ($schedule) {
                     $episode = $schedule->musicSubmission->episode ?? null;
+                    $program = $episode->program ?? null;
                     return [
                         'id' => 'music_shooting_' . $schedule->id,
-                        'title' => 'Syuting Musik: ' . ($episode ? $episode->program->name . ' - ' . $episode->title : 'Music Shooting'),
+                        'title' => $episode ? 'Syuting Musik: ' . ($program->name ?? '') . ' - ' . ($episode->title ?? 'Ep ' . $episode->episode_number) : 'Syuting Musik',
                         'start' => $schedule->scheduled_datetime,
                         'type' => 'shooting',
-                        'location' => $schedule->location,
+                        'location' => $schedule->location ?? 'Studio',
                         'status' => $schedule->status,
-                        'color' => '#2563eb' // Darker Blue
+                        'color' => '#2563eb',
+                        'episode_id' => $episode->id ?? null,
+                        'episode_number' => $episode->episode_number ?? null,
                     ];
                 });
 

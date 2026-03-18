@@ -59,15 +59,25 @@ class ProductionTeamMember extends Model
     public function getRoleLabelAttribute(): string
     {
         $labels = [
+            'producer' => 'Producer',
             'creative' => 'Creative',
             'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
             'production' => 'Production',
             'editor' => 'Editor',
-            'art_set_design' => 'Art & Set Properti'
+            'art_set_design' => 'Art & Set Properti',
+            'kreatif' => 'Creative',
+            'produksi' => 'Production',
+            'sound_engineer' => 'Sound Engineer',
+            'music_arranger' => 'Music Arranger'
         ];
 
-        return $labels[$this->role] ?? $this->role;
+        if (isset($labels[$this->role])) {
+            return $labels[$this->role];
+        }
+
+        // Return capitalized role if not in list
+        return ucwords(str_replace(['_', '-'], ' ', $this->role));
     }
 
     /**

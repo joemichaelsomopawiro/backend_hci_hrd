@@ -134,6 +134,62 @@ class MusicArrangerController extends Controller
                 ], 422);
             }
 
+            // ✅ VALIDASI PRODUCER ACCEPTANCE
+            // Music Arranger tidak bisa membuat aransemen jika Producer belum menyetujui program
+            $episode = Episode::with('program')->find($request->episode_id);
+            if ($episode && $episode->program && !$episode->program->producer_accepted) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Program ini belum disetujui oleh Producer. Tunggu Producer menerima program sebelum memulai aransemen.',
+                    'program_name' => $episode->program->name
+                ], 403);
+            }
+
+            // ✅ VALIDASI DUPLIKASI EPISODE
+            // Cek apakah episode sudah memiliki arrangement aktif
+            // Status yang dianggap 'aktif' (tidak bisa buat arrangement baru):
+            // song_proposal, song_approved, arrangement_in_progress, arrangement_submitted, arrangement_approved
+            // Status yang boleh buat arrangement baru (sudah selesai/ditolak):
+            // song_rejected, arrangement_rejected
+            $activeStatuses = [
+                'song_proposal',
+                'song_approved',
+                'arrangement_in_progress',
+                'arrangement_submitted',
+                'arrangement_approved',
+                'approved',
+                'draft'
+            ];
+
+            $existingArrangement = MusicArrangement::where('episode_id', $request->episode_id)
+                ->whereIn('status', $activeStatuses)
+                ->first();
+
+            if ($existingArrangement) {
+                $episode = Episode::find($request->episode_id);
+                $episodeLabel = $episode ? "Episode {$episode->episode_number}" : "Episode ini";
+                $statusLabel = [
+                    'song_proposal'          => 'sedang dalam review usulan lagu',
+                    'song_approved'          => 'usulan lagunya sudah disetujui, menunggu dikerjakan',
+                    'arrangement_in_progress'=> 'sedang dalam proses aransemen',
+                    'arrangement_submitted'  => 'aransemen sudah disubmit ke Producer',
+                    'arrangement_approved'   => 'sudah selesai dan disetujui',
+                    'approved'               => 'sudah selesai dan disetujui',
+                    'draft'                  => 'masih dalam proses'
+                ][$existingArrangement->status] ?? 'sedang dalam pengerjaan';
+
+                return response()->json([
+                    'success' => false,
+                    'message' => "{$episodeLabel} tidak bisa dipilih karena {$statusLabel}. Silakan pilih episode lain.",
+                    'error_code' => 'EPISODE_ALREADY_ASSIGNED',
+                    'data' => [
+                        'episode_id'           => $request->episode_id,
+                        'existing_arrangement_id' => $existingArrangement->id,
+                        'current_status'       => $existingArrangement->status
+                    ]
+                ], 409);
+            }
+
             // Create record
             $arrangement = MusicArrangement::create([
                 'episode_id' => $request->episode_id,
@@ -165,9 +221,34 @@ class MusicArrangerController extends Controller
                 ]);
             }
 
+            // Update episode workflow state ke tahap music_arrangement
+            // supaya Active Production bisa melihat bahwa episode ini sudah masuk tahap Music Arranger
+            if ($episode && in_array($episode->current_workflow_state, [null, '', 'program_created', 'episode_generated'], true)) {
+                try {
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $episode,
+                        'music_arrangement',
+                        'music_arranger',
+                        $user->id,
+                        'Music arrangement created by Music Arranger'
+                    );
+                } catch (\Throwable $e) {
+                    // Jangan gagalkan pembuatan arrangement hanya karena update workflow gagal
+                    \Log::warning('Failed to update workflow state to music_arrangement', [
+                        'episode_id' => $episode->id ?? null,
+                        'arrangement_id' => $arrangement->id ?? null,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
+            // Load relasi sama seperti index() agar frontend bisa langsung menampilkan data baru tanpa refresh
+            $arrangement->load(['episode', 'createdBy', 'reviewedBy', 'soundEngineerHelper', 'song', 'singer']);
+
             return response()->json([
                 'success' => true,
-                'data' => $arrangement->load(['song', 'singer', 'episode']),
+                'data' => $arrangement,
                 'message' => 'Music arrangement created successfully'
             ], 201);
 
@@ -376,9 +457,104 @@ class MusicArrangerController extends Controller
     public function submitSongProposal(Request $request, $id): JsonResponse
     {
         try {
+            $user = Auth::user();
+
+            if (!$user || !in_array($user->role, ['Music Arranger', 'music_arranger', 'musicarranger', 'music_arr'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'song_title' => 'required|string|max:255',
+                'singer_name' => 'nullable|string|max:255',
+                'notes' => 'nullable|string|max:1000',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
             $arrangement = MusicArrangement::findOrFail($id);
-            $arrangement->update(['status' => 'song_proposal', 'submitted_at' => now()]);
-            return response()->json(['success' => true, 'data' => $arrangement]);
+
+            // Access check: only creator can submit proposal
+            if ((int) $arrangement->created_by !== (int) $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You can only submit your own song proposal.'
+                ], 403);
+            }
+
+            // Must be assigned to a production team (episode team or program team)
+            $episode = Episode::with(['productionTeam', 'program.productionTeam'])->find($arrangement->episode_id);
+            if (!$episode) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Episode not found for this arrangement.'
+                ], 404);
+            }
+
+            $teamOnEpisode = $episode->productionTeam;
+            $teamOnProgram = $episode->program ? $episode->program->productionTeam : null;
+            $team = $teamOnEpisode ?: $teamOnProgram;
+
+            if (!$team || !$team->is_active) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Production team not found for this episode/program. Please ask Manager Program to assign a production team first.'
+                ], 404);
+            }
+
+            if ((int) $team->music_arranger_id !== (int) $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You are not assigned as Music Arranger for this production team.'
+                ], 403);
+            }
+
+            // Only allow submit if not already submitted/approved
+            if (!in_array($arrangement->status, ['draft', 'revised', 'song_rejected', 'rejected', 'song_proposal'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Cannot submit song proposal with status '{$arrangement->status}'."
+                ], 400);
+            }
+
+            $arrangement->update([
+                'song_title' => $request->song_title,
+                'singer_name' => $request->singer_name,
+                'notes' => $request->notes ?? $arrangement->notes,
+                'status' => 'song_proposal',
+                'submitted_at' => now()
+            ]);
+
+            // Notify Producer
+            $producer = $team->producer ?? null;
+            if ($producer) {
+                Notification::create([
+                    'user_id' => $producer->id,
+                    'type' => 'song_proposal_submitted',
+                    'title' => 'Usulan Lagu & Penyanyi Baru',
+                    'message' => "Music Arranger mengajukan usulan lagu '{$arrangement->song_title}'" . ($arrangement->singer_name ? " dengan penyanyi '{$arrangement->singer_name}'" : '') . " untuk Episode {$episode->episode_number}.",
+                    'data' => [
+                        'arrangement_id' => $arrangement->id,
+                        'episode_id' => $episode->id,
+                        'program_id' => $episode->program_id,
+                        'status' => 'song_proposal'
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $arrangement->fresh(['song', 'singer', 'episode']),
+                'message' => 'Song proposal submitted successfully. Producer has been notified.'
+            ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
@@ -474,12 +650,30 @@ class MusicArrangerController extends Controller
         }
     }
 
+    /**
+     * Statistics untuk dashboard Music Arranger.
+     * Menghitung per status: total, draft, dikirim (menunggu review), disetujui, ditolak.
+     * GET /api/live-tv/music-arranger/statistics
+     */
     public function statistics(): JsonResponse
     {
         $user = Auth::user();
+        $base = MusicArrangement::where('created_by', $user->id);
+
+        $total = (clone $base)->count();
+        $draft = (clone $base)->where('status', 'draft')->count();
+        $submitted = (clone $base)->whereIn('status', ['song_proposal', 'arrangement_submitted', 'submitted'])->count();
+        $approved = (clone $base)->whereIn('status', ['approved', 'arrangement_approved'])->count();
+        $rejected = (clone $base)->whereIn('status', ['song_rejected', 'arrangement_rejected', 'rejected'])->count();
+
         $stats = [
-            'total_arrangements' => MusicArrangement::where('created_by', $user->id)->count(),
-            'approved' => MusicArrangement::where('created_by', $user->id)->whereIn('status', ['approved', 'arrangement_approved'])->count(),
+            'total' => $total,
+            'draft' => $draft,
+            'submitted' => $submitted,
+            'approved' => $approved,
+            'rejected' => $rejected,
+            // Backward compatibility
+            'total_arrangements' => $total,
         ];
         return response()->json(['success' => true, 'data' => $stats]);
     }
@@ -576,6 +770,53 @@ class MusicArrangerController extends Controller
         $arrangement = MusicArrangement::findOrFail($id);
         $arrangement->update(['status' => 'arrangement_submitted', 'submitted_at' => now()]);
         return response()->json(['success' => true, 'data' => $arrangement]);
+    }
+
+    /**
+     * Get list of episode IDs that already have an active arrangement
+     * Used by frontend to disable already-assigned episodes in dropdown
+     * GET /api/live-tv/music-arranger/episodes-status
+     */
+    public function getEpisodesStatus(Request $request): JsonResponse
+    {
+        try {
+            $activeStatuses = [
+                'song_proposal',
+                'song_approved',
+                'arrangement_in_progress',
+                'arrangement_submitted',
+                'arrangement_approved',
+                'approved',
+                'draft'
+            ];
+
+            // Get all episodes that have at least one active arrangement
+            $activeArrangements = MusicArrangement::whereIn('status', $activeStatuses)
+                ->select('episode_id', 'status', 'id', 'created_by', 'song_title')
+                ->get()
+                ->keyBy('episode_id');
+
+            // Return a map of episode_id => arrangement info
+            $result = $activeArrangements->map(function ($arr) {
+                return [
+                    'has_active_arrangement' => true,
+                    'arrangement_id'         => $arr->id,
+                    'arrangement_status'     => $arr->status,
+                    'song_title'             => $arr->song_title,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data'    => $result,
+                'message' => 'Episodes status retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving episodes status: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function downloadFile($id, Request $request)

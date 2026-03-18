@@ -53,21 +53,31 @@ class ProduksiController extends Controller
             // Use cache with 5 minutes TTL
             $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request, $isProductionRole, $user) {
                 $query = ProduksiWork::with([
-                    'episode.program.productionTeam', 
+                    'episode.program.productionTeam',
+                    'episode.teamAssignments' => function ($q) {
+                        $q->whereIn('team_type', ['setting', 'shooting'])->where('status', '!=', 'cancelled');
+                    },
+                    'episode.teamAssignments.members.user:id,name,email',
                     'creativeWork.latestApprovedMusicArrangement',
                     'runSheet',
-                    'createdBy'
+                    'createdBy',
+                    'equipmentRequests' => function ($q) {
+                        $q->whereIn('status', ['pending', 'approved', 'in_use', 'returned'])
+                            ->with(['assignedUser:id,name', 'crewLeader:id,name'])
+                            ->orderBy('requested_at', 'desc');
+                    }
                 ]);
 
-                // If not global Production role, only show works where the user is a member of the shooting team
+                // If not global Production role, show works where the user is a member of Tim Syuting OR Tim Setting for that episode
                 if (!$isProductionRole) {
-                    $query->whereHas('episode.teamAssignments', function($q) use ($user) {
-                        $q->where('team_type', 'shooting')
-                          ->where('status', '!=', 'cancelled')
-                          ->whereHas('members', function($mq) use ($user) {
-                              $mq->where('user_id', $user->id)
-                                 ->where('is_active', true);
-                          });
+                    $query->where(function ($q) use ($user) {
+                        $q->whereHas('episode.teamAssignments', function ($aq) use ($user) {
+                            $aq->whereIn('team_type', ['shooting', 'setting'])
+                                ->where('status', '!=', 'cancelled')
+                                ->whereHas('members', function ($mq) use ($user) {
+                                    $mq->where('user_id', $user->id)->where('is_active', true);
+                                });
+                        });
                     });
                 }
 
@@ -103,27 +113,46 @@ class ProduksiController extends Controller
             $user = Auth::user();
             
             $work = ProduksiWork::with([
-                'episode',
+                'episode.program:id,name',
+                'episode.teamAssignments' => function ($q) {
+                    $q->whereIn('team_type', ['setting', 'shooting'])->where('status', '!=', 'cancelled');
+                },
+                'episode.teamAssignments.members.user:id,name,email',
                 'creativeWork',
                 'createdBy',
                 'completedBy',
-                'runSheet'
+                'runSheet',
+                'equipmentRequests' => function ($q) {
+                    $q->orderBy('requested_at', 'desc')->with(['returnedByUser:id,name', 'assignedUser:id,name', 'crewLeader:id,name']);
+                }
             ])->findOrFail($id);
 
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
 
+            $activity = $this->buildWorkActivityTimeline($work);
+
+            // Pastikan frontend dapat run_sheet (snake_case) dan shooting_file_links
+            $data = $work->toArray();
+            $data['run_sheet'] = $work->relationLoaded('runSheet') && $work->runSheet
+                ? $work->runSheet->toArray()
+                : null;
+            $data['shooting_file_links'] = $work->shooting_file_links ?? [];
+            $data['shooting_files'] = $work->shooting_files ?? [];
+
             return response()->json([
                 'success' => true,
-                'data' => $work,
+                'data' => $data,
+                'activity' => $activity,
                 'message' => 'Produksi work detail retrieved successfully'
             ]);
 
@@ -151,14 +180,15 @@ class ProduksiController extends Controller
             
             $work = ProduksiWork::findOrFail($id);
 
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
 
@@ -206,7 +236,8 @@ class ProduksiController extends Controller
     }
 
     /**
-     * Input List Alat dan Ajukan ke Art & Set Properti
+     * Input List Alat dan Ajukan ke Art & Set Properti (pinjam barang).
+     * Hanya Tim Setting (atau role Production) yang boleh memanggil ini.
      * POST /api/live-tv/roles/produksi/works/{id}/request-equipment
      */
     public function requestEquipment(Request $request, int $id): JsonResponse
@@ -216,14 +247,14 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: hanya Tim Setting (atau role Production) yang boleh pinjam barang (request equipment)
             $isProductionRole = $user->role === 'Production';
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Hanya Tim Setting yang boleh mengajukan permintaan alat (pinjam barang). Anda harus anggota Tim Setting episode ini atau role Production.'
                 ], 403);
             }
 
@@ -231,9 +262,15 @@ class ProduksiController extends Controller
                 'equipment_list' => 'required|array|min:1',
                 'equipment_list.*.equipment_name' => 'required|string|max:255',
                 'equipment_list.*.quantity' => 'required|integer|min:1',
-                'equipment_list.*.return_date' => 'required|date|after_or_equal:today',
+                'equipment_list.*.return_date' => 'nullable|date|after_or_equal:today',
                 'equipment_list.*.notes' => 'nullable|string|max:1000',
-                'request_notes' => 'nullable|string|max:1000'
+                'request_notes' => 'nullable|string|max:1000',
+                'crew_leader_id' => 'nullable|exists:users,id',
+                'crew_member_ids' => 'nullable|array',
+                'crew_member_ids.*' => 'exists:users,id',
+                'scheduled_date' => 'nullable|date',
+                'scheduled_time' => 'nullable|date_format:H:i',
+                'update_equipment_request_id' => 'nullable|integer|exists:production_equipment,id',
             ]);
 
             if ($validator->fails()) {
@@ -254,53 +291,122 @@ class ProduksiController extends Controller
                 ], 400);
             }
 
-            $equipmentRequests = [];
+            $updateRequestId = $request->input('update_equipment_request_id');
+            if ($updateRequestId) {
+                $existingRequest = ProductionEquipment::where('id', $updateRequestId)
+                    ->where('episode_id', $work->episode_id)
+                    ->where('status', 'pending')
+                    ->first();
+                if ($existingRequest) {
+                    $unavailableEquipment = [];
+                    $useNewSchema = Schema::hasColumn('equipment_inventory', 'equipment_name');
+                    $nameColumn = $useNewSchema ? 'equipment_name' : 'name';
+                    $flatList = [];
+                    $notesParts = [];
+                    foreach ($request->equipment_list as $equipment) {
+                        $equipmentName = $equipment['equipment_name'];
+                        $quantity = (int) ($equipment['quantity'] ?? 1);
+                        for ($i = 0; $i < $quantity; $i++) {
+                            $flatList[] = $equipmentName;
+                        }
+                        if (!empty($equipment['notes'])) {
+                            $notesParts[] = "{$equipmentName}: " . $equipment['notes'];
+                        }
+                    }
+                    $requestedNames = array_unique(array_column($request->equipment_list, 'equipment_name'));
+                    $inventoryCounts = EquipmentInventory::whereIn($nameColumn, $requestedNames)
+                        ->where('status', 'available')
+                        ->select($nameColumn)
+                        ->get()
+                        ->groupBy($nameColumn)
+                        ->map->count();
+                    foreach ($request->equipment_list as $equipment) {
+                        $equipmentName = $equipment['equipment_name'];
+                        $quantity = (int) ($equipment['quantity'] ?? 1);
+                        $availableCount = $inventoryCounts->get($equipmentName, 0);
+                        if ($availableCount < $quantity) {
+                            $unavailableEquipment[] = [
+                                'equipment_name' => $equipmentName,
+                                'requested_quantity' => $quantity,
+                                'available_count' => $availableCount,
+                                'reason' => 'Equipment tidak tersedia dalam jumlah yang diminta',
+                            ];
+                        }
+                    }
+                    if (!empty($unavailableEquipment)) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Some equipment is not available or currently in use',
+                            'unavailable_equipment' => $unavailableEquipment,
+                        ], 400);
+                    }
+                    $requestNotes = trim(implode("\n", $notesParts) . ($request->request_notes ? "\n" . $request->request_notes : ''));
+                    $existingRequest->update([
+                        'equipment_list' => $flatList,
+                        'request_notes' => $requestNotes ?: null,
+                        'crew_leader_id' => $request->crew_leader_id,
+                        'crew_member_ids' => $request->crew_member_ids ?? [],
+                        'scheduled_date' => $request->scheduled_date ? \Carbon\Carbon::parse($request->scheduled_date)->format('Y-m-d') : null,
+                        'scheduled_time' => $request->scheduled_time,
+                        'requested_at' => now(),
+                    ]);
+                    $work->update(['equipment_list' => $request->equipment_list]);
+                    QueryOptimizer::clearAllIndexCaches();
+                    $equipmentRequestsList = ProductionEquipment::where('episode_id', $work->episode_id)->orderBy('requested_at', 'desc')->get();
+                    return response()->json([
+                        'success' => true,
+                        'data' => [
+                            'work' => $work->fresh(['episode', 'creativeWork', 'equipmentRequests']),
+                            'equipment_requests' => $equipmentRequestsList,
+                            'is_update' => true,
+                            'updated_request_id' => (int) $updateRequestId,
+                        ],
+                        'message' => 'Permintaan alat diperbarui. Masih Menunggu Art & Set Properti. Tampilan riwayat gunakan data.equipment_requests.',
+                    ]);
+                }
+            }
+
             $unavailableEquipment = [];
-            
-            // OPTIMIZATION: Bulk fetch availability data to avoid N+1
-            $requestedNames = collect($request->equipment_list)->pluck('equipment_name')->unique()->toArray();
             $useNewSchema = Schema::hasColumn('equipment_inventory', 'equipment_name');
             $nameColumn = $useNewSchema ? 'equipment_name' : 'name';
-            
-            // 1. Fetch available counts from inventory
+
+            // Build flat equipment_list (nama repeated by qty) for one loan
+            $flatList = [];
+            $requestedNames = [];
+            $notesParts = [];
+            foreach ($request->equipment_list as $equipment) {
+                $equipmentName = $equipment['equipment_name'];
+                $quantity = (int) ($equipment['quantity'] ?? 1);
+                for ($i = 0; $i < $quantity; $i++) {
+                    $flatList[] = $equipmentName;
+                }
+                $requestedNames[] = $equipmentName;
+                if (!empty($equipment['notes'])) {
+                    $notesParts[] = "{$equipmentName}: " . $equipment['notes'];
+                }
+            }
+            $requestedNames = array_unique($requestedNames);
+
+            // Check availability per name
             $inventoryCounts = EquipmentInventory::whereIn($nameColumn, $requestedNames)
                 ->where('status', 'available')
                 ->select($nameColumn)
                 ->get()
                 ->groupBy($nameColumn)
                 ->map->count();
-            
-            // Check each equipment availability
+
             foreach ($request->equipment_list as $equipment) {
                 $equipmentName = $equipment['equipment_name'];
-                $quantity = $equipment['quantity'];
-
+                $quantity = (int) ($equipment['quantity'] ?? 1);
                 $availableCount = $inventoryCounts->get($equipmentName, 0);
-
-
                 if ($availableCount < $quantity) {
                     $unavailableEquipment[] = [
                         'equipment_name' => $equipmentName,
                         'requested_quantity' => $quantity,
                         'available_count' => $availableCount,
-                        'reason' => 'Equipment tidak tersedia dalam jumlah yang diminta'
+                        'reason' => 'Equipment tidak tersedia dalam jumlah yang diminta',
                     ];
-                    continue;
                 }
-
-                // Create equipment request
-                // We fill the array with the equipment name repeated 'quantity' times 
-                // to match the Art & Set Properti approval logic
-                $equipmentRequest = ProductionEquipment::create([
-                    'episode_id' => $work->episode_id,
-                    'equipment_list' => array_fill(0, $quantity, $equipmentName),
-                    'request_notes' => ($equipment['notes'] ?? '') . ($request->request_notes ? "\n" . $request->request_notes : ''),
-                    'status' => 'pending',
-                    'requested_by' => $user->id,
-                    'requested_at' => now()
-                ]);
-
-                $equipmentRequests[] = $equipmentRequest->id;
             }
 
             if (!empty($unavailableEquipment)) {
@@ -308,22 +414,41 @@ class ProduksiController extends Controller
                     'success' => false,
                     'message' => 'Some equipment is not available or currently in use',
                     'unavailable_equipment' => $unavailableEquipment,
-                    'available_requests' => $equipmentRequests
                 ], 400);
             }
+
+            $programId = $work->episode->program_id ?? null;
+            $requestNotes = trim(implode("\n", $notesParts) . ($request->request_notes ? "\n" . $request->request_notes : ''));
+
+            // Satu peminjaman per request: program, episode, crew leader, anggota, daftar alat
+            $equipmentRequest = ProductionEquipment::create([
+                'episode_id' => $work->episode_id,
+                'program_id' => $programId,
+                'equipment_list' => $flatList,
+                'request_notes' => $requestNotes ?: null,
+                'scheduled_date' => $request->scheduled_date ? \Carbon\Carbon::parse($request->scheduled_date)->format('Y-m-d') : null,
+                'scheduled_time' => $request->scheduled_time,
+                'status' => 'pending',
+                'requested_by' => $user->id,
+                'crew_leader_id' => $request->crew_leader_id,
+                'crew_member_ids' => $request->crew_member_ids,
+                'requested_at' => now(),
+            ]);
+
+            $equipmentRequests = [$equipmentRequest->id];
 
             // Update work
             $work->update([
                 'equipment_list' => $request->equipment_list,
-                'equipment_requests' => array_merge($work->equipment_requests ?? [], $equipmentRequests)
+                'equipment_requests' => array_merge($work->equipment_requests ?? [], $equipmentRequests),
             ]);
 
             // Notify Art & Set Properti
             $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
-            $equipmentCount = count($request->equipment_list);
             $notificationsToInsert = [];
             $now = now();
 
+            $equipmentCount = count($flatList ?? $request->equipment_list);
             foreach ($artSetUsers as $artSetUser) {
                 $notificationsToInsert[] = [
                     'user_id' => $artSetUser->id,
@@ -353,11 +478,14 @@ class ProduksiController extends Controller
             // Clear cache
             QueryOptimizer::clearAllIndexCaches();
 
+            // Return full equipment_requests for episode so frontend can refresh riwayat in one place
+            $equipmentRequestsList = ProductionEquipment::where('episode_id', $work->episode_id)->orderBy('requested_at', 'desc')->get();
             return response()->json([
                 'success' => true,
                 'data' => [
                     'work' => $work->fresh(['episode', 'creativeWork']),
-                    'equipment_requests' => ProductionEquipment::whereIn('id', $equipmentRequests)->get()
+                    'equipment_requests' => $equipmentRequestsList,
+                    'is_update' => false,
                 ],
                 'message' => 'Equipment requests created successfully. Art & Set Properti has been notified.'
             ]);
@@ -371,6 +499,135 @@ class ProduksiController extends Controller
     }
 
     /**
+     * Peminjaman alat sekaligus untuk beberapa episode.
+     * POST /api/live-tv/roles/produksi/request-equipment-multiple
+     * Body: episode_ids[] (array), equipment_list, request_notes, scheduled_date, scheduled_time, crew_leader_id, crew_member_ids
+     * Membuat satu ProductionEquipment per episode (work harus in_progress).
+     */
+    public function requestEquipmentMultiple(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'episode_ids' => 'required|array|min:1|max:52',
+            'episode_ids.*' => 'required|integer|exists:episodes,id',
+            'equipment_list' => 'required|array|min:1',
+            'equipment_list.*.equipment_name' => 'required|string|max:255',
+            'equipment_list.*.quantity' => 'required|integer|min:1',
+            'equipment_list.*.notes' => 'nullable|string|max:1000',
+            'request_notes' => 'nullable|string|max:1000',
+            'crew_leader_id' => 'nullable|exists:users,id',
+            'crew_member_ids' => 'nullable|array',
+            'crew_member_ids.*' => 'exists:users,id',
+            'scheduled_date' => 'nullable|date',
+            'scheduled_time' => 'nullable|date_format:H:i',
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+        }
+
+        $user = Auth::user();
+        $episodeIds = array_unique($request->episode_ids);
+        $created = [];
+        $skipped = [];
+
+        $useNewSchema = Schema::hasColumn('equipment_inventory', 'equipment_name');
+        $nameColumn = $useNewSchema ? 'equipment_name' : 'name';
+        $flatList = [];
+        $notesParts = [];
+        foreach ($request->equipment_list as $equipment) {
+            $equipmentName = $equipment['equipment_name'];
+            $quantity = (int) ($equipment['quantity'] ?? 1);
+            for ($i = 0; $i < $quantity; $i++) {
+                $flatList[] = $equipmentName;
+            }
+            if (!empty($equipment['notes'])) {
+                $notesParts[] = "{$equipmentName}: " . ($equipment['notes'] ?? '');
+            }
+        }
+        $requestedNames = array_unique(array_column($request->equipment_list, 'equipment_name'));
+        $inventoryCounts = EquipmentInventory::whereIn($nameColumn, $requestedNames)
+            ->where('status', 'available')
+            ->select($nameColumn)
+            ->get()
+            ->groupBy($nameColumn)
+            ->map->count();
+        foreach ($request->equipment_list as $equipment) {
+            $equipmentName = $equipment['equipment_name'];
+            $quantity = (int) ($equipment['quantity'] ?? 1);
+            $availableCount = $inventoryCounts->get($equipmentName, 0);
+            if ($availableCount < $quantity) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Some equipment is not available or currently in use',
+                    'unavailable_equipment' => [['equipment_name' => $equipmentName, 'requested_quantity' => $quantity, 'available_count' => $availableCount]],
+                ], 400);
+            }
+        }
+        $requestNotes = trim(implode("\n", $notesParts) . ($request->request_notes ? "\n" . $request->request_notes : ''));
+
+        foreach ($episodeIds as $episodeId) {
+            $work = ProduksiWork::where('episode_id', $episodeId)->first();
+            if (!$work || $work->status !== 'in_progress') {
+                $skipped[] = ['episode_id' => $episodeId, 'reason' => $work ? 'Work not in progress' : 'No produksi work'];
+                continue;
+            }
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+                $skipped[] = ['episode_id' => $episodeId, 'reason' => 'Unauthorized'];
+                continue;
+            }
+            $programId = $work->episode->program_id ?? null;
+            $equipmentRequest = ProductionEquipment::create([
+                'episode_id' => $work->episode_id,
+                'program_id' => $programId,
+                'equipment_list' => $flatList,
+                'request_notes' => $requestNotes ?: null,
+                'scheduled_date' => $request->scheduled_date ? \Carbon\Carbon::parse($request->scheduled_date)->format('Y-m-d') : null,
+                'scheduled_time' => $request->scheduled_time,
+                'status' => 'pending',
+                'requested_by' => $user->id,
+                'crew_leader_id' => $request->crew_leader_id,
+                'crew_member_ids' => $request->crew_member_ids ?? [],
+                'requested_at' => now(),
+            ]);
+            $work->update([
+                'equipment_list' => $request->equipment_list,
+                'equipment_requests' => array_merge($work->equipment_requests ?? [], [$equipmentRequest->id]),
+            ]);
+            $created[] = ['episode_id' => $episodeId, 'equipment_request_id' => $equipmentRequest->id];
+            $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
+            $now = now();
+            $equipmentCount = count($flatList);
+            foreach ($artSetUsers as $artSetUser) {
+                Notification::insert([
+                    'user_id' => $artSetUser->id,
+                    'type' => 'equipment_request_created',
+                    'title' => 'Permintaan Alat Baru',
+                    'message' => "Produksi meminta {$equipmentCount} item equipment untuk Episode {$work->episode->episode_number}.",
+                    'data' => json_encode([
+                        'equipment_request_ids' => [$equipmentRequest->id],
+                        'episode_id' => $work->episode_id,
+                        'produksi_work_id' => $work->id
+                    ]),
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ]);
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'created' => $created,
+                'skipped' => $skipped,
+                'total_created' => count($created),
+            ],
+            'message' => count($created) . ' permintaan alat dibuat.' . (count($skipped) ? ' ' . count($skipped) . ' episode dilewati.' : ''),
+        ]);
+    }
+
+    /**
      * Ajukan Kebutuhan
      * POST /api/live-tv/roles/produksi/works/{id}/request-needs
      */
@@ -381,14 +638,15 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
 
@@ -461,24 +719,26 @@ class ProduksiController extends Controller
     }
 
     /**
-     * Selesaikan Pekerjaan - Produksi selesaikan setelah input list alat dan kebutuhan
+     * Selesaikan Pekerjaan — bedakan Tim Setting vs Tim Syuting.
      * POST /api/live-tv/roles/produksi/works/{id}/complete-work
+     * Body: { "complete_team": "setting" | "syuting", "notes": "..." }
+     * - complete_team=setting: hanya tandai bagian Tim Setting selesai (work tetap in_progress untuk Tim Syuting).
+     * - complete_team=syuting atau tidak dikirim: selesaikan work penuh (wajib run sheet + link file syuting).
      */
     public function completeWork(Request $request, int $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            
             $work = ProduksiWork::findOrFail($id);
 
-            // Authorization: Production role OR member of Tim Syuting for this episode
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
 
@@ -489,10 +749,80 @@ class ProduksiController extends Controller
                 ], 400);
             }
 
+            $completeTeam = $request->input('complete_team', null);
+            // Jika tidak dikirim, infer: hanya Setting → setting; hanya Syuting → syuting; keduanya → wajib kirim complete_team
+            if ($completeTeam === null) {
+                if ($isSettingMember && !$isShootingMember) {
+                    $completeTeam = 'setting';
+                } elseif ($isShootingMember && !$isSettingMember) {
+                    $completeTeam = 'syuting';
+                } else {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Anda anggota Tim Setting dan Tim Syuting. Kirim complete_team: "setting" atau "syuting" untuk memilih bagian mana yang diselesaikan.'
+                    ], 400);
+                }
+            }
+            $completeTeam = strtolower((string) $completeTeam);
+
+            // --- Selesai bagian Tim Setting saja (work tidak jadi completed) ---
+            if ($completeTeam === 'setting') {
+                if (!$isProductionRole && !$isSettingMember) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Hanya Tim Setting (atau role Production) yang boleh menandai bagian Tim Setting selesai.'
+                    ], 403);
+                }
+                $work->completeSettingPart($user->id, $request->notes);
+                QueryOptimizer::clearAllIndexCaches();
+                ControllerSecurityHelper::logCrud('produksi_setting_part_completed', $work, [
+                    'setting_completed_by' => $user->id,
+                    'notes' => $request->notes
+                ], $request);
+                return response()->json([
+                    'success' => true,
+                    'data' => ['work' => $work->fresh(['episode', 'creativeWork'])],
+                    'message' => 'Bagian Tim Setting telah ditandai selesai. Pekerjaan tetap berjalan untuk Tim Syuting (run sheet, link file, kembalikan alat, lalu selesai).'
+                ]);
+            }
+
+            // --- Selesai penuh (Tim Syuting): run sheet + link file syuting wajib ---
+            if ($completeTeam !== 'syuting') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'complete_team harus "setting" atau "syuting".'
+                ], 400);
+            }
+            if (!$isProductionRole && !$isShootingMember) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Hanya Tim Syuting (atau role Production) yang boleh menyelesaikan pekerjaan (run sheet + link file syuting + kembalikan alat).'
+                ], 403);
+            }
+            if (!$work->run_sheet_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Run sheet (form catatan syuting) belum diisi. Input run sheet terlebih dahulu.'
+                ], 400);
+            }
+            $links = $work->shooting_file_links ?? [];
+            if (is_string($links)) {
+                $links = $links ? array_filter(explode(',', $links)) : [];
+            }
+            $files = $work->shooting_files ?? [];
+            if (!is_array($files)) {
+                $files = [];
+            }
+            if (empty($links) && empty($files)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Link file hasil syuting belum diisi. Input link file syuting terlebih dahulu.'
+                ], 400);
+            }
+
             $oldData = $work->toArray();
             $work->completeWork($user->id, $request->notes);
 
-            // Audit logging
             ControllerSecurityHelper::logCrud('produksi_work_completed', $work, [
                 'old_status' => $oldData['status'],
                 'new_status' => 'completed',
@@ -500,11 +830,9 @@ class ProduksiController extends Controller
                 'notes' => $request->notes
             ], $request);
 
-            // Clear cache
             QueryOptimizer::clearAllIndexCaches();
 
-            // Notify related roles
-        $episode = $work->episode;
+            $episode = $work->episode;
         $productionTeam = $episode->program->productionTeam;
         
         // 1. Notify Producer
@@ -610,6 +938,56 @@ class ProduksiController extends Controller
     }
 
     /**
+     * Buka kembali work yang sudah Selesai agar Tim Syuting bisa input run sheet & link file syuting.
+     * POST /api/live-tv/roles/produksi/works/{id}/reopen
+     */
+    public function reopenWork(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $work = ProduksiWork::findOrFail($id);
+
+            $isProductionRole = $user->role === 'Production';
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
+
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Hanya anggota Tim Syuting, Tim Setting, atau role Production yang boleh membuka kembali.'
+                ], 403);
+            }
+
+            if ($work->status !== 'completed') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Hanya work yang sudah Selesai yang bisa dibuka kembali.'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'in_progress',
+                'completed_at' => null,
+                'completed_by' => null,
+            ]);
+
+            QueryOptimizer::clearAllIndexCaches();
+            ControllerSecurityHelper::logCrud('produksi_work_reopened', $work, ['reopened_by' => $user->id], $request);
+
+            return response()->json([
+                'success' => true,
+                'data' => ['work' => $work->fresh(['episode', 'creativeWork'])],
+                'message' => 'Pekerjaan dibuka kembali. Silakan input run sheet dan link file syuting lalu selesaikan.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error reopening work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Input Form Catatan Syuting (Run Sheet)
      * POST /api/live-tv/roles/produksi/works/{id}/create-run-sheet
      */
@@ -620,14 +998,15 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
 
@@ -719,14 +1098,15 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
 
@@ -965,14 +1345,15 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
 
@@ -1130,25 +1511,43 @@ class ProduksiController extends Controller
         try {
             $user = Auth::user();
 
-            $work = ProduksiWork::findOrFail($id);
-            
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
             $isProductionRole = $user->role === 'Production';
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $episodeId, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $episodeId, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            // Get QC results for this episode
+            // Get standard QC results (e.g. from QC Role)
             $qcWorks = QualityControlWork::where('episode_id', $episodeId)
                 ->whereIn('status', ['approved', 'revision_needed', 'failed'])
                 ->with(['episode', 'createdBy'])
                 ->orderBy('created_at', 'desc')
                 ->get();
+
+            // Get Distribution Manager QC results (from BroadcastingWork)
+            $broadcastingQC = BroadcastingWork::where('episode_id', $episodeId)
+                ->whereIn('status', ['pending', 'rejected', 'reviewing'])
+                ->with(['approvedBy', 'rejectedBy'])
+                ->orderBy('updated_at', 'desc')
+                ->get()
+                ->map(function ($work) {
+                    return [
+                        'id' => $work->id,
+                        'status' => $work->status,
+                        'approved_at' => $work->approved_at,
+                        'rejected_at' => $work->rejected_at,
+                        'notes' => $work->status === 'rejected' ? $work->rejection_notes : $work->approval_notes,
+                        'qc_by' => $work->status === 'rejected' ? $work->rejectedBy?->name : $work->approvedBy?->name,
+                        'checklist' => $work->metadata['qc_checklist'] ?? [],
+                        'type' => 'Distribution Manager QC'
+                    ];
+                });
 
             // Also get EpisodeQC if exists
             $episodeQC = \App\Models\QualityControl::where('episode_id', $episodeId)
@@ -1160,6 +1559,7 @@ class ProduksiController extends Controller
                 'success' => true,
                 'data' => [
                     'qc_works' => $qcWorks,
+                    'broadcasting_qc' => $broadcastingQC,
                     'episode_qc' => $episodeQC,
                     'episode_id' => $episodeId
                 ],
@@ -1263,14 +1663,15 @@ class ProduksiController extends Controller
 
             $produksiWork = ProduksiWork::with(['episode.program.productionTeam'])->findOrFail($produksiWorkId);
 
-            // Authorization check (consistent with other methods)
+            // Authorization check (consistent with other methods): shooting or setting member
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $produksiWork->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $produksiWork->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember) {
+            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: You are not assigned to the shooting team for this episode.'
+                    'message' => 'Unauthorized: You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
 
@@ -1347,7 +1748,8 @@ class ProduksiController extends Controller
             }
         }
     /**
-     * Return Equipment to Art & Set Properti
+     * Return Equipment to Art & Set Properti (balikin barang).
+     * Hanya Tim Syuting (atau role Production) yang boleh memanggil ini.
      * POST /api/live-tv/roles/produksi/works/{id}/return-equipment
      */
     public function returnEquipment(Request $request, int $id): JsonResponse
@@ -1357,14 +1759,14 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting for this episode
+            // Authorization: hanya Tim Syuting (atau role Production) yang boleh mengembalikan barang (return equipment)
             $isProductionRole = $user->role === 'Production';
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
 
             if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting team for this episode.'
+                    'message' => 'Hanya Tim Syuting yang boleh mengembalikan alat (balikin barang). Anda harus anggota Tim Syuting episode ini atau role Production.'
                 ], 403);
             }
 
@@ -1388,11 +1790,11 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::with(['episode'])->findOrFail($id);
 
-            // Check if user has access
+            // Re-check: hanya Tim Syuting atau Production yang boleh return
             if (!$isProductionRole && !$isShootingMember) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: You are not assigned to the shooting team for this episode.'
+                    'message' => 'Hanya Tim Syuting yang boleh mengembalikan alat (balikin barang).'
                 ], 403);
             }
 
@@ -1450,12 +1852,13 @@ class ProduksiController extends Controller
                     continue;
                 }
 
-                // Update equipment status to returned
+                // Update equipment status to returned (Tim Syuting yang balikin — simpan returned_by)
                 $equipment->update([
                     'status' => 'returned',
                     'return_condition' => $conditionData['condition'],
                     'return_notes' => ($conditionData['notes'] ?? '') . ($request->return_notes ? "\n" . $request->return_notes : ''),
-                    'returned_at' => now()
+                    'returned_at' => now(),
+                    'returned_by' => $user->id
                 ]);
 
                 // Update EquipmentInventory if exists (search by name)
@@ -1583,6 +1986,100 @@ class ProduksiController extends Controller
             'data' => $availableEquipment,
             'message' => 'Available equipment retrieved successfully'
         ]);
+    }
+
+    /**
+     * Build activity timeline for produksi work (untuk history Tim Setting / Tim Syuting).
+     */
+    private function buildWorkActivityTimeline(ProduksiWork $work): array
+    {
+        $activity = [];
+        $work->loadMissing(['runSheet', 'equipmentRequests', 'createdBy', 'completedBy']);
+
+        if ($work->created_at) {
+            $activity[] = [
+                'at' => $work->created_at->toIso8601String(),
+                'type' => 'work_created',
+                'label' => 'Pekerjaan diterima',
+                'description' => $work->createdBy ? 'Diterima oleh ' . $work->createdBy->name : null,
+            ];
+        }
+
+        foreach ($work->equipmentRequests ?? [] as $eq) {
+            if ($eq->requested_at) {
+                $activity[] = [
+                    'at' => $eq->requested_at->toIso8601String(),
+                    'type' => 'equipment_requested',
+                    'label' => 'List alat diajukan ke Art & Set Properti',
+                    'description' => $eq->request_notes ?: null,
+                ];
+            }
+            if ($eq->approved_at) {
+                $activity[] = [
+                    'at' => $eq->approved_at->toIso8601String(),
+                    'type' => 'equipment_approved',
+                    'label' => 'Alat disetujui Art & Set Properti',
+                    'description' => null,
+                ];
+            }
+            if ($eq->assigned_at) {
+                $activity[] = [
+                    'at' => $eq->assigned_at->toIso8601String(),
+                    'type' => 'equipment_received',
+                    'label' => 'Barang diterima tim syuting',
+                    'description' => $eq->assignedUser?->name ?? null,
+                ];
+            }
+            if ($eq->returned_at) {
+                $activity[] = [
+                    'at' => $eq->returned_at->toIso8601String(),
+                    'type' => 'equipment_returned',
+                    'label' => 'Alat dikembalikan ke Art & Set Properti',
+                    'description' => $eq->returnedByUser ? $eq->returnedByUser->name : null,
+                ];
+            }
+        }
+
+        if ($work->runSheet && $work->runSheet->created_at) {
+            $activity[] = [
+                'at' => $work->runSheet->created_at->toIso8601String(),
+                'type' => 'run_sheet_created',
+                'label' => 'Run sheet diisi',
+                'description' => null,
+            ];
+        }
+
+        if ($work->shooting_file_links && count($work->shooting_file_links) > 0) {
+            $links = is_array($work->shooting_file_links) ? $work->shooting_file_links : [];
+            $firstAt = null;
+            foreach ($links as $item) {
+                if (is_array($item) && isset($item['created_at'])) {
+                    $firstAt = $item['created_at'];
+                    break;
+                }
+            }
+            $activity[] = [
+                'at' => $firstAt ?? $work->updated_at?->toIso8601String() ?? now()->toIso8601String(),
+                'type' => 'shooting_uploaded',
+                'label' => 'Hasil syuting diupload',
+                'description' => count($links) . ' file',
+            ];
+        }
+
+        if ($work->completed_at) {
+            $activity[] = [
+                'at' => $work->completed_at->toIso8601String(),
+                'type' => 'work_completed',
+                'label' => 'Pekerjaan selesai',
+                'description' => $work->completedBy ? 'Diselesaikan oleh ' . $work->completedBy->name : null,
+            ];
+        }
+
+        usort($activity, function ($a, $b) {
+            return strcmp($a['at'], $b['at']);
+        });
+
+        return array_values($activity);
     }
 }
 

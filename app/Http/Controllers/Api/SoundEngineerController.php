@@ -33,9 +33,53 @@ class SoundEngineerController extends Controller
         if (in_array(strtolower($role), ['sound engineer', 'sound_engineer', 'production'])) {
             return true;
         }
-
         // Also allow if has any music team assignment (for dashboard visibility)
         return $user->hasAnyMusicTeamAssignment();
+    }
+
+    /**
+     * Check if user has access to a specific recording recording
+     */
+    private function hasRecordingAccess($user, $recording): bool
+    {
+        if (!$user || !$recording) {
+            return false;
+        }
+
+        // Must be a Sound Engineer Role
+        if (!$this->isSoundEngineer($user)) {
+            return false;
+        }
+
+        // Creator has access
+        if ($recording->created_by === $user->id) {
+            return true;
+        }
+
+        // Broaden access: Check if user is a sound engineer in the program's production team
+        // Support both direct load and relationship
+        $episode = $recording->relationLoaded('episode') ? $recording->episode : $recording->episode()->withTrashed()->first();
+        if (!$episode) {
+            return false;
+        }
+
+        $program = $episode->relationLoaded('program') ? $episode->program : $episode->program()->withTrashed()->first();
+        if (!$program) {
+            return false;
+        }
+
+        $productionTeam = $program->relationLoaded('productionTeam') ? $program->productionTeam : $program->productionTeam;
+        
+        if (!$productionTeam) {
+            return false;
+        }
+
+        // Access members
+        return $productionTeam->members()
+            ->where('user_id', $user->id)
+            ->where('role', 'sound_eng')
+            ->where('is_active', true)
+            ->exists();
     }
 
     /**
@@ -53,15 +97,23 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            // Optimize query with eager loading
+            // Optimize query with eager loading (include trashed for data integrity)
             $query = SoundEngineerRecording::with([
+                'episode' => function($q) { $q->withTrashed(); },
+                'episode.program' => function($q) { $q->withTrashed(); },
                 'episode.program.managerProgram',
                 'episode.program.productionTeam.members.user',
                 'musicArrangement.song',
                 'musicArrangement.singer',
                 'createdBy',
                 'reviewedBy',
-                'equipmentRequests.episode.program'
+                'equipmentRequests' => function($q) use ($user) {
+                    $q->where('requested_by', $user->id)
+                      ->with([
+                          'episode' => function($eq) { $eq->withTrashed(); }, 
+                          'episode.program' => function($pq) { $pq->withTrashed(); }
+                      ]);
+                }
             ]);
             
             // Filter by episode
@@ -78,9 +130,16 @@ class SoundEngineerController extends Controller
             if ($request->has('created_by')) {
                 $query->where('created_by', $request->created_by);
             } else {
-                // Show recordings created by user OR recordings for episodes where user is in recording team
+                // Show recordings created by user OR recordings for episodes where user is in the program's production team
                 $query->where(function($q) use ($user) {
                     $q->where('created_by', $user->id)
+                      // Broaden filter: check if user is a sound engineer in the program's production team
+                      ->orWhereHas('episode.program.productionTeam.members', function($mq) use ($user) {
+                          $mq->where('user_id', $user->id)
+                             ->where('role', 'sound_eng')
+                             ->where('is_active', true);
+                      })
+                      // Keep existing episode-specific team check just in case it's used
                       ->orWhereHas('episode.teamAssignments', function($aq) use ($user) {
                           $aq->where('team_type', 'recording')
                              ->where('status', '!=', 'cancelled')
@@ -94,12 +153,38 @@ class SoundEngineerController extends Controller
             
             $recordings = $query->orderBy('created_at', 'desc')->paginate(15);
 
-            // Add convenience fields for frontend (episode_number 1-52, program_name, recording_link)
-            $recordings->getCollection()->transform(function ($recording) {
-                $recording->episode_number = $recording->episode->episode_number ?? null;
-                $recording->program_name = $recording->episode->program->name ?? null;
-                $recording->program_id = $recording->episode->program->id ?? null;
+            // Add convenience fields and only include equipment requests made by current user
+            $recordings->getCollection()->transform(function ($recording) use ($user) {
+                $episode = $recording->episode;
+                $program = $episode?->program;
+
+                // Set basic properties
+                $recording->episode_number = $episode->episode_number ?? null;
+                $recording->program_name = $program->name ?? null;
+                $recording->program_id = $program->id ?? null;
+
+                // Fallback for orphaned/missing data
+                if (!$episode) {
+                    $recording->episode_number = "#" . ($recording->episode_id ?? 'N/A');
+                    $recording->program_name = "Unknown Program (Ep ID: {$recording->episode_id})";
+                } elseif (!$program) {
+                    $recording->program_name = "Unknown Program (Prog ID: " . ($episode->program_id ?? 'N/A') . ")";
+                }
+
+                // Append status for trashed records
+                if ($episode && $episode->trashed()) {
+                    $recording->episode_number .= " (Deleted)";
+                }
+                if ($program && $program->trashed()) {
+                    $recording->program_name .= " (Deleted)";
+                }
+
                 $recording->recording_link = $recording->file_link; // alias for frontend
+                
+                // Equipment requests already filtered in 'with' query for efficiency
+                // but we still ensure the relation is set correctly
+                $recording->setRelation('equipmentRequests', $recording->equipmentRequests);
+                
                 return $recording;
             });
             
@@ -131,45 +216,59 @@ class SoundEngineerController extends Controller
                     'message' => 'Your account role (' . ($user->role ?? 'unknown') . ') does not have access to the music workflow system. Please contact your administrator if you believe this is an error.'
                 ], 403);
             }
-
+-
             $recording = SoundEngineerRecording::with([
-            'episode.program.productionTeam.members',
-            'musicArrangement',
-            'createdBy',
-            'reviewedBy'
-        ])->findOrFail($id);
-        
-        // Check if user has access to this recording (must be creator or in same production team)
-        if ($recording->created_by !== $user->id) {
-            // Check if user is in the same production team
-            $productionTeam = $recording->episode?->program?->productionTeam;
-            if ($productionTeam) {
-                // Access members from eager-loaded collection
-                $hasAccess = $productionTeam->members
-                    ->where('user_id', $user->id)
-                    ->where('role', 'sound_eng')
-                    ->where('is_active', true)
-                    ->count() > 0;
-                    
-                    if (!$hasAccess) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Unauthorized: You do not have access to this recording.'
-                        ], 403);
-                    }
-                } else {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Unauthorized: You do not have access to this recording.'
-                    ], 403);
+                'episode' => function($q) { $q->withTrashed(); },
+                'episode.program' => function($q) { $q->withTrashed(); },
+                'episode.program.productionTeam.members',
+                'musicArrangement',
+                'createdBy',
+                'reviewedBy',
+                'equipmentRequests' => function($q) use ($user) {
+                    $q->where('requested_by', $user->id)
+                      ->with([
+                          'episode' => function($eq) { $eq->withTrashed(); },
+                          'episode.program' => function($pq) { $pq->withTrashed(); }
+                      ]);
                 }
+            ])->findOrFail($id);
+        
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this recording.'
+                ], 403);
             }
 
-            // Add convenience fields for frontend (episode_number 1-52, program_name, recording_link)
-            $recording->episode_number = $recording->episode->episode_number ?? null;
-            $recording->program_name = $recording->episode->program->name ?? null;
-            $recording->program_id = $recording->episode->program->id ?? null;
+            // Add convenience fields
+            $episode = $recording->episode;
+            $program = $episode?->program;
+
+            $recording->episode_number = $episode->episode_number ?? null;
+            $recording->program_name = $program->name ?? null;
+            $recording->program_id = $program->id ?? null;
+
+             // Fallback for orphaned/missing data
+             if (!$episode) {
+                $recording->episode_number = "#" . ($recording->episode_id ?? 'N/A');
+                $recording->program_name = "Unknown Program (Ep ID: {$recording->episode_id})";
+            } elseif (!$program) {
+                $recording->program_name = "Unknown Program (Prog ID: " . ($episode->program_id ?? 'N/A') . ")";
+            }
+
+            // Append status for trashed records
+            if ($episode && $episode->trashed()) {
+                $recording->episode_number .= " (Deleted)";
+            }
+            if ($program && $program->trashed()) {
+                $recording->program_name .= " (Deleted)";
+            }
+
             $recording->recording_link = $recording->file_link; // alias for frontend
+            
+            // Equipment requests already filtered in 'with' query
+            $recording->setRelation('equipmentRequests', $recording->equipmentRequests);
             
             return response()->json([
                 'success' => true,
@@ -290,28 +389,12 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
-            // Check if user has access (must be creator or in same production team)
-            if ($recording->created_by !== $user->id) {
-                $productionTeam = $recording->episode?->program?->productionTeam;
-                if ($productionTeam) {
-                    $hasAccess = $productionTeam->members
-                        ->where('user_id', $user->id)
-                        ->where('role', 'sound_eng')
-                        ->where('is_active', true)
-                        ->count() > 0;
-                    
-                    if (!$hasAccess) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Unauthorized: You do not have access to update this recording.'
-                        ], 403);
-                    }
-                } else {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Unauthorized: You do not have access to update this recording.'
-                    ], 403);
-                }
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to update this recording.'
+                ], 403);
             }
             
             $validator = Validator::make($request->all(), [
@@ -379,23 +462,12 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
-            // Check if user has access
-            if ($recording->created_by !== $user->id) {
-                $productionTeam = $recording->episode?->program?->productionTeam;
-                if ($productionTeam) {
-                    $hasAccess = $productionTeam->members
-                        ->where('user_id', $user->id)
-                        ->where('role', 'sound_eng')
-                        ->where('is_active', true)
-                        ->count() > 0;
-                    
-                    if (!$hasAccess) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Unauthorized: You do not have access to this recording.'
-                        ], 403);
-                    }
-                }
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this recording.'
+                ], 403);
             }
             
             // Allow starting if not already started or completed
@@ -440,23 +512,12 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
-            // Check if user has access
-            if ($recording->created_by !== $user->id) {
-                $productionTeam = $recording->episode?->program?->productionTeam;
-                if ($productionTeam) {
-                    $hasAccess = $productionTeam->members
-                        ->where('user_id', $user->id)
-                        ->where('role', 'sound_eng')
-                        ->where('is_active', true)
-                        ->count() > 0;
-                    
-                    if (!$hasAccess) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Unauthorized: You do not have access to this recording.'
-                        ], 403);
-                    }
-                }
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this recording.'
+                ], 403);
             }
             
             if ($recording->status !== 'recording') {
@@ -580,23 +641,12 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
-            // Check if user has access
-            if ($recording->created_by !== $user->id) {
-                $productionTeam = $recording->episode?->program?->productionTeam;
-                if ($productionTeam) {
-                    $hasAccess = $productionTeam->members
-                        ->where('user_id', $user->id)
-                        ->where('role', 'sound_eng')
-                        ->where('is_active', true)
-                        ->count() > 0;
-                    
-                    if (!$hasAccess) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Unauthorized: You do not have access to this recording.'
-                        ], 403);
-                    }
-                }
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this recording.'
+                ], 403);
             }
             
             if ($recording->status !== 'completed') {
@@ -651,23 +701,12 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
-            // Check if user has access
-            if ($recording->created_by !== $user->id) {
-                $productionTeam = $recording->episode?->program?->productionTeam;
-                if ($productionTeam) {
-                    $hasAccess = $productionTeam->members
-                        ->where('user_id', $user->id)
-                        ->where('role', 'sound_eng')
-                        ->where('is_active', true)
-                        ->count() > 0;
-                    
-                    if (!$hasAccess) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Unauthorized: You do not have access to this recording.'
-                        ], 403);
-                    }
-                }
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this recording.'
+                ], 403);
             }
             
             $url = $recording->file_url;
@@ -718,9 +757,41 @@ class SoundEngineerController extends Controller
             }
 
             $recordings = SoundEngineerRecording::where('episode_id', $episodeId)
-                ->with(['createdBy', 'reviewedBy'])
+                ->with([
+                    'episode' => function($q) { $q->withTrashed(); },
+                    'episode.program' => function($q) { $q->withTrashed(); },
+                    'createdBy', 
+                    'reviewedBy'
+                ])
                 ->orderBy('created_at', 'desc')
                 ->get();
+            
+            // Add convenience fields
+            $recordings->transform(function ($recording) {
+                $episode = $recording->episode;
+                $program = $episode?->program;
+
+                $recording->episode_number = $episode->episode_number ?? null;
+                $recording->program_name = $program->name ?? null;
+                $recording->program_id = $program->id ?? null;
+
+                if (!$episode) {
+                    $recording->episode_number = "#" . ($recording->episode_id ?? 'N/A');
+                    $recording->program_name = "Unknown Program (Ep ID: {$recording->episode_id})";
+                } elseif (!$program) {
+                    $recording->program_name = "Unknown Program (Prog ID: " . ($episode->program_id ?? 'N/A') . ")";
+                }
+
+                if ($episode && $episode->trashed()) {
+                    $recording->episode_number .= " (Deleted)";
+                }
+                if ($program && $program->trashed()) {
+                    $recording->program_name .= " (Deleted)";
+                }
+
+                $recording->recording_link = $recording->file_link;
+                return $recording;
+            });
             
             return response()->json([
                 'success' => true,
@@ -753,9 +824,41 @@ class SoundEngineerController extends Controller
 
             $recordings = SoundEngineerRecording::where('status', $status)
                 ->where('created_by', $user->id) // Only show current user's recordings
-                ->with(['episode', 'createdBy', 'reviewedBy'])
+                ->with([
+                    'episode' => function($q) { $q->withTrashed(); },
+                    'episode.program' => function($q) { $q->withTrashed(); },
+                    'createdBy', 
+                    'reviewedBy'
+                ])
                 ->orderBy('created_at', 'desc')
                 ->paginate(15);
+            
+            // Add convenience fields
+            $recordings->getCollection()->transform(function ($recording) {
+                $episode = $recording->episode;
+                $program = $episode?->program;
+
+                $recording->episode_number = $episode->episode_number ?? null;
+                $recording->program_name = $program->name ?? null;
+                $recording->program_id = $program->id ?? null;
+
+                if (!$episode) {
+                    $recording->episode_number = "#" . ($recording->episode_id ?? 'N/A');
+                    $recording->program_name = "Unknown Program (Ep ID: {$recording->episode_id})";
+                } elseif (!$program) {
+                    $recording->program_name = "Unknown Program (Prog ID: " . ($episode->program_id ?? 'N/A') . ")";
+                }
+
+                if ($episode && $episode->trashed()) {
+                    $recording->episode_number .= " (Deleted)";
+                }
+                if ($program && $program->trashed()) {
+                    $recording->program_name .= " (Deleted)";
+                }
+
+                $recording->recording_link = $recording->file_link;
+                return $recording;
+            });
             
             return response()->json([
                 'success' => true,
@@ -1097,11 +1200,13 @@ class SoundEngineerController extends Controller
                 })->toArray()
             ]);
             
+            // Tampilkan: butuh bantuan SE, ATAU sudah dibantu SE tapi masih rejected (agar SE bisa kirim link)
             $query = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy', 'reviewedBy'])
-                ->whereIn('status', ['arrangement_rejected', 'rejected']) // Support both status values
-                ->where(function($q) {
+                ->whereIn('status', ['arrangement_rejected', 'rejected'])
+                ->where(function ($q) use ($user) {
                     $q->where('needs_sound_engineer_help', true)
-                      ->orWhereNull('sound_engineer_helper_id');
+                      ->orWhereNull('sound_engineer_helper_id')
+                      ->orWhere('sound_engineer_helper_id', $user->id);
                 });
 
             // Filter by episode
@@ -1368,8 +1473,9 @@ class SoundEngineerController extends Controller
             $validator = Validator::make($request->all(), [
                 'help_notes' => 'required|string|max:2000',
                 'suggested_fixes' => 'nullable|string|max:2000',
-                'file' => 'nullable|file|mimes:mp3,wav,midi|max:102400', // Optional: upload fixed arrangement file (100MB max)
-                'help_file_link' => 'nullable|url|max:2048', // Optional: link to fixed arrangement
+                'file' => 'nullable|file|mimes:mp3,wav,midi|max:102400',
+                'help_file_link' => 'nullable|string|max:2048',
+                'link' => 'nullable|string|max:2048', // Frontend kirim "link" → wajib ada agar status masuk ke Producer
             ]);
 
             if ($validator->fails()) {
@@ -1415,46 +1521,49 @@ class SoundEngineerController extends Controller
                 ], 403);
             }
 
-            // Prepared update data
-            // Mark help as provided
+            // Handle Help File Link (frontend kirim "link"). Jika SE sudah pernah isi link tapi status belum pindah, pakai link yang tersimpan.
+            $rawLink = $request->filled('help_file_link') ? $request->input('help_file_link') : $request->input('link');
+            $helpFileLink = is_string($rawLink) ? trim($rawLink) : '';
+            if ($helpFileLink === '' && $arrangement->sound_engineer_helper_id === (int) $user->id && !empty($arrangement->sound_engineer_help_file_link)) {
+                $helpFileLink = trim($arrangement->sound_engineer_help_file_link);
+            }
+            $fileUploaded = false;
+            $hasHelpFile = $helpFileLink !== '' || $fileUploaded;
+
+            // Mark help as provided. Hanya set needs_sound_engineer_help = false kalau ada link,
+            // agar kalau SE submit tanpa link, item tetap muncul di list SE dan bisa submit lagi dengan link.
             $updateData = [
-                'needs_sound_engineer_help' => false,
+                'needs_sound_engineer_help' => !$hasHelpFile,
                 'sound_engineer_helper_id' => $user->id,
                 'sound_engineer_help_at' => now(),
                 'sound_engineer_help_notes' => $request->help_notes
             ];
-
-            // Update arrangement with suggested fixes if provided
             if ($request->has('suggested_fixes')) {
                 $updateData['arrangement_notes'] = ($arrangement->arrangement_notes ?? '') . "\n\n[Sound Engineer Help] " . $request->suggested_fixes;
             }
-
-            // Handle Help File Link
-            if ($request->has('help_file_link')) {
-                $updateData['sound_engineer_help_file_link'] = $request->help_file_link;
+            if ($helpFileLink !== '') {
+                $updateData['sound_engineer_help_file_link'] = $helpFileLink;
             }
 
-            $fileUploaded = false; // Physical upload removed
-
-            // Update arrangement
             $arrangement->update($updateData);
             
-            // Jika Sound Engineer menyertakan file (link atau upload), langsung submit ke Producer
-            // Ini agar tidak perlu bolak-balik ke Music Arranger lagi
-            $hasHelpFile = $request->has('help_file_link') || $fileUploaded;
-            
             if ($hasHelpFile) {
-                // Copy help file to main file_link jika perlu
-                if ($request->has('help_file_link') && !$arrangement->file_link) {
+                // Simpan link perbaikan ke file_link arrangement agar Producer bisa dengar
+                if ($helpFileLink) {
                     $arrangement->update([
-                        'file_link' => $request->help_file_link
+                        'file_link' => $helpFileLink
                     ]);
                 }
                 
-                // Auto-submit ke Producer
+                // Auto-submit ke Producer agar muncul di "Menunggu Approval" / Music Arrangements
                 $arrangement->update([
                     'status' => 'arrangement_submitted',
                     'submitted_at' => now()
+                ]);
+                Log::info('SoundEngineer helpFixArrangement: arrangement resubmitted to Producer', [
+                    'arrangement_id' => $arrangement->id,
+                    'episode_id' => $arrangement->episode_id,
+                    'status' => $arrangement->fresh()->status
                 ]);
                 
                 // Notify Producer - Arrangement ready for approval
@@ -1578,31 +1687,37 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode.creativeWork'])->findOrFail($id);
 
-            if ($recording->created_by !== $user->id) {
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This recording is not assigned to you.'
+                    'message' => 'Unauthorized: You do not have access to this recording.'
                 ], 403);
             }
 
-            // Get recording schedule from Creative Work
+            // Jadwal bisa dari Creative Work (Creative input) atau sudah di-set saat Producer approve Creative Work
+            $scheduleToUse = $recording->recording_schedule;
             $creativeWork = $recording->episode->creativeWork;
-            if (!$creativeWork || !$creativeWork->recording_schedule) {
+            if ($creativeWork && $creativeWork->recording_schedule) {
+                $scheduleToUse = $creativeWork->recording_schedule;
+            }
+
+            if (!$scheduleToUse) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Recording schedule not found in Creative Work'
+                    'message' => 'Jadwal rekaman vokal belum tersedia. Creative harus mengisi jadwal rekaman di Creative Work lalu submit ke Producer. Setelah Producer menyetujui Creative Work, jadwal akan tersedia di sini.'
                 ], 400);
             }
 
             $recording->update([
-                'recording_schedule' => $creativeWork->recording_schedule,
+                'recording_schedule' => $scheduleToUse,
                 'status' => 'scheduled'
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => $recording->fresh(['episode', 'musicArrangement']),
-                'message' => 'Recording schedule accepted successfully. Recording date: ' . \Carbon\Carbon::parse($creativeWork->recording_schedule)->format('d M Y')
+                'message' => 'Jadwal rekaman vokal diterima. Tanggal rekaman: ' . \Carbon\Carbon::parse($scheduleToUse)->format('d M Y')
             ]);
 
         } catch (\Exception $e) {
@@ -1631,10 +1746,11 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::findOrFail($id);
 
-            if ($recording->created_by !== $user->id) {
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This recording is not assigned to you.'
+                    'message' => 'Unauthorized: You do not have access to this recording.'
                 ], 403);
             }
 
@@ -1699,10 +1815,11 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode'])->findOrFail($id);
 
-            if ($recording->created_by !== $user->id) {
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This recording is not assigned to you.'
+                    'message' => 'Unauthorized: You do not have access to this recording.'
                 ], 403);
             }
 
@@ -1798,6 +1915,43 @@ class SoundEngineerController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error requesting equipment: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Batalkan permintaan alat (hanya yang status pending dan yang diajukan oleh user ini).
+     * DELETE /api/live-tv/sound-engineer/equipment-requests/{id}
+     */
+    public function cancelEquipmentRequest(int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$this->isSoundEngineer($user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $equipment = ProductionEquipment::where('id', $id)
+                ->where('requested_by', $user->id)
+                ->where('status', 'pending')
+                ->first();
+
+            if (!$equipment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Permintaan tidak ditemukan atau sudah tidak dapat dibatalkan (hanya permintaan dengan status menunggu persetujuan yang bisa dibatalkan).'
+                ], 404);
+            }
+
+            $equipment->delete();
+            return response()->json([
+                'success' => true,
+                'message' => 'Permintaan alat berhasil dibatalkan.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -1933,10 +2087,11 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode'])->findOrFail($id);
 
-            if ($recording->created_by !== $user->id) {
+            // Check if user has access to this recording
+            if (!$this->hasRecordingAccess($user, $recording)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: This recording is not assigned to you.'
+                    'message' => 'Unauthorized: You do not have access to this recording.'
                 ], 403);
             }
 
@@ -2100,12 +2255,13 @@ class SoundEngineerController extends Controller
                     continue;
                 }
 
-                // Update equipment status to returned
+                // Update equipment status to returned (returned_by = user yang mengembalikan, untuk Riwayat)
                 $equipment->update([
                     'status' => 'returned',
                     'return_condition' => $conditionData['condition'],
                     'return_notes' => ($conditionData['notes'] ?? '') . ($request->return_notes ? "\n" . $request->return_notes : ''),
-                    'returned_at' => now()
+                    'returned_at' => now(),
+                    'returned_by' => $user->id
                 ]);
 
                 // Update EquipmentInventory if exists

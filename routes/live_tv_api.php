@@ -52,6 +52,9 @@ use App\Http\Controllers\Api\TaskReassignmentController;
 // Wrap all Live TV routes with 'live-tv' prefix
 Route::prefix('live-tv')->group(function () {
 
+// Program Musik options (shooting location dropdown, genre) - auth optional for dropdown
+Route::get('options/program-musik', [ProgramController::class, 'getProgramMusicOptions'])->middleware(['auth:sanctum', 'throttle:60,1']);
+
 // Program Management Routes
 Route::prefix('programs')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::get('/', [ProgramController::class, 'index'])->middleware('throttle:60,1');
@@ -109,6 +112,7 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     Route::post('/programs/{programId}/generate-episodes-for-year', [ManagerProgramController::class, 'generateEpisodesForYear'])->middleware('throttle:sensitive');
     Route::get('/programs/{programId}/check-next-year-episodes', [ManagerProgramController::class, 'checkNextYearEpisodes'])->middleware('throttle:60,1');
     Route::post('/programs/{programId}/close', [ManagerProgramController::class, 'closeProgram'])->middleware('throttle:sensitive');
+    Route::put('/programs/{programId}/broadcast-day', [ManagerProgramController::class, 'updateBroadcastDayFromEpisode'])->middleware('throttle:sensitive'); // Ubah hari tayang dari episode X ke depan
     
     // Performance & Views Tracking (NEW)
     Route::put('/episodes/{episodeId}/views', [ManagerProgramController::class, 'updateEpisodeViews'])->middleware('throttle:sensitive');
@@ -152,6 +156,7 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     
     // Special Budget Approval
     Route::get('/special-budget-approvals', [ManagerProgramController::class, 'getSpecialBudgetApprovals'])->middleware('throttle:60,1');
+    Route::get('/special-budget-approvals/history', [ManagerProgramController::class, 'getSpecialBudgetApprovalsHistory'])->middleware('throttle:60,1');
     Route::post('/special-budget-approvals/{id}/approve', [ManagerProgramController::class, 'approveSpecialBudget'])->middleware('throttle:sensitive');
     Route::post('/special-budget-approvals/{id}/reject', [ManagerProgramController::class, 'rejectSpecialBudget'])->middleware('throttle:sensitive');
     
@@ -394,6 +399,7 @@ Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->g
     Route::get('/approved-arrangements', [MusicArrangerController::class, 'getApprovedArrangementsHistory'])->middleware('throttle:60,1'); // History arrangement yang sudah disetujui
     Route::get('/songs', [MusicArrangerController::class, 'getAvailableSongs'])->middleware('throttle:60,1');
     Route::get('/singers', [MusicArrangerController::class, 'getAvailableSingers'])->middleware('throttle:60,1');
+    Route::get('/episodes-status', [MusicArrangerController::class, 'getEpisodesStatus'])->middleware('throttle:60,1'); // ✅ NEW: cek status episode
     
     // Fallback route dengan auth (untuk backward compatibility)
     Route::get('/arrangements/{id}/file-auth', [MusicArrangerController::class, 'downloadFile'])
@@ -489,6 +495,7 @@ Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->g
         Route::post('/recordings/{id}/accept-schedule', [SoundEngineerController::class, 'acceptRecordingSchedule']); // Terima jadwal rekaman vokal
         Route::get('/equipment/available', [SoundEngineerController::class, 'getAvailableEquipment']); // Cek Stok Alat
         Route::post('/recordings/{id}/request-equipment', [SoundEngineerController::class, 'requestEquipment']); // Input list alat dan ajukan ke Art & Set Properti
+        Route::delete('/equipment-requests/{id}', [SoundEngineerController::class, 'cancelEquipmentRequest']); // Batalkan permintaan alat (hanya pending, milik user)
         Route::post('/equipment/{id}/notify-return', [SoundEngineerController::class, 'notifyReturn']); // Notify return to Art & Set Properti
         Route::post('/recordings/{id}/return-equipment', [SoundEngineerController::class, 'returnEquipment']); // Kembalikan alat ke Art & Set Properti
         Route::post('/recordings/{id}/complete-work', [SoundEngineerController::class, 'completeWork']); // Selesaikan pekerjaan setelah input list alat
@@ -606,13 +613,23 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::post('/equipment', [ArtSetPropertiController::class, 'store'])->middleware('throttle:sensitive');
         Route::put('/equipment/{id}', [ArtSetPropertiController::class, 'update'])->middleware('throttle:sensitive');
         Route::delete('/equipment/{id}', [ArtSetPropertiController::class, 'destroy'])->middleware('throttle:sensitive');
-        
+
         Route::get('/requests', [ArtSetPropertiController::class, 'getRequests'])->middleware('throttle:60,1');
         Route::post('/requests/{id}/approve', [ArtSetPropertiController::class, 'approveRequest'])->middleware('throttle:sensitive');
         Route::post('/requests/{id}/reject', [ArtSetPropertiController::class, 'rejectRequest'])->middleware('throttle:sensitive');
+        Route::post('/requests/{id}/transfer', [ArtSetPropertiController::class, 'transferRequest'])->middleware('throttle:sensitive'); // Pindah ke episode lain tanpa return
         Route::post('/equipment/{id}/return', [ArtSetPropertiController::class, 'returnEquipment'])->middleware('throttle:sensitive');
-        Route::post('/equipment/{id}/accept-returned', [ArtSetPropertiController::class, 'acceptReturnedEquipment'])->middleware('throttle:sensitive'); // ACC alat yang dikembalikan
+        Route::post('/equipment/{id}/accept-returned', [ArtSetPropertiController::class, 'acceptReturnedEquipment'])->middleware('throttle:sensitive');
         Route::get('/statistics', [ArtSetPropertiController::class, 'statistics'])->middleware('throttle:60,1');
+
+        Route::get('/history', [ArtSetPropertiController::class, 'getHistory'])->middleware('throttle:60,1'); // Riwayat pinjam & kembali
+        Route::get('/history/export', [ArtSetPropertiController::class, 'exportEquipmentHistory'])->middleware('throttle:60,1'); // Export Excel peminjaman
+        Route::get('/program-templates', [ArtSetPropertiController::class, 'getProgramTemplates'])->middleware('throttle:60,1');
+        Route::get('/programs-list', [ArtSetPropertiController::class, 'getProgramsList'])->middleware('throttle:60,1');
+        Route::get('/programs/{programId}/episodes-list', [ArtSetPropertiController::class, 'getEpisodesList'])->middleware('throttle:60,1');
+        Route::get('/programs/{programId}/equipment-template', [ArtSetPropertiController::class, 'getTemplateByProgram'])->middleware('throttle:60,1');
+        Route::post('/program-templates', [ArtSetPropertiController::class, 'storeProgramTemplate'])->middleware('throttle:sensitive');
+        Route::get('/episodes/{episodeId}/equipment-summary', [ArtSetPropertiController::class, 'getEpisodeEquipmentSummary'])->middleware('throttle:60,1');
     });
 
     // Promosi Routes
@@ -634,6 +651,7 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         // New workflow methods (setelah QC/Broadcasting)
         Route::post('/episodes/{id}/receive-links', [PromosiController::class, 'receiveLinks'])->middleware('throttle:sensitive'); // Terima link YouTube dan website
         Route::post('/works/{id}/accept-promotion-work', [PromosiController::class, 'acceptPromotionWork'])->middleware('throttle:sensitive'); // Terima pekerjaan promosi
+        Route::post('/works/{id}/upload-sharing-proof', [PromosiController::class, 'uploadSharingProof'])->middleware('throttle:uploads'); // Upload file bukti sharing (untuk dipakai sebagai proof_link)
         Route::post('/works/{id}/share-facebook', [PromosiController::class, 'shareFacebook'])->middleware('throttle:sensitive'); // Share link website ke Facebook dengan bukti
         Route::post('/works/{id}/upload-story-ig', [PromosiController::class, 'uploadStoryIG'])->middleware('throttle:uploads'); // Buat video highlight untuk story IG dengan bukti
         Route::post('/works/{id}/upload-reels-facebook', [PromosiController::class, 'uploadReelsFacebook'])->middleware('throttle:uploads'); // Buat video highlight untuk reels Facebook dengan bukti
@@ -652,11 +670,13 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::get('/works/{id}', [ProduksiController::class, 'show'])->middleware('throttle:60,1');
         Route::post('/works/{id}/accept-work', [ProduksiController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima pekerjaan
         Route::post('/works/{id}/request-equipment', [ProduksiController::class, 'requestEquipment'])->middleware('throttle:sensitive'); // Input list alat dan ajukan ke Art & Set Properti
+        Route::post('/request-equipment-multiple', [ProduksiController::class, 'requestEquipmentMultiple'])->middleware('throttle:sensitive'); // Peminjaman alat sekaligus beberapa episode
         Route::post('/works/{id}/request-needs', [ProduksiController::class, 'requestNeeds'])->middleware('throttle:sensitive'); // Ajukan kebutuhan
         Route::post('/works/{id}/create-run-sheet', [ProduksiController::class, 'createRunSheet'])->middleware('throttle:sensitive'); // Input form catatan syuting (run sheet)
         Route::post('/works/{id}/upload-shooting-results', [ProduksiController::class, 'uploadShootingResults'])->middleware('throttle:uploads'); // Upload hasil syuting ke storage
         Route::post('/works/{id}/input-file-links', [ProduksiController::class, 'inputFileLinks'])->middleware('throttle:sensitive'); // Input link file di sistem
         Route::post('/works/{id}/complete-work', [ProduksiController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
+        Route::post('/works/{id}/reopen', [ProduksiController::class, 'reopenWork'])->middleware('throttle:sensitive'); // Buka kembali work (untuk input run sheet & link file)
         Route::post('/works/{id}/return-equipment', [ProduksiController::class, 'returnEquipment'])->middleware('throttle:sensitive'); // Kembalikan alat ke Art & Set Properti
         Route::get('/equipment/available', [ProduksiController::class, 'getAvailableEquipment'])->middleware('throttle:60,1'); // Cek stok alat
         // Equipment Return Notification
@@ -673,6 +693,7 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::post('/schedules/{id}/approve', [ManagerBroadcastingController::class, 'approveSchedule'])->middleware('throttle:sensitive');
         Route::post('/schedules/{id}/reject', [ManagerBroadcastingController::class, 'rejectSchedule'])->middleware('throttle:sensitive');
         Route::post('/schedules/{id}/revise', [ManagerBroadcastingController::class, 'reviseSchedule'])->middleware('throttle:sensitive');
+        Route::post('/works/{id}/accept', [ManagerBroadcastingController::class, 'acceptWork'])->middleware('throttle:sensitive');
         Route::post('/works/{id}/approve', [ManagerBroadcastingController::class, 'approveWork'])->middleware('throttle:sensitive');
         Route::post('/works/{id}/reject', [ManagerBroadcastingController::class, 'rejectWork'])->middleware('throttle:sensitive');
         Route::get('/schedule-options', [ManagerBroadcastingController::class, 'getScheduleOptions'])->middleware('throttle:60,1');
@@ -701,6 +722,22 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::get('/statistics', [SoundEngineerEditingController::class, 'statistics'])->middleware('throttle:60,1');
     });
 
+    // Alias: frontend memanggil api/live-tv/roles/sound-engineer-editing/works (ProductionDashboard loadAllData)
+    Route::prefix('roles/sound-engineer-editing')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+        Route::get('/works', [SoundEngineerEditingController::class, 'index'])->middleware('throttle:60,1');
+        Route::post('/works', [SoundEngineerEditingController::class, 'store'])->middleware('throttle:sensitive');
+        Route::get('/works/{id}', [SoundEngineerEditingController::class, 'show'])->middleware('throttle:60,1');
+        Route::post('/works/{id}/accept-work', [SoundEngineerEditingController::class, 'acceptWork'])->middleware('throttle:sensitive');
+        Route::put('/works/{id}', [SoundEngineerEditingController::class, 'update'])->middleware('throttle:sensitive');
+        Route::post('/works/{id}/submit', [SoundEngineerEditingController::class, 'submit'])->middleware('throttle:sensitive');
+        Route::post('/upload-vocal', [SoundEngineerEditingController::class, 'uploadVocal'])->middleware('throttle:uploads');
+        Route::post('/input-vocal-link', [SoundEngineerEditingController::class, 'inputVocalLink'])->middleware('throttle:api');
+        Route::get('/statistics', [SoundEngineerEditingController::class, 'statistics'])->middleware('throttle:60,1');
+    });
+
+    // Bukti transfer: buka via URL dengan token (tanpa auth di new tab) — untuk production
+    Route::get('general-affairs/receipts/view', [GeneralAffairsController::class, 'showReceiptByToken'])->middleware('throttle:60,1');
+
     // General Affairs Routes
     Route::prefix('general-affairs')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
         Route::get('/budget-requests', [GeneralAffairsController::class, 'index'])->middleware('throttle:60,1');
@@ -708,6 +745,9 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::get('/budget-requests/from-creative-work', [GeneralAffairsController::class, 'getCreativeWorkBudgetRequests'])->middleware('throttle:60,1'); // Permohonan dana dari Creative Work
         Route::get('/budget-requests/program/{programId}', [GeneralAffairsController::class, 'getByProgram'])->middleware('throttle:60,1');
         Route::get('/budget-requests/{id}', [GeneralAffairsController::class, 'show'])->middleware('throttle:60,1');
+        Route::post('/upload-payment-receipt', [GeneralAffairsController::class, 'uploadPaymentReceipt'])->middleware('throttle:uploads');
+        Route::get('/receipts/file', [GeneralAffairsController::class, 'showReceiptFile'])->middleware('throttle:60,1');
+        Route::post('/receipts/view-url', [GeneralAffairsController::class, 'getReceiptViewUrl'])->middleware('throttle:60,1');
         Route::post('/budget-requests/{id}/approve', [GeneralAffairsController::class, 'approve'])->middleware('throttle:sensitive');
         Route::post('/budget-requests/{id}/reject', [GeneralAffairsController::class, 'reject'])->middleware('throttle:sensitive');
         Route::post('/budget-requests/{id}/process-payment', [GeneralAffairsController::class, 'processPayment'])->middleware('throttle:sensitive');
@@ -767,6 +807,11 @@ Route::prefix('schedules')->middleware(['auth:sanctum', 'throttle:api'])->group(
 Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::get('/approvals', [ProducerController::class, 'getApprovals'])->middleware('throttle:120,1'); // 120 requests per minute
     Route::get('/pending-approvals', [ProducerController::class, 'getApprovals'])->middleware('throttle:120,1'); // Alias untuk frontend - 120 requests per minute
+    Route::get('/pending-programs', [ProducerController::class, 'getPendingPrograms']);
+    Route::get('/programs/{id}', [ProducerController::class, 'getProgramDetail'])->whereNumber('id');
+    Route::post('/programs/{id}/accept', [ProducerController::class, 'acceptProgram']);
+    Route::post('/programs/{id}/reject', [ProducerController::class, 'rejectProgram']);
+    Route::get('/my-budget-requests', [ProducerController::class, 'getMyBudgetRequests'])->middleware('throttle:60,1'); // Permohonan dana yang diajukan producer (untuk lihat status & bukti dibayar)
     Route::get('/rejected-arrangements', [ProducerController::class, 'getRejectedArrangementsHistory'])->middleware('throttle:60,1'); // History arrangement yang di-reject
     Route::get('/approved-arrangements', [ProducerController::class, 'getApprovedArrangementsHistory'])->middleware('throttle:60,1'); // History arrangement yang sudah disetujui
     Route::post('/approvals/{id}/approve', [ProducerController::class, 'approve'])->middleware('throttle:sensitive');
@@ -825,6 +870,7 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     Route::post('/episodes/{episodeId}/copy-team-assignment', [ProducerController::class, 'copyTeamAssignment'])->middleware('throttle:sensitive'); // Copy/reuse team assignment dari episode lain
     Route::get('/editor-missing-files', [ProducerController::class, 'getEditorMissingFiles'])->middleware('throttle:60,1'); // Get Editor missing files reports
     Route::post('/request-produksi-action', [ProducerController::class, 'requestProduksiAction'])->middleware('throttle:sensitive'); // Request Produksi action (reshoot/complete files/fix)
+    Route::post('/editor-works/{editorWorkId}/handle-missing-files', [ProducerController::class, 'handleMissingFilesAction'])->middleware('throttle:sensitive'); // Ambil tindakan atas laporan file kurang Editor
     
     // Phase 3: Creative Work - Edit Directly & Special Budget
     Route::post('/creative-works/{id}/edit-directly', [ProducerController::class, 'editCreativeDirectly'])->middleware('throttle:sensitive');

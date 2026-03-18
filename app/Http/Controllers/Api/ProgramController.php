@@ -194,6 +194,21 @@ class ProgramController extends Controller
     }
 
     /**
+     * GET options untuk Program Musik: lokasi syuting (dropdown + other), genre.
+     * GET /api/live-tv/options/program-musik
+     */
+    public function getProgramMusicOptions(): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'shooting_location_options' => config('program_musik.shooting_location_options', []),
+                'genre_options' => config('program_musik.genre_options', []),
+            ],
+        ]);
+    }
+
+    /**
      * Create new program
      */
     public function store(Request $request): JsonResponse
@@ -202,6 +217,8 @@ class ProgramController extends Controller
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'category' => 'nullable|in:musik,live_tv,regular,special,other',
+            'genre' => 'nullable|string|max:100',
+            'target_audience' => 'nullable|string|max:255',
             'manager_program_id' => 'required|exists:users,id',
             'production_team_id' => 'nullable|exists:production_teams,id',
             'start_date' => [
@@ -228,6 +245,7 @@ class ProgramController extends Controller
             'duration_minutes' => 'nullable|integer|min:1',
             'broadcast_channel' => 'nullable|string|max:255',
             'target_views_per_episode' => 'nullable|integer|min:0',
+            'max_budget_per_episode' => 'nullable|numeric|min:0',
             'proposal_file' => 'nullable|file|mimes:pdf,doc,docx|max:10240', // Max 10MB
             'proposal_file_link' => 'nullable|url|max:2048' // Link to external proposal file
         ]);
@@ -270,13 +288,16 @@ class ProgramController extends Controller
                 'name',
                 'description',
                 'category',
+                'genre',
+                'target_audience',
                 'manager_program_id',
                 'production_team_id',
                 'start_date',
                 'air_time',
                 'duration_minutes',
                 'broadcast_channel',
-                'target_views_per_episode'
+                'target_views_per_episode',
+                'max_budget_per_episode'
             ]);
             
             // Filter out null values dan kolom yang tidak ada di database
@@ -391,7 +412,10 @@ class ProgramController extends Controller
             'air_time' => 'sometimes|date_format:H:i',
             'duration_minutes' => 'nullable|integer|min:1',
             'broadcast_channel' => 'nullable|string|max:255',
-            'target_views_per_episode' => 'nullable|integer|min:0'
+            'target_views_per_episode' => 'nullable|integer|min:0',
+            'genre' => 'nullable|string|max:100',
+            'target_audience' => 'nullable|string|max:255',
+            'max_budget_per_episode' => 'nullable|numeric|min:0'
         ]);
         
         if ($validator->fails()) {
@@ -404,7 +428,7 @@ class ProgramController extends Controller
         
         try {
             $oldTeamId = $program->production_team_id;
-            $program->update($request->all());
+            $program->update($request->only($program->getFillable()));
             
             // Counter untuk tracking (inisialisasi di luar if)
             $updatedCount = 0;

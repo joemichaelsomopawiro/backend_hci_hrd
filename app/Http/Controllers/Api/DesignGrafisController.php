@@ -238,7 +238,8 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
-            if (!in_array($work->status, ['draft', 'designing'])) {
+            // Izinkan accept dari status draft / designing / pending
+            if (!in_array($work->status, ['draft', 'designing', 'pending'])) {
                 return response()->json([
                     'success' => false,
                     'message' => "Work cannot be accepted. Current status: {$work->status}"

@@ -17,6 +17,8 @@ class Program extends Model
         'name',
         'description',
         'category',
+        'genre',
+        'target_audience',
         'status',
         'manager_program_id',
         'production_team_id',
@@ -41,6 +43,7 @@ class Program extends Model
         'rejected_at',
         'rejection_notes',
         'budget_amount',
+        'max_budget_per_episode',
         'budget_approved',
         'budget_notes',
         'budget_approved_by',
@@ -50,7 +53,13 @@ class Program extends Model
         'performance_status',
         'last_performance_check',
         'auto_close_enabled',
-        'min_episodes_before_evaluation'
+        'min_episodes_before_evaluation',
+        // Producer Acceptance
+        'producer_accepted',
+        'producer_accepted_by',
+        'producer_accepted_at',
+        'producer_rejected_at',
+        'producer_rejection_notes',
     ];
 
     protected $casts = [
@@ -63,8 +72,12 @@ class Program extends Model
         'duration_minutes' => 'integer',
         'proposal_file_size' => 'integer',
         'budget_amount' => 'decimal:2',
+        'max_budget_per_episode' => 'decimal:2',
         'budget_approved' => 'boolean',
-        'budget_approved_at' => 'datetime'
+        'budget_approved_at' => 'datetime',
+        'producer_accepted' => 'boolean',
+        'producer_accepted_at' => 'datetime',
+        'producer_rejected_at' => 'datetime',
     ];
 
     /**

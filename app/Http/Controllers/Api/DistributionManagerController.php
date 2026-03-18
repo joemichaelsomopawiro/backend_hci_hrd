@@ -60,9 +60,19 @@ class DistributionManagerController extends Controller
 
             $schedules = $query->orderBy('schedule_date', 'desc')->paginate(15);
 
+            // Meta: helper for frontend "Minggu ini" filter
+            $now = now();
+            $weekStart = $now->copy()->startOfWeek();
+            $weekEnd = $now->copy()->endOfWeek();
+
             return response()->json([
                 'success' => true,
                 'data' => $schedules,
+                'meta' => [
+                    'week_start' => $weekStart->toDateString(),
+                    'week_end' => $weekEnd->toDateString(),
+                    'note' => 'Use start_date/end_date params to filter by week. Schedules come from approved Schedule Options.',
+                ],
                 'message' => 'Schedules retrieved successfully'
             ]);
 
@@ -526,13 +536,19 @@ class DistributionManagerController extends Controller
 
     /**
      * Get all schedule options submitted by Manager Program (Program Musik)
-     * Distribution Manager can view all pending/reviewed schedule options
+     * Distribution Manager can view pending/reviewed schedule options
+     *
+     * Query params:
+     * - status: pending|approved|revised|rejected (optional, filter by status)
+     * - program_id: int (optional, filter by program)
+     *
+     * Response meta includes counts for frontend badges/tabs.
      */
     public function getScheduleOptions(Request $request): JsonResponse
     {
         try {
             $user = Auth::user();
-            
+
             if ($user->role !== 'Distribution Manager') {
                 return response()->json([
                     'success' => false,
@@ -540,13 +556,15 @@ class DistributionManagerController extends Controller
                 ], 403);
             }
 
-            // ✅ Eager loading to avoid N+1
             $query = \App\Models\ProgramScheduleOption::with(['program', 'episode', 'submittedBy', 'reviewedBy'])
                 ->orderBy('created_at', 'desc');
 
-            // Filter by status if provided
+            // Filter by status (validate allowed values)
             if ($request->has('status')) {
-                $query->where('status', $request->status);
+                $allowedStatuses = ['pending', 'approved', 'revised', 'rejected'];
+                if (in_array($request->status, $allowedStatuses)) {
+                    $query->where('status', $request->status);
+                }
             }
 
             // Filter by program if provided
@@ -556,9 +574,21 @@ class DistributionManagerController extends Controller
 
             $options = $query->paginate(15);
 
+            // Meta: counts for frontend tabs/badges (Pending / Disetujui / Ditolak)
+            $counts = \App\Models\ProgramScheduleOption::selectRaw('status, count(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
             return response()->json([
                 'success' => true,
                 'data' => $options,
+                'meta' => [
+                    'pending_count' => $counts->get('pending', 0),
+                    'approved_count' => $counts->get('approved', 0),
+                    'revised_count' => $counts->get('revised', 0),
+                    'rejected_count' => $counts->get('rejected', 0),
+                    'note' => 'Approved options create BroadcastingSchedule. Check Schedule tab for approved air dates.',
+                ],
                 'message' => 'Schedule options retrieved successfully'
             ]);
 
@@ -644,7 +674,7 @@ class DistributionManagerController extends Controller
                 if ($applyTo === 'select' && !empty($scheduleOption->target_episode_ids)) {
                     // CASE: Apply to Specific Episodes
                     foreach ($scheduleOption->target_episode_ids as $epId) {
-                        $episode = \App\Models\Episode::find($epId);
+                        $episode = Episode::find($epId);
                         if ($episode) {
                             // Combine selected Date + Time
                             // NOTE: If user selects multiple episodes, they ALL get this Date+Time.
@@ -659,6 +689,24 @@ class DistributionManagerController extends Controller
                                 $episode->updateDeadline('kreatif', $newAirDate->copy()->subDays(9), 'Reschedule Approved');
                                 $episode->updateDeadline('produksi', $newAirDate->copy()->subDays(9), 'Reschedule Approved');
                             }
+
+                            // Create or update BroadcastingSchedule for this episode (TV platform)
+                            $schedule = BroadcastingSchedule::firstOrNew([
+                                'episode_id' => $episode->id,
+                                'platform' => 'tv',
+                            ]);
+
+                            // Set / update schedule date
+                            $schedule->schedule_date = $newAirDate;
+
+                            if (!$schedule->exists) {
+                                $schedule->status = 'scheduled';
+                                $schedule->created_by = $user->id;
+                                $schedule->title = $schedule->title ?: ($program ? ($program->name . ' - Episode ' . $episode->episode_number) : null);
+                                $schedule->description = $schedule->description ?: ($scheduleOption->submission_notes ?? null);
+                            }
+
+                            $schedule->save();
                         }
                     }
                 } else {
@@ -687,6 +735,23 @@ class DistributionManagerController extends Controller
                              $episode->updateDeadline('kreatif', $epAirDate->copy()->subDays(9), 'Program Schedule Approved');
                              $episode->updateDeadline('produksi', $epAirDate->copy()->subDays(9), 'Program Schedule Approved');
                         }
+
+                        // Create or update BroadcastingSchedule for this episode (TV platform)
+                        $schedule = BroadcastingSchedule::firstOrNew([
+                            'episode_id' => $episode->id,
+                            'platform' => 'tv',
+                        ]);
+
+                        $schedule->schedule_date = $epAirDate;
+
+                        if (!$schedule->exists) {
+                            $schedule->status = 'scheduled';
+                            $schedule->created_by = $user->id;
+                            $schedule->title = $schedule->title ?: ($program ? ($program->name . ' - Episode ' . $episode->episode_number) : null);
+                            $schedule->description = $schedule->description ?: ($scheduleOption->submission_notes ?? null);
+                        }
+
+                        $schedule->save();
                     }
                     
                     // If no episodes exist yet (first time approval), generate them?

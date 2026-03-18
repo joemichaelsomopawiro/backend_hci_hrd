@@ -247,39 +247,63 @@ class ProductionTeamService
      */
     public function getAvailableUsersForRole(string $role): array
     {
-        // Special logic for Tim Syuting (production), Tim Setting (art_set_design) and Tim Vocal (sound_eng)
-        // Producer can select ANY user (except Managers) for ini roles
-        if (in_array($role, ['production', 'art_set_design', 'sound_eng'])) {
-             $users = User::whereNotIn('role', ['Manager Program', 'Program Manager', 'General Manager', 'Administrator'])
-                ->where('is_active', true)
-                ->get();
-        } else {
-            // Map production team role to user role for other specialized roles
-            $roleMapping = [
-                'creative' => 'Creative',
-                'musik_arr' => 'Music Arranger',
-                'music_arranger' => 'Music Arranger',
-                'sound_eng' => 'Sound Engineer',
-                'sound_engineer' => 'Sound Engineer',
-                'editor' => 'Editor',
-                'producer' => 'Producer',
-                'production' => 'Production',
-            ];
-            
-            // Get user role from mapping, fallback to original role if not found
-            $userRole = $roleMapping[$role] ?? $role;
-            
-            $users = User::where('role', $userRole)
-                ->where('is_active', true)
-                ->get();
+        // Slug tim (frontend) -> nama role/jabatan (users.role ATAU employees.jabatan_saat_ini), Inggris + Indonesia
+        $roleMapping = [
+            'creative' => ['Creative', 'Kreatif'],
+            'kreatif' => ['Creative', 'Kreatif'],
+            'musik_arr' => ['Music Arranger', 'Musik Arranger'],
+            'music_arranger' => ['Music Arranger', 'Musik Arranger'],
+            'sound_eng' => ['Sound Engineer'],
+            'sound_engineer' => ['Sound Engineer'],
+            'editor' => ['Editor'],
+            'producer' => ['Producer'],
+            'production' => ['Production', 'Produksi'],
+            'produksi' => ['Production', 'Produksi'],
+            'art_set_design' => ['Art & Set Properti'],
+        ];
+
+        if ($role === 'all' || $role === 'any' || $role === 'others') {
+            $users = User::with('employee')->where('is_active', true)->get();
+            return $users->map(function ($user) {
+                $roleLabel = $user->role ?: ($user->employee?->jabatan_saat_ini ?? 'User');
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'role' => $roleLabel,
+                ];
+            })->toArray();
         }
-            
+
+        $roleList = $roleMapping[$role] ?? [$role];
+        $roleList = is_array($roleList) ? $roleList : [$roleList];
+        $roleList = array_values(array_unique(array_map('trim', array_filter($roleList))));
+        if (empty($roleList)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($roleList), '?'));
+        // User bisa punya role di users.role ATAU di employees.jabatan_saat_ini (jabatan).
+        // Match role exact atau TRIM(role) agar nilai dengan spasi (e.g. "Production ") tetap ketemu.
+        $users = User::with('employee')
+            ->where('is_active', true)
+            ->where(function ($q) use ($roleList, $placeholders) {
+                $q->whereIn('role', $roleList)
+                    ->orWhereRaw('TRIM(COALESCE(role, "")) IN (' . $placeholders . ')', $roleList)
+                    ->orWhereHas('employee', function ($eq) use ($roleList, $placeholders) {
+                        $eq->whereIn('jabatan_saat_ini', $roleList)
+                            ->orWhereRaw('TRIM(COALESCE(jabatan_saat_ini, "")) IN (' . $placeholders . ')', $roleList);
+                    });
+            })
+            ->get();
+
         return $users->map(function ($user) {
+            $roleLabel = $user->role ?: ($user->employee?->jabatan_saat_ini ?? null);
             return [
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'role' => $user->role
+                'role' => $roleLabel,
             ];
         })->toArray();
     }

@@ -736,9 +736,11 @@ class BroadcastingController extends Controller
 
             $work->update($updateData);
 
+            $this->syncBroadcastingLinksToPromotionWorks($work->fresh());
+
             // Notify Producer hanya kalau ada YouTube URL (video benar‑benar sudah diupload)
             $episode = $work->episode;
-            $productionTeam = $episode->program->productionTeam;
+            $productionTeam = $episode->program?->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
             
             if ($producer && $request->filled('youtube_url')) {
@@ -802,7 +804,10 @@ class BroadcastingController extends Controller
 
             $work = BroadcastingWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // Allow edit if: creator, atau work sudah completed/published (agar link yang belum diisi bisa diisi oleh siapa pun Broadcasting)
+            $isCreator = $work->created_by === $user->id;
+            $isPublishedOrCompleted = in_array($work->status, ['completed', 'published']);
+            if (!$isCreator && !$isPublishedOrCompleted) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized to upload website for this work.'
@@ -823,7 +828,7 @@ class BroadcastingController extends Controller
 
             // Notify Producer
             $episode = $work->episode;
-            $productionTeam = $episode->program->productionTeam;
+            $productionTeam = $episode->program?->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
             
             if ($producer) {
@@ -839,6 +844,8 @@ class BroadcastingController extends Controller
                     ]
                 ]);
             }
+
+            $this->syncBroadcastingLinksToPromotionWorks($work->fresh());
 
             QueryOptimizer::clearAllIndexCaches();
 
@@ -887,7 +894,10 @@ class BroadcastingController extends Controller
 
             $work = BroadcastingWork::with(['episode'])->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            // Allow edit if: creator, atau work sudah completed/published (agar link yang belum diisi bisa diisi)
+            $isCreator = $work->created_by === $user->id;
+            $isPublishedOrCompleted = in_array($work->status, ['completed', 'published']);
+            if (!$isCreator && !$isPublishedOrCompleted) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized to input YouTube link for this work.'
@@ -1045,8 +1055,8 @@ class BroadcastingController extends Controller
                 ], 400);
             }
 
-            // Update work status to completed/published
-            $work->update([
+            // Update work status and URLs (persist url changes)
+            $updatePayload = [
                 'status' => 'published',
                 'published_time' => now(),
                 'metadata' => array_merge($work->metadata ?? [], [
@@ -1054,7 +1064,15 @@ class BroadcastingController extends Controller
                     'completed_at' => now()->toDateTimeString(),
                     'completed_by' => $user->id
                 ])
-            ]);
+            ];
+            if ($request->has('youtube_url')) {
+                $updatePayload['youtube_url'] = $work->youtube_url;
+                $updatePayload['youtube_video_id'] = $work->youtube_video_id;
+            }
+            if ($request->has('website_url')) {
+                $updatePayload['website_url'] = $work->website_url;
+            }
+            $work->update($updatePayload);
 
             // Notify Manager Program
             $episode = $work->episode;
@@ -1214,6 +1232,39 @@ class BroadcastingController extends Controller
                 'message' => 'Error completing work: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Sinkronkan link YouTube & Website dari BroadcastingWork ke semua PromotionWork sharing (share_facebook, share_wa_group, story_ig, reels_facebook)
+     * agar Promotion selalu dapat link terbaru saat Broadcasting edit link.
+     */
+    private function syncBroadcastingLinksToPromotionWorks(?BroadcastingWork $work): void
+    {
+        if (!$work || !$work->episode_id) {
+            return;
+        }
+
+        $episodeId = $work->episode_id;
+        $youtubeUrl = $work->youtube_url ?? null;
+        $websiteUrl = $work->website_url ?? null;
+        $thumbnailPath = $work->thumbnail_path ?? null;
+
+        \App\Models\PromotionWork::where('episode_id', $episodeId)
+            ->whereIn('work_type', ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'])
+            ->get()
+            ->each(function ($promoWork) use ($youtubeUrl, $websiteUrl, $thumbnailPath) {
+                $socialLinks = $promoWork->social_media_links ?? [];
+                if ($youtubeUrl !== null) {
+                    $socialLinks['youtube_url'] = $youtubeUrl;
+                }
+                if ($websiteUrl !== null) {
+                    $socialLinks['website_url'] = $websiteUrl;
+                }
+                if ($thumbnailPath !== null) {
+                    $socialLinks['thumbnail_path'] = $thumbnailPath;
+                }
+                $promoWork->update(['social_media_links' => $socialLinks]);
+            });
     }
 
     /**

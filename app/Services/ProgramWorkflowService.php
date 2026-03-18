@@ -297,15 +297,26 @@ class ProgramWorkflowService
         
         // Notify Production Team
         if ($program->production_team_id) {
-            $teamMembers = $program->productionTeam->members()->where('is_active', true)->get();
+            $team = $program->productionTeam;
+            $producerId = $team->producer_id ?? null;
+            $teamMembers = $team->members()->where('is_active', true)->get();
+
             foreach ($teamMembers as $member) {
+                $isProducer = ($producerId && $member->user_id == $producerId);
+
                 Notification::create([
                     'user_id' => $member->user_id,
-                    'type' => 'program_created',
-                    'title' => 'New Program Assigned',
-                    'message' => "You have been assigned to program '{$program->name}'.",
+                    'type' => $isProducer ? 'program_pending_acceptance' : 'program_created',
+                    'title' => $isProducer ? 'Program Baru Perlu Persetujuan' : 'New Program Assigned',
+                    'message' => $isProducer
+                        ? "Program baru '{$program->name}' telah dibuat. Silakan terima program ini untuk memulai workflow."
+                        : "You have been assigned to program '{$program->name}'.",
                     'program_id' => $program->id,
-                    'priority' => 'normal'
+                    'priority' => $isProducer ? 'high' : 'normal',
+                    'data' => [
+                        'program_id' => $program->id,
+                        'need_acceptance' => $isProducer
+                    ]
                 ]);
             }
         }

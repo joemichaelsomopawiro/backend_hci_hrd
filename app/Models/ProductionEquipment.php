@@ -5,17 +5,26 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ProductionEquipment extends Model
 {
     use HasFactory;
 
+    /** Tabel di database: production_equipment (singular) */
+    protected $table = 'production_equipment';
+
     protected $fillable = [
         'episode_id',
+        'program_id',
         'equipment_list',
         'request_notes',
+        'scheduled_date',
+        'scheduled_time',
         'status',
         'requested_by',
+        'crew_leader_id',
+        'crew_member_ids',
         'requested_at',
         'approved_by',
         'approved_at',
@@ -27,16 +36,19 @@ class ProductionEquipment extends Model
         'returned_at',
         'return_condition',
         'return_notes',
-        'assigned_to'
+        'assigned_to',
+        'returned_by'
     ];
 
     protected $casts = [
         'equipment_list' => 'array',
+        'crew_member_ids' => 'array',
         'requested_at' => 'datetime',
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
         'assigned_at' => 'datetime',
-        'returned_at' => 'datetime'
+        'returned_at' => 'datetime',
+        'scheduled_date' => 'date',
     ];
 
     /**
@@ -45,6 +57,30 @@ class ProductionEquipment extends Model
     public function episode(): BelongsTo
     {
         return $this->belongsTo(Episode::class);
+    }
+
+    /**
+     * Relationship dengan Program (denormalized for listing)
+     */
+    public function program(): BelongsTo
+    {
+        return $this->belongsTo(Program::class);
+    }
+
+    /**
+     * Crew leader (1) - tim setting yang pinjam
+     */
+    public function crewLeader(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'crew_leader_id');
+    }
+
+    /**
+     * User yang mengembalikan (tim syuting)
+     */
+    public function returnedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'returned_by');
     }
 
     /**
@@ -184,5 +220,29 @@ class ProductionEquipment extends Model
     public function scopeReturned($query)
     {
         return $query->where('status', 'returned');
+    }
+
+    /**
+     * Riwayat transfer (pindah ke episode lain tanpa return)
+     */
+    public function transfers(): HasMany
+    {
+        return $this->hasMany(ProductionEquipmentTransfer::class, 'production_equipment_id');
+    }
+
+    /**
+     * Equipment list as name => qty for display
+     */
+    public function getEquipmentItemsAttribute(): array
+    {
+        if (!is_array($this->equipment_list)) {
+            return [];
+        }
+        $counts = array_count_values($this->equipment_list);
+        $items = [];
+        foreach ($counts as $name => $qty) {
+            $items[] = ['name' => $name, 'qty' => $qty];
+        }
+        return $items;
     }
 }

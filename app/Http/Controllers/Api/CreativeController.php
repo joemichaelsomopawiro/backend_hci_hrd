@@ -13,6 +13,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CreativeController extends Controller
 {
@@ -58,6 +59,13 @@ class CreativeController extends Controller
                 $query->where('created_by', $request->created_by);
             } elseif ($user->role === 'Creative') {
                 $query->where('created_by', $user->id);
+            }
+
+            // Producer: hanya tampilkan creative works dari program yang producer ini kelola (untuk arsip approved/rejected)
+            if ($user->role === 'Producer') {
+                $query->whereHas('episode.program.productionTeam', function ($q) use ($user) {
+                    $q->where('producer_id', $user->id);
+                });
             }
 
             // Filter untuk "Terima Pekerjaan" - hanya creative work dengan status draft
@@ -662,6 +670,7 @@ class CreativeController extends Controller
                 'storyboard_data' => 'nullable|array',
                 'budget_data' => 'nullable|array',
                 'recording_schedule' => 'nullable|date',
+                // datetime-local kirim format YYYY-MM-DDTHH:mm atau Y-m-d H:i:s
                 'shooting_schedule' => 'nullable|date',
                 'shooting_location' => 'nullable|string|max:255',
                 'revision_notes' => 'nullable|string|max:1000'
@@ -679,11 +688,17 @@ class CreativeController extends Controller
                 ->where('created_by', $user->id)
                 ->firstOrFail();
 
-            // Only allow revise if status is rejected or revised
-            if (!in_array($work->status, ['rejected', 'revised'])) {
+            // Allow revise: status rejected/revised, ATAU status submitted dengan jadwal syuting dibatalkan Producer
+            $shootingCancelled = $work->shooting_schedule_cancelled === true
+                || $work->shooting_schedule_cancelled === 1
+                || !empty($work->shooting_schedule_cancelled);
+            $allowedForRevise = in_array($work->status, ['rejected', 'revised'])
+                || ($work->status === 'submitted' && $shootingCancelled)
+                || $shootingCancelled;
+            if (!$allowedForRevise) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be revised when status is rejected or revised'
+                    'message' => 'Work can only be revised when status is rejected or revised, or when Producer has cancelled the shooting schedule'
                 ], 400);
             }
 
@@ -695,6 +710,13 @@ class CreativeController extends Controller
             if ($request->has('recording_schedule')) $updateData['recording_schedule'] = $request->recording_schedule;
             if ($request->has('shooting_schedule')) $updateData['shooting_schedule'] = $request->shooting_schedule;
             if ($request->has('shooting_location')) $updateData['shooting_location'] = $request->shooting_location;
+
+            // Jika Creative mengisi ulang jadwal syuting setelah dibatalkan Producer, clear status cancel
+            if ($request->has('shooting_schedule') && !empty($request->shooting_schedule) && $work->shooting_schedule_cancelled) {
+                $updateData['shooting_schedule_cancelled'] = false;
+                $updateData['shooting_cancellation_reason'] = null;
+                $updateData['shooting_schedule_new'] = null;
+            }
 
             // Reset review fields
             $updateData['script_approved'] = null;

@@ -8,10 +8,12 @@ use App\Models\BroadcastingWork;
 use App\Models\EditorWork;
 use App\Models\Episode;
 use App\Models\Notification;
+use App\Models\ProductionTeamMember;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 
@@ -99,6 +101,7 @@ class ManagerBroadcastingController extends Controller
             'episode.program.managerProgram',
             'episode.program.productionTeam.members.user',
             'createdBy',
+            'submittedBy',
             'editorWork.createdBy'
         ]);
 
@@ -284,6 +287,58 @@ class ManagerBroadcastingController extends Controller
         }
     }
 
+     /**
+     * Accept broadcasting work (Terima Pekerjaan oleh Distribution Manager)
+     */
+    public function acceptWork(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not authenticated.'
+                ], 401);
+            }
+
+            $allowedRoles = ['Distribution Manager', 'Manager Broadcasting'];
+            if (!in_array($user->role, $allowedRoles)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $work = BroadcastingWork::findOrFail($id);
+
+            if ($work->status !== 'pending_approval') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Broadcasting work is not in pending approval status.'
+                ], 400);
+            }
+
+            $work->update([
+                'status' => 'reviewing',
+                'accepted_by' => $user->id,
+                'accepted_at' => now(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->load(['episode.program', 'createdBy', 'submittedBy', 'editorWork.createdBy']),
+                'message' => 'Broadcasting work accepted successfully. You can now perform Quality Control.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error accepting broadcasting work: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     /**
      * Approve broadcasting work
      */
@@ -328,19 +383,37 @@ class ManagerBroadcastingController extends Controller
 
             $work = BroadcastingWork::findOrFail($id);
 
-            if ($work->status !== 'pending_approval') {
+            // Idempotent: jika sudah di-approve (status pending + approved_at set), kembalikan sukses
+            if ($work->status === 'pending' && $work->approved_at) {
+                try {
+                    $work->load(['episode', 'createdBy', 'submittedBy', 'approvedBy', 'editorWork.createdBy']);
+                } catch (\Throwable $e) {
+                    $work->load(['episode', 'createdBy', 'approvedBy', 'editorWork.createdBy']);
+                }
+                return response()->json([
+                    'success' => true,
+                    'data' => $work,
+                    'message' => 'Broadcasting work was already approved.'
+                ]);
+            }
+
+            if (!in_array($work->status, ['pending_approval', 'reviewing'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Broadcasting work is not pending approval'
+                    'message' => 'Broadcasting work is not in a status that can be approved.'
                 ], 400);
             }
 
+            $metadata = is_array($work->metadata) ? $work->metadata : [];
             $work->update([
                 'status' => 'pending', // Set to pending so Broadcasting team can see it
                 'approved_by' => $user->id,
                 'approved_at' => now(),
                 'approval_notes' => $request->approval_notes,
-                'scheduled_time' => $request->publish_time ?? $work->scheduled_time
+                'scheduled_time' => $request->publish_time ?? $work->scheduled_time,
+                'metadata' => array_merge($metadata, [
+                    'qc_checklist' => $request->checklist ?? []
+                ])
             ]);
 
             // ✨ Sync with EditorWork: Set terminal status to 'approved' ✨
@@ -357,62 +430,128 @@ class ManagerBroadcastingController extends Controller
             }
 
             if ($editorWork) {
-                $editorWork->update([
-                    'status' => 'approved',
-                    'reviewed_by' => $user->id,
-                    'reviewed_at' => now(),
-                    'review_notes' => $request->approval_notes
-                ]);
+                try {
+                    $editorWork->update([
+                        'status' => 'approved',
+                        'reviewed_by' => $user->id,
+                        'reviewed_at' => now(),
+                        'review_notes' => $request->approval_notes
+                    ]);
+                } catch (\Throwable $e) {
+                    Log::warning('ApproveWork: EditorWork update failed', ['editor_work_id' => $editorWork->id, 'error' => $e->getMessage()]);
+                }
             }
 
-            $episode = $work->episode()->with('program.productionTeam')->first();
+            $episode = null;
+            try {
+                $episode = $work->episode()->with('program.productionTeam')->first();
+            } catch (\Throwable $e) {
+                Log::warning('ApproveWork: episode load failed', ['work_id' => $work->id, 'error' => $e->getMessage()]);
+            }
             $catatanQc = $request->approval_notes ?: null;
 
-            // Notify Producer (QC approved – bisa baca hasil QC)
-            $producerId = $episode?->program?->productionTeam?->producer_id;
-            if ($producerId) {
-                Notification::create([
-                    'user_id' => $producerId,
-                    'type' => 'qc_editor_work_approved',
-                    'title' => 'QC Program: Hasil Editor Disetujui',
-                    'message' => "QC (Distribution Manager) telah menyetujui hasil editor Episode #{$work->episode?->episode_number}. " . ($catatanQc ? "Catatan QC: {$catatanQc}" : ''),
-                    'episode_id' => $work->episode_id,
-                    'data' => [
-                        'broadcasting_work_id' => $work->id,
-                        'editor_work_id' => $editorWork?->id,
-                        'catatan_qc' => $catatanQc,
-                        'approved_by' => $user->name ?? 'QC',
-                    ],
-                ]);
+            // Notify Producer (QC approved) – only if user exists to avoid FK constraint
+            $producerId = null;
+            try {
+                $producerId = $episode?->program?->productionTeam?->producer_id;
+            } catch (\Throwable $e) {
+                Log::warning('ApproveWork: failed to get producer_id', ['work_id' => $work->id, 'error' => $e->getMessage()]);
+            }
+            if ($producerId && User::where('id', $producerId)->exists()) {
+                try {
+                    Notification::create([
+                        'user_id' => $producerId,
+                        'type' => 'qc_editor_work_approved',
+                        'title' => 'QC Program: Hasil Editor Disetujui',
+                        'message' => "QC (Distribution Manager) telah menyetujui hasil editor Episode #{$work->episode?->episode_number}. " . ($catatanQc ? "Catatan QC: {$catatanQc}" : ''),
+                        'episode_id' => $work->episode_id,
+                        'data' => [
+                            'broadcasting_work_id' => $work->id,
+                            'editor_work_id' => $editorWork?->id,
+                            'catatan_qc' => $catatanQc,
+                            'approved_by' => $user->name ?? 'QC',
+                        ],
+                    ]);
+                } catch (\Exception $e) {
+                    Log::warning('ApproveWork: failed to notify producer', ['producer_id' => $producerId, 'error' => $e->getMessage()]);
+                }
             }
 
-            // Notify Produksi (role Produksi / Production) – Terima Notifikasi QC, Baca Hasil QC
+            // Notify Produksi (role Produksi / Production)
             $produksiUsers = User::whereIn('role', ['Produksi', 'Production'])->pluck('id');
+            $alreadyNotified = array_unique(array_filter([$producerId]));
             foreach ($produksiUsers as $produksiUserId) {
-                if ($produksiUserId == $producerId) continue; // avoid duplicate
-                Notification::create([
-                    'user_id' => $produksiUserId,
-                    'type' => 'qc_result_ready',
-                    'title' => 'Hasil QC Siap Dibaca',
-                    'message' => "Hasil QC dari Distribution Manager untuk Episode #{$work->episode?->episode_number} telah tersedia. " . ($catatanQc ? "Catatan QC: {$catatanQc}" : ''),
-                    'episode_id' => $work->episode_id,
-                    'data' => [
-                        'broadcasting_work_id' => $work->id,
-                        'catatan_qc' => $catatanQc,
-                    ],
-                ]);
+                if (in_array($produksiUserId, $alreadyNotified)) continue;
+                if (!User::where('id', $produksiUserId)->exists()) continue;
+                $alreadyNotified[] = $produksiUserId;
+                try {
+                    Notification::create([
+                        'user_id' => $produksiUserId,
+                        'type' => 'qc_result_ready',
+                        'title' => 'Hasil QC Siap Dibaca',
+                        'message' => "Hasil QC dari Distribution Manager untuk Episode #{$work->episode?->episode_number} telah tersedia. " . ($catatanQc ? "Catatan QC: {$catatanQc}" : ''),
+                        'episode_id' => $work->episode_id,
+                        'data' => [
+                            'broadcasting_work_id' => $work->id,
+                            'catatan_qc' => $catatanQc,
+                        ],
+                    ]);
+                } catch (\Exception $e) {
+                    Log::warning('ApproveWork: failed to notify Produksi user', ['user_id' => $produksiUserId, 'error' => $e->getMessage()]);
+                }
             }
 
-            // Notify Broadcasting team (Terima Notifikasi, Terima File materi dari QC)
-            $this->notifyBroadcastingTeam($work, 'work_approved', $catatanQc);
+            // Notify Tim Syuting & Tim Setting (wrap in try to avoid 500 if relation/table issue)
+            $timSyutingSettingUserIds = [];
+            try {
+                $timSyutingSettingUserIds = $this->getTimSyutingSettingMemberIdsForEpisode($work->episode_id);
+            } catch (\Throwable $e) {
+                Log::warning('ApproveWork: getTimSyutingSettingMemberIdsForEpisode failed', ['episode_id' => $work->episode_id, 'error' => $e->getMessage()]);
+            }
+            foreach ($timSyutingSettingUserIds as $memberUserId) {
+                if (in_array($memberUserId, $alreadyNotified)) continue;
+                if (!User::where('id', $memberUserId)->exists()) continue;
+                $alreadyNotified[] = $memberUserId;
+                try {
+                    Notification::create([
+                        'user_id' => $memberUserId,
+                        'type' => 'qc_result_ready',
+                        'title' => 'Hasil QC Siap Dibaca',
+                        'message' => "Hasil QC dari Distribution Manager untuk Episode #{$work->episode?->episode_number} telah tersedia. " . ($catatanQc ? "Catatan QC: {$catatanQc}" : ''),
+                        'episode_id' => $work->episode_id,
+                        'data' => [
+                            'broadcasting_work_id' => $work->id,
+                            'catatan_qc' => $catatanQc,
+                            'for_tim_syuting_setting' => true,
+                        ],
+                    ]);
+                } catch (\Exception $e) {
+                    Log::warning('ApproveWork: failed to notify Tim Syuting/Setting member', ['user_id' => $memberUserId, 'error' => $e->getMessage()]);
+                }
+            }
+
+            // Notify Broadcasting team
+            try {
+                $this->notifyBroadcastingTeam($work, 'work_approved', $catatanQc);
+            } catch (\Exception $e) {
+                Log::warning('ApproveWork: failed to notify Broadcasting team', ['error' => $e->getMessage()]);
+            }
+
+            try {
+                $work->load(['episode', 'createdBy', 'submittedBy', 'approvedBy', 'editorWork.createdBy']);
+            } catch (\Exception $e) {
+                Log::warning('ApproveWork: load relations failed (e.g. submitted_by column missing)', ['work_id' => $work->id, 'error' => $e->getMessage()]);
+                $work->load(['episode', 'createdBy', 'approvedBy', 'editorWork.createdBy']);
+            }
 
             return response()->json([
                 'success' => true,
-                'data' => $work->load(['episode', 'createdBy', 'approvedBy', 'editorWork.createdBy']),
+                'data' => $work,
                 'message' => 'Broadcasting work approved successfully'
             ]);
 
         } catch (\Exception $e) {
+            Log::error('ApproveWork: exception', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return response()->json([
                 'success' => false,
                 'message' => 'Error approving broadcasting work: ' . $e->getMessage()
@@ -465,10 +604,10 @@ class ManagerBroadcastingController extends Controller
 
             $work = BroadcastingWork::findOrFail($id);
 
-            if ($work->status !== 'pending_approval') {
+            if (!in_array($work->status, ['pending_approval', 'reviewing'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Broadcasting work is not pending approval'
+                    'message' => 'Broadcasting work is not in a status that can be rejected.'
                 ], 400);
             }
 
@@ -477,6 +616,9 @@ class ManagerBroadcastingController extends Controller
                 'rejected_by' => $user->id,
                 'rejected_at' => now(),
                 'rejection_notes' => $request->rejection_notes,
+                'metadata' => array_merge($work->metadata ?? [], [
+                    'qc_checklist' => $request->checklist ?? []
+                ])
             ]);
 
             // ✨ Reset EditorWork status and notify Editor/Producer ✨
@@ -510,56 +652,128 @@ class ManagerBroadcastingController extends Controller
                     'qc_feedback' => "[QC REJECTED - " . now()->format('Y-m-d H:i:s') . "]\n" . $request->rejection_notes
                 ]);
 
-                // Notify Editor – Kembali ke Editor untuk revisi
-                Notification::create([
-                    'user_id' => $editorWork->created_by,
-                    'type' => 'work_rejected',
-                    'title' => 'QC REJECTED: Kembali ke Editor',
-                    'message' => "Hasil editing episode #{$work->episode?->episode_number} ditolak oleh QC (Distribution Manager). Pekerjaan dikembalikan ke Editor untuk revisi. Catatan: {$request->rejection_notes}",
-                    'episode_id' => $work->episode_id,
-                    'data' => [
-                        'episode_id' => $work->episode_id,
-                        'notes' => $request->rejection_notes,
-                        'editor_work_id' => $editorWork->id,
-                        'kembali_ke_editor' => true,
-                    ]
-                ]);
+                // Notify Editor – only if user exists
+                if ($editorWork->created_by && User::where('id', $editorWork->created_by)->exists()) {
+                    try {
+                        Notification::create([
+                            'user_id' => $editorWork->created_by,
+                            'type' => 'work_rejected',
+                            'title' => 'QC REJECTED: Kembali ke Editor',
+                            'message' => "Hasil editing episode #{$work->episode?->episode_number} ditolak oleh QC (Distribution Manager). Pekerjaan dikembalikan ke Editor untuk revisi. Catatan: {$request->rejection_notes}",
+                            'episode_id' => $work->episode_id,
+                            'data' => [
+                                'episode_id' => $work->episode_id,
+                                'notes' => $request->rejection_notes,
+                                'editor_work_id' => $editorWork->id,
+                                'kembali_ke_editor' => true,
+                            ]
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::warning('RejectWork: failed to notify Editor', ['user_id' => $editorWork->created_by, 'error' => $e->getMessage()]);
+                    }
+                }
             }
 
             // Notify Producer (Manager Program) AND Team Producer
             $episode = $work->episode()->with('program.productionTeam')->first();
             $managerProgramId = $episode?->program?->manager_program_id;
             $teamProducerId = $episode?->program?->productionTeam?->producer_id;
-
-            // Recipient IDs (unique)
             $recipientIds = array_unique(array_filter([$managerProgramId, $teamProducerId]));
 
             foreach ($recipientIds as $recipientId) {
-                Notification::create([
-                    'user_id' => $recipientId,
-                    'type' => 'qc_alert',
-                    'title' => 'QC Alert: Kembali ke Editor',
-                    'message' => "QC (Distribution Manager) menolak hasil editing episode #{$work->episode?->episode_number}. Pekerjaan dikembalikan ke Editor untuk revisi. Catatan: {$request->rejection_notes}",
-                    'episode_id' => $work->episode_id,
-                    'data' => [
+                if (!User::where('id', $recipientId)->exists()) continue;
+                try {
+                    Notification::create([
+                        'user_id' => $recipientId,
+                        'type' => 'qc_alert',
+                        'title' => 'QC Alert: Kembali ke Editor',
+                        'message' => "QC (Distribution Manager) menolak hasil editing episode #{$work->episode?->episode_number}. Pekerjaan dikembalikan ke Editor untuk revisi. Catatan: {$request->rejection_notes}",
                         'episode_id' => $work->episode_id,
-                        'editor_name' => $editorWork?->createdBy?->name,
-                        'rejection_notes' => $request->rejection_notes,
-                        'kembali_ke_editor' => true,
-                    ]
-                ]);
+                        'data' => [
+                            'episode_id' => $work->episode_id,
+                            'editor_name' => $editorWork?->createdBy?->name,
+                            'rejection_notes' => $request->rejection_notes,
+                            'kembali_ke_editor' => true,
+                        ]
+                    ]);
+                } catch (\Exception $e) {
+                    Log::warning('RejectWork: failed to notify recipient', ['user_id' => $recipientId, 'error' => $e->getMessage()]);
+                }
+            }
+
+            // Notify Produksi (role Produksi / Production)
+            $rejectionNotes = $request->rejection_notes;
+            $produksiUsers = User::whereIn('role', ['Produksi', 'Production'])->pluck('id');
+            $alreadyNotifiedReject = $recipientIds;
+            foreach ($produksiUsers as $produksiUserId) {
+                if (in_array($produksiUserId, $alreadyNotifiedReject)) continue;
+                if (!User::where('id', $produksiUserId)->exists()) continue;
+                $alreadyNotifiedReject[] = $produksiUserId;
+                try {
+                    Notification::create([
+                        'user_id' => $produksiUserId,
+                        'type' => 'qc_result_rejected',
+                        'title' => 'Hasil QC: Revisi Needed (Editor)',
+                        'message' => "QC Manager memberikan feedback revisi untuk hasil editor Episode #{$work->episode?->episode_number}. " . ($rejectionNotes ? "Catatan: {$rejectionNotes}" : ''),
+                        'episode_id' => $work->episode_id,
+                        'data' => [
+                            'broadcasting_work_id' => $work->id,
+                            'catatan_qc' => $rejectionNotes,
+                            'status' => 'rejected'
+                        ],
+                    ]);
+                } catch (\Exception $e) {
+                    Log::warning('RejectWork: failed to notify Produksi user', ['user_id' => $produksiUserId, 'error' => $e->getMessage()]);
+                }
+            }
+
+            // Notify Tim Syuting & Tim Setting
+            $timSyutingSettingUserIds = $this->getTimSyutingSettingMemberIdsForEpisode($work->episode_id);
+            foreach ($timSyutingSettingUserIds as $memberUserId) {
+                if (in_array($memberUserId, $alreadyNotifiedReject)) continue;
+                if (!User::where('id', $memberUserId)->exists()) continue;
+                $alreadyNotifiedReject[] = $memberUserId;
+                try {
+                    Notification::create([
+                        'user_id' => $memberUserId,
+                        'type' => 'qc_result_rejected',
+                        'title' => 'Hasil QC: Revisi Needed (Editor)',
+                        'message' => "QC Manager memberikan feedback revisi untuk hasil editor Episode #{$work->episode?->episode_number}. " . ($rejectionNotes ? "Catatan: {$rejectionNotes}" : ''),
+                        'episode_id' => $work->episode_id,
+                        'data' => [
+                            'broadcasting_work_id' => $work->id,
+                            'catatan_qc' => $rejectionNotes,
+                            'status' => 'rejected',
+                            'for_tim_syuting_setting' => true,
+                        ],
+                    ]);
+                } catch (\Exception $e) {
+                    Log::warning('RejectWork: failed to notify Tim Syuting/Setting member', ['user_id' => $memberUserId, 'error' => $e->getMessage()]);
+                }
             }
 
             // Notify Broadcasting team
-            $this->notifyBroadcastingTeam($work, 'rejected');
+            try {
+                $this->notifyBroadcastingTeam($work, 'rejected');
+            } catch (\Exception $e) {
+                Log::warning('RejectWork: failed to notify Broadcasting team', ['error' => $e->getMessage()]);
+            }
+
+            try {
+                $work->load(['episode', 'createdBy', 'submittedBy', 'rejectedBy', 'editorWork.createdBy']);
+            } catch (\Exception $e) {
+                Log::warning('RejectWork: load relations failed (e.g. submitted_by column missing)', ['work_id' => $work->id, 'error' => $e->getMessage()]);
+                $work->load(['episode', 'createdBy', 'rejectedBy', 'editorWork.createdBy']);
+            }
 
             return response()->json([
                 'success' => true,
-                'data' => $work->load(['episode', 'createdBy', 'rejectedBy', 'editorWork.createdBy']),
+                'data' => $work,
                 'message' => 'Broadcasting work rejected successfully'
             ]);
 
         } catch (\Exception $e) {
+            Log::error('RejectWork: exception', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return response()->json([
                 'success' => false,
                 'message' => 'Error rejecting broadcasting work: ' . $e->getMessage()
@@ -1089,5 +1303,23 @@ class ManagerBroadcastingController extends Controller
                 'data' => $data,
             ]);
         }
+    }
+
+    /**
+     * Get user IDs of Tim Syuting and Tim Setting members assigned to the episode.
+     * Used to send QC result notifications to the right crew per episode.
+     */
+    private function getTimSyutingSettingMemberIdsForEpisode(int $episodeId): array
+    {
+        return ProductionTeamMember::where('is_active', true)
+            ->whereHas('assignment', function ($q) use ($episodeId) {
+                $q->where('episode_id', $episodeId)
+                    ->whereIn('team_type', ['setting', 'shooting'])
+                    ->where('status', '!=', 'cancelled');
+            })
+            ->pluck('user_id')
+            ->unique()
+            ->values()
+            ->all();
     }
 }

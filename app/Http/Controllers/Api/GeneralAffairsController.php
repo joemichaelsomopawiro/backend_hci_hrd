@@ -11,6 +11,9 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 class GeneralAffairsController extends Controller
 {
@@ -28,7 +31,7 @@ class GeneralAffairsController extends Controller
             return response()->json(['message' => 'Access denied'], 403);
         }
 
-        $query = BudgetRequest::with(['program', 'requestedBy']);
+        $query = BudgetRequest::with(['program', 'requestedBy', 'approvedBy']);
 
         // Filter by status
         if ($request->has('status')) {
@@ -225,10 +228,20 @@ class GeneralAffairsController extends Controller
             ], 422);
         }
 
+        $paymentReceipt = trim((string) ($request->payment_receipt ?? ''));
+        if ($paymentReceipt === '' && !empty(trim((string) ($budgetRequest->approval_notes ?? '')))) {
+            $notes = $budgetRequest->approval_notes;
+            if (preg_match('#(general-affairs/receipts/[^\s]+\.(?:jpe?g|png|gif|webp|pdf))#i', $notes, $m)) {
+                $paymentReceipt = trim(preg_replace('/[^\w.\/-]/', '', $m[1]));
+            } elseif (preg_match('#https?://[^\s]+/storage/(general-affairs/receipts/[^\s]+)#i', $notes, $m)) {
+                $paymentReceipt = $m[1];
+            }
+        }
+
         $budgetRequest->update([
             'status' => 'paid',
-            'payment_receipt' => $request->payment_receipt,
-            'payment_notes' => $request->payment_notes,
+            'payment_receipt' => $paymentReceipt ?: $budgetRequest->payment_receipt,
+            'payment_notes' => $request->payment_notes ?? $budgetRequest->payment_notes,
             'payment_date' => $request->payment_date ?? now(),
             'processed_by' => $user->id
         ]);
@@ -236,19 +249,23 @@ class GeneralAffairsController extends Controller
         // Notify requester (Producer)
         $this->notifyRequester($budgetRequest, 'paid');
 
-        // Notify Producer bahwa dana telah diberikan
+        // Notify Producer bahwa dana telah diberikan (bisa lihat bukti transfer di Permohonan Dana Saya)
         if ($budgetRequest->requestedBy) {
+            $amount = $budgetRequest->approved_amount ?? $budgetRequest->requested_amount;
+            $programName = $budgetRequest->program?->name ?? 'program';
             Notification::create([
                 'user_id' => $budgetRequest->requested_by,
                 'type' => 'fund_released',
-                'title' => 'Dana Telah Diberikan',
-                'message' => "Dana sebesar Rp " . number_format($budgetRequest->approved_amount ?? $budgetRequest->requested_amount, 0, ',', '.') . " untuk {$budgetRequest->title} telah diberikan oleh General Affairs.",
+                'title' => 'Dana Telah Diberikan oleh General Affairs',
+                'message' => "Dana sebesar Rp " . number_format($amount, 0, ',', '.') . " untuk {$programName} telah diberikan. Anda dapat melihat bukti transfer di menu Permohonan Dana Saya.",
                 'data' => [
                     'budget_request_id' => $budgetRequest->id,
                     'program_id' => $budgetRequest->program_id,
-                    'amount' => $budgetRequest->approved_amount ?? $budgetRequest->requested_amount,
-                    'payment_receipt' => $request->payment_receipt,
-                    'payment_date' => $request->payment_date ?? now()
+                    'program_name' => $programName,
+                    'amount' => $amount,
+                    'payment_receipt' => $budgetRequest->payment_receipt,
+                    'payment_date' => $budgetRequest->payment_date ?? now(),
+                    'status' => 'paid'
                 ]
             ]);
         }
@@ -258,6 +275,178 @@ class GeneralAffairsController extends Controller
             'message' => 'Payment processed successfully. Producer has been notified.',
             'data' => $budgetRequest->load(['program', 'requestedBy', 'approvedBy'])
         ]);
+    }
+
+    /**
+     * Upload payment receipt / bukti transfer (optional file)
+     * POST /api/live-tv/general-affairs/upload-payment-receipt
+     */
+    public function uploadPaymentReceipt(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        if (!$user || $user->role !== 'General Affairs') {
+            return response()->json(['message' => 'Access denied'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'file' => 'required|file|max:10240', // 10MB max
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $file = $request->file('file');
+            $path = $file->store('general-affairs/receipts', 'public');
+            $url = asset('storage/' . $path);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'path' => $path,
+                    'url' => $url,
+                ],
+                'message' => 'File uploaded successfully'
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload file',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Serve receipt file (bukti transfer) via API dengan auth — agar bisa diakses tanpa bergantung storage link.
+     * GET /api/live-tv/general-affairs/receipts/file?path=general-affairs/receipts/xxx.jpg
+     */
+    public function showReceiptFile(Request $request)
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $path = $request->query('path');
+        if (!$path || !is_string($path)) {
+            return response()->json(['message' => 'Path required'], 400);
+        }
+        if (preg_match('#^https?://#i', $path) && !str_contains($path, 'general-affairs/receipts')) {
+            return response()->json(['message' => 'Invalid path'], 400);
+        }
+        $path = $this->resolveReceiptPath($path);
+        if (!$path) {
+            \Log::warning('GeneralAffairs showReceiptFile: could not resolve path', ['path' => $request->query('path')]);
+            return response()->json(['message' => 'Invalid path'], 400);
+        }
+
+        $fullPath = Storage::disk('public')->path($path);
+        if (!file_exists($fullPath) || !is_file($fullPath)) {
+            \Log::warning('GeneralAffairs showReceiptFile: file not found', ['path' => $path, 'fullPath' => $fullPath]);
+            return response()->json(['message' => 'File not found'], 404);
+        }
+
+        $mime = mime_content_type($fullPath) ?: 'application/octet-stream';
+        return response()->file($fullPath, ['Content-Type' => $mime]);
+    }
+
+    /**
+     * Dapatkan URL sekali pakai untuk buka bukti transfer di tab baru (untuk production, bukan blob).
+     * POST /api/live-tv/general-affairs/receipts/view-url { path: "general-affairs/receipts/xxx.jpg" }
+     */
+    public function getReceiptViewUrl(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $path = $request->input('path');
+        if (!$path || !is_string($path)) {
+            return response()->json(['message' => 'Path required'], 400);
+        }
+        $path = trim(str_replace('\\', '/', $path));
+        $path = ltrim($path, '/');
+        if (preg_match('#^https?://#i', $path) && !str_contains($path, 'general-affairs/receipts')) {
+            return response()->json(['message' => 'Invalid path'], 400);
+        }
+        $resolved = $this->resolveReceiptPath($path);
+        if (!$resolved) {
+            return response()->json(['message' => 'Invalid path'], 400);
+        }
+        $fullPath = Storage::disk('public')->path($resolved);
+        if (!file_exists($fullPath) || !is_file($fullPath)) {
+            return response()->json(['message' => 'File not found'], 404);
+        }
+
+        $token = Str::random(64);
+        Cache::put('receipt_view:' . $token, $resolved, now()->addMinutes(5));
+        $url = url('/api/live-tv/general-affairs/receipts/view?token=' . $token);
+
+        return response()->json([
+            'success' => true,
+            'url' => $url,
+        ]);
+    }
+
+    /**
+     * Buka bukti transfer dengan token (tanpa auth — untuk new tab di production).
+     * GET /api/live-tv/general-affairs/receipts/view?token=xxx
+     */
+    public function showReceiptByToken(Request $request)
+    {
+        $token = $request->query('token');
+        if (!$token || !is_string($token)) {
+            return response()->json(['message' => 'Token required'], 400);
+        }
+        $path = Cache::pull('receipt_view:' . $token);
+        if (!$path) {
+            return response()->json(['message' => 'Link expired or invalid'], 404);
+        }
+        $fullPath = Storage::disk('public')->path($path);
+        if (!file_exists($fullPath) || !is_file($fullPath)) {
+            return response()->json(['message' => 'File not found'], 404);
+        }
+        $mime = mime_content_type($fullPath) ?: 'application/octet-stream';
+        return response()->file($fullPath, ['Content-Type' => $mime]);
+    }
+
+    /**
+     * Resolve path bukti ke path relatif storage (general-affairs/receipts/xxx).
+     */
+    private function resolveReceiptPath(string $path): ?string
+    {
+        $path = trim(str_replace('\\', '/', $path));
+        $path = ltrim($path, '/');
+        if (strpos($path, 'general-affairs/receipts/') === 0) {
+            return $path;
+        }
+        if (preg_match('#/storage/(general-affairs/receipts/[^\s?#]+)#', $path, $m)) {
+            return $m[1];
+        }
+        if (preg_match('#(general-affairs/receipts/[^\s]+)#', $path, $m)) {
+            return preg_replace('/[^\w.\/-]/', '', $m[1]);
+        }
+        if (strpos($path, '/') === false && preg_match('/\.(jpe?g|png|gif|webp|pdf)$/i', $path)) {
+            return 'general-affairs/receipts/' . $path;
+        }
+        if (preg_match('/([^\s\/\\\\]+\.(jpe?g|png|gif|webp|pdf))$/i', $path, $m)) {
+            return 'general-affairs/receipts/' . $m[1];
+        }
+        if (preg_match('/([^\s\/\\\\]+\.(jpe?g|png|gif|webp|pdf))/i', $path, $m)) {
+            return 'general-affairs/receipts/' . $m[1];
+        }
+        $base = basename($path);
+        if (preg_match('/\.(jpe?g|png|gif|webp|pdf)$/i', $base)) {
+            return 'general-affairs/receipts/' . $base;
+        }
+        return null;
     }
 
     /**

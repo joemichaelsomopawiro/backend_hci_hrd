@@ -14,6 +14,7 @@ class BroadcastingWork extends Model
         'episode_id',
         'editor_work_id',
         'created_by',
+        'submitted_by',
         'work_type',
         'title',
         'description',
@@ -35,7 +36,10 @@ class BroadcastingWork extends Model
         'approval_notes',
         'rejected_by',
         'rejected_at',
-        'rejection_notes'
+        'rejection_notes',
+        'metadata',
+        'accepted_by',
+        'accepted_at'
     ];
 
     protected $casts = [
@@ -45,6 +49,7 @@ class BroadcastingWork extends Model
         'platform_responses' => 'array',
         'scheduled_time' => 'datetime',
         'published_time' => 'datetime',
+        'accepted_at' => 'datetime',
         'editor_work_id' => 'integer'
     ];
 
@@ -70,6 +75,22 @@ class BroadcastingWork extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * Relationship dengan User yang submit hasil editor untuk QC (Editor)
+     */
+    public function submittedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'submitted_by');
+    }
+
+    /**
+     * Relationship dengan User yang accept (Distribution Manager)
+     */
+    public function acceptedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'accepted_by');
     }
 
     /**

@@ -507,12 +507,20 @@ class EditorController extends Controller
 
             // Update work with missing files report
             $work->update([
+                'source_files' => array_merge(
+                    is_array($work->source_files) ? $work->source_files : (json_decode($work->source_files, true) ?: []),
+                    [
+                        'missing_files' => $request->missing_files,
+                        'missing_notes' => $request->notes,
+                        'reported_at' => now()->toDateTimeString()
+                    ]
+                ),
                 'file_notes' => ($work->file_notes ? $work->file_notes . "\n\n" : '') . 
                     "[Missing Files Report - " . now()->format('Y-m-d H:i:s') . "]\n" .
                     ($request->notes ?? '') . "\n" .
                     json_encode($request->missing_files, JSON_PRETTY_PRINT),
                 'file_complete' => false,
-                'status' => 'editing' // Tetap editing, tapi file tidak lengkap
+                'status' => 'file_incomplete'
             ]);
 
             // Notify Producer
@@ -854,14 +862,15 @@ class EditorController extends Controller
                             $url = is_array($link) ? ($link['file_link'] ?? '') : $link;
                             
                             if ($url && strpos($url, 'http') !== 0) {
-                                // Case 1: Likely external link missing protocol
+                                // External link tanpa protocol
                                 if (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $url) && !preg_match('/^(shooting|audio|video|export|vocal)\//i', $url)) {
                                     $url = 'https://' . $url;
                                 } else {
-                                    // Case 2: Likely local path
+                                    // Local path — hanya wrap jika bukan absolute URL
                                     $url = url('storage/' . ltrim($url, '/'));
                                 }
                             }
+                            // Jika sudah http/https, gunakan langsung (tidak perlu wrap)
                             
                             if (is_array($link)) {
                                 $link['file_link'] = $url;
@@ -1300,7 +1309,8 @@ class EditorController extends Controller
                     'video_file_path' => $work->file_path,
                     'file_link' => $work->file_link,
                     'status' => 'pending_approval',
-                    'created_by' => $assignToId
+                    'created_by' => $assignToId,
+                    'submitted_by' => $user->id, // Editor who submitted for QC ("Dikirim oleh")
                 ]);
             } else {
                 // Update existing work with new files if it's still in approval or pending state
@@ -1309,7 +1319,8 @@ class EditorController extends Controller
                         'editor_work_id' => $work->id,
                         'video_file_path' => $work->file_path,
                         'file_link' => $work->file_link,
-                        'status' => 'pending_approval' // Reset to pending approval if updated
+                        'status' => 'pending_approval', // Reset to pending approval if updated
+                        'submitted_by' => $user->id, // Editor who submitted for QC ("Dikirim oleh")
                     ]);
                 }
             }
@@ -1514,7 +1525,12 @@ class EditorController extends Controller
                                 $audioUrl = 'https://' . $audioUrl;
                             }
                         } elseif ($audio->final_file_path) {
-                            $audioUrl = url('storage/' . $audio->final_file_path);
+                            // Cek apakah final_file_path sudah merupakan absolute URL
+                            if (strpos($audio->final_file_path, 'http') === 0) {
+                                $audioUrl = $audio->final_file_path;
+                            } else {
+                                $audioUrl = url('storage/' . $audio->final_file_path);
+                            }
                         }
 
                         return [
@@ -1542,7 +1558,12 @@ class EditorController extends Controller
                                     $vocalUrl = 'https://' . $vocalUrl;
                                 }
                             } elseif ($vocal->file_path) {
-                                $vocalUrl = url('storage/' . $vocal->file_path);
+                                // Cek apakah file_path sudah merupakan absolute URL
+                                if (strpos($vocal->file_path, 'http') === 0) {
+                                    $vocalUrl = $vocal->file_path;
+                                } else {
+                                    $vocalUrl = url('storage/' . $vocal->file_path);
+                                }
                             }
 
                             return [

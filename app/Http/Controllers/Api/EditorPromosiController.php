@@ -9,6 +9,8 @@ use App\Models\EditorWork;
 use App\Models\ProduksiWork;
 use App\Models\MediaFile;
 use App\Models\Notification;
+use App\Models\User;
+use App\Models\QualityControlWork;
 use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -43,7 +45,7 @@ class EditorPromosiController extends Controller
                 ->where(function ($q) use ($user) {
                     $q->where('created_by', $user->id)
                         ->orWhere(function ($sub) {
-                            $sub->whereIn('status', ['draft', 'planning', 'editing', 'review', 'rejected'])
+                            $sub->whereIn('status', ['draft', 'planning', 'shooting', 'editing', 'review', 'rejected', 'completed', 'approved', 'published'])
                                 ->whereHas('createdBy', function ($roleQuery) {
                                     $roleQuery->whereNotIn('role', ['Editor Promotion', 'Editor Promosi', 'Promotion Editor']);
                                 });
@@ -266,11 +268,24 @@ class EditorPromosiController extends Controller
             $user = Auth::user();
             $work = PromotionWork::findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            $isEditor = in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor']);
+            
+            if ($work->created_by !== $user->id && !$isEditor) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized to upload files for this work.'
                 ], 403);
+            }
+
+            // Auto-assign to current user if it's an editor (eliminates need for separate accept-work step)
+            // Auto-assign to current user if it's an editor (eliminates need for separate accept-work step)
+            if ($isEditor && $work->created_by !== $user->id) {
+                $work->created_by = $user->id;
+                // Transition to editing status if starting from early stages
+                if (in_array($work->status, ['draft', 'planning'])) {
+                    $work->status = 'editing';
+                }
+                $work->save();
             }
 
             $validator = Validator::make($request->all(), [
@@ -312,29 +327,39 @@ class EditorPromosiController extends Controller
                 ], 405);
             }
 
-            // Handle file_links (new: external storage links with metadata)
-            $fileLinks = $work->file_links ?? [];
+            // Handle file_links (Full replacement to support updates/deletes from frontend)
+            $fileLinks = [];
             if ($request->has('file_links') && is_array($request->file_links)) {
                 foreach ($request->file_links as $linkData) {
-                    $url = is_array($linkData) ? ($linkData['url'] ?? null) : $linkData;
-                    
+                    $url = is_array($linkData) ? ($linkData['url'] ?? $linkData['file_link'] ?? null) : $linkData;
                     if (!$url) continue;
 
                     $fileLinks[] = [
                         'file_link' => $url,
                         'type' => $linkData['type'] ?? 'other',
                         'label' => $linkData['label'] ?? null,
-                        'uploaded_at' => now()->toDateTimeString(),
-                        'uploaded_by' => $user->id
+                        'uploaded_at' => $linkData['uploaded_at'] ?? now()->toDateTimeString(),
+                        'uploaded_by' => $linkData['uploaded_by'] ?? $user->id
                     ];
                 }
             }
 
-            // Update work with file paths and links
+            // Sync metadata into file_paths
+            $filePaths = $work->file_paths ?? [];
+            if ($request->has('duration') || $request->has('resolution')) {
+                $filePaths['result_metadata'] = [
+                    'duration' => $request->duration,
+                    'resolution' => $request->resolution,
+                    'updated_at' => now()->toDateTimeString()
+                ];
+            }
+
+            // Update work with file paths, links, and description
             $work->update([
                 'file_paths' => $filePaths,
                 'file_links' => $fileLinks,
-                'status' => 'review' // Change to 'review' as 'completed' is not in the enum
+                'description' => $request->notes ?? $work->description,
+                'status' => 'review'
             ]);
 
             // Notify related roles
@@ -745,11 +770,19 @@ class EditorPromosiController extends Controller
 
             $work = PromotionWork::findOrFail((int) $id);
 
-            if ($work->created_by !== $user->id) {
+            $isEditor = in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor']);
+
+            if ($work->created_by !== $user->id && !$isEditor) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access to this work'
+                    'message' => 'Unauthorized to submit files for this work.'
                 ], 403);
+            }
+
+            // Ensure ownership is set if it's an editor
+            if ($isEditor && $work->created_by !== $user->id) {
+                $work->created_by = $user->id;
+                $work->save();
             }
 
             if ((!$work->file_paths || empty($work->file_paths)) && (!$work->file_links || empty($work->file_links))) {
@@ -759,146 +792,179 @@ class EditorPromosiController extends Controller
                 ], 400);
             }
 
-            // Validasi status harus editing atau review
-            if (!in_array($work->status, ['editing', 'review'])) {
+            // Allow submission from various statuses to enable re-submissions and corrections
+            if (!in_array($work->status, ['editing', 'review', 'completed', 'approved', 'published'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Work must be in 'editing' or 'review' status before submitting to QC. Current status: {$work->status}"
+                    'message' => "Work must be in a valid status for submission. Current status: {$work->status}"
                 ], 400);
             }
 
-            // Map work_type to qc_type
-            $qcTypeMap = [
-                'bts_video' => 'bts_video',
-                'iklan_episode_tv' => 'advertisement_tv',
-                'highlight_ig' => 'highlight_ig',
-                'highlight_tv' => 'highlight_tv',
-                'highlight_facebook' => 'highlight_facebook'
+            // Consolidate ALL Editor Promosi tasks for an episode into a single QC Card
+            // Using 'bts_video' as the technical type to match database ENUM allowed values
+            $qcType = 'bts_video';
+            $episodeNumber = $work->episode->episode_number ?? 'X';
+            $qcTitle = "Materi Promosi - Episode {$episodeNumber}";
+
+            // Whitelist for Editor Promosi outputs ONLY
+            $allowedKeys = [
+                'bts_video', 'bts_photo',
+                'iklan_episode_tv', 'advertisement_tv',
+                'highlight_ig', 'highlight_tv', 'highlight_facebook', 'highlight_face', 'highlight_fb',
+                'story_ig', 'reels_facebook', 'tiktok', 'website_content', 'promotion'
             ];
 
-            $qcType = $qcTypeMap[$work->work_type] ?? 'bts_video'; // Default fallback
+            // Professional labels for QC items
+            $materialLabels = [
+                'bts_video' => 'QC Video BTS',
+                'bts_photo' => 'QC Foto BTS',
+                'iklan_episode_tv' => 'QC Iklan Episode TV',
+                'advertisement_tv' => 'QC Iklan Episode TV',
+                'highlight_ig' => 'QC Highlight Episode IG',
+                'highlight_tv' => 'QC Highlight Episode TV',
+                'highlight_facebook' => 'QC Highlight Episode Face',
+                'highlight_face' => 'QC Highlight Episode Face',
+                'highlight_fb' => 'QC Highlight Episode Face',
+                'story_ig' => 'QC Highlight Story IG',
+                'reels_facebook' => 'QC Highlight Reels FB',
+                'tiktok' => 'QC TikTok Content',
+                'website_content' => 'QC Website Content'
+            ];
 
-            // Prepare file locations with promotion_work_id
+            // Get all works for this episode to ensure we don't miss anything that was already submitted or is ready
+            $allWorks = PromotionWork::where('episode_id', $work->episode_id)
+                ->whereIn('status', ['editing', 'review', 'completed', 'approved', 'published'])
+                ->get();
+
+            // Prepare file locations from ALL works
             $fileLocations = [];
+            $seenUrls = [];
 
-            // Process file_paths (physical files)
-            if (is_array($work->file_paths)) {
-                foreach ($work->file_paths as $file) {
-                    if (is_array($file) && isset($file['file_path'])) {
+            foreach ($allWorks as $w) {
+                // 1. Process file_paths (Physical files)
+                if (is_array($w->file_paths)) {
+                    foreach ($w->file_paths as $key => $value) {
+                        if (!in_array($key, $allowedKeys) || !is_string($value)) {
+                            continue;
+                        }
+
+                        if (in_array($value, $seenUrls)) continue;
+                        $seenUrls[] = $value;
+
                         $fileLocations[] = [
-                            'promotion_work_id' => $work->id,
-                            'file_path' => $file['file_path'],
-                            'file_name' => $file['file_name'] ?? basename($file['file_path']),
-                            'file_size' => $file['file_size'] ?? null,
-                            'mime_type' => $file['mime_type'] ?? null,
-                            'work_type' => $work->work_type,
+                            'promotion_work_id' => $w->id,
+                            'file_path' => $value,
+                            'file_name' => $materialLabels[$key] ?? str_replace(['_', '-'], ' ', ucwords($key)),
+                            'work_type' => $key,
                             'source' => 'editor_promosi',
-                            'submitted_at' => now()->toDateTimeString()
-                        ];
-                    } elseif (is_string($file)) {
-                        $fileLocations[] = [
-                            'promotion_work_id' => $work->id,
-                            'file_path' => $file,
-                            'file_name' => basename($file),
-                            'work_type' => $work->work_type,
-                            'source' => 'editor_promosi',
+                            'is_link' => false,
                             'submitted_at' => now()->toDateTimeString()
                         ];
                     }
                 }
-            }
 
-            // Process file_links (external links)
-            if (is_array($work->file_links)) {
-                foreach ($work->file_links as $link) {
-                    if (is_array($link) && isset($link['file_link'])) {
-                        $fileLocations[] = [
-                            'promotion_work_id' => $work->id,
-                            'file_link' => $link['file_link'],
-                            'file_path' => $link['file_link'], // Store link in file_path for QC access
-                            'file_name' => 'Visual Link',
-                            'work_type' => $work->work_type,
-                            'source' => 'editor_promosi',
-                            'is_link' => true,
-                            'submitted_at' => now()->toDateTimeString()
-                        ];
-                    } elseif (is_string($link)) {
-                        $fileLocations[] = [
-                            'promotion_work_id' => $work->id,
-                            'file_link' => $link,
-                            'file_path' => $link,
-                            'file_name' => 'Visual Link',
-                            'work_type' => $work->work_type,
-                            'source' => 'editor_promosi',
-                            'is_link' => true,
-                            'submitted_at' => now()->toDateTimeString()
-                        ];
+                // 2. Process file_links (External links)
+                if (is_array($w->file_links) && !empty($w->file_links)) {
+                    // Determine if we have a list of objects or a single associative object
+                    $isList = array_key_exists(0, $w->file_links);
+                    $links = $isList ? $w->file_links : [$w->file_links];
+
+                    foreach ($links as $link) {
+                        // Skip if not a valid link object
+                        if (!is_array($link)) continue;
+                        
+                        $linkVal = $link['file_link'] ?? $link['url'] ?? null;
+                        if (!$linkVal) continue;
+
+                        if (in_array($linkVal, $seenUrls)) continue;
+                        $seenUrls[] = $linkVal;
+
+                        $typeKey = $link['type'] ?? $w->work_type;
+                        // Fallback to work_type if link type is 'other' or unknown
+                        if ($typeKey === 'other' || !in_array($typeKey, $allowedKeys)) {
+                            $typeKey = $w->work_type;
+                        }
+                        
+                        if (in_array($typeKey, $allowedKeys)) {
+                            $fileLocations[] = [
+                                'promotion_work_id' => $w->id,
+                                'file_link' => $linkVal,
+                                'file_path' => $linkVal,
+                                'file_name' => $materialLabels[$typeKey] ?? ($materialLabels[$w->work_type] ?? 'QC External File'),
+                                'work_type' => $typeKey,
+                                'source' => 'editor_promosi',
+                                'is_link' => true,
+                                'submitted_at' => now()->toDateTimeString()
+                            ];
+                        }
                     }
                 }
             }
 
-            // Check if QC work already exists for this work type
-            $existingQCWork = \App\Models\QualityControlWork::where('episode_id', $work->episode_id)
+            if (empty($fileLocations)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tidak ada file promosi yang relevan untuk diajukan ke QC.'
+                ], 400);
+            }
+
+            // Check for existing QC work
+            $existingQCWork = QualityControlWork::where('episode_id', $work->episode_id)
                 ->where('qc_type', $qcType)
-                ->where('status', '!=', 'approved')
                 ->first();
 
             if (!$existingQCWork) {
                 // Create new QualityControlWork
-                $qcUsers = \App\Models\User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
-                $qcWork = \App\Models\QualityControlWork::create([
+                $qcWork = QualityControlWork::create([
                     'episode_id' => $work->episode_id,
                     'qc_type' => $qcType,
-                    'title' => "QC {$work->title}",
-                    'description' => "Quality Control untuk {$work->work_type} dari Editor Promosi",
-                    'editor_promosi_file_locations' => $fileLocations, // Keep for specific history
-                    'files_to_check' => $fileLocations, // Add for main visibility
+                    'title' => $qcTitle,
+                    'description' => "Quality Control Materi Promosi dari Editor Promosi",
+                    'editor_promosi_file_locations' => $fileLocations,
+                    'files_to_check' => $fileLocations,
                     'status' => 'pending',
-                    'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
+                    'created_by' => $user->id
                 ]);
 
                 // Notify Quality Control and related managers
+                $qcUsers = User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
                 foreach ($qcUsers as $qcUser) {
                     Notification::create([
                         'user_id' => $qcUser->id,
                         'type' => 'editor_promosi_submitted_to_qc',
                         'title' => 'Editor Promosi Work Submitted to QC',
-                        'message' => "Editor Promosi telah mengajukan {$work->work_type} untuk QC Episode {$work->episode->episode_number}.",
+                        'message' => "Editor Promosi telah mengajukan materi promosi untuk QC Episode {$work->episode->episode_number}.",
                         'data' => [
                             'promotion_work_id' => $work->id,
                             'qc_work_id' => $qcWork->id,
                             'episode_id' => $work->episode_id,
-                            'work_type' => $work->work_type,
+                            'work_type' => 'promosi_material',
                             'qc_type' => $qcType
                         ]
                     ]);
                 }
             } else {
-                // Update existing QC work with latest editor promosi files
-                $existingEditorPromosiFiles = $existingQCWork->editor_promosi_file_locations ?? [];
-                $existingEditorPromosiFiles = array_merge($existingEditorPromosiFiles, $fileLocations);
-                $existingFilesToCheck = $existingQCWork->files_to_check ?? [];
-                $existingFilesToCheck = array_merge($existingFilesToCheck, $fileLocations);
-
+                // Update existing QC work with latest editor promosi files (All materials for the episode)
                 $existingQCWork->update([
-                    'editor_promosi_file_locations' => $existingEditorPromosiFiles,
-                    'files_to_check' => $existingFilesToCheck,
+                    'editor_promosi_file_locations' => $fileLocations,
+                    'files_to_check' => $fileLocations,
                     'status' => 'pending' // Reset to pending for re-review
                 ]);
 
-                // Notify Quality Control
-                $qcUsers = \App\Models\User::where('role', 'Quality Control')->get();
+                // Also notify again on resubmission
+                $qcUsers = User::whereIn('role', ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])->get();
                 foreach ($qcUsers as $qcUser) {
                     Notification::create([
                         'user_id' => $qcUser->id,
-                        'type' => 'editor_promosi_resubmitted_to_qc',
-                        'title' => 'Editor Promosi Work Resubmitted to QC',
-                        'message' => "Editor Promosi telah mengajukan ulang {$work->work_type} untuk QC Episode {$work->episode->episode_number}.",
+                        'type' => 'editor_promosi_submitted_to_qc',
+                        'title' => 'Editor Promosi Work Updated',
+                        'message' => "Editor Promosi telah memperbarui materi promosi untuk QC Episode {$work->episode->episode_number}.",
                         'data' => [
                             'promotion_work_id' => $work->id,
                             'qc_work_id' => $existingQCWork->id,
                             'episode_id' => $work->episode_id,
-                            'work_type' => $work->work_type
+                            'work_type' => 'promosi_material',
+                            'qc_type' => $qcType
                         ]
                     ]);
                 }

@@ -342,6 +342,22 @@ class Episode extends Model
     }
 
     /**
+     * Relationship dengan Broadcasting Works (Program Musik - upload YouTube/Website)
+     */
+    public function broadcastingWorks(): HasMany
+    {
+        return $this->hasMany(BroadcastingWork::class);
+    }
+
+    /**
+     * Relationship dengan Promotion Works (Program Musik - BTS, sharing, dll)
+     */
+    public function promotionWorks(): HasMany
+    {
+        return $this->hasMany(PromotionWork::class);
+    }
+
+    /**
      * Relationship dengan Quality Controls
      */
     public function qualityControls(): HasMany

@@ -58,7 +58,7 @@ class MusicArrangement extends Model
      *
      * @var array
      */
-    protected $appends = ['file_url'];
+    protected $appends = ['file_url', 'episode_display'];
 
     /**
      * Relationship dengan Episode
@@ -66,6 +66,31 @@ class MusicArrangement extends Model
     public function episode(): BelongsTo
     {
         return $this->belongsTo(Episode::class);
+    }
+
+    /**
+     * Teks siap tampil untuk episode (nama/judul, bukan ID).
+     * Gunakan ini di frontend agar tidak menampilkan "Episode #3478" (id) melainkan "Ep. 1 – Judul Episode".
+     * Hanya terisi ketika relation episode di-load (e.g. with('episode')).
+     */
+    public function getEpisodeDisplayAttribute(): ?string
+    {
+        if (! $this->relationLoaded('episode') || ! $this->episode) {
+            return null;
+        }
+        $e = $this->episode;
+        $num = $e->episode_number ?? null;
+        $title = trim((string) ($e->title ?? ''));
+        if ($num !== null && $title !== '') {
+            return "Ep. {$num} – {$title}";
+        }
+        if ($num !== null) {
+            return "Episode {$num}";
+        }
+        if ($title !== '') {
+            return $title;
+        }
+        return null;
     }
 
     /**

@@ -45,6 +45,9 @@ class PromosiController extends Controller
                 ], 403);
             }
 
+            // Auto-mark BTS/talent Promotion Works as published bila episode sudah sampai QC/Broadcasting/Sharing (agar status "Sedang Dikerjakan" tidak tetap saat workflow sudah lanjut)
+            $this->syncBtsPromotionWorkStatusWhenEpisodeProgressed();
+
             // Build cache key
             $cacheKey = 'promosi_index_' . md5(json_encode([
                 'user_id' => $user->id,
@@ -54,7 +57,7 @@ class PromosiController extends Controller
 
             // Use cache with 5 minutes TTL
             $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request, $user) {
-                $query = PromotionWork::with(['episode.program.productionTeam', 'createdBy', 'reviewedBy']);
+                $query = PromotionWork::with(['episode.program.productionTeam', 'episode.creativeWork', 'createdBy', 'reviewedBy']);
 
                 // Filter by user (only works assigned to this user)
                 // PromotionWork bisa di-assign ke user tertentu melalui created_by
@@ -75,6 +78,42 @@ class PromosiController extends Controller
                 return $query->orderBy('created_at', 'desc')->paginate(15);
             });
 
+            // Untuk sharing works: selalu isi social_media_links dari BroadcastingWork agar Link Website/YouTube terbaru tampil
+            $sharingTypes = ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'];
+            $episodeIds = $works->getCollection()
+                ->filter(fn ($w) => in_array($w->work_type ?? '', $sharingTypes, true))
+                ->pluck('episode_id')
+                ->unique()
+                ->filter()
+                ->values();
+            $broadcastingByEpisode = [];
+            if ($episodeIds->isNotEmpty()) {
+                $broadcastingByEpisode = \App\Models\BroadcastingWork::whereIn('episode_id', $episodeIds)
+                    ->get()
+                    ->keyBy('episode_id');
+            }
+            $works->getCollection()->transform(function ($work) use ($sharingTypes, $broadcastingByEpisode) {
+                if (!in_array($work->work_type ?? '', $sharingTypes, true)) {
+                    return $work;
+                }
+                $bc = $broadcastingByEpisode->get($work->episode_id);
+                if (!$bc) {
+                    return $work;
+                }
+                $social = $work->social_media_links ?? [];
+                if ($bc->youtube_url !== null) {
+                    $social['youtube_url'] = $bc->youtube_url;
+                }
+                if ($bc->website_url !== null) {
+                    $social['website_url'] = $bc->website_url;
+                }
+                if ($bc->thumbnail_path !== null) {
+                    $social['thumbnail_path'] = $bc->thumbnail_path;
+                }
+                $work->social_media_links = $social;
+                return $work;
+            });
+
             return response()->json([
                 'success' => true,
                 'data' => $works,
@@ -87,6 +126,47 @@ class PromosiController extends Controller
                 'message' => 'Error retrieving promotion works: ' . $e->getMessage()
             ], 500);
     }
+    }
+
+    /**
+     * Jika episode sudah sampai QC/Broadcasting/Sharing, tandai Promotion Work BTS/talent untuk episode itu sebagai published
+     * agar status tidak tetap "Sedang Dikerjakan" dan tombol Selesai tidak muncul lagi.
+     */
+    private function syncBtsPromotionWorkStatusWhenEpisodeProgressed(): void
+    {
+        // Only auto-publish metadata/resource types, NOT the main video work 
+        // that Editor Promosi still needs to handle if there are revisions.
+        $btsTypes = ['bts_photo']; // Removed bts_video to allow manual/explicit completion
+        $sharingTypes = ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'];
+
+        $btsWorks = PromotionWork::whereIn('work_type', $btsTypes)
+            ->whereIn('status', ['shooting', 'editing'])
+            ->get(['id', 'episode_id']);
+
+        if ($btsWorks->isEmpty()) {
+            return;
+        }
+
+        $episodeIds = $btsWorks->pluck('episode_id')->unique()->filter()->values();
+        $broadcastingCompleted = \App\Models\BroadcastingWork::whereIn('episode_id', $episodeIds)
+            ->whereIn('status', ['completed', 'published'])
+            ->pluck('episode_id')
+            ->unique();
+        $hasSharingWorks = PromotionWork::whereIn('episode_id', $episodeIds)
+            ->whereIn('work_type', $sharingTypes)
+            ->pluck('episode_id')
+            ->unique();
+
+        $episodesProgressed = $broadcastingCompleted->merge($hasSharingWorks)->unique();
+
+        $idsToPublish = $btsWorks->filter(function ($work) use ($episodesProgressed) {
+            return $episodesProgressed->contains($work->episode_id);
+        })->pluck('id');
+
+        if ($idsToPublish->isNotEmpty()) {
+            PromotionWork::whereIn('id', $idsToPublish)->update(['status' => 'published']);
+            QueryOptimizer::clearAllIndexCaches();
+        }
     }
 
     /**
@@ -262,21 +342,16 @@ class PromosiController extends Controller
             if ($work->status !== 'planning') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be accepted when status is planning'
+                    'message' => 'Work can only be accepted when status is planning',
+                    'current_status' => $work->status
                 ], 400);
             }
 
             $oldData = $work->toArray();
             
             // Update status to shooting and set created_by
-            // Untuk sharing tasks, status bisa langsung 'shooting' atau tetap 'planning' tergantung workflow
-            // share_facebook dan share_wa_group bisa langsung ke 'shooting' karena tidak perlu shooting
-            $newStatus = in_array($work->work_type, ['share_facebook', 'share_wa_group']) 
-                ? 'shooting' // Langsung ke shooting karena tidak perlu persiapan shooting
-                : 'shooting'; // Default untuk work types lain
-            
             $work->update([
-                'status' => $newStatus,
+                'status' => 'shooting',
                 'created_by' => $user->id
             ]);
 
@@ -298,10 +373,10 @@ class PromosiController extends Controller
 
             // Custom message berdasarkan work type
             $messages = [
-                'share_facebook' => 'Work accepted successfully. You can now share the website link to Facebook and upload proof.',
-                'share_wa_group' => 'Work accepted successfully. You can now share to WA group and upload proof.',
-                'story_ig' => 'Work accepted successfully. You can now create and upload Story IG highlight video with proof.',
-                'reels_facebook' => 'Work accepted successfully. You can now create and upload Reels Facebook highlight video with proof.',
+                'share_facebook' => 'Work accepted successfully. You can now share the website link to Facebook and upload proof (file or link).',
+                'share_wa_group' => 'Work accepted successfully. You can now share to WA group and upload proof (file or link).',
+                'story_ig' => 'Work accepted successfully. You can now create and upload Story IG highlight with proof (file or link).',
+                'reels_facebook' => 'Work accepted successfully. You can now create and upload Reels Facebook highlight with proof (file or link).',
                 'bts_video' => 'Work accepted successfully. You can now upload BTS video and talent photos.',
                 'bts_photo' => 'Work accepted successfully. You can now upload BTS video and talent photos.'
             ];
@@ -319,7 +394,7 @@ class PromosiController extends Controller
                 'success' => false,
                 'message' => 'Error accepting work: ' . $e->getMessage()
             ], 500);
-    }
+        }
     }
 
     /**
@@ -345,14 +420,19 @@ class PromosiController extends Controller
 
             $work = PromotionWork::findOrFail($id);
 
-            // Access check
+            // Access check (boleh edit walau status sudah published/approved)
             if ($work->created_by !== $user->id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $fileLinks = $work->file_links ?? [];
-            $fileLinks = array_filter($fileLinks, fn($item) => ($item['type'] ?? '') !== 'bts_video');
-            
+            if (is_array($fileLinks) && isset($fileLinks['bts_file_links'])) {
+                $fileLinks = array_merge(
+                    array_filter($fileLinks['bts_file_links'] ?? [], fn($item) => is_array($item)),
+                    array_filter($fileLinks['talent_photo_links'] ?? [], fn($item) => is_array($item))
+                );
+            }
+            $fileLinks = is_array($fileLinks) ? array_values(array_filter($fileLinks, fn($item) => is_array($item) && (($item['type'] ?? '') !== 'bts_video'))) : [];
             $fileLinks[] = [
                 'type' => 'bts_video',
                 'file_link' => $request->file_link,
@@ -361,13 +441,18 @@ class PromosiController extends Controller
             ];
 
             $work->update(['file_links' => array_values($fileLinks)]);
+            QueryOptimizer::clearAllIndexCaches();
 
             // Activity log
             $this->logActivity($work, $user, 'bts_video_uploaded', 'Link video BTS diunggah', [
                 'file_link' => $request->file_link
             ]);
 
-            return response()->json(['success' => true, 'message' => 'BTS video link submitted successfully.']);
+            return response()->json([
+                'success' => true,
+                'message' => 'Link BTS video berhasil disimpan.',
+                'data' => $work->fresh(['episode', 'createdBy'])
+            ]);
 
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
@@ -388,8 +473,10 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'file_links' => 'required|array|min:1',
-                'file_links.*' => 'required|url'
+                'file_links' => 'required_without:file_paths|array|min:1',
+                'file_links.*' => 'required|url',
+                'file_paths' => 'sometimes|array|min:1',
+                'file_paths.*' => 'sometimes|file'
             ]);
 
             if ($validator->fails()) {
@@ -398,30 +485,85 @@ class PromosiController extends Controller
 
             $work = PromotionWork::findOrFail($id);
 
+            // Boleh edit walau status sudah published/approved
             if ($work->created_by !== $user->id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $fileLinks = $work->file_links ?? [];
-            $fileLinks = array_filter($fileLinks, fn($item) => ($item['type'] ?? '') !== 'talent_photo');
-            
-            foreach ($request->file_links as $link) {
-                $fileLinks[] = [
-                    'type' => 'talent_photo',
-                    'file_link' => $link,
-                    'uploaded_at' => now()->toDateTimeString(),
-                    'uploaded_by' => $user->id
-                ];
+            if (!is_array($fileLinks)) {
+                $fileLinks = json_decode(is_string($fileLinks) ? $fileLinks : '[]', true) ?: [];
+            }
+            if (is_array($fileLinks) && isset($fileLinks['bts_file_links'])) {
+                $fileLinks = array_merge(
+                    array_filter($fileLinks['bts_file_links'] ?? [], fn($item) => is_array($item)),
+                    array_filter($fileLinks['talent_photo_links'] ?? [], fn($item) => is_array($item))
+                );
+            }
+            $fileLinks = is_array($fileLinks) ? array_values(array_filter($fileLinks, fn($item) => is_array($item) && (($item['type'] ?? '') !== 'talent_photo'))) : [];
+
+            if ($request->has('file_links')) {
+                foreach ($request->file_links as $link) {
+                    $fileLinks[] = [
+                        'type' => 'talent_photo',
+                        'file_link' => $link,
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id
+                    ];
+                }
             }
 
-            $work->update(['file_links' => array_values($fileLinks)]);
+            $filePaths = $work->file_paths ?? [];
+            if (!is_array($filePaths)) {
+                $filePaths = json_decode($filePaths, true) ?: [];
+            }
+            $filePaths = array_filter($filePaths, fn($item) => ($item['type'] ?? '') !== 'talent_photo');
+
+            if ($request->hasFile('file_paths')) {
+                foreach ($request->file('file_paths') as $uploaded) {
+                    $stored = FileUploadHelper::storeUploadedFile(
+                        $uploaded,
+                        'promosi/talent-photos',
+                        [
+                            'uploaded_by' => $user->id,
+                            'promotion_work_id' => $work->id,
+                        ]
+                    );
+
+                    $filePaths[] = [
+                        'type' => 'talent_photo',
+                        'file_path' => $stored['path'] ?? null,
+                        'file_id' => $stored['id'] ?? null,
+                        'original_name' => $stored['original_name'] ?? $uploaded->getClientOriginalName(),
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id
+                    ];
+                }
+            }
+
+            $work->update([
+                'file_links' => array_values($fileLinks),
+                'file_paths' => array_values($filePaths),
+            ]);
+            QueryOptimizer::clearAllIndexCaches();
 
             // Activity log
-            $this->logActivity($work, $user, 'talent_photos_uploaded', 'Foto talent diunggah (' . count($request->file_links) . ' foto)', [
-                'photo_count' => count($request->file_links)
-            ]);
+            $this->logActivity(
+                $work,
+                $user,
+                'talent_photos_uploaded',
+                'Foto talent diunggah (' . (count($request->file_links ?? []) + count($request->file('file_paths') ?? [])) . ' bukti)',
+                [
+                    'link_count' => count($request->file_links ?? []),
+                    'file_count' => count($request->file('file_paths') ?? []),
+                ]
+            );
 
-            return response()->json(['success' => true, 'message' => 'Talent photo links submitted successfully.']);
+            return response()->json([
+                'success' => true,
+                'message' => 'Bukti foto talent berhasil disimpan (file / link).',
+                'data' => $work->fresh(['episode', 'createdBy'])
+            ]);
 
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
@@ -433,13 +575,19 @@ class PromosiController extends Controller
     /**
      * Upload BTS Content (Legacy/Alternative endpoint)
      * POST /api/live-tv/promosi/works/{id}/upload-bts
+     *
+     * Now accepts either file uploads or links and delegates to uploadTalentPhotos.
      */
     public function uploadBTSContent(Request $request, int $id): JsonResponse
     {
+        if ($request->hasFile('file_paths') || $request->has('file_links')) {
+            return $this->uploadTalentPhotos($request, $id);
+        }
+
         return response()->json([
             'success' => false,
-            'message' => 'Physical file uploads are disabled. Please use the link submission endpoints (upload-bts-video or upload-talent-photos).'
-        ], 405);
+            'message' => 'Please provide either file_paths (files) or file_links (URLs) for BTS content.'
+        ], 400);
     }
 
     /**
@@ -481,48 +629,59 @@ class PromosiController extends Controller
                 ], 403);
             }
 
-            // Only allow complete if status is shooting
-            if ($work->status !== 'shooting') {
+            // Boleh complete: shooting → editing; editing/approved → published; published → no-op (sudah selesai)
+            $allowedForComplete = ['shooting', 'editing', 'approved', 'published'];
+            if (!in_array($work->status, $allowedForComplete, true)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be completed when status is shooting'
+                    'message' => 'Work can only be completed when status is shooting, editing, approved, or published.',
+                    'allowed_statuses' => $allowedForComplete
                 ], 400);
             }
 
-            // Validate: BTS video and talent photos must be uploaded (check both file_paths and file_links)
-            // Only strictly enforce for bts_video and bts_photo work types
+            // Validate: BTS video and talent photos when completing from shooting. When already editing, skip (hanya tandai selesai).
             $isBTSWork = in_array($work->work_type, ['bts_video', 'bts_photo']);
-            
             $filePaths = $work->file_paths ?? [];
             $fileLinks = $work->file_links ?? [];
             $hasBTSVideo = false;
             $hasTalentPhotos = false;
             $hasAnyFile = false;
 
-            // Check file_paths (backward compatibility)
-            foreach ($filePaths as $file) {
-                $hasAnyFile = true;
-                if (isset($file['type']) && $file['type'] === 'bts_video') {
-                    $hasBTSVideo = true;
-                }
-                if (isset($file['type']) && $file['type'] === 'talent_photo') {
-                    $hasTalentPhotos = true;
+            if (is_array($filePaths)) {
+                foreach ($filePaths as $file) {
+                    if (!is_array($file)) {
+                        continue;
+                    }
+                    if (isset($file['type'])) {
+                        $hasAnyFile = true;
+                        if ($file['type'] === 'bts_video') {
+                            $hasBTSVideo = true;
+                        }
+                        if ($file['type'] === 'talent_photo') {
+                            $hasTalentPhotos = true;
+                        }
+                    }
                 }
             }
-            
-            // Check file_links (new: external storage links)
-            foreach ($fileLinks as $link) {
-                $hasAnyFile = true;
-                if (isset($link['type']) && $link['type'] === 'bts_video') {
-                    $hasBTSVideo = true;
-                }
-                if (isset($link['type']) && $link['type'] === 'talent_photo') {
-                    $hasTalentPhotos = true;
+            if (is_array($fileLinks)) {
+                foreach ($fileLinks as $link) {
+                    if (!is_array($link)) {
+                        continue;
+                    }
+                    if (isset($link['type'])) {
+                        $hasAnyFile = true;
+                        if ($link['type'] === 'bts_video') {
+                            $hasBTSVideo = true;
+                        }
+                        if ($link['type'] === 'talent_photo') {
+                            $hasTalentPhotos = true;
+                        }
+                    }
                 }
             }
 
-            if ($isBTSWork) {
-                if (!$hasBTSVideo || !$hasTalentPhotos) {
+            if ($work->status === 'shooting') {
+                if ($isBTSWork && (!$hasBTSVideo || !$hasTalentPhotos)) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Please upload both BTS video and talent photos before completing work.',
@@ -532,10 +691,8 @@ class PromosiController extends Controller
                         ]
                     ], 400);
                 }
-            } else {
-                // For other works (sharing, story, etc), require at least one proof (file or link)
-                if (!$hasAnyFile && empty($request->completion_notes)) {
-                     return response()->json([
+                if (!$isBTSWork && !$hasAnyFile && empty($request->completion_notes)) {
+                    return response()->json([
                         'success' => false,
                         'message' => 'Please provide proof (upload file/link) or completion notes before completing work.'
                     ], 400);
@@ -543,19 +700,54 @@ class PromosiController extends Controller
             }
 
             $oldData = $work->toArray();
-            
-            // Update status to completed (or editing if needs review)
-            $work->update([
-                'status' => 'editing', // Set to editing, bisa diubah ke completed jika tidak perlu review
-                'shooting_notes' => ($work->shooting_notes ? $work->shooting_notes . "\n\n" : '') . 
-                    ($request->completion_notes ? "[Selesai] " . $request->completion_notes : '')
-            ]);
 
-            // Notify Producer
+            // shooting → editing; editing/approved → published; published → tetap published (no-op)
+            $newStatus = $work->status === 'shooting' ? 'editing' : 'published';
+            if ($work->status !== 'published') {
+                $work->update([
+                    'status' => $newStatus,
+                    'shooting_notes' => ($work->shooting_notes ? $work->shooting_notes . "\n\n" : '') .
+                        ($request->completion_notes ? "[Selesai] " . $request->completion_notes : '')
+                ]);
+            }
+
             $episode = $work->episode;
-            $productionTeam = $episode->program->productionTeam;
-            $producer = $productionTeam ? $productionTeam->producer : null;
-            
+            $productionTeam = $episode->program?->productionTeam;
+            $producer = $productionTeam?->producer;
+            $episodeTitleSuffix = $episode && $episode->title ? ": {$episode->title}" : '';
+
+            // Hanya jalankan notifikasi Producer + auto-create Design Grafis + Editor Promosi saat pertama selesai (shooting → editing)
+            if ($newStatus === 'published') {
+                if ($producer) {
+                    \App\Models\Notification::create([
+                        'user_id' => $producer->id,
+                        'type' => 'promosi_work_completed',
+                        'title' => 'Pekerjaan Promosi Ditandai Selesai',
+                        'message' => "Promosi telah menandai pekerjaan BTS/foto untuk Episode {$episode->episode_number} sebagai selesai.",
+                        'data' => [
+                            'promotion_work_id' => $work->id,
+                            'episode_id' => $work->episode_id,
+                            'completion_notes' => $request->completion_notes
+                        ]
+                    ]);
+                }
+                $this->logActivity($work, $user, 'work_completed', 'Pekerjaan ditandai selesai (published)', [
+                    'old_status' => $oldData['status'],
+                    'new_status' => 'published'
+                ]);
+                ControllerSecurityHelper::logCrud('promosi_work_completed', $work, [
+                    'old_status' => $oldData['status'],
+                    'new_status' => 'published'
+                ], $request);
+                QueryOptimizer::clearAllIndexCaches();
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Work marked as completed.',
+                    'data' => $work->fresh(['episode', 'createdBy'])
+                ]);
+            }
+
+            // Notify Producer (shooting → editing)
             if ($producer) {
                 \App\Models\Notification::create([
                     'user_id' => $producer->id,
@@ -617,7 +809,6 @@ class PromosiController extends Controller
             
             // 1. Thumbnail BTS
             if (!$existingThumbnailBTS && !empty($finalTalentPhotos)) {
-                $episodeTitleSuffix = $episode->title ? ": {$episode->title}" : "";
                 $designGrafisWork = \App\Models\DesignGrafisWork::create([
                     'episode_id' => $work->episode_id,
                     'work_type' => 'thumbnail_bts',
@@ -714,7 +905,6 @@ class PromosiController extends Controller
                 ->first();
 
             if (!$existingThumbnailYoutube && !empty($finalTalentPhotos)) {
-                $episodeTitleSuffix = $episode->title ? ": {$episode->title}" : "";
                 $designGrafisWork = \App\Models\DesignGrafisWork::create([
                     'episode_id' => $work->episode_id,
                     'work_type' => 'thumbnail_youtube',
@@ -813,7 +1003,6 @@ class PromosiController extends Controller
                         }
                     }
 
-                    $episodeTitleSuffix = $episode->title ? ": {$episode->title}" : "";
                     $promotionWork = \App\Models\PromotionWork::create([
                         'episode_id' => $work->episode_id,
                         'work_type' => $workType,
@@ -969,17 +1158,107 @@ class PromosiController extends Controller
     public function getSocialMediaPosts(Request $request): JsonResponse
     {
         // TODO: Implement jika diperlukan
-        return response()->json(['success' => false, 'message' => 'Social media posts feature is not yet implemented', 'data' => []], 501);
+        return response()->json(['success' => true, 'message' => 'Social media posts feature is not yet implemented', 'data' => []], 200);
     }
 
     /**
      * Submit Social Proof
      * POST /api/live-tv/promosi/social-media/{id}/submit-proof
+     *
+     * Generic endpoint to attach either links or files as social proof.
      */
     public function submitSocialProof(Request $request, int $id): JsonResponse
     {
-        // TODO: Implement jika diperlukan
-        return response()->json(['success' => false, 'message' => 'Social proof feature is not yet implemented'], 501);
+        try {
+            $user = Auth::user();
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'proof_links' => 'sometimes|array',
+                'proof_links.*' => 'required|url',
+                'files' => 'sometimes|array',
+                'files.*' => 'sometimes|file|max:51200',
+                'channel' => 'nullable|string|max:100', // e.g. facebook, instagram, wa_group
+                'notes' => 'nullable|string|max:1000',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+
+            $socialProof = $work->social_media_proof ?? [];
+
+            if ($request->has('proof_links')) {
+                $socialProof['generic_links'] = [
+                    'links' => $request->proof_links,
+                    'channel' => $request->channel,
+                    'notes' => $request->notes,
+                    'submitted_at' => now()->toDateTimeString(),
+                    'submitted_by' => $user->id,
+                ];
+            }
+
+            if ($request->hasFile('files')) {
+                $storedFiles = [];
+                foreach ($request->file('files') as $uploaded) {
+                    $stored = FileUploadHelper::storeUploadedFile(
+                        $uploaded,
+                        'promosi/social-proof',
+                        [
+                            'uploaded_by' => $user->id,
+                            'promotion_work_id' => $work->id,
+                        ]
+                    );
+
+                    $storedFiles[] = [
+                        'file_path' => $stored['path'] ?? null,
+                        'file_id' => $stored['id'] ?? null,
+                        'original_name' => $stored['original_name'] ?? $uploaded->getClientOriginalName(),
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id,
+                    ];
+                }
+
+                $socialProof['generic_files'] = [
+                    'files' => $storedFiles,
+                    'channel' => $request->channel,
+                    'notes' => $request->notes,
+                ];
+            }
+
+            $work->update(['social_media_proof' => $socialProof]);
+            QueryOptimizer::clearAllIndexCaches();
+
+            $this->logActivity(
+                $work,
+                $user,
+                'social_proof_submitted',
+                'Social proof submitted (files/links)',
+                [
+                    'links' => $request->proof_links ?? [],
+                    'files_uploaded' => isset($socialProof['generic_files']) ? count($socialProof['generic_files']['files']) : 0,
+                    'channel' => $request->channel,
+                ]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Social proof submitted successfully.',
+                'data' => $work->fresh(['episode', 'createdBy'])
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1034,11 +1313,60 @@ class PromosiController extends Controller
     /**
      * Receive Links (from Broadcasting/QC)
      * POST /api/live-tv/promosi/episodes/{id}/receive-links
+     *
+     * Simple passthrough to attach final YouTube/website links to all related promotion works.
      */
     public function receiveLinks(Request $request, int $id): JsonResponse
     {
-        // TODO: Implement jika diperlukan
-        return response()->json(['success' => false, 'message' => 'Receive links feature is not yet implemented'], 501);
+        try {
+            $user = Auth::user();
+
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'User not authenticated.'], 401);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'youtube_link' => 'nullable|url',
+                'website_link' => 'nullable|url',
+                'notes' => 'nullable|string|max:1000',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $works = PromotionWork::where('episode_id', $id)->get();
+
+            foreach ($works as $work) {
+                $meta = $work->social_media_proof ?? [];
+                $meta['final_links'] = [
+                    'youtube_link' => $request->youtube_link,
+                    'website_link' => $request->website_link,
+                    'notes' => $request->notes,
+                    'received_at' => now()->toDateTimeString(),
+                    'received_by' => $user->id,
+                ];
+                $work->update(['social_media_proof' => $meta]);
+            }
+
+            QueryOptimizer::clearAllIndexCaches();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Links received successfully for promotion works.',
+                'data' => [
+                    'episode_id' => $id,
+                    'works_count' => $works->count(),
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1052,6 +1380,49 @@ class PromosiController extends Controller
     }
 
     /**
+     * Upload file bukti sharing (screenshot dll). Mengembalikan URL untuk dipakai sebagai proof_link.
+     * POST /api/live-tv/promosi/works/{id}/upload-sharing-proof
+     */
+    public function uploadSharingProof(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'file' => 'required|file|mimes:jpeg,jpg,png,gif,webp,pdf|max:20480', // 20MB
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+            $file = $request->file('file');
+            $safeName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $file->getClientOriginalName());
+            $path = $file->storeAs('promosi/sharing-proof', $work->id . '_' . time() . '_' . $safeName, 'public');
+            $relativeUrl = Storage::disk('public')->url($path);
+            $url = str_starts_with($relativeUrl, 'http') ? $relativeUrl : url($relativeUrl);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'File bukti berhasil diupload.',
+                'url' => $url,
+                'path' => $path
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Share Link Website ke Facebook (Strict Link Only)
      * POST /api/live-tv/promosi/works/{id}/share-facebook
      */
@@ -1059,12 +1430,13 @@ class PromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || $user->role !== 'Promotion') {
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'proof_link' => 'required|url',
+                'proof_link' => 'required|string', // URL atau full URL dari upload
                 'facebook_post_url' => 'nullable|url',
                 'notes' => 'nullable|string'
             ]);

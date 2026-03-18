@@ -923,6 +923,7 @@ class QualityControlController extends Controller
         }
 
         // Update Editor Promosi PromotionWork status menjadi approved
+        $sourceBtsWorkIds = [];
         if ($hasEditorPromosiFiles) {
             foreach ($work->editor_promosi_file_locations as $editorPromosiFile) {
                 if (isset($editorPromosiFile['promotion_work_id'])) {
@@ -933,7 +934,28 @@ class QualityControlController extends Controller
                             'reviewed_by' => $user->id,
                             'reviewed_at' => now()
                         ]);
+                        // Program Musik: dapatkan source BTS work (work asli BTS Video & Talent Photos) dari file_paths/file_links
+                        $fp = $promotionWork->file_paths;
+                        $fl = $promotionWork->file_links;
+                        if (is_array($fp) && !empty($fp['promotion_work_id'])) {
+                            $sourceBtsWorkIds[] = (int) $fp['promotion_work_id'];
+                        }
+                        if (is_array($fl) && !empty($fl['promotion_work_id'])) {
+                            $sourceBtsWorkIds[] = (int) $fl['promotion_work_id'];
+                        }
                     }
+                }
+            }
+            // Program Musik: set work BTS asli (BTS Video & Talent Photos) ke approved agar status tidak tetap "Sedang Dikerjakan"
+            $sourceBtsWorkIds = array_unique(array_filter($sourceBtsWorkIds));
+            foreach ($sourceBtsWorkIds as $sourceId) {
+                $sourceWork = \App\Models\PromotionWork::find($sourceId);
+                if ($sourceWork && in_array($sourceWork->status, ['editing', 'shooting'], true)) {
+                    $sourceWork->update([
+                        'status' => 'approved',
+                        'reviewed_by' => $user->id,
+                        'reviewed_at' => now()
+                    ]);
                 }
             }
         }
@@ -992,17 +1014,36 @@ class QualityControlController extends Controller
             }
 
             // QC-approved work: status 'pending' agar Broadcasting bisa langsung Terima Pekerjaan (tanpa approval DM)
-            $broadcastingWork = \App\Models\BroadcastingWork::create([
-                'episode_id' => $work->episode_id,
-                'work_type' => 'main_episode',
-                'title' => "Broadcasting Work - Episode {$episode->episode_number}",
-                'description' => "File materi dari QC (Manager Broadcasting) & thumbnail dari QC Promosi yang telah disetujui.",
-                'video_file_path' => $videoFilePath,
-                'file_link' => (is_string($videoFilePath) && (str_starts_with($videoFilePath, 'http://') || str_starts_with($videoFilePath, 'https://'))) ? $videoFilePath : null,
-                'thumbnail_path' => $thumbnailPath,
-                'status' => 'pending',
-                'created_by' => $broadcastingUsers->first()->id
-            ]);
+            $broadcastingWork = \App\Models\BroadcastingWork::firstOrCreate(
+                [
+                    'episode_id' => $work->episode_id,
+                    'work_type' => 'main_episode'
+                ],
+                [
+                    'title' => "Broadcasting Work - Episode {$episode->episode_number}",
+                    'description' => "File materi dari QC (Manager Broadcasting) & thumbnail dari QC Promosi yang telah disetujui.",
+                    'video_file_path' => $videoFilePath,
+                    'file_link' => (is_string($videoFilePath) && (str_starts_with($videoFilePath, 'http://') || str_starts_with($videoFilePath, 'https://'))) ? $videoFilePath : null,
+                    'thumbnail_path' => $thumbnailPath,
+                    'status' => 'pending',
+                    'created_by' => $broadcastingUsers->first()->id
+                ]
+            );
+
+            // Update existing if new thumbnail or video comes in
+            $updates = [];
+            if (!$broadcastingWork->wasRecentlyCreated) {
+                if ($thumbnailPath && !$broadcastingWork->thumbnail_path) {
+                    $updates['thumbnail_path'] = $thumbnailPath;
+                }
+                if ($videoFilePath && !$broadcastingWork->video_file_path && !$broadcastingWork->file_link) {
+                    $updates['video_file_path'] = $videoFilePath;
+                    $updates['file_link'] = (is_string($videoFilePath) && (str_starts_with($videoFilePath, 'http://') || str_starts_with($videoFilePath, 'https://'))) ? $videoFilePath : null;
+                }
+                if (!empty($updates)) {
+                    $broadcastingWork->update($updates);
+                }
+            }
 
             $broadcastMessage = "Terima File materi dari QC (Manager Broadcasting). Terima thumbnail dari QC Promosi. Episode #{$episode->episode_number} telah disetujui QC. Silakan Terima Pekerjaan → Proses → Jadwal Playlist, Upload YouTube (thumbnail, deskripsi, tag, judul SEO), Upload Website, input link YT, Selesaikan Pekerjaan.";
             $broadcastData = [

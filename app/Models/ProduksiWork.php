@@ -27,9 +27,13 @@ class ProduksiWork extends Model
         'shooting_file_links',
         'producer_requests',
         'notes',
+        'setting_completed_at',
+        'setting_completed_by',
         'completed_at',
         'completed_by'
     ];
+
+    protected $appends = ['episode_display'];
 
     protected $casts = [
         'equipment_list' => 'array',
@@ -39,6 +43,7 @@ class ProduksiWork extends Model
         'shooting_files' => 'array',
         'shooting_file_links' => 'array',
         'producer_requests' => 'array',
+        'setting_completed_at' => 'datetime',
         'completed_at' => 'datetime'
     ];
 
@@ -67,11 +72,19 @@ class ProduksiWork extends Model
     }
 
     /**
-     * Relationship dengan User yang complete
+     * Relationship dengan User yang complete (Tim Syuting — selesai akhir)
      */
     public function completedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'completed_by');
+    }
+
+    /**
+     * Relationship dengan User yang selesai bagian Tim Setting
+     */
+    public function settingCompletedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'setting_completed_by');
     }
 
     /**
@@ -102,7 +115,19 @@ class ProduksiWork extends Model
     }
 
     /**
-     * Complete work
+     * Selesai bagian Tim Setting saja (work tetap in_progress untuk Tim Syuting)
+     */
+    public function completeSettingPart(int $userId, ?string $notes = null): void
+    {
+        $this->update([
+            'setting_completed_at' => now(),
+            'setting_completed_by' => $userId,
+            'notes' => $notes ?: $this->notes
+        ]);
+    }
+
+    /**
+     * Complete work (akhir — dipanggil Tim Syuting setelah run sheet, link file, kembalikan alat)
      */
     public function completeWork(int $userId, ?string $notes = null): void
     {
@@ -110,16 +135,34 @@ class ProduksiWork extends Model
             'status' => 'completed',
             'completed_by' => $userId,
             'completed_at' => now(),
-            'notes' => $notes
+            'notes' => $notes ?: $this->notes
         ]);
     }
 
     /**
-     * Check if work can be completed
+     * Check if work can be completed (Tim Syuting: run sheet + shooting files wajib)
      */
     public function canBeCompleted(): bool
     {
         return $this->status === 'in_progress';
+    }
+
+    /** Apakah bagian Tim Setting sudah ditandai selesai */
+    public function isSettingCompleted(): bool
+    {
+        return $this->setting_completed_at !== null;
+    }
+
+    /**
+     * Display text for episode (e.g. "Ep. 3") so frontend does not show work id or episode id.
+     */
+    public function getEpisodeDisplayAttribute(): ?string
+    {
+        if (!$this->relationLoaded('episode') || !$this->episode) {
+            return null;
+        }
+        $num = $this->episode->episode_number ?? null;
+        return $num !== null && $num !== '' ? 'Ep. ' . $num : null;
     }
 }
 

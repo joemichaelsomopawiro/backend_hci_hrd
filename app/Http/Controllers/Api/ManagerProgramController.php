@@ -19,6 +19,10 @@ use App\Models\CreativeWork;
 use App\Models\SoundEngineerRecording;
 use App\Models\ProduksiWork;
 use App\Models\EditorWork;
+use App\Models\DesignGrafisWork;
+use App\Models\PromotionWork;
+use App\Models\BroadcastingWork;
+use App\Models\ProductionEquipment;
 use Carbon\Carbon;
 use App\Services\ProgramPerformanceService;
 use Illuminate\Http\Request;
@@ -464,11 +468,15 @@ class ManagerProgramController extends Controller
     public function generateNextYearEpisodes(Request $request, int $programId): JsonResponse
     {
         $user = auth()->user();
+        $program = Program::findOrFail($programId);
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        $isManager = in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram']);
+        $isProducer = ($user->role === 'Producer' && $program->producer_id == $user->id);
+        
+        if (!$isManager && !$isProducer) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can generate next year episodes'
+                'message' => 'Only Manager Program or assigned Producer can generate next year episodes'
             ], 403);
         }
         
@@ -900,11 +908,16 @@ class ManagerProgramController extends Controller
     public function updateEpisodeViews(Request $request, int $episodeId): JsonResponse
     {
         $user = auth()->user();
+        $episode = Episode::with('program')->findOrFail($episodeId);
+        $program = $episode->program;
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+        $isManager = in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram']);
+        $isProducer = ($user->role === 'Producer' && $program && $program->producer_id == $user->id);
+        
+        if (!$isManager && !$isProducer) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program can update views'
+                'message' => 'Only Manager Program or assigned Producer can update views'
             ], 403);
         }
         
@@ -1080,11 +1093,15 @@ class ManagerProgramController extends Controller
     public function setTargetViews(Request $request, int $programId): JsonResponse
     {
         $user = auth()->user();
+        $program = Program::findOrFail($programId);
         
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
+        $isManager = in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager']);
+        $isProducer = ($user->role === 'Producer' && $program->producer_id == $user->id);
+        
+        if (!$isManager && !$isProducer) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Manager Program or Distribution Manager can set target views'
+                'message' => 'Only Manager Program, Distribution Manager, or assigned Producer can set target views'
             ], 403);
         }
         
@@ -1144,14 +1161,6 @@ class ManagerProgramController extends Controller
     {
         $user = auth()->user();
         
-        // Allow all authenticated users to monitor workflow for transparency
-        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Only Manager Program or Distribution Manager can monitor workflow'
-            ], 403);
-        }
-        
         try {
             $episode = Episode::with([
                 'program',
@@ -1160,12 +1169,31 @@ class ManagerProgramController extends Controller
                 'musicArrangements',
                 'creativeWorks',
                 'soundEngineerRecordings',
+                'produksiWorks',
                 'editorWorks',
                 'qualityControls',
                 'broadcastingSchedules',
+                'broadcastingWorks',
+                'promotionWorks',
+                'designGrafisWorks',
                 'productionTeam.members.user'
             ])->findOrFail($episodeId);
-            
+
+            $buildStep = function ($key, $name, $completed, $status, $reasonIfNotCompleted, $data = null, $deadline = null) {
+                $step = [
+                    'step_key' => $key,
+                    'step_name' => $name,
+                    'completed' => (bool) $completed,
+                    'status' => $status,
+                    'reason_if_not_completed' => $reasonIfNotCompleted,
+                    'data' => $data,
+                ];
+                if ($deadline !== null) {
+                    $step['deadline'] = $deadline;
+                }
+                return $step;
+            };
+
             // Data Episode
             $episodeData = [
                 'id' => $episode->id,
@@ -1177,128 +1205,259 @@ class ManagerProgramController extends Controller
                 'days_until_air' => now()->diffInDays($episode->air_date, false),
                 'is_overdue' => now() > $episode->air_date && $episode->status !== 'aired'
             ];
-            
-            // Workflow Timeline - Tahap demi tahap
+
+            // Workflow lengkap Program Musik (urutan tahap) — untuk Aktif Production
             $workflowSteps = [];
-            
-            // 1. Music Arrangement
+            $dlMusik = $episode->deadlines->where('role', 'musik_arr')->first();
+            $dlKreatif = $episode->deadlines->where('role', 'kreatif')->first();
+            $dlSound = $episode->deadlines->where('role', 'sound_eng')->first();
+            $dlProduksi = $episode->deadlines->where('role', 'produksi')->first();
+            $dlEditor = $episode->deadlines->where('role', 'editor')->first();
+
+            // 1. Program Aktif (kredit program)
+            $programOk = $episode->program && in_array($episode->program->status ?? null, ['active', 'approved', 'in_production'], true);
+            $workflowSteps['program_dikredit'] = $buildStep(
+                'program_dikredit',
+                'Program Aktif',
+                $programOk,
+                $programOk ? 'completed' : 'pending',
+                $programOk ? null : 'Program belum aktif.',
+                ['program_status' => $episode->program->status ?? null]
+            );
+
+            // 2. Music Arranger
             $musicArrangement = $episode->musicArrangements->sortByDesc('created_at')->first();
-            $workflowSteps['music_arrangement'] = [
-                'step_name' => 'Music Arrangement',
-                'status' => $musicArrangement ? ($musicArrangement->status === 'approved' ? 'completed' : $musicArrangement->status) : 'pending',
-                'data' => $musicArrangement ? [
-                    'id' => $musicArrangement->id,
-                    'status' => $musicArrangement->status,
-                    'song_title' => $musicArrangement->song_title,
-                    'arranger_name' => $musicArrangement->arranger_name,
-                    'created_at' => $musicArrangement->created_at,
-                    'updated_at' => $musicArrangement->updated_at,
-                    'approved_at' => $musicArrangement->approved_at
-                ] : null,
-                'deadline' => $episode->deadlines->where('role', 'musik_arr')->first()
-            ];
-            
-            // 2. Creative Work
-            $creativeWork = $episode->creativeWorks->sortByDesc('created_at')->first();
-            $workflowSteps['creative_work'] = [
-                'step_name' => 'Creative Work',
-                'status' => $creativeWork ? ($creativeWork->script_approved && $creativeWork->storyboard_approved ? 'completed' : 'in_progress') : 'pending',
-                'data' => $creativeWork ? [
-                    'id' => $creativeWork->id,
-                    'script_approved' => $creativeWork->script_approved,
-                    'storyboard_approved' => $creativeWork->storyboard_approved,
-                    'status' => $creativeWork->status,
-                    'created_at' => $creativeWork->created_at,
-                    'updated_at' => $creativeWork->updated_at
-                ] : null,
-                'deadline' => $episode->deadlines->where('role', 'kreatif')->first()
-            ];
-            
-            // 3. Sound Engineer Recording
+            $musicCompleted = $musicArrangement
+                && in_array($musicArrangement->status ?? '', ['approved', 'arrangement_approved'], true);
+            $musicRejected = $musicArrangement && in_array($musicArrangement->status ?? '', ['rejected', 'arrangement_rejected'], true);
+            $workflowSteps['music_arranger'] = $buildStep(
+                'music_arranger',
+                'Music Arranger',
+                $musicCompleted,
+                $musicArrangement ? $musicArrangement->status : 'pending',
+                $musicRejected ? ('Ditolak oleh Producer' . ($musicArrangement->rejection_reason ? ': ' . $musicArrangement->rejection_reason : '')) : (!$musicArrangement ? 'Belum sampai tahap Music Arranger.' : 'Belum disetujui Producer.'),
+                $musicArrangement ? ['id' => $musicArrangement->id, 'status' => $musicArrangement->status, 'song_title' => $musicArrangement->song_title, 'rejection_reason' => $musicArrangement->rejection_reason ?? null] : null,
+                $dlMusik
+            );
+
+            // 3. Producer (approve Music Arranger)
+            $workflowSteps['producer_music_arranger'] = $buildStep(
+                'producer_music_arranger',
+                'Producer (approve Music Arranger)',
+                $musicCompleted,
+                $musicCompleted ? 'completed' : ($musicRejected ? 'rejected' : 'pending'),
+                $musicRejected ? ('Ditolak: ' . ($musicArrangement->rejection_reason ?? 'Alasan tidak dicatat.')) : (!$musicArrangement ? 'Belum ada usulan dari Music Arranger.' : 'Menunggu approval Producer.'),
+                $musicArrangement ? ['reviewed_at' => $musicArrangement->reviewed_at, 'review_notes' => $musicArrangement->review_notes ?? null] : null
+            );
+
+            // 4. Sound Engineer
             $soundRecording = $episode->soundEngineerRecordings->sortByDesc('created_at')->first();
-            $workflowSteps['sound_recording'] = [
-                'step_name' => 'Sound Recording',
-                'status' => $soundRecording ? ($soundRecording->status === 'completed' ? 'completed' : $soundRecording->status) : 'pending',
-                'data' => $soundRecording ? [
-                    'id' => $soundRecording->id,
-                    'status' => $soundRecording->status,
-                    'created_at' => $soundRecording->created_at,
-                    'updated_at' => $soundRecording->updated_at,
-                    'completed_at' => $soundRecording->completed_at
-                ] : null,
-                'deadline' => $episode->deadlines->where('role', 'sound_eng')->first()
-            ];
-            
-            // 4. Production
-            // Pastikan ProduksiWork sudah ada di model Episode sebagai relation
-            $produksiWork = $episode->produksiWorks ? $episode->produksiWorks->sortByDesc('created_at')->first() : null;
-            $workflowSteps['production'] = [
-                'step_name' => 'Production',
-                'status' => $produksiWork ? ($produksiWork->status === 'completed' ? 'completed' : $produksiWork->status) : 'pending',
-                'data' => $produksiWork ? [
-                    'id' => $produksiWork->id,
-                    'status' => $produksiWork->status,
-                    'created_at' => $produksiWork->created_at,
-                    'updated_at' => $produksiWork->updated_at,
-                    'completed_at' => $produksiWork->completed_at
-                ] : null,
-                'deadline' => $episode->deadlines->where('role', 'produksi')->first()
-            ];
-            
-            // 5. Editor
+            $soundCompleted = $soundRecording && $soundRecording->status === 'completed';
+            $workflowSteps['sound_engineer'] = $buildStep(
+                'sound_engineer',
+                'Sound Engineer',
+                $soundCompleted,
+                $soundRecording ? $soundRecording->status : 'pending',
+                $soundCompleted ? null : (!$soundRecording ? 'Belum sampai tahap Sound Engineer.' : 'Belum selesai recording.'),
+                $soundRecording ? ['id' => $soundRecording->id, 'status' => $soundRecording->status] : null,
+                $dlSound
+            );
+
+            // 5. Tim Setting
+            $produksiWork = $episode->produksiWorks->sortByDesc('created_at')->first();
+            $settingDone = $produksiWork && $produksiWork->setting_completed_at !== null;
+            $workflowSteps['tim_setting'] = $buildStep(
+                'tim_setting',
+                'Tim Setting',
+                $settingDone,
+                $settingDone ? 'completed' : ($produksiWork ? 'in_progress' : 'pending'),
+                $settingDone ? null : (!$produksiWork ? 'Belum ada work Produksi.' : 'Tim Setting belum menyelesaikan.'),
+                $produksiWork ? ['setting_completed_at' => $produksiWork->setting_completed_at] : null,
+                $dlProduksi
+            );
+
+            // 6. Tim Shooting
+            $shootingDone = $produksiWork && $produksiWork->status === 'completed';
+            $workflowSteps['tim_shooting'] = $buildStep(
+                'tim_shooting',
+                'Tim Shooting',
+                $shootingDone,
+                $produksiWork ? $produksiWork->status : 'pending',
+                $shootingDone ? null : (!$produksiWork ? 'Belum ada work Produksi.' : 'Tim Shooting belum selesai (run sheet & file syuting).'),
+                $produksiWork ? ['id' => $produksiWork->id, 'status' => $produksiWork->status, 'completed_at' => $produksiWork->completed_at] : null,
+                $dlProduksi
+            );
+
+            // 7. Creative
+            $creativeWork = $episode->creativeWorks->sortByDesc('created_at')->first();
+            $creativeCompleted = $creativeWork && $creativeWork->script_approved && $creativeWork->storyboard_approved;
+            $creativeRejected = $creativeWork && !empty($creativeWork->rejection_reason);
+            $workflowSteps['creative_work'] = $buildStep(
+                'creative_work',
+                'Creative',
+                $creativeCompleted,
+                $creativeWork ? ($creativeCompleted ? 'completed' : 'in_progress') : 'pending',
+                $creativeRejected ? ('Ditolak/Revisi: ' . ($creativeWork->rejection_reason ?? '')) : (!$creativeWork ? 'Belum sampai tahap Creative.' : 'Script/Storyboard belum disetujui.'),
+                $creativeWork ? ['id' => $creativeWork->id, 'script_approved' => $creativeWork->script_approved, 'storyboard_approved' => $creativeWork->storyboard_approved, 'rejection_reason' => $creativeWork->rejection_reason ?? null] : null,
+                $dlKreatif
+            );
+
+            // 8. Producer (approve Creative)
+            $workflowSteps['producer_creative'] = $buildStep(
+                'producer_creative',
+                'Producer (approve Creative)',
+                $creativeCompleted,
+                $creativeCompleted ? 'completed' : ($creativeWork ? 'in_progress' : 'pending'),
+                $creativeCompleted ? null : (!$creativeWork ? 'Belum ada Creative Work.' : 'Menunggu approval Producer (script & storyboard).'),
+                $creativeWork ? ['script_approved' => $creativeWork->script_approved, 'storyboard_approved' => $creativeWork->storyboard_approved] : null
+            );
+
+            // 9. Program Manager
+            $workflowSteps['program_manager'] = $buildStep(
+                'program_manager',
+                'Program Manager',
+                true,
+                'completed',
+                null,
+                ['note' => 'Monitoring & approval program level']
+            );
+
+            // 10. Distribution Manager
+            $bcWork = $episode->broadcastingWorks->sortByDesc('created_at')->first();
+            $dmApproved = $bcWork && in_array($bcWork->status ?? '', ['published', 'completed', 'approved'], true);
+            $workflowSteps['distribution_manager'] = $buildStep(
+                'distribution_manager',
+                'Distribution Manager',
+                $dmApproved,
+                $bcWork ? $bcWork->status : 'pending',
+                $dmApproved ? null : (!$bcWork ? 'Belum ada Broadcasting Work.' : 'Menunggu approval/jadwal Distribution Manager.'),
+                $bcWork ? ['id' => $bcWork->id, 'status' => $bcWork->status] : null
+            );
+
+            // 11. Art Set / Property
+            $equipmentCount = ProductionEquipment::where('episode_id', $episode->id)->count();
+            $workflowSteps['art_set_property'] = $buildStep(
+                'art_set_property',
+                'Art Set / Property',
+                $produksiWork ? true : false,
+                $produksiWork ? 'completed' : 'pending',
+                $produksiWork ? null : 'Terkait Produksi (request equipment).',
+                ['equipment_requests_count' => $equipmentCount]
+            );
+
+            // 12. Promotion (BTS & sharing)
+            $promoWorks = $episode->promotionWorks ?? collect();
+            $promoBts = $promoWorks->where('work_type', 'bts_video')->first();
+            $promoCompleted = $promoBts && in_array($promoBts->status ?? '', ['approved', 'published', 'editing'], true);
+            $workflowSteps['promotion'] = $buildStep(
+                'promotion',
+                'Promotion',
+                $promoCompleted,
+                $promoBts ? $promoBts->status : 'pending',
+                $promoCompleted ? null : (!$promoBts ? 'Belum ada work BTS Video & Talent Photos.' : 'Promotion (BTS/foto) belum selesai/disetujui.'),
+                $promoBts ? ['id' => $promoBts->id, 'status' => $promoBts->status] : null
+            );
+
+            // 13. Broadcasting
+            $bcCompleted = $bcWork && in_array($bcWork->status ?? '', ['published', 'completed'], true);
+            $workflowSteps['broadcasting'] = $buildStep(
+                'broadcasting',
+                'Broadcasting',
+                $bcCompleted || $episode->status === 'aired',
+                $episode->status === 'aired' ? 'completed' : ($bcWork ? $bcWork->status : 'pending'),
+                ($bcCompleted || $episode->status === 'aired') ? null : (!$bcWork ? 'Belum ada Broadcasting Work.' : 'Upload YouTube/Website belum selesai.'),
+                $bcWork ? ['id' => $bcWork->id, 'status' => $bcWork->status, 'youtube_url' => $bcWork->youtube_url ?? null, 'website_url' => $bcWork->website_url ?? null] : null
+            );
+
+            // 14. Editor Promosi (highlight, iklan, dll)
+            $editorPromoWorks = $promoWorks->whereIn('work_type', ['highlight_ig', 'highlight_tv', 'highlight_facebook', 'iklan_episode_tv']);
+            $editorPromoDone = $editorPromoWorks->isEmpty() ? false : $editorPromoWorks->every(fn ($w) => in_array($w->status ?? '', ['approved', 'published'], true));
+            $workflowSteps['editor_promosi'] = $buildStep(
+                'editor_promosi',
+                'Editor Promosi',
+                $editorPromoDone,
+                $editorPromoDone ? 'completed' : ($editorPromoWorks->isNotEmpty() ? 'in_progress' : 'pending'),
+                $editorPromoDone ? null : ($editorPromoWorks->isEmpty() ? 'Belum ada task Editor Promosi (Highlight/Iklan).' : 'Ada task Editor Promosi belum disetujui.'),
+                ['count' => $editorPromoWorks->count()]
+            );
+
+            // 15. Design Grafis
+            $designWorks = $episode->designGrafisWorks ?? collect();
+            $designLatest = $designWorks->sortByDesc('created_at')->first();
+            $designCompleted = $designLatest && in_array($designLatest->status ?? '', ['completed', 'approved'], true);
+            $workflowSteps['design_grafis'] = $buildStep(
+                'design_grafis',
+                'Design Grafis',
+                $designCompleted,
+                $designLatest ? $designLatest->status : 'pending',
+                $designCompleted ? null : (!$designLatest ? 'Belum ada work Design Grafis.' : 'Design Grafis belum selesai/disetujui.'),
+                $designLatest ? ['id' => $designLatest->id, 'status' => $designLatest->status] : null
+            );
+
+            // 16. Editor (video utama)
             $editorWork = $episode->editorWorks->sortByDesc('created_at')->first();
-            $workflowSteps['editing'] = [
-                'step_name' => 'Editing',
-                'status' => $editorWork ? ($editorWork->status === 'completed' ? 'completed' : $editorWork->status) : 'pending',
-                'data' => $editorWork ? [
-                    'id' => $editorWork->id,
-                    'status' => $editorWork->status,
-                    'created_at' => $editorWork->created_at,
-                    'updated_at' => $editorWork->updated_at,
-                    'completed_at' => $editorWork->completed_at
-                ] : null,
-                'deadline' => $episode->deadlines->where('role', 'editor')->first()
-            ];
-            
-            // 6. Quality Control
+            $editorCompleted = $editorWork && $editorWork->status === 'completed';
+            $workflowSteps['editing'] = $buildStep(
+                'editing',
+                'Editing',
+                $editorCompleted,
+                $editorWork ? $editorWork->status : 'pending',
+                $editorCompleted ? null : (!$editorWork ? 'Belum sampai tahap Editor.' : 'Editor belum menyelesaikan video.'),
+                $editorWork ? ['id' => $editorWork->id, 'status' => $editorWork->status] : null,
+                $dlEditor
+            );
+
+            // 17. Quality Control
             $qcWork = $episode->qualityControls->sortByDesc('created_at')->first();
-            $workflowSteps['quality_control'] = [
-                'step_name' => 'Quality Control',
-                'status' => $qcWork ? ($qcWork->status === 'approved' ? 'completed' : ($qcWork->status === 'rejected' ? 'revision_needed' : $qcWork->status)) : 'pending',
-                'data' => $qcWork ? [
-                    'id' => $qcWork->id,
-                    'status' => $qcWork->status,
-                    'quality_score' => $qcWork->quality_score,
-                    'qc_notes' => $qcWork->qc_notes,
-                    'created_at' => $qcWork->created_at,
-                    'updated_at' => $qcWork->updated_at,
-                    'qc_completed_at' => $qcWork->qc_completed_at
-                ] : null,
-                'deadline' => $episode->deadlines->where('role', 'quality_control')->first()
+            $qcCompleted = $qcWork && $qcWork->status === 'approved';
+            $qcRejected = $qcWork && $qcWork->status === 'rejected';
+            $workflowSteps['quality_control'] = $buildStep(
+                'quality_control',
+                'Quality Control',
+                $qcCompleted,
+                $qcWork ? $qcWork->status : 'pending',
+                $qcRejected ? ('Ditolak: ' . ($qcWork->qc_notes ?? 'Perlu revisi.')) : (!$qcWork ? 'Belum sampai tahap QC.' : 'Menunggu approval QC.'),
+                $qcWork ? ['id' => $qcWork->id, 'status' => $qcWork->status, 'qc_notes' => $qcWork->qc_notes ?? null] : null
+            );
+
+            // Jika episode sudah sampai tahap akhir (sharing works / broadcasting / aired),
+            // semua tahap sebelumnya dianggap selesai (masuk akal: tidak mungkin sampai sharing kalau tahap sebelumnya belum selesai)
+            $promoSharingPublished = $episode->promotionWorks
+                ->whereIn('work_type', ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'])
+                ->where('status', 'published')
+                ->isNotEmpty();
+            $reachedEnd = $episode->status === 'aired'
+                || ($bcWork && in_array($bcWork->status ?? '', ['published', 'completed'], true))
+                || $promoSharingPublished;
+            if ($reachedEnd) {
+                foreach ($workflowSteps as $k => $step) {
+                    $workflowSteps[$k] = array_merge($step, [
+                        'completed' => true,
+                        'status' => 'completed',
+                        'reason_if_not_completed' => null,
+                    ]);
+                }
+            }
+
+            // Urutan tampilan untuk frontend (Aktif Production): flow MULAI dari Music Arranger
+            $workflowOrder = [
+                'music_arranger', 'producer_music_arranger', 'creative_work', 'producer_creative',
+                'sound_engineer', 'tim_setting', 'tim_shooting', 'art_set_property',
+                'promotion', 'design_grafis', 'editor_promosi', 'editing', 'quality_control',
+                'distribution_manager', 'broadcasting', 'program_manager', 'program_dikredit'
             ];
-            
-            // 7. Broadcasting
-            $broadcastingSchedule = $episode->broadcastingSchedules->sortByDesc('created_at')->first();
-            $workflowSteps['broadcasting'] = [
-                'step_name' => 'Broadcasting',
-                'status' => $broadcastingSchedule ? ($episode->status === 'aired' ? 'completed' : ($broadcastingSchedule->status === 'approved' ? 'ready' : $broadcastingSchedule->status)) : 'pending',
-                'data' => $broadcastingSchedule ? [
-                    'id' => $broadcastingSchedule->id,
-                    'status' => $broadcastingSchedule->status,
-                    'air_date' => $broadcastingSchedule->air_date,
-                    'platform' => $broadcastingSchedule->platform,
-                    'created_at' => $broadcastingSchedule->created_at,
-                    'updated_at' => $broadcastingSchedule->updated_at
-                ] : null,
-                'deadline' => null
-            ];
-            
+            $workflowStepsOrdered = [];
+            foreach ($workflowOrder as $key) {
+                if (isset($workflowSteps[$key])) {
+                    $workflowStepsOrdered[$key] = $workflowSteps[$key];
+                }
+            }
+
             // Calculate Progress
-            $completedSteps = collect($workflowSteps)->filter(function($step) {
-                return $step['status'] === 'completed';
+            $completedSteps = collect($workflowStepsOrdered)->filter(function ($step) {
+                return !empty($step['completed']);
             })->count();
-            
-            $totalSteps = count($workflowSteps);
+            $totalSteps = count($workflowStepsOrdered);
             $progressPercentage = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100, 2) : 0;
             
             // Workflow Timeline (History)
@@ -1341,7 +1500,13 @@ class ManagerProgramController extends Controller
                         'id' => $episode->program->id,
                         'name' => $episode->program->name
                     ],
-                    'workflow_steps' => $workflowSteps,
+                    'workflow_steps' => $workflowStepsOrdered,
+                    'workflow_order' => $workflowOrder,
+                    'ui_hint' => [
+                        'aktif_production_collapsible' => true,
+                        'aktif_production_default_open' => false,
+                        'reason_clickable' => true,
+                    ],
                     'progress' => [
                         'percentage' => $progressPercentage,
                         'completed_steps' => $completedSteps,
@@ -1580,6 +1745,72 @@ class ManagerProgramController extends Controller
     }
 
     /**
+     * Ubah hari tayang dari episode tertentu ke depan (contoh: Jumat jadi Minggu dari Ep 4).
+     * PUT /api/live-tv/manager-program/programs/{programId}/broadcast-day
+     * Body: from_episode_number (int), new_day_of_week (0=Minggu, 1=Senin, ..., 6=Sabtu)
+     */
+    public function updateBroadcastDayFromEpisode(Request $request, int $programId): JsonResponse
+    {
+        $user = auth()->user();
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json(['success' => false, 'message' => 'Only Manager Program can update broadcast day'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'from_episode_number' => 'required|integer|min:1|max:52',
+            'new_day_of_week' => 'required|integer|min:0|max:6', // 0=Minggu, 6=Sabtu
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+        }
+
+        $program = Program::findOrFail($programId);
+        $fromNum = (int) $request->from_episode_number;
+        $newDay = (int) $request->new_day_of_week;
+
+        $refEpisode = $program->episodes()->where('episode_number', $fromNum)->first();
+        if (!$refEpisode || !$refEpisode->air_date) {
+            return response()->json([
+                'success' => false,
+                'message' => "Episode {$fromNum} not found or has no air_date",
+            ], 404);
+        }
+
+        $refDate = Carbon::parse($refEpisode->air_date);
+        $currentDow = $refDate->dayOfWeek; // 0=Sun, 6=Sat
+        $daysToAdd = ($newDay - $currentDow + 7) % 7;
+        if ($daysToAdd === 0 && $currentDow !== $newDay) {
+            $daysToAdd = 7;
+        }
+        $firstNewDate = $refDate->copy()->addDays($daysToAdd)->startOfDay();
+
+        $episodes = $program->episodes()
+            ->where('episode_number', '>=', $fromNum)
+            ->orderBy('episode_number')
+            ->get();
+
+        $updated = 0;
+        foreach ($episodes as $ep) {
+            $weeksOffset = $ep->episode_number - $fromNum;
+            $newAirDate = $firstNewDate->copy()->addWeeks($weeksOffset);
+            $ep->update(['air_date' => $newAirDate->format('Y-m-d H:i:s')]);
+            $updated++;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'program_id' => $programId,
+                'from_episode_number' => $fromNum,
+                'new_day_of_week' => $newDay,
+                'first_new_air_date' => $firstNewDate->format('Y-m-d'),
+                'episodes_updated' => $updated,
+            ],
+            'message' => "Jadwal tayang diubah: {$updated} episode dari Ep {$fromNum} ke depan sekarang hari " . ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][$newDay] . '.',
+        ]);
+    }
+
+    /**
      * Submit opsi jadwal tayang ke Manager Broadcasting
      * User: "Manager Program dapat mengirim opsi jadwal tayang ke Manager Broadcasting"
      */
@@ -1596,6 +1827,11 @@ class ManagerProgramController extends Controller
 
         // LOGGING & NORMALIZATION
         \Illuminate\Support\Facades\Log::info('SubmitScheduleOptions Request:', $request->all());
+
+        // Backward compatibility: older frontend doesn't send apply_to/episode_ids
+        if (!$request->has('apply_to') || empty($request->input('apply_to'))) {
+            $request->merge(['apply_to' => 'all']);
+        }
 
         $episodeIds = $request->input('episode_ids');
         if (is_array($episodeIds) && !empty($episodeIds)) {
@@ -1614,15 +1850,37 @@ class ManagerProgramController extends Controller
 
         $validator = Validator::make($request->all(), [
             'schedule_options' => 'required|array|min:1',
-            'schedule_options.*.date' => 'required|date|after:now',
+            'schedule_options.*.date' => 'required|date',
             'schedule_options.*.time' => 'required|date_format:H:i',
             'schedule_options.*.notes' => 'nullable|string|max:500',
             'platform' => 'nullable|in:tv,youtube,website,all',
             'submission_notes' => 'nullable|string|max:1000',
-            'apply_to' => 'required|in:all,select',
+            'apply_to' => 'nullable|in:all,select',
             'episode_ids' => 'required_if:apply_to,select|array',
             'episode_ids.*' => 'exists:episodes,id'
         ]);
+
+        // Validate option datetime (date + time) must be in the future.
+        $validator->after(function ($validator) use ($request) {
+            $options = $request->input('schedule_options', []);
+            if (!is_array($options)) return;
+
+            foreach ($options as $i => $opt) {
+                if (!is_array($opt)) continue;
+                $date = $opt['date'] ?? null;
+                $time = $opt['time'] ?? null;
+                if (!$date || !$time) continue;
+
+                try {
+                    $dt = \Carbon\Carbon::parse($date . ' ' . $time);
+                    if ($dt->lte(now())) {
+                        $validator->errors()->add("schedule_options.$i.date", "The schedule_options.$i.date field must be a date/time after now.");
+                    }
+                } catch (\Exception $e) {
+                    // If parse fails, base rules will report invalid date/time.
+                }
+            }
+        });
 
         if ($validator->fails()) {
             \Illuminate\Support\Facades\Log::error('SubmitScheduleValidation Failed:', $validator->errors()->toArray());
@@ -2786,9 +3044,9 @@ class ManagerProgramController extends Controller
                         return false;
                     }
                     
-                    // Filter berdasarkan manager_program_id
-                    // Hanya Program Manager yang membuat/mengelola program tersebut yang bisa approve
-                    $isManaged = $program->manager_program_id == $user->id;
+                    // Filter: tampilkan jika program belum punya manager ATAU program dikelola oleh Program Manager ini
+                    // Jika manager_program_id null, semua Program Manager bisa lihat (agar request tidak hilang)
+                    $isManaged = $program->manager_program_id === null || $program->manager_program_id == $user->id;
                     
                     if (!$isManaged) {
                         Log::info('Approval filtered out - not managed by this Program Manager', [
@@ -2801,7 +3059,7 @@ class ManagerProgramController extends Controller
                             'reason' => 'Special budget approval hanya bisa di-manage oleh Program Manager yang membuat program tersebut'
                         ]);
                     } else {
-                        Log::info('Approval included - managed by this Program Manager', [
+                        Log::info('Approval included - managed by this Program Manager or program has no manager', [
                             'approval_id' => $approval->id,
                             'program_id' => $program->id,
                             'program_name' => $program->name,
@@ -2840,32 +3098,21 @@ class ManagerProgramController extends Controller
                     : 0;
                 $episodeId = $requestData['episode_id'] ?? ($episode ? $episode->id : null);
                 
-                // Ambil reason dari request_notes (ini adalah special_budget_reason yang dikirim Producer)
-                // request_notes diisi dengan special_budget_reason saat Producer mengajukan
-                // Cek dengan lebih teliti untuk memastikan reason tidak kosong
+                // Reason = alasan Producer (special_budget_reason). Sumber: request_notes, request_data.special_budget_reason, atau CreativeWork.special_budget_reason
                 $reason = null;
-                if (!empty($approval->request_notes) && trim($approval->request_notes) !== '') {
-                    $reason = trim($approval->request_notes);
-                } elseif ($approvable && !empty($approvable->special_budget_reason) && trim($approvable->special_budget_reason) !== '') {
-                    $reason = trim($approvable->special_budget_reason);
+                if (!empty($approval->request_notes) && trim((string) $approval->request_notes) !== '') {
+                    $reason = trim((string) $approval->request_notes);
                 }
-                $reason = $reason ?: '-'; // Default ke '-' jika masih kosong
+                if (($reason === null || $reason === '') && !empty($requestData['special_budget_reason']) && trim((string) $requestData['special_budget_reason']) !== '') {
+                    $reason = trim((string) $requestData['special_budget_reason']);
+                }
+                if (($reason === null || $reason === '') && $approvable && !empty($approvable->special_budget_reason) && trim((string) $approvable->special_budget_reason) !== '') {
+                    $reason = trim((string) $approvable->special_budget_reason);
+                }
+                $reason = ($reason !== null && $reason !== '') ? $reason : null; // Jangan pakai '-' agar frontend bisa bedakan "kosong" vs "tidak diisi"
                 
                 // Pastikan creative_work_id ada
                 $creativeWorkId = $approvable ? (int) $approvable->id : null;
-                
-                // Pastikan reason tidak kosong - ambil dari request_notes (yang diisi dengan special_budget_reason saat Producer submit)
-                // request_notes diisi di ProducerController dengan: 'request_notes' => $request->special_budget_reason
-                if (empty($reason) || $reason === '-') {
-                    // Fallback ke special_budget_reason dari CreativeWork jika request_notes kosong
-                    if ($approvable && !empty($approvable->special_budget_reason)) {
-                        $reason = trim($approvable->special_budget_reason);
-                    }
-                    // Jika masih kosong, coba ambil dari request_data jika ada
-                    if (empty($reason) || $reason === '-') {
-                        $reason = isset($requestData['special_budget_reason']) ? trim($requestData['special_budget_reason']) : '-';
-                    }
-                }
                 
                 // Log untuk debugging jika ada masalah
                 if (!$creativeWorkId) {
@@ -2876,23 +3123,17 @@ class ManagerProgramController extends Controller
                     ]);
                 }
                 
-                if ($reason === '-') {
-                    Log::warning('Special budget approval missing reason', [
-                        'approval_id' => $approval->id,
-                        'request_notes' => $approval->request_notes,
-                        'special_budget_reason' => $approvable ? $approvable->special_budget_reason : null,
-                        'request_data' => $requestData
-                    ]);
-                }
-                
                 return [
                     'id' => $approval->id,
                     'approval_type' => $approval->approval_type,
                     'status' => $approval->status,
                     'priority' => $approval->priority ?? 'normal',
                     'requested_at' => $approval->requested_at ? $approval->requested_at->toDateTimeString() : null,
-                    'request_notes' => $reason,
+                    'request_notes' => $reason ?? '-',
                     'request_data' => $requestData,
+                    // Agar Program Manager dapat data persis seperti input Producer:
+                    'special_budget_reason' => $reason,
+                    'reason' => $reason ?? '-',
                     
                     // Data dari request_data (untuk frontend)
                     'special_budget_amount' => $specialBudgetAmount,
@@ -2938,7 +3179,6 @@ class ManagerProgramController extends Controller
                     'formatted_amount' => 'Rp ' . number_format($specialBudgetAmount, 0, ',', '.'),
                     'episode_display' => $episode ? "Episode {$episode->episode_number}" : 'Episode #-',
                     'creative_work_display' => $creativeWorkId ? "Creative Work #{$creativeWorkId}" : 'Creative Work #undefined',
-                    'reason' => $reason, // Alias untuk request_notes - pastikan selalu ada
                     
                     // Pastikan creative_work_id selalu ada di root level untuk frontend
                     'creative_work_id' => $creativeWorkId,
@@ -2982,10 +3222,118 @@ class ManagerProgramController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
-    } 
+    }
 
+    /**
+     * Get Special Budget Approval History (approved & rejected)
+     * GET /api/live-tv/manager-program/special-budget-approvals/history
+     */
+    public function getSpecialBudgetApprovalsHistory(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            $userRole = strtolower($user->role ?? '');
+            $allowedRoles = ['manager program', 'program manager', 'managerprogram'];
+            if (!in_array($userRole, $allowedRoles)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. Your role: ' . ($user->role ?? 'unknown')
+                ], 403);
+            }
 
+            $allApprovals = ProgramApproval::where('approval_type', 'special_budget')
+                ->whereIn('status', ['approved', 'rejected'])
+                ->where('approvable_type', 'App\Models\CreativeWork')
+                ->with([
+                    'approvable' => fn($q) => $q->with(['episode.program']),
+                    'requestedBy',
+                    'approvedBy'
+                ])
+                ->orderBy('updated_at', 'desc')
+                ->limit(100)
+                ->get();
 
+            $filteredApprovals = $allApprovals->filter(function ($approval) use ($user) {
+                try {
+                    $approvable = $approval->approvable;
+                    if (!$approvable) return false;
+                    $episode = $approvable->episode;
+                    if (!$episode) return false;
+                    $program = $episode->program;
+                    if (!$program) return false;
+                    return $program->manager_program_id === null || $program->manager_program_id == $user->id;
+                } catch (\Throwable $e) {
+                    return false;
+                }
+            });
+
+            $requestData = null;
+            $formattedItems = $filteredApprovals->map(function ($approval) {
+                $approvable = $approval->approvable;
+                $episode = $approvable?->episode;
+                $program = $episode?->program;
+                $requestData = $approval->request_data ?? [];
+                $specialBudgetAmount = isset($requestData['special_budget_amount']) ? (float) $requestData['special_budget_amount'] : 0;
+                $approvedAmount = $requestData['approved_amount'] ?? $specialBudgetAmount;
+
+                $reason = null;
+                if (!empty($approval->request_notes) && trim((string) $approval->request_notes) !== '') {
+                    $reason = trim((string) $approval->request_notes);
+                }
+                if (($reason === null || $reason === '') && !empty($requestData['special_budget_reason'])) {
+                    $reason = trim((string) $requestData['special_budget_reason']);
+                }
+                if (($reason === null || $reason === '') && $approvable && !empty($approvable->special_budget_reason)) {
+                    $reason = trim((string) $approvable->special_budget_reason);
+                }
+
+                return [
+                    'id' => $approval->id,
+                    'approval_type' => $approval->approval_type,
+                    'status' => $approval->status,
+                    'priority' => $approval->priority ?? 'normal',
+                    'requested_at' => $approval->requested_at ? $approval->requested_at->toDateTimeString() : null,
+                    'approved_at' => $approval->approved_at ? $approval->approved_at->toDateTimeString() : null,
+                    'request_notes' => $reason ?? '-',
+                    'special_budget_reason' => $reason,
+                    'reason' => $reason ?? '-',
+                    'approval_notes' => $approval->approval_notes,
+                    'special_budget_amount' => $specialBudgetAmount,
+                    'requested_amount' => $specialBudgetAmount,
+                    'approved_amount' => $approvedAmount,
+                    'request_data' => $requestData,
+                    'creative_work' => $approvable ? ['id' => $approvable->id, 'episode_id' => $approvable->episode_id, 'status' => $approvable->status] : null,
+                    'episode' => $episode ? ['id' => $episode->id, 'episode_number' => $episode->episode_number, 'title' => $episode->title ?? "Episode {$episode->episode_number}", 'program_id' => $episode->program_id] : null,
+                    'episode_id' => $episode?->id,
+                    'episode_number' => $episode?->episode_number,
+                    'program' => $program ? ['id' => $program->id, 'name' => $program->name] : null,
+                    'program_id' => $program?->id,
+                    'program_name' => $program?->name,
+                    'requested_by' => $approval->requestedBy ? ['id' => $approval->requestedBy->id, 'name' => $approval->requestedBy->name, 'role' => $approval->requestedBy->role] : null,
+                    'requested_by_name' => $approval->requestedBy?->name,
+                    'approved_by' => $approval->approvedBy ? ['id' => $approval->approvedBy->id, 'name' => $approval->approvedBy->name] : null,
+                    'approved_by_name' => $approval->approvedBy?->name,
+                    'formatted_amount' => 'Rp ' . number_format($specialBudgetAmount, 0, ',', '.'),
+                    'formatted_approved_amount' => 'Rp ' . number_format($approvedAmount, 0, ',', '.'),
+                    'episode_display' => $episode ? "Episode {$episode->episode_number}" : 'Episode #-',
+                    'creative_work_id' => $approvable ? (int) $approvable->id : null,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $formattedItems->values()->toArray(),
+                'message' => 'Special budget history retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error in getSpecialBudgetApprovalsHistory: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve special budget history',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 
     /**
      * Get revised schedules for Manager Program
@@ -3206,7 +3554,8 @@ class ManagerProgramController extends Controller
         try {
             $user = auth()->user();
             
-            if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            $userRole = is_string($user->role) ? strtolower(trim($user->role)) : '';
+            if (!in_array($userRole, ['manager program', 'program manager', 'managerprogram'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -3316,13 +3665,13 @@ class ManagerProgramController extends Controller
                     'total_budget' => $creativeWork->total_budget
                 ]);
 
-                // Notify Producer
-                $producer = $creativeWork->episode->program->productionTeam->producer;
-                if ($producer) {
-                    $message = $approvedAmount != $requestedAmount 
-                        ? "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah disetujui dengan revisi. Diminta: Rp " . number_format($requestedAmount, 0, ',', '.') . ", Disetujui: Rp " . number_format($approvedAmount, 0, ',', '.')
-                        : "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah disetujui sebesar Rp " . number_format($approvedAmount, 0, ',', '.');
+                $message = $approvedAmount != $requestedAmount
+                    ? "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah disetujui dengan revisi. Diminta: Rp " . number_format($requestedAmount, 0, ',', '.') . ", Disetujui: Rp " . number_format($approvedAmount, 0, ',', '.')
+                    : "Budget khusus untuk Episode {$creativeWork->episode->episode_number} telah disetujui sebesar Rp " . number_format($approvedAmount, 0, ',', '.');
 
+                // Notify Producer
+                $producer = $creativeWork->episode->program->productionTeam->producer ?? null;
+                if ($producer) {
                     Notification::create([
                         'user_id' => $producer->id,
                         'type' => 'special_budget_approved',
@@ -3340,18 +3689,20 @@ class ManagerProgramController extends Controller
                 }
 
                 // Notify Creative
-                Notification::create([
-                    'user_id' => $creativeWork->created_by,
-                    'type' => 'special_budget_approved',
-                    'title' => 'Budget Khusus Disetujui',
-                    'message' => $message,
-                    'data' => [
-                        'approval_id' => $approval->id,
-                        'creative_work_id' => $creativeWork->id,
-                        'episode_id' => $creativeWork->episode_id,
-                        'approved_amount' => $approvedAmount
-                    ]
-                ]);
+                if ($creativeWork->created_by) {
+                    Notification::create([
+                        'user_id' => $creativeWork->created_by,
+                        'type' => 'special_budget_approved',
+                        'title' => 'Budget Khusus Disetujui',
+                        'message' => $message,
+                        'data' => [
+                            'approval_id' => $approval->id,
+                            'creative_work_id' => $creativeWork->id,
+                            'episode_id' => $creativeWork->episode_id,
+                            'approved_amount' => $approvedAmount
+                        ]
+                    ]);
+                }
             }
 
             return response()->json([
@@ -3379,7 +3730,8 @@ class ManagerProgramController extends Controller
         try {
             $user = auth()->user();
             
-            if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            $userRole = is_string($user->role) ? strtolower(trim($user->role)) : '';
+            if (!in_array($userRole, ['manager program', 'program manager', 'managerprogram'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -3414,8 +3766,11 @@ class ManagerProgramController extends Controller
                 ], 400);
             }
 
-            // Reject approval
-            $approval->reject($user->id, $request->rejection_notes);
+            // Reject approval (ProgramApproval tidak punya method reject, update langsung)
+            $approval->update([
+                'status' => 'rejected',
+                'approval_notes' => $request->rejection_notes,
+            ]);
 
             // Update Creative Work
             $creativeWork = $approval->approvable; // CreativeWork
@@ -3483,7 +3838,7 @@ class ManagerProgramController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'approval' => $approval->fresh(['approvable', 'rejectedBy']),
+                    'approval' => $approval->fresh(['approvable']),
                     'creative_work' => $creativeWork->fresh(['episode', 'specialBudgetApproval'])
                 ],
                 'message' => 'Special budget rejected. Producer and Creative have been notified.'
