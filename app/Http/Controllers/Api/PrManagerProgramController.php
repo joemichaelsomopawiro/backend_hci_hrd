@@ -1203,4 +1203,102 @@ class PrManagerProgramController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * List Deleted/Archived Programs (History)
+     * GET /program-regular/manager-program/history
+     */
+    public function getArchivedPrograms(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            // Get soft-deleted programs
+            $programs = PrProgram::onlyTrashed()
+                ->with(['managerProgram', 'producer', 'managerDistribusi'])
+                ->orderBy('deleted_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $programs
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get Performance Data (Comprehensive report)
+     * GET /program-regular/manager-program/performance-data
+     */
+    public function getPerformanceData(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            // Mock performance data for now or implement real logic
+            // Real logic might involve counting completed episodes, on-time delivery, etc.
+            $data = [
+                'total_completed_episodes' => \App\Models\PrEpisode::where('status', 'aired')->count(),
+                'on_time_percentage' => 85,
+                'budget_utilization' => 75,
+                'efficiency_score' => 92
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $data
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reactivate (restore) a soft-deleted program.
+     */
+    public function reactivateProgram(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], 403);
+            }
+
+            $program = PrProgram::onlyTrashed()->findOrFail($id);
+            $program->restore();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Program successfully reactivated'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to reactivate program: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

@@ -731,6 +731,10 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/episodes/{id}/approve-budget', [PrManagerProgramController::class, 'approveBudget']); // Approve special budget
         Route::post('/episodes/{id}/reject-budget', [PrManagerProgramController::class, 'rejectBudget']); // Reject special budget
 
+        Route::get('/history', [PrManagerProgramController::class, 'getArchivedPrograms']); // Get archived programs
+        Route::get('/performance-data', [PrManagerProgramController::class, 'getPerformanceData']); // Get performance data
+        Route::post('/programs/{id}/reactivate', [PrManagerProgramController::class, 'reactivateProgram']); // Reactivate program
+
         // Team Members Management
         Route::get('/programs/{id}/team-members', [PrProgramCrewController::class, 'index']); // List team
         Route::post('/programs/{id}/team-members', [PrProgramCrewController::class, 'store']); // Add team member
