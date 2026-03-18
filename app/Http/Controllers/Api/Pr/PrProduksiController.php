@@ -221,6 +221,10 @@ class PrProduksiController extends Controller
 
             $work->acceptWork($user->id);
 
+            // Notify crew members that production work has been accepted
+            $notificationService = app(\App\Services\PrNotificationService::class);
+            $notificationService->notifyWorkflowStepReady($work->pr_episode_id, 5);
+
             return response()->json(['success' => true, 'data' => $work->fresh(['episode', 'createdBy']), 'message' => 'Work accepted successfully']);
 
         } catch (\Exception $e) {
@@ -290,6 +294,10 @@ class PrProduksiController extends Controller
                     "Shooting results submitted via links.",
                     ['step' => 5, 'work_id' => $work->id]
                 );
+
+                // Notify Editor team that shooting is complete and editing can start
+                $notificationService = app(\App\Services\PrNotificationService::class);
+                $notificationService->notifyWorkflowStepReady($work->pr_episode_id, 6); // Step 6 is Editing
             }
 
             // Always ensure Editor work is ready when Production work is updated
@@ -559,6 +567,10 @@ class PrProduksiController extends Controller
             // Check if both production and promotion are complete, then
             if ($work->status === 'completed') {
                 app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
+                
+                // Notify Editor team that production is complete and editing can start
+                $notificationService = app(\App\Services\PrNotificationService::class);
+                $notificationService->notifyWorkflowStepReady($work->pr_episode_id, 6); // Step 6 is Editing
             }
             // Auto-create PrEditorWork for next step
             $this->ensureEditorWorkReady($work->pr_episode_id, $user->id);

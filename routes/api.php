@@ -51,10 +51,13 @@ use App\Http\Controllers\Api\Pr\PrTalentController;
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
 Route::get('/employees/roles', [EmployeeController::class, 'getRoles']); // Endpoint untuk get roles
+Route::get('/employees/deleted', [EmployeeController::class, 'getDeletedEmployees']); // Get soft-deleted employees
 Route::get('/employees/{id}', [EmployeeController::class, 'show']);
 Route::post('/employees', [EmployeeController::class, 'store']);
 Route::put('/employees/{id}', [EmployeeController::class, 'update']);
-Route::delete('/employees/{id}', [EmployeeController::class, 'destroy']);
+Route::delete('/employees/{id}', [EmployeeController::class, 'destroy']); // Soft delete
+Route::post('/employees/{id}/restore', [EmployeeController::class, 'restore']); // Restore soft-deleted employee
+Route::delete('/employees/{id}/force', [EmployeeController::class, 'forceDelete']); // Permanent delete (use with caution)
 Route::delete('/employees/{employeeId}/documents/{documentId}', [EmployeeController::class, 'deleteDocument']);
 Route::delete('/employees/{employeeId}/employment-histories/{historyId}', [EmployeeController::class, 'deleteEmploymentHistory']);
 Route::delete('/employees/{employeeId}/promotion-histories/{promotionId}', [EmployeeController::class, 'deletePromotionHistory']);

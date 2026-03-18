@@ -225,6 +225,10 @@ class PrEditorController extends Controller
                 ['step' => 6, 'work_id' => $work->id, 'reason' => $request->notes]
             );
 
+            // Notify Production team about file request
+            $notificationService = app(\App\Services\PrNotificationService::class);
+            $notificationService->notifyWorkflowStepReady($work->pr_episode_id, 5); // Step 5 is Production
+
             DB::commit();
 
             return response()->json([
@@ -311,6 +315,10 @@ class PrEditorController extends Controller
                     "Video editing submitted for QC review.",
                     ['step' => 6, 'work_id' => $work->id]
                 );
+
+                // Notify QC team that editing is complete and ready for review
+                $notificationService = app(\App\Services\PrNotificationService::class);
+                $notificationService->notifyWorkflowStepReady($work->pr_episode_id, 7); // Step 7 is QC
             }
 
             $work->update($updateData);

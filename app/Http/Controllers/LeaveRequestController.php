@@ -6,6 +6,7 @@ use App\Models\LeaveRequest;
 use App\Models\LeaveQuota;
 use App\Services\RoleHierarchyService;
 use App\Services\LeaveAttendanceIntegrationService;
+use App\Services\LeaveNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
@@ -282,6 +283,14 @@ class LeaveRequestController extends Controller
             $leaveRequest->update(['employee_signature_path' => $path]);
         }
 
+        // Kirim notifikasi ke manager yang berwenang
+        try {
+            $notificationService = new LeaveNotificationService();
+            $notificationService->notifyLeaveSubmitted($leaveRequest);
+        } catch (\Exception $e) {
+            Log::error('Failed to send leave submission notification', ['error' => $e->getMessage()]);
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Permohonan cuti berhasil diajukan',
@@ -389,6 +398,14 @@ class LeaveRequestController extends Controller
         $leaveService = new LeaveAttendanceIntegrationService();
         $leaveService->handleLeaveApproval($leaveRequest);
 
+        // Kirim notifikasi ke employee bahwa cuti disetujui
+        try {
+            $notificationService = new LeaveNotificationService();
+            $notificationService->notifyLeaveApproved($leaveRequest);
+        } catch (\Exception $e) {
+            Log::error('Failed to send leave approval notification', ['error' => $e->getMessage()]);
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Permohonan cuti berhasil disetujui dan status attendance telah diupdate',
@@ -441,6 +458,14 @@ class LeaveRequestController extends Controller
         // Reset status attendance jika ada
         $leaveService = new LeaveAttendanceIntegrationService();
         $leaveService->handleLeaveRejection($leaveRequest);
+
+        // Kirim notifikasi ke employee bahwa cuti ditolak
+        try {
+            $notificationService = new LeaveNotificationService();
+            $notificationService->notifyLeaveRejected($leaveRequest);
+        } catch (\Exception $e) {
+            Log::error('Failed to send leave rejection notification', ['error' => $e->getMessage()]);
+        }
 
         return response()->json([
             'success' => true,

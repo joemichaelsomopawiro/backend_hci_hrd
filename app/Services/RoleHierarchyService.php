@@ -421,6 +421,33 @@ class RoleHierarchyService
     }
 
     /**
+     * Check if role is in Program department
+     */
+    public static function isInProgramDepartment(string $role): bool
+    {
+        $department = self::getDepartmentForRole($role);
+        return $department === 'production';
+    }
+
+    /**
+     * Check if role is in Distribution department
+     */
+    public static function isInDistributionDepartment(string $role): bool
+    {
+        $department = self::getDepartmentForRole($role);
+        return $department === 'distribution';
+    }
+
+    /**
+     * Check if role is in HR department
+     */
+    public static function isInHRDepartment(string $role): bool
+    {
+        $department = self::getDepartmentForRole($role);
+        return $department === 'hr';
+    }
+
+    /**
      * Check if a user with given role can access data for target role
      *
      * @param string $userRole The role of the current user

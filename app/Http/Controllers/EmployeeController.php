@@ -624,51 +624,32 @@ class EmployeeController extends Controller
             DB::beginTransaction();
 
             try {
-                Log::info("Attempting to delete employee with ID: {$id}");
+                Log::info("Soft deleting employee with ID: {$id}");
             } catch (\Exception $logException) {
                 // Silently ignore logging failure
             }
             $employee = Employee::findOrFail($id);
 
-            foreach ($employee->documents as $doc) {
+            // Soft delete - data tetap ada di database tapi ditandai deleted_at
+            // Tidak menghapus dokumen dan data terkait agar bisa direstore
+            $employee->delete();
+
+            // Jika employee punya user account, nonaktifkan juga
+            if ($employee->user) {
+                $employee->user->update(['is_active' => false]);
                 try {
-                    Log::info("Deleting document: {$doc->file_path}");
+                    Log::info("Deactivated user account for employee ID: {$id}");
                 } catch (\Exception $logException) {
                     // Silently ignore logging failure
                 }
-                if (Storage::disk('public')->exists($doc->file_path)) {
-                    Storage::disk('public')->delete($doc->file_path);
-                } else {
-                    try {
-                        Log::warning("Document file not found: {$doc->file_path}");
-                    } catch (\Exception $logException) {
-                        // Silently ignore logging failure
-                    }
-                }
-                $doc->delete();
             }
-
-            try {
-                Log::info("Deleting related records for employee ID: {$id}");
-            } catch (\Exception $logException) {
-                // Silently ignore logging failure
-            }
-            $employee->employmentHistories()->delete();
-            $employee->promotionHistories()->delete();
-            $employee->trainings()->delete();
-            $employee->benefits()->delete();
-
-            try {
-                Log::info("Deleting employee record with ID: {$id}");
-            } catch (\Exception $logException) {
-                // Silently ignore logging failure
-            }
-            $employee->delete();
 
             DB::commit();
 
             return response()->json([
-                'message' => 'Data pegawai dan semua data terkait berhasil dihapus'
+                'message' => 'Data pegawai berhasil dinonaktifkan dan dipindahkan ke arsip',
+                'employee_id' => $id,
+                'deleted_at' => $employee->deleted_at
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             DB::rollBack();
@@ -701,6 +682,175 @@ class EmployeeController extends Controller
             }
             return response()->json([
                 'message' => 'Terjadi kesalahan',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all soft-deleted employees (archived/inactive employees)
+     */
+    public function getDeletedEmployees()
+    {
+        try {
+            $deletedEmployees = Employee::onlyTrashed()
+                ->with([
+                    'user',
+                    'documents',
+                    'employmentHistories',
+                    'promotionHistories',
+                    'trainings',
+                    'benefits'
+                ])
+                ->orderBy('deleted_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $deletedEmployees,
+                'total' => $deletedEmployees->count(),
+                'message' => 'Daftar pegawai yang dinonaktifkan berhasil diambil'
+            ]);
+        } catch (\Exception $e) {
+            try {
+                Log::error('Error in getDeletedEmployees: ' . $e->getMessage());
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil daftar pegawai yang dinonaktifkan',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Restore a soft-deleted employee (reactivate employee)
+     */
+    public function restore($id)
+    {
+        try {
+            DB::beginTransaction();
+
+            $employee = Employee::onlyTrashed()->findOrFail($id);
+
+            try {
+                Log::info("Restoring employee with ID: {$id}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+
+            // Restore employee
+            $employee->restore();
+
+            // Jika employee punya user account, aktifkan kembali
+            if ($employee->user) {
+                $employee->user->update(['is_active' => true]);
+                try {
+                    Log::info("Reactivated user account for employee ID: {$id}");
+                } catch (\Exception $logException) {
+                    // Silently ignore logging failure
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Data pegawai berhasil diaktifkan kembali',
+                'employee' => $employee->load([
+                    'user',
+                    'documents',
+                    'employmentHistories',
+                    'promotionHistories',
+                    'trainings',
+                    'benefits'
+                ])
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            DB::rollBack();
+            try {
+                Log::error("Deleted employee not found: ID {$id}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Pegawai yang dinonaktifkan tidak ditemukan',
+                'error' => $e->getMessage(),
+            ], 404);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            try {
+                Log::error("Error in restore: {$e->getMessage()}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengaktifkan kembali pegawai',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Permanently delete an employee (force delete - use with caution)
+     */
+    public function forceDelete($id)
+    {
+        try {
+            DB::beginTransaction();
+
+            $employee = Employee::onlyTrashed()->findOrFail($id);
+
+            try {
+                Log::info("Force deleting employee with ID: {$id}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+
+            // Delete all related documents from storage
+            foreach ($employee->documents as $doc) {
+                if (Storage::disk('public')->exists($doc->file_path)) {
+                    Storage::disk('public')->delete($doc->file_path);
+                }
+                $doc->delete();
+            }
+
+            // Delete all related records
+            $employee->employmentHistories()->delete();
+            $employee->promotionHistories()->delete();
+            $employee->trainings()->delete();
+            $employee->benefits()->delete();
+
+            // Force delete the employee
+            $employee->forceDelete();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Data pegawai dan semua data terkait berhasil dihapus permanen'
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Pegawai tidak ditemukan',
+                'error' => $e->getMessage(),
+            ], 404);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            try {
+                Log::error("Error in forceDelete: {$e->getMessage()}");
+            } catch (\Exception $logException) {
+                // Silently ignore logging failure
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menghapus permanen pegawai',
                 'error' => $e->getMessage(),
             ], 500);
         }
