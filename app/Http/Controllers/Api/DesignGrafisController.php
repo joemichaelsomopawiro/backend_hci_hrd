@@ -102,7 +102,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || (!in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design']) && !MusicProgramAuthorization::hasDistributionManagerAccess($user))) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -212,7 +212,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || (!in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design']) && !MusicProgramAuthorization::hasDistributionManagerAccess($user instanceof \App\Models\User ? $user : null))) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -251,7 +251,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -341,7 +341,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -386,7 +386,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -505,7 +505,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -625,7 +625,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -709,7 +709,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -778,7 +778,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

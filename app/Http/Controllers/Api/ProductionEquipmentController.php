@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ProductionEquipment;
-use App\Models\EquipmentInventory;
+use App\Models\InventoryItem;
 use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -73,18 +73,16 @@ class ProductionEquipmentController extends Controller
             ], 403);
         }
         
-        // Group by name to show total available quantity for each type/model
-        // We assume 'name' is the identifier for the type of equipment users request
-        $availableEquipment = EquipmentInventory::where('status', 'available')
-            ->select('name', 'category', \DB::raw('count(*) as available_quantity'))
-            ->groupBy('name', 'category')
+        // Group by name to show total available quantity for each type/model from unified inventory
+        $availableEquipment = InventoryItem::where('status', 'active')
+            ->select('name', 'category', 'available_quantity', 'total_quantity', 'equipment_id')
             ->orderBy('name')
             ->get();
             
         return response()->json([
             'success' => true,
             'data' => $availableEquipment,
-            'message' => 'Available equipment retrieved successfully'
+            'message' => 'Available equipment retrieved successfully from unified inventory'
         ]);
     }
 
@@ -137,25 +135,19 @@ class ProductionEquipmentController extends Controller
             ], 400);
         }
 
-        // Optional: Check against inventory quantity if inventory system exists
-        $inventoryItem = EquipmentInventory::where('name', $request->equipment_name)->first();
+        // Check against unified InventoryItem table
+        $inventoryItem = InventoryItem::where('name', $request->equipment_name)->first();
         if ($inventoryItem) {
-            // Count all approved and in_use equipment
-            $totalInUse = ProductionEquipment::where('equipment_name', $request->equipment_name)
-                ->whereIn('status', ['approved', 'in_use'])
-                ->sum('quantity');
-            
             $requestedQuantity = $request->quantity;
-            $availableQuantity = $inventoryItem->quantity - $totalInUse;
+            $availableQuantity = $inventoryItem->available_quantity;
 
             if ($requestedQuantity > $availableQuantity) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Insufficient equipment quantity. Requested: ' . $requestedQuantity . ', Available: ' . $availableQuantity,
+                    'message' => 'Insufficient equipment quantity in unified inventory. Requested: ' . $requestedQuantity . ', Available: ' . $availableQuantity,
                     'details' => [
                         'equipment_name' => $request->equipment_name,
-                        'total_inventory' => $inventoryItem->quantity,
-                        'currently_in_use' => $totalInUse,
+                        'total_inventory' => $inventoryItem->total_quantity,
                         'available' => $availableQuantity,
                         'requested' => $requestedQuantity
                     ]
@@ -408,18 +400,14 @@ class ProductionEquipmentController extends Controller
             'returned_at' => now()
         ]);
 
-        // Update EquipmentInventory if exists
-        $equipmentInventory = \App\Models\EquipmentInventory::where('episode_id', $equipment->episode_id)
-            ->where('equipment_name', is_array($equipment->equipment_list) ? $equipment->equipment_list[0] : ($equipment->equipment_list ?? $equipment->equipment_name))
-            ->where('status', 'assigned')
+        // Update unified InventoryItem if exists
+        $inventoryItem = \App\Models\InventoryItem::where('name', is_array($equipment->equipment_list) ? $equipment->equipment_list[0] : ($equipment->equipment_list ?? $equipment->equipment_name))
             ->first();
 
-        if ($equipmentInventory) {
-            $equipmentInventory->update([
-                'status' => 'returned',
-                'return_condition' => $request->return_condition,
-                'return_notes' => $request->return_notes ?? null,
-                'returned_at' => now()
+        if ($inventoryItem) {
+            $newAvailable = $inventoryItem->available_quantity + 1;
+            $inventoryItem->update([
+                'available_quantity' => min($newAvailable, $inventoryItem->total_quantity)
             ]);
         }
         // Notifikasi ke Art & Set Properti

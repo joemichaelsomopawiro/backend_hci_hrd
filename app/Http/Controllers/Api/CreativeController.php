@@ -60,7 +60,7 @@ class CreativeController extends Controller
             // Filter by creator - default to current user if Creative role
             if ($request->has('created_by')) {
                 $query->where('created_by', $request->created_by);
-            } elseif ($user->role === 'Creative' && !$isProgramManager) {
+            } elseif (strtolower($user->role) === 'creative' && !$isProgramManager) {
                 $query->where('created_by', $user->id);
             }
 
@@ -504,12 +504,10 @@ class CreativeController extends Controller
                 ], 403);
             }
 
-            $workQuery = CreativeWork::where('id', $id);
-            if (!$isProgramManager) {
-                $workQuery->where('created_by', $user->id);
-            }
-
-            $work = $workQuery->firstOrFail();
+            $work = CreativeWork::findOrFail($id);
+            // Non-Program Manager/Producer/DM can only accept their own assignments (or unclaimed draft)
+            // But if it's "View as", they are already authorized.
+            // For now, allow the action if canUserPerformTask passes.
 
             // Only allow accept work if status is draft
             if ($work->status !== 'draft') {
@@ -606,14 +604,13 @@ class CreativeController extends Controller
                 ], 422);
             }
 
-            // Find the work, allow any Creative user to complete it if they are in the same team
-            // but for now, let's keep it simple: any user with role 'Creative' can update.
+            // Find the work
             $work = CreativeWork::where('id', $id)->firstOrFail();
             
-            if (!$isProgramManager && strtolower($user->role) !== 'creative') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Creative')) {
                  return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. Only Creative role can complete this work.'
+                    'message' => 'Unauthorized access.'
                 ], 403);
             }
 

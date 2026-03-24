@@ -8,7 +8,7 @@ use App\Models\MusicArrangement;
 use App\Models\Episode;
 use App\Models\Notification;
 use App\Models\ProductionEquipment;
-use App\Models\EquipmentInventory;
+use App\Models\InventoryItem;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\ProgramManagerAuthorization;
 use App\Helpers\MusicProgramAuthorization;
@@ -31,19 +31,7 @@ class SoundEngineerController extends Controller
             return false;
         }
 
-        // Program Manager should be able to access all music workflow steps.
-        if (ProgramManagerAuthorization::isProgramManager($user)) {
-            return true;
-        }
-        
-        $role = $user->role;
-        $roleLower = strtolower($role);
-        if (in_array($roleLower, ['sound engineer', 'sound_engineer', 'production', 'recording_team', 'vocal_recording']) || MusicProgramAuthorization::hasProducerAccess($user)) {
-            return true;
-        }
-        // Also allow if has any music team assignment (for dashboard visibility)
-        // includes 'recording' type in ProductionTeamAssignment
-        return $user->hasAnyMusicTeamAssignment();
+        return MusicProgramAuthorization::canUserPerformTask($user, null, 'Sound Engineer');
     }
 
     /**
@@ -376,7 +364,7 @@ class SoundEngineerController extends Controller
             ->where('is_active', true)
             ->exists();
 
-            if (!$hasAccess) {
+            if (!$this->isSoundEngineer($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: You are not assigned as Sound Engineer for this episode\'s production team.'
@@ -2100,7 +2088,7 @@ class SoundEngineerController extends Controller
                 $equipmentName = $equipment['equipment_name'];
 
                 if (!empty($equipment['equipment_id'])) {
-                    $inventoryItem = EquipmentInventory::find($equipment['equipment_id']);
+                    $inventoryItem = InventoryItem::find($equipment['equipment_id']);
                     if ($inventoryItem) {
                         $equipmentName = $inventoryItem->name;
                     }
@@ -2120,25 +2108,20 @@ class SoundEngineerController extends Controller
                 $qtyByName[$it['name']] = ($qtyByName[$it['name']] ?? 0) + (int) $it['quantity'];
             }
 
-            // Check availability per name (total qty), considering existing pending requests as "reserved"
-            foreach ($qtyByName as $name => $qty) {
-                $availableCount = EquipmentInventory::where('status', 'available')->where('name', $name)->count();
-                $reservedPending = 0;
-                $pendingRows = ProductionEquipment::where('status', 'pending')
-                    ->whereJsonContains('equipment_list', $name)
-                    ->get(['id', 'equipment_quantities']);
-                foreach ($pendingRows as $row) {
-                    $map = is_array($row->equipment_quantities) ? $row->equipment_quantities : (json_decode($row->equipment_quantities, true) ?? []);
-                    $reservedPending += (int) ($map[$name] ?? 0);
-                }
+            // Check availability per name (total qty) in master inventory
+            $inventoryCounts = InventoryItem::whereIn('name', array_keys($qtyByName))
+                ->get()
+                ->pluck('available_quantity', 'name');
 
-                $effectiveAvailable = max(0, $availableCount - $reservedPending);
-                if ($effectiveAvailable < $qty) {
+            foreach ($qtyByName as $name => $qty) {
+                $availableCount = $inventoryCounts->get($name, 0);
+
+                if ($availableCount < $qty) {
                     $unavailableEquipment[] = [
                         'equipment_name' => $name,
                         'requested_quantity' => $qty,
-                        'available_count' => $effectiveAvailable,
-                        'reason' => 'Equipment tidak tersedia dalam jumlah yang diminta'
+                        'available_count' => $availableCount,
+                        'reason' => 'Equipment tidak tersedia dalam jumlah yang cukup di stok pusat'
                     ];
                 }
             }
@@ -2322,35 +2305,10 @@ class SoundEngineerController extends Controller
         }
         
         // Return unique names with effective availability (available - reserved pending)
-        $availableCounts = EquipmentInventory::where('status', 'available')
-            ->selectRaw('name, COUNT(*) as available_quantity')
-            ->groupBy('name')
-            ->pluck('available_quantity', 'name');
-
-        $pending = ProductionEquipment::where('status', 'pending')->get(['equipment_quantities']);
-        $reservedByName = [];
-        foreach ($pending as $row) {
-            $map = is_array($row->equipment_quantities) ? $row->equipment_quantities : (json_decode($row->equipment_quantities, true) ?? []);
-            if (!is_array($map)) continue;
-            foreach ($map as $n => $q) {
-                $reservedByName[$n] = ($reservedByName[$n] ?? 0) + (int) $q;
-            }
-        }
-
-        $names = $availableCounts->keys()->merge(collect(array_keys($reservedByName)))->unique()->values();
-
-        $availableEquipment = [];
-        foreach ($names as $name) {
-            $available = (int) ($availableCounts[$name] ?? 0);
-            $reserved = (int) ($reservedByName[$name] ?? 0);
-            $effective = max(0, $available - $reserved);
-            if ($effective <= 0) continue;
-            $sample = EquipmentInventory::where('status', 'available')->where('name', $name)->orderBy('id')->first();
-            if (!$sample) continue;
-            $sample->available_quantity = $effective;
-            $availableEquipment[] = $sample;
-        }
-        $availableEquipment = collect($availableEquipment)->sortBy('name')->values();
+        $availableEquipment = InventoryItem::where('status', 'active') // InventoryItem uses 'active' status for available
+            ->select(['id', 'equipment_id', 'name', 'category', 'available_quantity', 'total_quantity'])
+            ->orderBy('name')
+            ->get();
             
         return response()->json([
             'success' => true,
@@ -2657,37 +2615,9 @@ class SoundEngineerController extends Controller
                     'returned_at' => now(),
                     'returned_by' => $user->id
                 ]);
-
-                // Update EquipmentInventory if exists
-                $itemNames = is_array($equipment->equipment_list) ? $equipment->equipment_list : [$equipment->equipment_list];
-                foreach ($itemNames as $itemName) {
-                    $equipmentInventory = \App\Models\EquipmentInventory::where('name', $itemName)
-                        ->where('status', 'in_use')
-                        ->first();
-
-                    if ($equipmentInventory) {
-                        $newStatus = 'available';
-                        if (($conditionData['condition'] ?? 'good') === 'damaged') {
-                            $newStatus = 'broken';
-                        } elseif (($conditionData['condition'] ?? 'good') === 'lost') {
-                            $newStatus = 'broken';
-                        }
-                        
-                        try {
-                            $equipmentInventory->update([
-                                'status' => $newStatus,
-                                'assigned_to' => null,
-                                'episode_id' => null,
-                                'assigned_by' => null,
-                                'assigned_at' => null,
-                            ]);
-                        } catch (\Exception $e) {
-                            // Fallback: just update status
-                            $equipmentInventory->update(['status' => $newStatus]);
-                        }
-                    }
-                }
-
+                // NOTE: We no longer increment available_quantity here.
+                // It will be handled by Art & Set Properti when they confirm the return.
+                
                 $returnedEquipment[] = $equipment->fresh();
             }
 

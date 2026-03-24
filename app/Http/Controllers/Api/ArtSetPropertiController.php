@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\EquipmentInventory;
+use App\Models\InventoryItem;
 use App\Models\ProductionEquipment;
 use App\Models\ProductionEquipmentTransfer;
 use App\Models\ProgramEquipmentTemplate;
@@ -44,9 +44,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -54,12 +55,11 @@ class ArtSetPropertiController extends Controller
                 ], 403);
             }
 
-            $q = EquipmentInventory::query()
-                ->where('is_active', true)
+            $q = InventoryItem::query()
                 ->selectRaw("name, MAX(category) as category,
-                    SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) as available,
-                    SUM(CASE WHEN status = 'in_use' THEN 1 ELSE 0 END) as in_use,
-                    COUNT(*) as total")
+                    SUM(available_quantity) as available,
+                    SUM(total_quantity - available_quantity) as in_use,
+                    SUM(total_quantity) as total")
                 ->groupBy('name');
 
             if ($request->filled('search')) {
@@ -75,7 +75,7 @@ class ArtSetPropertiController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $items,
-                'message' => 'Equipment name summary retrieved successfully'
+                'message' => 'Equipment name summary retrieved successfully from unified inventory'
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -101,9 +101,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -111,27 +112,30 @@ class ArtSetPropertiController extends Controller
                 ], 403);
             }
 
-            $query = EquipmentInventory::where('is_active', true)->with(['borrower', 'episode.program']);
+            $query = InventoryItem::query()->with('createdBy');
 
             // Filter by status
             if ($request->has('status')) {
                 $query->where('status', $request->status);
             }
 
-            // Filter by category (using category column, not equipment_type)
+            // Filter by category
             if ($request->has('category')) {
                 $query->where('category', $request->category);
             }
 
-            // Search by name
+            // Search by name or ID
             if ($request->has('search')) {
-                $query->where('name', 'like', '%' . $request->search . '%');
+                $query->where(function($q) use ($request) {
+                    $q->where('name', 'like', '%' . $request->search . '%')
+                      ->orWhere('equipment_id', 'like', '%' . $request->search . '%');
+                });
             }
 
             $equipment = $query->orderBy('created_at', 'desc')->paginate(15);
 
             // Siapa terakhir mengembalikan (untuk barang yang status available)
-            $namesOnPage = $equipment->pluck('name')->unique()->filter()->values()->toArray();
+            $namesOnPage = $equipment->getCollection()->pluck('name')->unique()->filter()->values()->toArray();
             $lastReturnedByMap = [];
             if (!empty($namesOnPage)) {
                 $returnedLoans = ProductionEquipment::where('status', 'returned')
@@ -226,9 +230,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -239,15 +244,12 @@ class ArtSetPropertiController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'category' => 'required|string|max:255',
-                'brand' => 'nullable|string|max:255',
-                'model' => 'nullable|string|max:255',
-                'serial_number' => 'nullable|string|max:255',
                 'description' => 'nullable|string',
-                'notes' => 'nullable|string',
-                'purchase_price' => 'nullable|numeric',
-                'purchase_date' => 'nullable|date',
+                'condition' => 'nullable|string|max:100',
                 'location' => 'nullable|string|max:255',
-                'quantity' => 'required|integer|min:1'
+                'position' => 'nullable|string|max:255',
+                'total_quantity' => 'required|integer|min:1',
+                'status' => 'nullable|in:active,maintenance,lost'
             ]);
 
             if ($validator->fails()) {
@@ -258,32 +260,29 @@ class ArtSetPropertiController extends Controller
                 ], 422);
             }
 
-            // Create multiple items based on quantity
-            $quantity = $request->integer('quantity', 1);
-            $createdItems = [];
+            // Use specific logic similar to PrArtController for consistency
+            $data = $request->only(['name', 'description', 'condition', 'location', 'position', 'category', 'total_quantity', 'status']);
+            $data['created_by'] = $user->id;
+            $data['available_quantity'] = (int) $request->total_quantity;
 
-            for ($i = 0; $i < $quantity; $i++) {
-                $equipment = EquipmentInventory::create([
-                    'name' => $request->name,
-                    'category' => $request->category,
-                    'brand' => $request->brand,
-                    'model' => $request->model,
-                    'serial_number' => $request->serial_number,
-                    'description' => $request->description,
-                    'notes' => $request->notes,
-                    'purchase_price' => $request->purchase_price,
-                    'purchase_date' => $request->purchase_date,
-                    'location' => $request->location,
-                    'status' => 'available',
-                    'is_active' => true
-                ]);
-                $createdItems[] = $equipment;
+            // Auto-generate equipment_id: ART-YYYYMMDD-XXXX
+            $date = now()->format('Ymd');
+            $count = InventoryItem::where('equipment_id', 'like', "ART-{$date}-%")->count();
+            $nextNumber = str_pad($count + 1, 4, '0', STR_PAD_LEFT);
+            $data['equipment_id'] = "ART-{$date}-{$nextNumber}";
+
+            // Handle photo upload
+            if ($request->hasFile('photo')) {
+                $path = $request->file('photo')->store('inventory-photos', 'public');
+                $data['photo_url'] = \Illuminate\Support\Facades\Storage::url($path);
             }
+
+            $item = InventoryItem::create($data);
 
             return response()->json([
                 'success' => true,
-                'message' => "{$quantity} Equipment items created successfully",
-                'data' => $createdItems
+                'message' => "Equipment item '{$item->name}' created successfully with ID {$item->equipment_id}",
+                'data' => $item
             ], 201);
 
         } catch (\Exception $e) {
@@ -310,9 +309,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -323,15 +323,12 @@ class ArtSetPropertiController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'sometimes|required|string|max:255',
                 'category' => 'sometimes|required|string|max:255',
-                'brand' => 'nullable|string|max:255',
-                'model' => 'nullable|string|max:255',
-                'serial_number' => 'nullable|string|max:255',
                 'description' => 'nullable|string',
-                'notes' => 'nullable|string',
-                'status' => 'sometimes|required|in:available,in_use,maintenance,broken,retired',
+                'condition' => 'nullable|string|max:100',
                 'location' => 'nullable|string|max:255',
-                'purchase_price' => 'nullable|numeric',
-                'purchase_date' => 'nullable|date',
+                'position' => 'nullable|string|max:255',
+                'total_quantity' => 'sometimes|required|integer|min:0',
+                'status' => 'sometimes|required|in:active,maintenance,lost'
             ]);
 
             if ($validator->fails()) {
@@ -342,13 +339,41 @@ class ArtSetPropertiController extends Controller
                 ], 422);
             }
 
-            $equipment = EquipmentInventory::findOrFail($id);
-            $equipment->update($request->all());
+            $equipment = InventoryItem::findOrFail($id);
+            
+            $data = $request->all();
+            
+            // Adjust available quantity if total quantity is changing
+            if ($request->has('total_quantity')) {
+                $newTotal = (int) $request->total_quantity;
+                $diff = $newTotal - $equipment->total_quantity;
+                $newAvailable = $equipment->available_quantity + $diff;
+                
+                if ($newAvailable < 0) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot reduce total quantity below currently borrowed amount. ' . abs($newAvailable) . ' units are currently in use.'
+                    ], 400);
+                }
+                $data['available_quantity'] = $newAvailable;
+            }
+
+            // Handle photo upload if any
+            if ($request->hasFile('photo')) {
+                if ($equipment->photo_url) {
+                    $oldPath = str_replace('/storage/', '', $equipment->photo_url);
+                    \Illuminate\Support\Facades\Storage::disk('public')->delete($oldPath);
+                }
+                $path = $request->file('photo')->store('inventory-photos', 'public');
+                $data['photo_url'] = \Illuminate\Support\Facades\Storage::url($path);
+            }
+
+            $equipment->update($data);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Equipment updated successfully',
-                'data' => $equipment
+                'data' => $equipment->fresh()
             ]);
 
         } catch (\Exception $e) {
@@ -375,9 +400,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -385,18 +411,23 @@ class ArtSetPropertiController extends Controller
                 ], 403);
             }
 
-            $equipment = EquipmentInventory::findOrFail($id);
+            $equipment = InventoryItem::findOrFail($id);
 
-            // Soft delete logic: change status to retired and set is_active false
-            $equipment->update([
-                'status' => 'retired',
-                'is_active' => false
-            ]);
+            // Check if items are currently in use across ANY program (Music or Regular)
+            $isInUse = $equipment->total_quantity > $equipment->available_quantity;
+            
+            if ($isInUse) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot delete item that is currently borrowed or in use.'
+                ], 400);
+            }
+
+            $equipment->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Equipment retired successfully',
-                'data' => $equipment
+                'message' => 'Equipment deleted successfully'
             ]);
 
         } catch (\Exception $e) {
@@ -423,9 +454,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -491,9 +523,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -529,32 +562,17 @@ class ArtSetPropertiController extends Controller
                 $requestedItems = json_decode($requestedItems, true) ?? [];
             }
 
-            // Check availability and gather inventory items
-            $inventoryItemsToAssign = [];
+            // Check availability in unified InventoryItem table
             foreach ($requestedItems as $itemName) {
-                // Find one available item with this name
-                // We use lockForUpdate to prevent race conditions if high concurrency
-                $item = EquipmentInventory::where('name', $itemName)
-                    ->whereIn('status', ['available'])
-                    ->first();
+                $item = InventoryItem::where('name', $itemName)->first();
 
-                if (!$item) {
+                if (!$item || $item->available_quantity <= 0) {
                     return response()->json([
                         'success' => false,
-                        'message' => "Equipment not available: {$itemName}. Please reject or coordinate with requester.",
+                        'message' => "Equipment not available: {$itemName}. Current ready stock: " . ($item->available_quantity ?? 0),
                         'error_code' => 'EQUIPMENT_UNAVAILABLE'
                     ], 409);
                 }
-
-                $inventoryItemsToAssign[] = $item;
-            }
-
-            // Verify we have enough items (redundant check but safe)
-            if (count($inventoryItemsToAssign) !== count($requestedItems)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => "Insufficient equipment quantity available.",
-                ], 409);
             }
 
             // Execute updates
@@ -564,19 +582,15 @@ class ArtSetPropertiController extends Controller
                 $productionEquipment->update(['program_id' => $productionEquipment->episode->program_id]);
             }
 
-            // 2. Update EquipmentInventory items
-            foreach ($inventoryItemsToAssign as $item) {
-                try {
-                    $item->update([
-                        'status' => 'in_use',
-                        'assigned_to' => $productionEquipment->requested_by,
-                        'episode_id' => $productionEquipment->episode_id,
-                        'assigned_by' => $user->id,
-                        'assigned_at' => now(),
-                    ]);
-                } catch (\Exception $e) {
-                    // Tracking columns may not exist yet — just update status
-                    $item->update(['status' => 'in_use']);
+            // 2. Update Inventory Items availability
+            foreach ($requestedItems as $itemName) {
+                // Find matching InventoryItem by name
+                $item = InventoryItem::where('name', $itemName)
+                    ->where('available_quantity', '>', 0)
+                    ->first();
+
+                if ($item) {
+                    $item->decrement('available_quantity');
                 }
             }
 
@@ -613,9 +627,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -680,9 +695,10 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
+                && !MusicProgramAuthorization::hasDistributionManagerAccess($user)
             ) {
                 return response()->json([
                     'success' => false,
@@ -722,104 +738,56 @@ class ArtSetPropertiController extends Controller
             }
             
             // 1. Update ProductionEquipment status (returned_by = tim syuting yang mengembalikan)
+            // 1. Update ProductionEquipment status (Art Set confirms return)
             $productionEquipment->update([
                 'status' => 'returned',
-                'returned_at' => now(),
-                'return_condition' => $request->return_condition,
-                'return_notes' => $request->return_notes,
-                'returned_by' => $request->returned_by ?? $user->id
+                'returned_at' => $productionEquipment->returned_at ?? now(),
+                'return_condition' => $request->return_condition ?? $productionEquipment->return_condition ?? 'good',
+                'return_notes' => ($productionEquipment->return_notes ?? '') . ($request->return_notes ? "\n" . $request->return_notes : ''),
+                'returned_by' => $productionEquipment->returned_by ?? $user->id,
+                'accepted_returned_at' => now(), // Important for UI to know it's verified
+                'accepted_returned_by' => $user->id
             ]);
 
-            // 2. Update Inventory Items
+            // 2. Update Inventory Items (INCREMENT available count)
             $items = $productionEquipment->equipment_list;
             if (!is_array($items))
                 $items = json_decode($items, true) ?? [];
 
             foreach ($items as $itemName) {
-                // Find one 'in_use' item with this name
-                $inventoryItem = EquipmentInventory::where('name', $itemName)
-                    ->where('status', 'in_use')
-                    ->first();
-
+                $inventoryItem = InventoryItem::where('name', $itemName)->first();
                 if ($inventoryItem) {
-                    $newStatus = 'available';
-                    if ($request->return_condition === 'damaged') {
-                        $newStatus = 'broken';
-                    } elseif ($request->return_condition === 'needs_maintenance') {
-                        $newStatus = 'maintenance';
+                    $inventoryItem->increment('available_quantity');
+                    
+                    // Handle damaged/lost if needed (decrement total_quantity)
+                    if (in_array(($request->return_condition ?? 'good'), ['damaged', 'lost'])) {
+                        $inventoryItem->decrement('total_quantity');
+                        $inventoryItem->decrement('available_quantity'); // Net zero increment
                     }
-
-                    try {
-                        $inventoryItem->update([
-                            'status' => $newStatus,
-                            'assigned_to' => null,
-                            'episode_id' => null,
-                            'assigned_by' => null,
-                            'assigned_at' => null,
-                            'return_date' => null,
-                            'returned_at' => now(),
-                            'return_condition' => $request->return_condition,
-                            'return_notes' => $request->return_notes
-                        ]);
-                    } catch (\Exception $e) {
-                        // Tracking columns may not exist — just update status
-                        $inventoryItem->update(['status' => $newStatus]);
-                    }
-                }
-            }
-
-            // 3. AUTOMATION: Check if ALL equipment for this Episode is returned
-            $episodeId = $productionEquipment->episode_id;
-
-            // Count pending or in_use requests for this episode
-            $activeRequestsCount = ProductionEquipment::where('episode_id', $episodeId)
-                ->whereIn('status', ['pending', 'approved', 'in_use'])
-                ->where('id', '!=', $id) // Exclude current one (just in case)
-                ->count();
-
-            $allReturned = $activeRequestsCount === 0;
-            $episodeUpdated = false;
-
-            if ($allReturned) {
-                $episode = \App\Models\Episode::find($episodeId);
-                // Only update if currently in 'production'
-                if ($episode && $episode->status === 'production') {
-                    $episode->update(['status' => 'editing']);
-                    $episodeUpdated = true;
-
-                    // Notify Editor/Producer that shooting is done
-                    // (Optional: add notification logic here)
                 }
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $productionEquipment,
-                'message' => 'Equipment returned successfully.' . ($episodeUpdated ? ' Episode status updated to Editing.' : '')
+                'data' => $productionEquipment->fresh(),
+                'message' => 'Equipment return confirmed and inventory updated.'
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error returning equipment: ' . $e->getMessage()
+                'message' => 'Error accepting return: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
      * Accept/Confirm returned equipment
-     * THIS SEEMS REDUNDANT if 'returnEquipment' handles everything.
-     * But keeping it for backward compatibility if needed, or deprecating it.
-     * Let's make it a wrapper or just return success if already handled.
      */
     public function acceptReturnedEquipment(Request $request, $id): JsonResponse
     {
-        return response()->json([
-            'success' => true,
-            'message' => 'Return accepted (processed via returnEquipment)'
-        ]);
+        return $this->returnEquipment($request, $id);
     }
-
     /**
      * Get equipment statistics
      */
@@ -830,13 +798,16 @@ class ArtSetPropertiController extends Controller
 
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
-            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
-                $q->where('team_type', 'setting'); })->exists();
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->whereHas('assignment', function ($q) {
+                    $q->where('team_type', 'setting');
+                })->exists();
 
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
             ) {
@@ -846,22 +817,34 @@ class ArtSetPropertiController extends Controller
                 ], 403);
             }
 
-            $inventoryStats = EquipmentInventory::selectRaw('status, count(*) as count')
-                ->groupBy('status')
-                ->pluck('count', 'status');
+            // Inventory Summary from unified InventoryItem model
+            $inventoryStats = InventoryItem::selectRaw('SUM(total_quantity) as total, SUM(available_quantity) as available')->first();
+            $totalQty = (int) ($inventoryStats->total ?? 0);
+            $availableQty = (int) ($inventoryStats->available ?? 0);
+            $inUseQty = $totalQty - $availableQty;
 
+            // Requests/Work Summary from Music Program requests
             $requestStats = ProductionEquipment::selectRaw('status, count(*) as count')
                 ->groupBy('status')
                 ->pluck('count', 'status');
 
+            // Category breakdown for inventory
+            $categories = InventoryItem::selectRaw('category, count(*) as count')
+                ->groupBy('category')
+                ->pluck('count', 'category');
+
             $stats = [
-                'total_equipment' => $inventoryStats->sum(),
-                'assigned_equipment' => $inventoryStats->get('assigned', 0) + $inventoryStats->get('in_use', 0),
-                'available_equipment' => $inventoryStats->get('available', 0),
-                'returned_equipment' => $inventoryStats->get('returned', 0),
-                'pending_requests' => $requestStats->get('pending', 0),
-                'approved_requests' => $requestStats->get('approved', 0),
-                'rejected_requests' => $requestStats->get('rejected', 0)
+                'pending' => $requestStats->get('pending', 0),
+                'approved' => $requestStats->get('approved', 0),
+                'rejected' => $requestStats->get('rejected', 0),
+                'in_progress' => $requestStats->get('approved', 0),
+                'completed' => $requestStats->get('returned', 0),
+                'inventory' => [
+                    'total' => $totalQty,
+                    'available' => $availableQty,
+                    'in_use' => $inUseQty,
+                    'categories' => $categories
+                ]
             ];
 
             return response()->json([
@@ -894,7 +877,7 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSettingAssignment
-                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
             ) {
@@ -1065,10 +1048,10 @@ class ArtSetPropertiController extends Controller
                     'program_id' => $programId
                 ]);
 
-                EquipmentInventory::whereIn('name', is_array($loan->equipment_list) ? $loan->equipment_list : [])
-                    ->where('status', 'in_use')
-                    ->where('episode_id', $fromEpisodeId)
-                    ->update(['episode_id' => $toEpisodeId]);
+                // In quantity-based system, we don't necessarily update individual rows for episode_id
+                // but we might want to track which item type is being moved.
+                // For now, since InventoryItem doesn't track episode_id directly (it's in ProductionEquipment), 
+                // we just ensure the loan record is updated (which we did above).
 
                 \Illuminate\Support\Facades\DB::commit();
             } catch (\Exception $e) {
@@ -1244,13 +1227,8 @@ class ArtSetPropertiController extends Controller
                     'status' => 'in_use',
                 ]);
 
-                EquipmentInventory::whereIn('name', is_array($loan->equipment_list) ? $loan->equipment_list : [])
-                    ->where('status', 'in_use')
-                    ->update([
-                        'episode_id' => $toEpisodeId,
-                        'assigned_to' => $user->id,
-                        'assigned_at' => now(),
-                    ]);
+                // Similar to transferRequest, InventoryItem doesn't track assigned_to/episode_id directly per unit.
+                // The relationship is handled via ProductionEquipment.
 
                 \Illuminate\Support\Facades\DB::commit();
             } catch (\Exception $e) {
@@ -1506,7 +1484,7 @@ class ArtSetPropertiController extends Controller
             if (
                 !$isArtRole
                 && !$hasSetting
-                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer', 'distribution manager'])
                 && !$user->hasAnyMusicTeamAssignment()
                 && !ProgramManagerAuthorization::isProgramManager($user)
             ) {
@@ -1531,8 +1509,8 @@ class ArtSetPropertiController extends Controller
                         'crew_leader' => $loan->crewLeader ? ['id' => $loan->crewLeader->id, 'name' => $loan->crewLeader->name] : null,
                         'requester' => $loan->requester ? ['id' => $loan->requester->id, 'name' => $loan->requester->name] : null,
                         'requested_at' => $loan->requested_at?->toIso8601String(),
-                        'team_pinjam' => 'Tim Setting',
-                        'team_balikin' => $loan->status === 'returned' ? 'Tim Syuting' : null,
+                        'team_pinjam' => $loan->requester?->role ?? 'Requester',
+                        'team_balikin' => $loan->status === 'returned' ? ($loan->returnedByUser?->role ?? 'Returner') : null,
                         'returned_by_user' => $returnedBy ? ['id' => $returnedBy->id, 'name' => $returnedBy->name] : null,
                     ];
                 });
@@ -1540,20 +1518,20 @@ class ArtSetPropertiController extends Controller
             $template = ProgramEquipmentTemplate::where('program_id', $programId)->first();
             $defaultItems = $template ? ($template->items ?? []) : [];
 
-            $inventoryByName = EquipmentInventory::where('is_active', true)
-                ->selectRaw('name, status, count(*) as total')
-                ->groupBy('name', 'status')
+            $inventoryByName = InventoryItem::whereIn('name', array_column($defaultItems, 'name'))
                 ->get()
-                ->groupBy('name');
+                ->keyBy('name');
 
             $defaultWithStock = array_map(function ($item) use ($inventoryByName) {
                 $item = (array) $item;
                 $name = $item['name'] ?? '';
                 $qty = (int) ($item['qty'] ?? 1);
-                $byStatus = $inventoryByName->get($name, collect());
-                $available = (int) $byStatus->where('status', 'available')->sum('total');
-                $inUse = (int) $byStatus->where('status', 'in_use')->sum('total');
-                $total = $available + $inUse;
+                
+                $inv = $inventoryByName->get($name);
+                $available = $inv ? (int) $inv->available_quantity : 0;
+                $total = $inv ? (int) $inv->total_quantity : 0;
+                $inUse = $total - $available;
+                
                 return [
                     'name' => $name,
                     'default_qty' => $qty,

@@ -126,7 +126,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager', 'Program Manager']) && !MusicProgramAuthorization::hasDistributionManagerAccess($user)) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -195,7 +195,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager', 'Program Manager']) && !MusicProgramAuthorization::hasDistributionManagerAccess($user)) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -285,7 +285,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager', 'Program Manager']) && !MusicProgramAuthorization::hasDistributionManagerAccess($user)) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -356,7 +356,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager']) && !ProgramManagerAuthorization::isProgramManager($user)) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -438,7 +438,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'QC']) && !ProgramManagerAuthorization::isProgramManager($user)) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -503,7 +503,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager']) && !ProgramManagerAuthorization::isProgramManager($user)) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -664,7 +664,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -716,7 +716,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -768,7 +768,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

@@ -194,7 +194,7 @@ class EditorPromosiController extends Controller
             $user = Auth::user();
             $work = PromotionWork::findOrFail($id);
 
-            if ($work->created_by !== $user->id && $user->role !== 'Producer') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Editor Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized to update this work.'
@@ -265,7 +265,7 @@ class EditorPromosiController extends Controller
 
             $isEditor = in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor']);
             
-            if ($work->created_by !== $user->id && !$isEditor) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Editor Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized to upload files for this work.'
@@ -392,7 +392,7 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
 
-            if (!$user || !in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -479,7 +479,7 @@ class EditorPromosiController extends Controller
             $role = strtolower($user->role ?? '');
             $allowedRoles = ['editor promotion', 'editor promosi', 'promotion editor'];
 
-            if (!$user || !in_array($role, $allowedRoles)) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -673,7 +673,7 @@ class EditorPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -767,7 +767,7 @@ class EditorPromosiController extends Controller
 
             $isEditor = in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor']);
 
-            if ($work->created_by !== $user->id && !$isEditor) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Editor Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized to submit files for this work.'

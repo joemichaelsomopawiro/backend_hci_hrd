@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\ProduksiWork;
 use App\Models\ProductionEquipment;
-use App\Models\EquipmentInventory;
+use App\Models\InventoryItem;
 use App\Models\ShootingRunSheet;
 use App\Models\MediaFile;
 use App\Models\Notification;
@@ -41,8 +41,7 @@ class ProduksiController extends Controller
             }
             
             // Allow if has 'Production' role OR is a member of Tim Syuting for any episode
-            $isAuthorized = $user->role === 'Production' || ProgramManagerAuthorization::isProgramManager($user) || MusicProgramAuthorization::hasProducerAccess($user);
-            $isProductionRole = $isAuthorized;
+            $isProductionRole = MusicProgramAuthorization::canUserPerformTask($user, null, 'Production');
             
             // We'll check for shooting team membership in the query itself for index
 
@@ -130,13 +129,7 @@ class ProduksiController extends Controller
                 }
             ])->findOrFail($id);
 
-            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
-            $isProducer = MusicProgramAuthorization::hasProducerAccess($user);
-            $isProductionRole = $user->role === 'Production' || ProgramManagerAuthorization::isProgramManager($user) || $isProducer;
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
-            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
-
-            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Production')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
@@ -185,12 +178,12 @@ class ProduksiController extends Controller
             $work = ProduksiWork::findOrFail($id);
 
             // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
-            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
-            $isProductionRole = $user->role === 'Production' || $isProgramManager;
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
-            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+
+
+
+
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Production')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
@@ -252,19 +245,7 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR coordinator of Tim Setting for this episode
-            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
-            $isProductionRole = $user->role === 'Production' || $isProgramManager;
-            $isCoordinator = \App\Models\ProductionTeamMember::where('user_id', $user->id)
-                ->where('is_active', true)
-                ->where('is_coordinator', true)
-                ->whereHas('assignment', function ($q) use ($work) {
-                    $q->where('episode_id', $work->episode_id)
-                        ->where('team_type', 'setting')
-                        ->where('status', '!=', 'cancelled');
-                })->exists();
-
-            if (!$isProductionRole && !$isCoordinator) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Production')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Hanya Coordinator Tim Setting yang boleh mengajukan permintaan alat (pinjam barang).'
@@ -320,9 +301,7 @@ class ProduksiController extends Controller
                     ->where('status', 'pending')
                     ->first();
                 if ($existingRequest) {
-                    $unavailableEquipment = [];
-                    $useNewSchema = Schema::hasColumn('equipment_inventory', 'equipment_name');
-                    $nameColumn = $useNewSchema ? 'equipment_name' : 'name';
+                    $requestedNames = array_unique(array_column($request->equipment_list, 'equipment_name'));
                     $flatList = [];
                     $notesParts = [];
                     foreach ($request->equipment_list as $equipment) {
@@ -335,23 +314,22 @@ class ProduksiController extends Controller
                             $notesParts[] = "{$equipmentName}: " . $equipment['notes'];
                         }
                     }
-                    $requestedNames = array_unique(array_column($request->equipment_list, 'equipment_name'));
-                    $inventoryCounts = EquipmentInventory::whereIn($nameColumn, $requestedNames)
-                        ->where('status', 'available')
-                        ->select($nameColumn)
+
+                    $inventoryCounts = InventoryItem::whereIn('name', $requestedNames)
                         ->get()
-                        ->groupBy($nameColumn)
-                        ->map->count();
+                        ->pluck('available_quantity', 'name');
+
                     foreach ($request->equipment_list as $equipment) {
                         $equipmentName = $equipment['equipment_name'];
                         $quantity = (int) ($equipment['quantity'] ?? 1);
                         $availableCount = $inventoryCounts->get($equipmentName, 0);
+
                         if ($availableCount < $quantity) {
                             $unavailableEquipment[] = [
                                 'equipment_name' => $equipmentName,
                                 'requested_quantity' => $quantity,
                                 'available_count' => $availableCount,
-                                'reason' => 'Equipment tidak tersedia dalam jumlah yang diminta',
+                                'reason' => 'Equipment tidak tersedia dalam jumlah yang cukup di stok pusat',
                             ];
                         }
                     }
@@ -410,23 +388,22 @@ class ProduksiController extends Controller
             $requestedNames = array_unique($requestedNames);
 
             // Check availability per name
-            $inventoryCounts = EquipmentInventory::whereIn($nameColumn, $requestedNames)
-                ->where('status', 'available')
-                ->select($nameColumn)
+            // Check availability per name in master inventory
+            $inventoryCounts = InventoryItem::whereIn('name', $requestedNames)
                 ->get()
-                ->groupBy($nameColumn)
-                ->map->count();
+                ->pluck('available_quantity', 'name');
 
             foreach ($request->equipment_list as $equipment) {
                 $equipmentName = $equipment['equipment_name'];
                 $quantity = (int) ($equipment['quantity'] ?? 1);
                 $availableCount = $inventoryCounts->get($equipmentName, 0);
+
                 if ($availableCount < $quantity) {
                     $unavailableEquipment[] = [
                         'equipment_name' => $equipmentName,
                         'requested_quantity' => $quantity,
                         'available_count' => $availableCount,
-                        'reason' => 'Equipment tidak tersedia dalam jumlah yang diminta',
+                        'reason' => 'Equipment tidak tersedia dalam jumlah yang cukup di stok pusat',
                     ];
                 }
             }
@@ -567,31 +544,22 @@ class ProduksiController extends Controller
             }
         }
         $requestedNames = array_unique(array_column($request->equipment_list, 'equipment_name'));
-        $inventoryCounts = EquipmentInventory::whereIn($nameColumn, $requestedNames)
-            ->where('status', 'available')
-            ->select($nameColumn)
+        $inventoryCounts = InventoryItem::whereIn('name', $requestedNames)
             ->get()
-            ->groupBy($nameColumn)
-            ->map->count();
+            ->pluck('available_quantity', 'name');
+
         foreach ($request->equipment_list as $equipment) {
             $equipmentName = $equipment['equipment_name'];
             $quantity = (int) ($equipment['quantity'] ?? 1);
             $availableCount = $inventoryCounts->get($equipmentName, 0);
-            $reservedPending = 0;
-            $pendingRows = ProductionEquipment::where('status', 'pending')
-                ->whereJsonContains('equipment_list', $equipmentName)
-                ->get(['equipment_quantities']);
-            foreach ($pendingRows as $row) {
-                $map = is_array($row->equipment_quantities) ? $row->equipment_quantities : (json_decode($row->equipment_quantities, true) ?? []);
-                $reservedPending += (int) ($map[$equipmentName] ?? 0);
-            }
-            $effectiveAvailable = max(0, $availableCount - $reservedPending);
-
-            if ($effectiveAvailable < $quantity) {
+            
+            // Note: Multiple episode requests should ideally check if the same stock can be reused, 
+            // but for safety we check current absolute availability.
+            if ($availableCount < $quantity) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Some equipment is not available or currently in use',
-                    'unavailable_equipment' => [['equipment_name' => $equipmentName, 'requested_quantity' => $quantity, 'available_count' => $effectiveAvailable]],
+                    'unavailable_equipment' => [['equipment_name' => $equipmentName, 'requested_quantity' => $quantity, 'available_count' => $availableCount]],
                 ], 400);
             }
         }
@@ -677,13 +645,7 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
-            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
-            $isProductionRole = $user->role === 'Production' || $isProgramManager;
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
-            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
-
-            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Production')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
@@ -771,17 +733,17 @@ class ProduksiController extends Controller
             $user = Auth::user();
             $work = ProduksiWork::findOrFail($id);
 
-            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
-            $isProductionRole = $user->role === 'Production' || $isProgramManager;
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
-            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
-
-            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Production')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
                 ], 403);
             }
+
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
+            $isProductionRole = $user->role === 'Production' || $isProgramManager || MusicProgramAuthorization::hasProducerAccess($user);
+            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
             if ($work->status !== 'in_progress') {
                 return response()->json([
@@ -2029,35 +1991,10 @@ class ProduksiController extends Controller
                     'returned_by' => $user->id
                 ]);
 
-                // Update EquipmentInventory if exists (search by name)
-                $itemNames = is_array($equipment->equipment_list) ? $equipment->equipment_list : [$equipment->equipment_list];
-                foreach ($itemNames as $itemName) {
-                    $inventory = EquipmentInventory::where('name', $itemName)
-                        ->where('status', 'in_use')
-                        ->first();
-
-                    if ($inventory) {
-                        $newStatus = 'available';
-                        if (($conditionData['condition'] ?? 'good') === 'damaged') {
-                            $newStatus = 'broken';
-                        } elseif (($conditionData['condition'] ?? 'good') === 'lost') {
-                            $newStatus = 'broken';
-                        }
-                        
-                        try {
-                            $inventory->update([
-                                'status' => $newStatus,
-                                'assigned_to' => null,
-                                'episode_id' => null,
-                                'assigned_by' => null,
-                                'assigned_at' => null,
-                            ]);
-                        } catch (\Exception $e) {
-                            $inventory->update(['status' => $newStatus]);
-                        }
-                    }
-                }
-
+                // NOTA: Kita TIDAK melakukan increment available_quantity di sini lagi.
+                // Increment akan dilakukan oleh Art & Set Properti saat mereka 'Accept Returned Equipment'.
+                // Ini untuk mencegah double-counting dan memastikan verifikasi fisik oleh tim inventory.
+                
                 $returnedEquipment[] = $equipment->fresh();
             }
 
@@ -2140,16 +2077,9 @@ class ProduksiController extends Controller
             ], 403);
         }
         
-        $availableEquipment = EquipmentInventory::where('status', 'available')
-            ->select(
-                'id', 'name', 'category', 'brand', 'model', 
-                'serial_number', 'location',
-                \DB::raw('(SELECT count(*) FROM equipment_inventory ei WHERE ei.name = equipment_inventory.name AND ei.status = \'available\') as available_quantity')
-            )
+        $availableEquipment = InventoryItem::where('status', 'active') // InventoryItem uses 'active' status for available
+            ->select(['id', 'equipment_id', 'name', 'category', 'available_quantity', 'total_quantity'])
             ->orderBy('name')
-            ->orderBy('id')
-            ->get()
-            ->unique('name')
             ->values();
             
         return response()->json([

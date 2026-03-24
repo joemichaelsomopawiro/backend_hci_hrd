@@ -53,8 +53,8 @@ class BroadcastingController extends Controller
 
             // Get works for current user or all pending/preparing works (available for acceptance)
             $query->where(function($q) use ($user) {
-                if (ProgramManagerAuthorization::isProgramManager($user)) {
-                    // Program Manager can view all works
+                if (ProgramManagerAuthorization::isProgramManager($user) || MusicProgramAuthorization::hasDistributionManagerAccess($user)) {
+                    // Program Manager and Distribution Manager can view all works
                     $q->whereNotNull('id');
                     return;
                 }
@@ -191,7 +191,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -241,7 +241,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -299,7 +299,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -335,7 +335,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -393,7 +393,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -452,7 +452,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -579,7 +579,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -633,7 +633,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -710,7 +710,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

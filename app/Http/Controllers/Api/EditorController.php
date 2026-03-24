@@ -330,19 +330,7 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            // Team-based authorization: allow if creator OR production team member
-            $productionTeam = $work->episode->program->productionTeam;
-            $isTeamMember = false;
-            
-            if ($productionTeam) {
-                $isTeamMember = $productionTeam->members()
-                    ->where('user_id', $user->id)
-                    ->where('role', 'editor')
-                    ->where('is_active', true)
-                    ->exists();
-            }
-            
-            if ($work->created_by !== $user->id && !$isTeamMember) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you or your production team.'
@@ -662,19 +650,7 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode.program.productionTeam'])->findOrFail($id);
 
-            // Team-based authorization
-            $productionTeam = $work->episode->program->productionTeam;
-            $isTeamMember = false;
-            
-            if ($productionTeam) {
-                $isTeamMember = $productionTeam->members()
-                    ->where('user_id', $user->id)
-                    ->where('role', 'editor')
-                    ->where('is_active', true)
-                    ->exists();
-            }
-            
-            if ($work->created_by !== $user->id && !$isTeamMember) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you or your production team.'

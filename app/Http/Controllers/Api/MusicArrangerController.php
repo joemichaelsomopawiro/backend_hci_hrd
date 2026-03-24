@@ -415,8 +415,7 @@ class MusicArrangerController extends Controller
     public function inputLink(Request $request, $id): JsonResponse
     {
         try {
-            $user = Auth::user();
-            if (!$user || $user->role !== 'Music Arranger') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Music Arranger')) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -603,8 +602,7 @@ class MusicArrangerController extends Controller
             $user = Auth::user();
             $arrangement = MusicArrangement::with(['episode' => fn($q) => $q->withTrashed()])->findOrFail($id);
 
-            // Validate Music Arranger is the creator
-            if ($arrangement->created_by !== $user->id) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $arrangement, 'Music Arranger')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: You can only submit your own arrangements.'
