@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
+use App\Helpers\MusicProgramAuthorization;
 
 class GeneralAffairsController extends Controller
 {
@@ -27,7 +28,7 @@ class GeneralAffairsController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if ($user->role !== 'General Affairs') {
+        if (!MusicProgramAuthorization::canUserPerformTask($user, $work ?? null, 'General Affairs')) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
@@ -89,7 +90,7 @@ class GeneralAffairsController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if ($user->role !== 'General Affairs') {
+        if (!MusicProgramAuthorization::canUserPerformTask($user, $work ?? null, 'General Affairs')) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
@@ -147,7 +148,7 @@ class GeneralAffairsController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if ($user->role !== 'General Affairs') {
+        if (!MusicProgramAuthorization::canUserPerformTask($user, $work ?? null, 'General Affairs')) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
@@ -201,7 +202,7 @@ class GeneralAffairsController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        if ($user->role !== 'General Affairs') {
+        if (!MusicProgramAuthorization::canUserPerformTask($user, $work ?? null, 'General Affairs')) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
@@ -284,7 +285,7 @@ class GeneralAffairsController extends Controller
     public function uploadPaymentReceipt(Request $request): JsonResponse
     {
         $user = auth()->user();
-        if (!$user || $user->role !== 'General Affairs') {
+        if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work ?? null, 'General Affairs')) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
@@ -458,7 +459,7 @@ class GeneralAffairsController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || $user->role !== 'General Affairs') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work ?? null, 'General Affairs')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

@@ -7,6 +7,8 @@ use App\Models\SoundEngineerEditing;
 use App\Models\Episode;
 use App\Models\User;
 use App\Models\Notification;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
@@ -21,6 +23,11 @@ class SoundEngineerEditingController extends Controller
     {
         if (!$user) {
             return false;
+        }
+
+        // Program Manager should be able to access all music workflow steps.
+        if (ProgramManagerAuthorization::isProgramManager($user) || MusicProgramAuthorization::hasProducerAccess($user)) {
+            return true;
         }
         
         $role = strtolower($user->role ?? '');
@@ -62,6 +69,26 @@ class SoundEngineerEditingController extends Controller
         }
 
         $query = SoundEngineerEditing::with(['episode.program', 'soundEngineer', 'recording']);
+
+        // Restrict dashboard to episodes whose Creative Work has been approved
+        // by Producer (script/storyboard/budget approved -> final approve).
+        $query->whereHas('episode', function ($eq) {
+            $eq->whereHas('creativeWorks', function ($cq) {
+                $cq->where('status', 'approved');
+            });
+        });
+
+        // Restrict to this sound engineer's scope:
+        // - editing work assigned to this user, OR
+        // - user is in the episode's program production team as sound engineer.
+        $query->where(function ($q) use ($user) {
+            $q->where('sound_engineer_id', $user->id)
+                ->orWhereHas('episode.program.productionTeam.members', function ($mq) use ($user) {
+                    $mq->where('user_id', $user->id)
+                        ->whereRaw('LOWER(role) IN (?, ?, ?)', ['sound_eng', 'sound_engineer', 'sound engineer'])
+                        ->where('is_active', true);
+                });
+        });
 
         // Filter by status
         if ($request->has('status')) {

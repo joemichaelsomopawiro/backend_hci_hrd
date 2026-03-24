@@ -12,6 +12,8 @@ use App\Models\Notification;
 use App\Models\User;
 use App\Models\QualityControlWork;
 use App\Helpers\QueryOptimizer;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -31,7 +33,7 @@ class EditorPromosiController extends Controller
             $role = strtolower($user->role ?? '');
             $allowedRoles = ['editor promotion', 'editor promosi', 'promotion editor'];
 
-            if (!$user || !in_array($role, $allowedRoles)) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -97,14 +99,7 @@ class EditorPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'User not authenticated.'
-                ], 401);
-            }
-
-            if (!$user || !in_array($user->role, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

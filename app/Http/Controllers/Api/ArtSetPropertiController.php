@@ -9,6 +9,8 @@ use App\Models\ProductionEquipmentTransfer;
 use App\Models\ProgramEquipmentTemplate;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use App\Helpers\QueryOptimizer;
 use App\Exports\ProductionEquipmentExport;
 use Illuminate\Http\Request;
@@ -19,6 +21,70 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class ArtSetPropertiController extends Controller
 {
+    /**
+     * Ringkasan stok per nama equipment (grouped by name).
+     * GET /art-set-properti/equipment-name-summary
+     *
+     * Return: [{ name, category, available, in_use, total }]
+     * Catatan: ini untuk UI template (Program Manager / Art & Set) agar template selaras dengan stok.
+     */
+    public function getEquipmentNameSummary(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            $role = strtolower($user->role ?? '');
+            $isArtRole = $role === 'art & set properti';
+            $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->whereHas('assignment', function ($q) {
+                    $q->where('team_type', 'setting');
+                })->exists();
+
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $q = EquipmentInventory::query()
+                ->where('is_active', true)
+                ->selectRaw("name, MAX(category) as category,
+                    SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) as available,
+                    SUM(CASE WHEN status = 'in_use' THEN 1 ELSE 0 END) as in_use,
+                    COUNT(*) as total")
+                ->groupBy('name');
+
+            if ($request->filled('search')) {
+                $q->where('name', 'like', '%' . $request->search . '%');
+            }
+
+            if ($request->filled('category')) {
+                $q->where('category', $request->category);
+            }
+
+            $items = $q->orderBy('name')->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $items,
+                'message' => 'Equipment name summary retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error retrieving equipment name summary: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     /**
      * Get equipment inventory for Art & Set Properti
      */
@@ -32,7 +98,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -151,7 +223,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -229,7 +307,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -288,7 +372,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -330,7 +420,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -358,6 +454,13 @@ class ArtSetPropertiController extends Controller
             }
 
             $requests = $query->paginate($request->integer('per_page', 15));
+            $requests->getCollection()->transform(function ($row) {
+                $list = is_array($row->equipment_list) ? $row->equipment_list : (json_decode($row->equipment_list, true) ?? []);
+                $row->equipment_total_qty = count($list);
+                // `equipment_items` comes from model accessor (appended)
+                $row->equipment_items = $row->equipment_items;
+                return $row;
+            });
 
             return response()->json([
                 'success' => true,
@@ -385,7 +488,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media', 'producer'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -408,9 +517,10 @@ class ArtSetPropertiController extends Controller
 
             if ($productionEquipment->status !== 'pending') {
                 return response()->json([
-                    'success' => false,
-                    'message' => 'Equipment request is not in pending status'
-                ], 400);
+                    'success' => true,
+                    'data' => $productionEquipment->fresh(['episode.program', 'requester', 'approver']),
+                    'message' => 'Request already processed (current status: ' . $productionEquipment->status . '). No change made.'
+                ]);
             }
 
             // Parse equipment list
@@ -500,7 +610,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -561,7 +677,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -711,7 +833,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting'); })->exists();
 
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -763,7 +891,13 @@ class ArtSetPropertiController extends Controller
             $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
                 $q->where('team_type', 'setting');
             })->exists();
-            if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSettingAssignment
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -832,7 +966,13 @@ class ArtSetPropertiController extends Controller
         $hasSettingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', function ($q) {
             $q->where('team_type', 'setting');
         })->exists();
-        if (!$isArtRole && !$hasSettingAssignment && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+        if (
+            !$isArtRole
+            && !$hasSettingAssignment
+            && $role !== 'production'
+            && !$user->hasAnyMusicTeamAssignment()
+            && !ProgramManagerAuthorization::isProgramManager($user)
+        ) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -874,7 +1014,13 @@ class ArtSetPropertiController extends Controller
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
             $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))->exists();
-            if (!$isArtRole && !$hasSetting && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -944,6 +1090,204 @@ class ArtSetPropertiController extends Controller
     }
 
     /**
+     * Handover (lanjut pakai) ke user berikutnya + episode berikutnya.
+     * Flow: create transfer record status=pending_accept → notify target user.
+     * POST /art-set-properti/requests/{id}/handover
+     */
+    public function handoverRequest(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $role = strtolower($user->role ?? '');
+            $isArtRole = $role === 'art & set properti';
+            $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))
+                ->exists();
+
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'to_episode_id' => 'required|exists:episodes,id',
+                'to_user_id' => 'required|exists:users,id',
+                'notes' => 'nullable|string|max:500',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            $loan = ProductionEquipment::with(['episode.program', 'program'])->findOrFail($id);
+            if (!in_array($loan->status, ['approved', 'in_use'], true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Handover hanya untuk peminjaman status approved/in_use.'
+                ], 400);
+            }
+
+            $fromEpisodeId = (int) $loan->episode_id;
+            $toEpisodeId = (int) $request->to_episode_id;
+            $toUserId = (int) $request->to_user_id;
+            if ($fromEpisodeId === $toEpisodeId) {
+                return response()->json(['success' => false, 'message' => 'Episode tujuan harus berbeda.'], 400);
+            }
+
+            // Prevent duplicate pending handover for same loan+target
+            $existingPending = ProductionEquipmentTransfer::where('production_equipment_id', $loan->id)
+                ->where('to_episode_id', $toEpisodeId)
+                ->where('to_user_id', $toUserId)
+                ->where('status', 'pending_accept')
+                ->exists();
+            if ($existingPending) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Handover untuk tujuan ini masih pending.'
+                ], 400);
+            }
+
+            $toEpisode = \App\Models\Episode::with('program')->findOrFail($toEpisodeId);
+
+            $transfer = ProductionEquipmentTransfer::create([
+                'production_equipment_id' => $loan->id,
+                'from_episode_id' => $fromEpisodeId,
+                'to_episode_id' => $toEpisodeId,
+                'to_user_id' => $toUserId,
+                'transferred_by' => $user->id,
+                'transferred_at' => now(),
+                'notes' => $request->notes,
+                'status' => 'pending_accept',
+            ]);
+
+            Notification::create([
+                'user_id' => $toUserId,
+                'type' => 'equipment_handover_requested',
+                'title' => 'Handover Alat (Lanjut Pakai)',
+                'message' => 'Ada handover alat untuk Anda. Silakan konfirmasi terima agar alat tercatat berpindah.',
+                'data' => [
+                    'transfer_id' => $transfer->id,
+                    'production_equipment_id' => $loan->id,
+                    'from_episode_id' => $fromEpisodeId,
+                    'to_episode_id' => $toEpisodeId,
+                    'from_program' => $loan->episode?->program?->name ?? $loan->program?->name,
+                    'to_program' => $toEpisode->program?->name,
+                ]
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $transfer->load(['toEpisode.program', 'fromEpisode.program', 'toUser', 'transferredByUser']),
+                'message' => 'Handover dibuat. Menunggu user tujuan konfirmasi terima.'
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Accept handover: pindahkan loan ke episode target dan set assigned_to ke penerima.
+     * POST /art-set-properti/transfers/{transferId}/accept
+     */
+    public function acceptHandover(Request $request, int $transferId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            $transfer = ProductionEquipmentTransfer::with(['productionEquipment', 'toEpisode'])->findOrFail($transferId);
+            if ($transfer->status !== 'pending_accept') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Transfer ini tidak dalam status pending.'
+                ], 400);
+            }
+            if ((int) $transfer->to_user_id !== (int) $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Transfer ini bukan untuk Anda.'
+                ], 403);
+            }
+
+            $loan = $transfer->productionEquipment;
+            if (!$loan) {
+                return response()->json(['success' => false, 'message' => 'Loan tidak ditemukan.'], 404);
+            }
+            if (!in_array($loan->status, ['approved', 'in_use'], true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Loan tidak bisa dihandover karena status bukan approved/in_use.'
+                ], 400);
+            }
+
+            $toEpisodeId = (int) $transfer->to_episode_id;
+            $toEpisode = $transfer->toEpisode ?: \App\Models\Episode::with('program')->findOrFail($toEpisodeId);
+            $programId = $toEpisode->program_id;
+
+            \Illuminate\Support\Facades\DB::beginTransaction();
+            try {
+                $transfer->update([
+                    'status' => 'accepted',
+                    'accepted_by' => $user->id,
+                    'accepted_at' => now(),
+                ]);
+
+                $loan->update([
+                    'episode_id' => $toEpisodeId,
+                    'program_id' => $programId,
+                    'assigned_to' => $user->id,
+                    'assigned_at' => now(),
+                    'status' => 'in_use',
+                ]);
+
+                EquipmentInventory::whereIn('name', is_array($loan->equipment_list) ? $loan->equipment_list : [])
+                    ->where('status', 'in_use')
+                    ->update([
+                        'episode_id' => $toEpisodeId,
+                        'assigned_to' => $user->id,
+                        'assigned_at' => now(),
+                    ]);
+
+                \Illuminate\Support\Facades\DB::commit();
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\DB::rollBack();
+                throw $e;
+            }
+
+            // Notify original transferer (optional)
+            if ($transfer->transferred_by) {
+                Notification::create([
+                    'user_id' => $transfer->transferred_by,
+                    'type' => 'equipment_handover_accepted',
+                    'title' => 'Handover Diterima',
+                    'message' => 'Handover alat Anda sudah diterima oleh user tujuan.',
+                    'data' => [
+                        'transfer_id' => $transfer->id,
+                        'production_equipment_id' => $loan->id,
+                        'to_episode_id' => $toEpisodeId,
+                        'accepted_by' => $user->id,
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'transfer' => $transfer->fresh(['toEpisode.program', 'fromEpisode.program', 'toUser', 'acceptedByUser']),
+                    'loan' => $loan->fresh(['episode.program', 'program', 'requester', 'crewLeader', 'transfers']),
+                ],
+                'message' => 'Handover diterima. Loan dipindahkan tanpa return.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Daftar template default alat per program. GET /art-set-properti/program-templates
      */
     public function getProgramTemplates(Request $request): JsonResponse
@@ -953,7 +1297,13 @@ class ArtSetPropertiController extends Controller
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
             $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))->exists();
-            if (!$isArtRole && !$hasSetting && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -978,7 +1328,13 @@ class ArtSetPropertiController extends Controller
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
             $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))->exists();
-            if (!$isArtRole && !$hasSetting && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -1003,7 +1359,13 @@ class ArtSetPropertiController extends Controller
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
             $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))->exists();
-            if (!$isArtRole && !$hasSetting && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -1033,6 +1395,50 @@ class ArtSetPropertiController extends Controller
     }
 
     /**
+     * Delete template for a specific program.
+     * DELETE /art-set-properti/program-templates/{programId}
+     */
+    public function deleteProgramTemplate(int $programId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $role = strtolower($user->role ?? '');
+            $isArtRole = $role === 'art & set properti';
+            $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))
+                ->exists();
+
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $template = ProgramEquipmentTemplate::where('program_id', $programId)->first();
+            if (!$template) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Template not found for this program.'
+                ], 404);
+            }
+
+            $template->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Template deleted successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Daftar program (untuk dropdown tab Program & Episode).
      * GET /art-set-properti/programs-list
      */
@@ -1043,7 +1449,13 @@ class ArtSetPropertiController extends Controller
             $role = strtolower(trim($user->role ?? ''));
             $isArtRole = in_array($role, ['art & set properti', 'art & set design', 'art and set properti', 'art and set design'], true);
             $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))->exists();
-            if (!$isArtRole && !$hasSetting && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
             $programs = \App\Models\Program::orderBy('name')->get(['id', 'name']);
@@ -1064,7 +1476,13 @@ class ArtSetPropertiController extends Controller
             $role = strtolower(trim($user->role ?? ''));
             $isArtRole = in_array($role, ['art & set properti', 'art & set design', 'art and set properti', 'art and set design'], true);
             $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))->exists();
-            if (!$isArtRole && !$hasSetting && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
             $episodes = \App\Models\Episode::where('program_id', $programId)->orderBy('episode_number')->get(['id', 'episode_number', 'title']);
@@ -1085,7 +1503,13 @@ class ArtSetPropertiController extends Controller
             $role = strtolower($user->role ?? '');
             $isArtRole = $role === 'art & set properti';
             $hasSetting = \App\Models\ProductionTeamMember::where('user_id', $user->id)->where('is_active', true)->whereHas('assignment', fn($q) => $q->where('team_type', 'setting'))->exists();
-            if (!$isArtRole && !$hasSetting && $role !== 'production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (
+                !$isArtRole
+                && !$hasSetting
+                && !in_array($role, ['production', 'promotion', 'social media'])
+                && !$user->hasAnyMusicTeamAssignment()
+                && !ProgramManagerAuthorization::isProgramManager($user)
+            ) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 

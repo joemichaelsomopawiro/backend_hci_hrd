@@ -8,6 +8,8 @@ use App\Models\Episode;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
 use App\Services\WorkAssignmentService;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -29,6 +31,7 @@ class CreativeController extends Controller
     {
         try {
             $user = Auth::user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
             if (!$user) {
                 return response()->json([
@@ -57,7 +60,7 @@ class CreativeController extends Controller
             // Filter by creator - default to current user if Creative role
             if ($request->has('created_by')) {
                 $query->where('created_by', $request->created_by);
-            } elseif ($user->role === 'Creative') {
+            } elseif ($user->role === 'Creative' && !$isProgramManager) {
                 $query->where('created_by', $user->id);
             }
 
@@ -121,7 +124,16 @@ class CreativeController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $user = Auth::user();
+        $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 401);
+        }
+
+        $rules = [
             'episode_id' => 'required|exists:episodes,id',
             'script_content' => 'nullable|string',
             'script_link' => 'nullable|url|max:2048',
@@ -131,8 +143,14 @@ class CreativeController extends Controller
             'recording_schedule' => 'nullable|date',
             'shooting_schedule' => 'nullable|date',
             'shooting_location' => 'nullable|string|max:255',
-            'created_by' => 'required|exists:users,id'
-        ]);
+        ];
+
+        // For non-Program Manager, keep existing behavior (created_by may be auto-assigned by service).
+        if (!$isProgramManager) {
+            $rules['created_by'] = 'required|exists:users,id';
+        }
+
+        $validator = Validator::make($request->all(), $rules);
         
         if ($validator->fails()) {
             return response()->json([
@@ -152,8 +170,11 @@ class CreativeController extends Controller
                 $episode->program_id,
                 $episode->episode_number,
                 null,  // CreativeWork doesn't have work_type
-                $request->created_by  // Use requested creator ID as fallback
+                $isProgramManager ? $user->id : $request->created_by  // Use requested creator ID as fallback
             );
+
+            // Program Manager can execute all steps, but ownership stays on Program Manager.
+            $createdByUserId = $isProgramManager ? $user->id : $assignedUserId;
 
             $work = CreativeWork::create([
                 'episode_id' => $request->episode_id,
@@ -166,7 +187,7 @@ class CreativeController extends Controller
                 'shooting_schedule' => $request->shooting_schedule,
                 'shooting_location' => $request->shooting_location,
                 'status' => 'draft',
-                'created_by' => $assignedUserId,           // AUTO-ASSIGNED
+                'created_by' => $createdByUserId,
                 'originally_assigned_to' => null,           // Reset
                 'was_reassigned' => false                   // Reset
             ]);
@@ -474,17 +495,21 @@ class CreativeController extends Controller
     {
         try {
             $user = Auth::user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Creative')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            $work = CreativeWork::where('id', $id)
-                ->where('created_by', $user->id)
-                ->firstOrFail();
+            $workQuery = CreativeWork::where('id', $id);
+            if (!$isProgramManager) {
+                $workQuery->where('created_by', $user->id);
+            }
+
+            $work = $workQuery->firstOrFail();
 
             // Only allow accept work if status is draft
             if ($work->status !== 'draft') {
@@ -499,6 +524,23 @@ class CreativeController extends Controller
             $work->update([
                 'status' => 'in_progress'
             ]);
+
+            // Log Workflow State for Accept Work
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'creative_work',
+                'creative',
+                $user->id,
+                "Creative work accepted by {$user->name}",
+                $user->id,
+                ['action' => 'creative_work_accepted']
+            );
+
+            // If Program Manager is accepting, set actor by updating created_by.
+            if ($isProgramManager && $work->created_by !== $user->id) {
+                $work->update(['created_by' => $user->id]);
+            }
 
             // Audit logging
             ControllerSecurityHelper::logCrud('creative_work_accepted', $work, [
@@ -530,8 +572,9 @@ class CreativeController extends Controller
     {
         try {
             $user = Auth::user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Creative')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -567,7 +610,7 @@ class CreativeController extends Controller
             // but for now, let's keep it simple: any user with role 'Creative' can update.
             $work = CreativeWork::where('id', $id)->firstOrFail();
             
-            if (strtolower($user->role) !== 'creative') {
+            if (!$isProgramManager && strtolower($user->role) !== 'creative') {
                  return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access. Only Creative role can complete this work.'
@@ -616,6 +659,29 @@ class CreativeController extends Controller
             
             $work->update($updateData);
 
+            // Log Workflow State for Complete Work
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'creative_work',
+                'creative',
+                $user->id,
+                "Creative work completed by {$user->name}",
+                $user->id,
+                [
+                    'action' => 'creative_work_completed',
+                    'completion_notes' => $request->completion_notes,
+                    'has_script' => !empty($updateData['script_link']) || !empty($updateData['script_content']),
+                    'has_storyboard' => !empty($updateData['storyboard_link']),
+                    'shooting_location' => $updateData['shooting_location'] ?? $work->shooting_location
+                ]
+            );
+
+            // If Program Manager completes, update created_by to reflect actor.
+            if ($isProgramManager && $work->created_by !== $user->id) {
+                $work->update(['created_by' => $user->id]);
+            }
+
             // Notify Producer
             $episode = $work->episode;
             $productionTeam = $episode->program->productionTeam;
@@ -657,8 +723,9 @@ class CreativeController extends Controller
     {
         try {
             $user = Auth::user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Creative')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -684,9 +751,11 @@ class CreativeController extends Controller
                 ], 422);
             }
 
-            $work = CreativeWork::where('id', $id)
-                ->where('created_by', $user->id)
-                ->firstOrFail();
+            $workQuery = CreativeWork::where('id', $id);
+            if (!$isProgramManager) {
+                $workQuery->where('created_by', $user->id);
+            }
+            $work = $workQuery->firstOrFail();
 
             // Allow revise: status rejected/revised, ATAU status submitted dengan jadwal syuting dibatalkan Producer
             $shootingCancelled = $work->shooting_schedule_cancelled === true
@@ -737,6 +806,10 @@ class CreativeController extends Controller
 
             $work->update($updateData);
 
+            if ($isProgramManager && $work->created_by !== $user->id) {
+                $work->update(['created_by' => $user->id]);
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $work->fresh(['episode', 'createdBy']),
@@ -759,17 +832,20 @@ class CreativeController extends Controller
     {
         try {
             $user = Auth::user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || ($user->role !== 'Creative' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            $work = CreativeWork::where('id', $id)
-                ->where('created_by', $user->id)
-                ->firstOrFail();
+            $workQuery = CreativeWork::where('id', $id);
+            if (!$isProgramManager) {
+                $workQuery->where('created_by', $user->id);
+            }
+            $work = $workQuery->firstOrFail();
 
             // Only allow resubmit if status is revised
             if ($work->status !== 'revised') {
@@ -849,8 +925,9 @@ class CreativeController extends Controller
     {
         try {
             $user = Auth::user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
 
-            if (!$user || $user->role !== 'Creative') {
+            if (!$user || ($user->role !== 'Creative' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

@@ -721,6 +721,10 @@ class EpisodeController extends Controller
             if ($musicArrangement) {
                 if (in_array($musicArrangement->status, ['approved', 'arrangement_approved'])) {
                     $musicStatus = 'completed';
+                } elseif ($musicArrangement->status === 'song_proposal') {
+                    $musicStatus = 'song_proposal_submitted';
+                } elseif ($musicArrangement->status === 'song_approved') {
+                    $musicStatus = 'song_approved_waiting_arrangement';
                 } else {
                     $musicStatus = $musicArrangement->status;
                 }
@@ -735,7 +739,8 @@ class EpisodeController extends Controller
                     'arranger_name' => $musicArrangement->arranger_name,
                     'created_at' => $musicArrangement->created_at,
                     'updated_at' => $musicArrangement->updated_at,
-                    'approved_at' => $musicArrangement->approved_at
+                    'approved_at' => $musicArrangement->approved_at,
+                    'is_song_proposal' => $musicArrangement->status === 'song_proposal' || $musicArrangement->status === 'song_rejected'
                 ] : null,
                 'deadline' => $episode->deadlines()->where('role', 'musik_arr')->first()
             ];
@@ -826,47 +831,41 @@ class EpisodeController extends Controller
                 'deadline' => $episode->deadlines()->where('role', 'quality_control')->first()
             ];
 
-            // 7. Promotion (NEW) - Includes Design Grafis & Promosi
-            $promotionMaterial = $episode->promotionMaterials()->latest()->first();
-            $designWork = $episode->designGrafisWorks()->latest()->first();
+            // 7. Promotion (ENHANCED) - Includes BTS, Highlights & Sharing
+            $promotionMaterials = $episode->promotionMaterials()->get();
+            $designWorks = $episode->designGrafisWorks()->get();
+            $promotionWorks = $episode->promotionWorks()->get();
             
             // Determine combined promotion status
-            // Determine combined promotion status
             $promoStatus = 'pending';
-            if ($promotionMaterial && in_array($promotionMaterial->status, ['completed', 'published', 'approved'])) {
-                 $promoStatus = 'completed';
-            } elseif ($designWork && $designWork->status === 'completed') {
-                 // Check if there are other promotion works that are NOT completed
-                 $pendingPromo = $episode->promotionMaterials()
-                    ->whereNotIn('status', ['completed', 'published', 'approved'])
-                    ->exists();
-
-                 if (!$pendingPromo) {
-                      $promoStatus = 'completed';
-                 } else {
-                      $promoStatus = 'in_progress_promotion';
+            if ($promotionWorks->where('status', 'published')->count() > 0 || $promotionMaterials->whereIn('status', ['completed', 'published', 'approved'])->count() > 0) {
+                 $promoStatus = 'in_progress_sharing';
+                 // If all expected types are done, it's completed
+                 $isAllDone = $promotionWorks->every(fn($w) => in_array($w->status, ['published', 'completed']));
+                 if ($isAllDone && $promotionWorks->count() > 0) {
+                     $promoStatus = 'completed';
                  }
-            } elseif ($designWork || $promotionMaterial) {
-                $promoStatus = 'in_progress';
+            } elseif ($designWorks->where('status', 'completed')->exists() || $promotionWorks->count() > 0) {
+                 $promoStatus = 'in_progress';
             }
             
             $workflowSteps['promotion'] = [
                 'step_name' => 'Promotion',
                 'status' => $promoStatus,
                 'data' => [
-                    'design_work' => $designWork ? [
-                        'id' => $designWork->id,
-                        'status' => $designWork->status,
-                        'updated_at' => $designWork->updated_at
-                    ] : null,
-                    'promotion_material' => $promotionMaterial ? [
-                        'id' => $promotionMaterial->id,
-                        'status' => $promotionMaterial->status,
-                        'platform' => $promotionMaterial->platform,
-                        'updated_at' => $promotionMaterial->updated_at
-                    ] : null
+                    'design_works_count' => $designWorks->count(),
+                    'promotion_materials_count' => $promotionMaterials->count(),
+                    'promotion_works' => $promotionWorks->map(function($w) {
+                        return [
+                            'id' => $w->id,
+                            'work_type' => $w->work_type,
+                            'status' => $w->status,
+                            'has_proof' => !empty($w->social_media_proof),
+                            'updated_at' => $w->updated_at
+                        ];
+                    })
                 ],
-                'deadline' => null // Promotion usually triggered by finished product
+                'deadline' => $episode->deadlines()->where('role', 'promotion')->first()
             ];
             
             // 8. Broadcasting
@@ -895,7 +894,7 @@ class EpisodeController extends Controller
                     'created_at' => $broadcastingWork->created_at,
                     'updated_at' => $broadcastingWork->updated_at
                 ] : null,
-                'deadline' => null
+                'deadline' => $episode->deadlines()->where('role', 'broadcasting')->first()
             ];
             
             // Calculate Progress
@@ -908,7 +907,7 @@ class EpisodeController extends Controller
             
             // Workflow Timeline (History)
             $timeline = $episode->workflowStates()
-                ->with('assignedToUser')
+                ->with(['assignedToUser', 'performingUser'])
                 ->orderBy('created_at')
                 ->get()
                 ->map(function($state) {
@@ -918,9 +917,13 @@ class EpisodeController extends Controller
                         'state_label' => $state->state_label,
                         'assigned_to_role' => $state->assigned_to_role,
                         'assigned_to_user' => $state->assignedToUser ? $state->assignedToUser->name : null,
+                        'performing_user' => $state->performingUser ? $state->performingUser->name : ($state->notes ? 'System/User' : null),
+                        'performing_user_role' => $state->performingUser ? $state->performingUser->role : null,
                         'notes' => $state->notes,
+                        'metadata' => $state->metadata,
                         'created_at' => $state->created_at,
-                        'updated_at' => $state->updated_at
+                        'updated_at' => $state->updated_at,
+                        'timestamp_formatted' => $state->created_at->format('d M Y, H:i')
                     ];
                 });
             

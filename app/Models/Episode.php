@@ -171,6 +171,33 @@ class Episode extends Model
             'created_by' => auth()->id() ?? 1
         ]);
 
+        // Deadline Quality Control: 3 hari sebelum tayang
+        $this->deadlines()->create([
+            'role' => 'quality_control',
+            'deadline_date' => $airDate->copy()->subDays(3),
+            'description' => 'Deadline quality control episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+
+        // Deadline Promotion: 2 hari sebelum tayang
+        $this->deadlines()->create([
+            'role' => 'promotion',
+            'deadline_date' => $airDate->copy()->subDays(2),
+            'description' => 'Deadline promotion episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+
+        // Deadline Broadcasting: 1 hari sebelum tayang
+        $this->deadlines()->create([
+            'role' => 'broadcasting',
+            'deadline_date' => $airDate->copy()->subDays(1),
+            'description' => 'Deadline broadcasting episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+
         // Notifikasi ke semua role yang terkait
         $this->notifyDeadlineCreation();
     }
@@ -187,7 +214,10 @@ class Episode extends Model
             'kreatif' => 'Creative',
             'produksi' => 'Production',
             'musik_arr' => 'Music Arranger',
-            'sound_eng' => 'Sound Engineer'
+            'sound_eng' => 'Sound Engineer',
+            'quality_control' => 'Quality Control',
+            'broadcasting' => 'Broadcasting',
+            'promotion' => 'Promotion'
         ];
         
         // Get deadlines for this episode

@@ -11,6 +11,11 @@ class ProductionTeamAssignment extends Model
 
     protected $table = 'production_teams_assignment';
 
+    protected $appends = [
+        'coordinator_id',
+        'coordinator',
+    ];
+
     protected $fillable = [
         'music_submission_id',
         'episode_id',
@@ -55,6 +60,46 @@ class ProductionTeamAssignment extends Model
     public function members()
     {
         return $this->hasMany(ProductionTeamMember::class, 'assignment_id');
+    }
+
+    public function getCoordinatorIdAttribute(): ?int
+    {
+        $member = null;
+
+        if ($this->relationLoaded('members')) {
+            $member = $this->members->firstWhere('is_coordinator', true);
+        } else {
+            $member = $this->members()->where('is_coordinator', true)->first();
+        }
+
+        $id = $member?->user_id;
+        return $id !== null ? (int) $id : null;
+    }
+
+    public function getCoordinatorAttribute(): ?array
+    {
+        $member = null;
+
+        if ($this->relationLoaded('members')) {
+            $member = $this->members->firstWhere('is_coordinator', true);
+        } else {
+            $member = $this->members()->with('user')->where('is_coordinator', true)->first();
+        }
+
+        if (!$member) {
+            return null;
+        }
+
+        $user = $member->relationLoaded('user') ? $member->user : $member->user()->first();
+        if (!$user) {
+            return ['user_id' => (int) $member->user_id];
+        }
+
+        return [
+            'user_id' => (int) $user->id,
+            'name' => $user->name ?? null,
+            'role' => $user->role ?? null,
+        ];
     }
 
     /**

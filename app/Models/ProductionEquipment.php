@@ -14,10 +14,17 @@ class ProductionEquipment extends Model
     /** Tabel di database: production_equipment (singular) */
     protected $table = 'production_equipment';
 
+    protected $appends = [
+        'equipment_items',
+        'formatted_equipment_list',
+    ];
+
     protected $fillable = [
         'episode_id',
         'program_id',
+        'request_group_id',
         'equipment_list',
+        'equipment_quantities',
         'request_notes',
         'scheduled_date',
         'scheduled_time',
@@ -42,6 +49,7 @@ class ProductionEquipment extends Model
 
     protected $casts = [
         'equipment_list' => 'array',
+        'equipment_quantities' => 'array',
         'crew_member_ids' => 'array',
         'requested_at' => 'datetime',
         'approved_at' => 'datetime',
@@ -81,6 +89,14 @@ class ProductionEquipment extends Model
     public function returnedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'returned_by');
+    }
+
+    /**
+     * Relationship dengan User yang request (Alias for compatibility)
+     */
+    public function requestedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'requested_by');
     }
 
     /**

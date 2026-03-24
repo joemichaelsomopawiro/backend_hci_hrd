@@ -9,6 +9,7 @@ use App\Helpers\QueryOptimizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class ProductionTeamController extends Controller
 {
@@ -173,7 +174,12 @@ class ProductionTeamController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255|unique:production_teams,name',
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('production_teams', 'name')->whereNull('deleted_at')
+            ],
             'description' => 'nullable|string',
             'producer_id' => 'required|exists:users,id',
             'created_by' => 'nullable|exists:users,id'
@@ -295,7 +301,14 @@ class ProductionTeamController extends Controller
         $team = ProductionTeam::findOrFail($id);
         
         $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|string|max:255|unique:production_teams,name,' . $id,
+            'name' => [
+                'sometimes',
+                'string',
+                'max:255',
+                Rule::unique('production_teams', 'name')
+                    ->whereNull('deleted_at')
+                    ->ignore($id)
+            ],
             'description' => 'nullable|string',
             'producer_id' => 'sometimes|exists:users,id',
             'is_active' => 'sometimes|boolean'

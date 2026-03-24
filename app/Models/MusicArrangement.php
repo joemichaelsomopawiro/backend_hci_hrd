@@ -40,7 +40,10 @@ class MusicArrangement extends Model
         'sound_engineer_help_notes',
         'sound_engineer_help_at',
         'sound_engineer_help_file_link', // New: Link for help file from SE
-        'needs_sound_engineer_help'
+        'needs_sound_engineer_help',
+        'is_group',
+        'group_name',
+        'group_members'
     ];
 
     protected $casts = [
@@ -50,7 +53,9 @@ class MusicArrangement extends Model
         'sound_engineer_help_at' => 'datetime',
         'file_size' => 'integer',
         'producer_modified' => 'boolean',
-        'needs_sound_engineer_help' => 'boolean'
+        'needs_sound_engineer_help' => 'boolean',
+        'is_group' => 'boolean',
+        'group_members' => 'array'
     ];
 
     /**
@@ -166,7 +171,7 @@ class MusicArrangement extends Model
             'review_notes' => $notes
         ];
 
-        // If Producer modified song/singer, use modified values
+        // If Producer modified song/singer/group, use modified values
         if ($this->producer_modified) {
             if ($this->producer_modified_song_title) {
                 $updateData['song_title'] = $this->producer_modified_song_title;
@@ -174,6 +179,8 @@ class MusicArrangement extends Model
             if ($this->producer_modified_singer_name) {
                 $updateData['singer_name'] = $this->producer_modified_singer_name;
             }
+            
+            // Note: is_group, group_name, and group_members are updated immediately in producerModify
         }
 
         $this->update($updateData);
@@ -182,7 +189,15 @@ class MusicArrangement extends Model
     /**
      * Producer modify song/singer before approve
      */
-    public function producerModify(?string $newSongTitle = null, ?string $newSingerName = null, ?int $songId = null, ?int $singerId = null): void
+    public function producerModify(
+        ?string $newSongTitle = null, 
+        ?string $newSingerName = null, 
+        ?int $songId = null, 
+        ?int $singerId = null,
+        bool $isGroup = false,
+        ?string $groupName = null,
+        $groupMembers = null
+    ): void
     {
         // Store original values if not already stored
         if (!$this->original_song_title) {
@@ -205,6 +220,9 @@ class MusicArrangement extends Model
             'singer_name' => $finalSingerName,
             'song_id' => $finalSongId,
             'singer_id' => $finalSingerId,
+            'is_group' => $isGroup,
+            'group_name' => $isGroup ? ($groupName ?? $this->group_name) : null,
+            'group_members' => $isGroup ? ($groupMembers ?? $this->group_members) : null,
             // Also store in producer_modified fields for tracking and approval workflow
             'producer_modified_song_title' => $finalSongTitle,
             'producer_modified_singer_name' => $finalSingerName,

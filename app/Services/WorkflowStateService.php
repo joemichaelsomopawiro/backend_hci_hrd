@@ -13,9 +13,9 @@ class WorkflowStateService
     /**
      * Update workflow state
      */
-    public function updateWorkflowState(Episode $episode, string $newState, string $assignedRole, ?int $assignedUserId = null, ?string $notes = null): WorkflowState
+    public function updateWorkflowState(Episode $episode, string $newState, string $assignedRole, ?int $assignedUserId = null, ?string $notes = null, ?int $performingUserId = null, array $metadata = []): WorkflowState
     {
-        return DB::transaction(function () use ($episode, $newState, $assignedRole, $assignedUserId, $notes) {
+        return DB::transaction(function () use ($episode, $newState, $assignedRole, $assignedUserId, $notes, $performingUserId, $metadata) {
             // Update episode
             $episode->update([
                 'current_workflow_state' => $newState,
@@ -29,7 +29,9 @@ class WorkflowStateService
                 'current_state' => $newState,
                 'assigned_to_role' => $assignedRole,
                 'assigned_to_user_id' => $assignedUserId,
-                'notes' => $notes
+                'performing_user_id' => $performingUserId ?? auth()->id(),
+                'notes' => $notes,
+                'metadata' => $metadata
             ]);
             
             // Send notifications

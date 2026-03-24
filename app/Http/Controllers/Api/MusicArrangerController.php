@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 
 class MusicArrangerController extends Controller
 {
@@ -31,23 +33,27 @@ class MusicArrangerController extends Controller
                 ], 401);
             }
             
-            // IZINKAN AKSES: Music Arranger, Creative, dan Producer
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             $userRole = strtolower($user->role);
-            $allowedRoles = ['music arranger', 'creative', 'producer'];
             
-            if (!in_array($userRole, $allowedRoles)) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Music Arranger')) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. Your role: ' . $user->role
+                    'message' => 'Unauthorized access.'
                 ], 403);
             }
 
             // Include soundEngineerHelper relationship untuk menampilkan info Sound Engineer jika ada
-            $query = MusicArrangement::with(['episode', 'createdBy', 'reviewedBy', 'soundEngineerHelper']);
+            $query = MusicArrangement::with([
+                'episode' => fn($q) => $q->withTrashed(),
+                'createdBy',
+                'reviewedBy',
+                'soundEngineerHelper'
+            ]);
 
             // Music Arranger hanya bisa melihat miliknya sendiri
             // Creative dan Producer bisa melihat semua aransemen yang relevan
-            if ($userRole === 'music arranger') {
+            if ($userRole === 'music arranger' && !$isProgramManager) {
                 $query->where('created_by', $user->id);
             }
 
@@ -109,7 +115,7 @@ class MusicArrangerController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || ($user->role !== 'Music Arranger' && $user->role !== 'Producer')) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Music Arranger')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -122,6 +128,9 @@ class MusicArrangerController extends Controller
                 'singer_id' => 'nullable|exists:users,id',
                 'song_title' => 'required_without:song_id|string|max:255',
                 'singer_name' => 'nullable|string|max:255',
+                'is_group' => 'nullable|boolean',
+                'group_name' => 'nullable|string|max:255',
+                'group_members' => 'nullable|array',
                 'arrangement_notes' => 'nullable|string',
                 'arrangement_file_link' => 'nullable|url'
             ]);
@@ -136,7 +145,7 @@ class MusicArrangerController extends Controller
 
             // ✅ VALIDASI PRODUCER ACCEPTANCE
             // Music Arranger tidak bisa membuat aransemen jika Producer belum menyetujui program
-            $episode = Episode::with('program')->find($request->episode_id);
+            $episode = Episode::with(['program' => fn($q) => $q->withTrashed()])->withTrashed()->find($request->episode_id);
             if ($episode && $episode->program && !$episode->program->producer_accepted) {
                 return response()->json([
                     'success' => false,
@@ -198,13 +207,16 @@ class MusicArrangerController extends Controller
                 'singer_id' => $request->singer_id,
                 'song_title' => $request->song_title,
                 'singer_name' => $request->singer_name,
+                'is_group' => $request->is_group ?? false,
+                'group_name' => $request->group_name,
+                'group_members' => $request->group_members,
                 'arrangement_notes' => $request->arrangement_notes,
                 'file_link' => $request->arrangement_file_link,
                 'status' => $request->arrangement_file_link ? 'arrangement_submitted' : 'song_proposal'
             ]);
 
-            // Notify Producer
-            $episode = Episode::with('program.productionTeam')->find($request->episode_id);
+            // Notify Producer for review
+            $episode = Episode::with(['program' => fn($p) => $p->withTrashed(), 'program.productionTeam' => fn($p) => $p->withTrashed()])->withTrashed()->findOrFail($arrangement->episode_id);
             $producer = $episode->program->productionTeam->producer ?? null;
 
             if ($producer) {
@@ -231,7 +243,15 @@ class MusicArrangerController extends Controller
                         'music_arrangement',
                         'music_arranger',
                         $user->id,
-                        'Music arrangement created by Music Arranger'
+                        'Music arrangement created by Music Arranger',
+                        $user->id,
+                        [
+                            'action' => 'song_proposal_created',
+                            'song_title' => $arrangement->song_title,
+                            'singer_name' => $arrangement->is_group ? "Group: {$arrangement->group_name}" : $arrangement->singer_name,
+                            'is_group' => $arrangement->is_group,
+                            'group_members' => $arrangement->group_members
+                        ]
                     );
                 } catch (\Throwable $e) {
                     // Jangan gagalkan pembuatan arrangement hanya karena update workflow gagal
@@ -288,7 +308,7 @@ class MusicArrangerController extends Controller
     {
         try {
             $user = Auth::user();
-            $arrangement = MusicArrangement::findOrFail($id);
+            $arrangement = MusicArrangement::with(['episode' => fn($q) => $q->withTrashed()])->findOrFail($id);
 
             // Validate Music Arranger is the creator
             if ($arrangement->created_by !== $user->id) {
@@ -299,7 +319,8 @@ class MusicArrangerController extends Controller
             }
 
             // Allow modification if status is draft, song_proposal, or song_rejected
-            $allowedStatuses = ['draft', 'song_proposal', 'song_rejected', 'arrangement_in_progress', 'arrangement_rejected'];
+            // Updated: Also allow modification if status is song_approved or arrangement_approved (User can change singer/group)
+            $allowedStatuses = ['draft', 'song_proposal', 'song_rejected', 'arrangement_in_progress', 'arrangement_rejected', 'song_approved', 'arrangement_approved'];
             if (!in_array($arrangement->status, $allowedStatuses)) {
                 return response()->json([
                     'success' => false,
@@ -312,6 +333,9 @@ class MusicArrangerController extends Controller
                 'song_title' => 'nullable|string|max:255',
                 'singer_id' => 'nullable|exists:singers,id',
                 'singer_name' => 'nullable|string|max:255',
+                'is_group' => 'nullable|boolean',
+                'group_name' => 'nullable|string|max:255',
+                'group_members' => 'nullable|array',
                 'arrangement_notes' => 'nullable|string',
                 'arrangement_file_link' => 'nullable|url|max:2048',
             ]);
@@ -355,6 +379,9 @@ class MusicArrangerController extends Controller
                 'song_title' => $songTitle,
                 'singer_id' => $singerId,
                 'singer_name' => $singerName,
+                'is_group' => $request->has('is_group') ? $request->is_group : $arrangement->is_group,
+                'group_name' => $request->has('group_name') ? $request->group_name : $arrangement->group_name,
+                'group_members' => $request->has('group_members') ? $request->group_members : $arrangement->group_members,
                 'arrangement_notes' => $request->arrangement_notes ?? $arrangement->arrangement_notes,
                 'file_link' => $request->arrangement_file_link ?? $arrangement->file_link,
             ];
@@ -401,7 +428,7 @@ class MusicArrangerController extends Controller
                 return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
-            $arrangement = MusicArrangement::findOrFail($id);
+            $arrangement = MusicArrangement::with(['episode' => fn($q) => $q->withTrashed()])->findOrFail($id);
 
             // Access check: only the Music Arranger who created this arrangement can input link
             if ((int) $arrangement->created_by !== (int) $user->id) {
@@ -415,7 +442,7 @@ class MusicArrangerController extends Controller
             ]);
 
             // Notify Producer for Review
-            $episode = Episode::with('program.productionTeam')->find($arrangement->episode_id);
+            $episode = Episode::with(['program' => fn($p) => $p->withTrashed(), 'program.productionTeam' => fn($p) => $p->withTrashed()])->withTrashed()->find($arrangement->episode_id);
             $producer = $episode->program->productionTeam->producer ?? null;
 
             if ($producer) {
@@ -459,7 +486,7 @@ class MusicArrangerController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Music Arranger', 'music_arranger', 'musicarranger', 'music_arr'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Music Arranger')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -469,6 +496,9 @@ class MusicArrangerController extends Controller
             $validator = Validator::make($request->all(), [
                 'song_title' => 'required|string|max:255',
                 'singer_name' => 'nullable|string|max:255',
+                'is_group' => 'nullable|boolean',
+                'group_name' => 'nullable|string|max:255',
+                'group_members' => 'nullable|array',
                 'notes' => 'nullable|string|max:1000',
             ]);
 
@@ -480,7 +510,7 @@ class MusicArrangerController extends Controller
                 ], 422);
             }
 
-            $arrangement = MusicArrangement::findOrFail($id);
+            $arrangement = MusicArrangement::with(['episode' => fn($q) => $q->withTrashed()])->findOrFail($id);
 
             // Access check: only creator can submit proposal
             if ((int) $arrangement->created_by !== (int) $user->id) {
@@ -491,7 +521,11 @@ class MusicArrangerController extends Controller
             }
 
             // Must be assigned to a production team (episode team or program team)
-            $episode = Episode::with(['productionTeam', 'program.productionTeam'])->find($arrangement->episode_id);
+            $episode = Episode::with([
+                'productionTeam' => fn($q) => $q->withTrashed(),
+                'program' => fn($q) => $q->withTrashed(),
+                'program.productionTeam' => fn($q) => $q->withTrashed()
+            ])->withTrashed()->find($arrangement->episode_id);
             if (!$episode) {
                 return response()->json([
                     'success' => false,
@@ -518,7 +552,7 @@ class MusicArrangerController extends Controller
             }
 
             // Only allow submit if not already submitted/approved
-            if (!in_array($arrangement->status, ['draft', 'revised', 'song_rejected', 'rejected', 'song_proposal'])) {
+            if (!in_array($arrangement->status, ['draft', 'revised', 'song_rejected', 'rejected', 'song_proposal', 'song_approved', 'arrangement_approved'])) {
                 return response()->json([
                     'success' => false,
                     'message' => "Cannot submit song proposal with status '{$arrangement->status}'."
@@ -528,6 +562,9 @@ class MusicArrangerController extends Controller
             $arrangement->update([
                 'song_title' => $request->song_title,
                 'singer_name' => $request->singer_name,
+                'is_group' => $request->is_group ?? false,
+                'group_name' => $request->group_name,
+                'group_members' => $request->group_members,
                 'notes' => $request->notes ?? $arrangement->notes,
                 'status' => 'song_proposal',
                 'submitted_at' => now()
@@ -564,7 +601,7 @@ class MusicArrangerController extends Controller
     {
         try {
             $user = Auth::user();
-            $arrangement = MusicArrangement::findOrFail($id);
+            $arrangement = MusicArrangement::with(['episode' => fn($q) => $q->withTrashed()])->findOrFail($id);
 
             // Validate Music Arranger is the creator
             if ($arrangement->created_by !== $user->id) {

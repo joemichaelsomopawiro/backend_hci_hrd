@@ -20,11 +20,13 @@ class ProductionTeamMember extends Model
         'left_at',
         'notes',
         'role_notes',
-        'status'
+        'status',
+        'is_coordinator'
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'is_coordinator' => 'boolean',
         'joined_at' => 'datetime',
         'left_at' => 'datetime'
     ];
@@ -111,6 +113,28 @@ class ProductionTeamMember extends Model
     {
         return self::where('user_id', $userId)
             ->where('is_active', true)
+            ->whereHas('assignment', function ($q) use ($episodeId, $teamTypes) {
+                $q->where('episode_id', $episodeId)
+                    ->where('status', '!=', 'cancelled');
+                
+                if (!empty($teamTypes)) {
+                    if (is_array($teamTypes)) {
+                        $q->whereIn('team_type', (array)$teamTypes);
+                    } else {
+                        $q->where('team_type', $teamTypes);
+                    }
+                }
+            })->exists();
+    }
+
+    /**
+     * Static helper to check if a user is a coordinator for an episode
+     */
+    public static function isCoordinatorForEpisode(int $userId, int $episodeId, $teamTypes = []): bool
+    {
+        return self::where('user_id', $userId)
+            ->where('is_active', true)
+            ->where('is_coordinator', true)
             ->whereHas('assignment', function ($q) use ($episodeId, $teamTypes) {
                 $q->where('episode_id', $episodeId)
                     ->where('status', '!=', 'cancelled');

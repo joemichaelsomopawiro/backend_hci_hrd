@@ -22,10 +22,14 @@ use App\Models\Budget;
 use App\Models\BudgetRequest;
 use App\Models\Notification;
 use App\Models\ProgramApproval;
+use App\Models\ProductionTeamAssignment;
+use App\Models\ProductionTeamMember;
+use App\Models\MusicSchedule;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use App\Helpers\ProgramManagerAuthorization;
 
 class ProducerController extends Controller
 {
@@ -54,8 +58,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -68,23 +73,32 @@ class ProducerController extends Controller
             // Support episode.productionTeam langsung atau episode.program.productionTeam
             // Fallback: episode/program belum punya production team → tampilkan ke Producer agar data dari Music Arranger tetap terlihat
             $songProposals = MusicArrangement::where('status', 'song_proposal')
-                ->with(['episode', 'episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'createdBy'
+                ])
                 ->where(function ($q) use ($user) {
-                    // Episode punya productionTeam langsung dan producer_id = user
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    // Atau episode tidak punya productionTeam, ambil dari Program
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     })
-                    // Fallback: episode & program belum punya production_team_id (agar Producer tetap bisa lihat usulan Music Arranger)
                     ->orWhereHas('episode', function ($subQ) {
-                        $subQ->whereNull('production_team_id')
+                        $subQ->withTrashed()->whereNull('production_team_id')
                             ->where(function ($epQ) {
                                 $epQ->whereDoesntHave('program')
                                     ->orWhereHas('program', function ($pq) {
-                                        $pq->whereNull('production_team_id');
+                                        $pq->withTrashed()->whereNull('production_team_id');
                                     });
                             });
                     });
@@ -151,8 +165,7 @@ class ProducerController extends Controller
             // 1. Status arrangement_submitted atau submitted (arrangement file yang sudah di-submit)
             // 2. Status arrangement_in_progress yang sudah punya file atau link (fallback jika auto-submit belum jalan)
             // 3. Status song_approved yang sudah punya file atau link (fallback jika auto-submit belum jalan)
-            // Termasuk arrangement_submitted yang diajukan kembali oleh Sound Engineer (setelah ditolak)
-            $allMusicArrangements = MusicArrangement::where(function ($q) {
+            $musicArrangements = MusicArrangement::where(function ($q) {
                     $q->whereIn('status', ['submitted', 'arrangement_submitted'])
                       ->orWhere(function ($subQ) {
                           $subQ->whereIn('status', ['arrangement_in_progress', 'song_approved'])
@@ -163,99 +176,43 @@ class ProducerController extends Controller
                       });
                 })
                 ->with([
-                    'episode.productionTeam',
-                    'episode.program.productionTeam',
-                    'episode.program',
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
                     'createdBy',
                     'soundEngineerHelper'
                 ])
+                ->where(function ($q) use ($user, $isProgramManager) {
+                    if ($isProgramManager) {
+                        // Program Manager: see all arrangements matching status / file rules (no producer filter)
+                        return;
+                    }
+                    // Producer: filter by their production team / reviewed_by
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
+                    })
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
+                    })
+                    ->orWhereHas('episode', function ($subQ) {
+                        $subQ->withTrashed()->whereNull('production_team_id')
+                            ->where(function ($epQ) {
+                                $epQ->whereDoesntHave('program')
+                                    ->orWhereHas('program', function ($pq) {
+                                        $pq->withTrashed()->whereNull('production_team_id');
+                                    });
+                            });
+                    })
+                    ->orWhere('reviewed_by', $user->id);
+                })
                 ->get();
-            
-            // Debug: Log semua arrangement dengan status arrangement_in_progress (dengan atau tanpa file)
-            // CATATAN: Log ini hanya untuk debugging, tidak dikembalikan ke frontend
-            // Query $allMusicArrangements di atas sudah filter hanya yang punya file
-            $allInProgress = MusicArrangement::where('status', 'arrangement_in_progress')
-                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'episode.program'])
-                ->get();
-            
-            Log::info('Producer getApprovals - All arrangement_in_progress (DEBUG ONLY - not returned to frontend)', [
-                'producer_id' => $user->id,
-                'total_in_progress' => $allInProgress->count(),
-                'arrangements' => $allInProgress->map(function ($arr) use ($user) {
-                    $episode = $arr->episode;
-                    $episodePT = $episode->productionTeam ?? null;
-                    $programPT = $episode->program->productionTeam ?? null;
-                    
-                    return [
-                        'id' => $arr->id,
-                        'episode_id' => $arr->episode_id,
-                        'has_file' => !empty($arr->file_path),
-                        'file_path' => $arr->file_path,
-                        'episode_production_team_id' => $episode->production_team_id,
-                        'episode_production_team_producer_id' => $episodePT ? $episodePT->producer_id : null,
-                        'episode_production_team_match' => $episodePT && $episodePT->producer_id === $user->id,
-                        'program_production_team_id' => $episode->program->production_team_id ?? null,
-                        'program_production_team_producer_id' => $programPT ? $programPT->producer_id : null,
-                        'program_production_team_match' => $programPT && $programPT->producer_id === $user->id,
-                        'matches_producer' => ($episodePT && $episodePT->producer_id === $user->id) || ($programPT && $programPT->producer_id === $user->id)
-                    ];
-                })->toArray()
-            ]);
-            
-            // Filter berdasarkan productionTeam (episode.productionTeam atau episode.program.productionTeam)
-            $musicArrangements = $allMusicArrangements->filter(function ($arrangement) use ($user) {
-                $episode = $arrangement->episode;
-                if (!$episode) {
-                    Log::warning('Producer getApprovals - Arrangement without episode', [
-                        'arrangement_id' => $arrangement->id,
-                        'episode_id' => $arrangement->episode_id
-                    ]);
-                    return false;
-                }
-                
-                // Cek episode.productionTeam langsung
-                if ($episode->productionTeam && $episode->productionTeam->producer_id === $user->id) {
-                    Log::info('Producer getApprovals - Match via episode.productionTeam', [
-                        'arrangement_id' => $arrangement->id,
-                        'episode_id' => $episode->id,
-                        'production_team_id' => $episode->production_team_id,
-                        'producer_id' => $episode->productionTeam->producer_id
-                    ]);
-                    return true;
-                }
-                
-                // Cek episode.program.productionTeam
-                if ($episode->program && $episode->program->productionTeam && $episode->program->productionTeam->producer_id === $user->id) {
-                    Log::info('Producer getApprovals - Match via episode.program.productionTeam', [
-                        'arrangement_id' => $arrangement->id,
-                        'episode_id' => $episode->id,
-                        'program_id' => $episode->program->id,
-                        'production_team_id' => $episode->program->production_team_id,
-                        'producer_id' => $episode->program->productionTeam->producer_id
-                    ]);
-                    return true;
-                }
-                
-                // Fallback: episode/program tanpa production team → tampilkan ke Producer agar data arrangement dari Music Arranger tetap terlihat
-                $episodeNoPt = !$episode->production_team_id;
-                $programNoPt = !$episode->program || !$episode->program->production_team_id;
-                if ($episodeNoPt && $programNoPt) {
-                    Log::info('Producer getApprovals - Arrangement matched via fallback (no PT)', [
-                        'arrangement_id' => $arrangement->id,
-                        'episode_id' => $episode->id
-                    ]);
-                    return true;
-                }
-                
-                Log::warning('Producer getApprovals - Arrangement not matched', [
-                    'arrangement_id' => $arrangement->id,
-                    'episode_id' => $episode->id,
-                    'episode_production_team_id' => $episode->production_team_id,
-                    'user_producer_id' => $user->id,
-                    'arrangement_status' => $arrangement->status
-                ]);
-                return false;
-            })->values(); // Reset keys setelah filter
             
             // Debug logging untuk troubleshooting
             // Debug: Cek arrangement_in_progress yang punya file tapi tidak match productionTeam
@@ -279,73 +236,95 @@ class ProducerController extends Controller
             
             Log::info('Producer getApprovals - Music Arrangements Summary (RETURNED TO FRONTEND)', [
                 'producer_id' => $user->id,
-                'total_all' => $allMusicArrangements->count(),
                 'total_filtered' => $musicArrangements->count(),
                 'note' => 'Only arrangements with status arrangement_submitted/submitted, or arrangement_in_progress/song_approved WITH FILE are included',
-                'all_arrangements_status' => $allMusicArrangements->pluck('status', 'id')->toArray(),
+                'all_arrangements_status' => $musicArrangements->pluck('status', 'id')->toArray(),
                 'filtered_arrangements' => $musicArrangements->map(function ($arr) {
                     $episode = $arr->episode;
-                    $program = $episode->program ?? null;
+                    $program = $episode?->program ?? null;
                     return [
                         'id' => $arr->id,
                         'status' => $arr->status,
                         'has_file' => !empty($arr->file_path) || !empty($arr->file_link),
                         'episode_id' => $arr->episode_id,
-                        'episode_production_team_id' => $episode->production_team_id ?? null,
-                        'program_production_team_id' => $program->production_team_id ?? null,
-                        'episode_production_team_producer_id' => ($episode->productionTeam->producer_id ?? null),
-                        'program_production_team_producer_id' => ($program && $program->productionTeam ? $program->productionTeam->producer_id : null),
-                    ];
-                })->toArray(),
-                'in_progress_with_file_count' => $inProgressWithFile->count(),
-                'in_progress_not_matched' => $inProgressNotMatched->map(function ($arr) {
-                    $episode = $arr->episode;
-                    return [
-                        'id' => $arr->id,
-                        'episode_id' => $arr->episode_id,
-                        'episode_production_team_id' => $episode->production_team_id ?? null,
-                        'episode_production_team_producer_id' => ($episode->productionTeam->producer_id ?? null),
-                        'program_production_team_id' => ($episode->program->production_team_id ?? null),
-                        'program_production_team_producer_id' => ($episode->program->productionTeam->producer_id ?? null),
+                        'episode_production_team_id' => $episode?->production_team_id ?? null,
+                        'program_production_team_id' => $program?->production_team_id ?? null,
+                        'episode_production_team_producer_id' => ($episode?->productionTeam?->producer_id ?? null),
+                        'program_production_team_producer_id' => ($program?->productionTeam?->producer_id ?? null),
                     ];
                 })->toArray()
             ]);
             
             // Creative works pending approval (script_link, storyboard_link, budget_data, jadwal, lokasi untuk Producer)
             $creativeWorks = CreativeWork::where('status', 'submitted')
-                ->with(['episode.program', 'createdBy', 'specialBudgetApproval'])
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'createdBy',
+                    'specialBudgetApproval'
+                ])
                 ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     });
                 })
                 ->get();
             
             // Equipment requests pending approval
             $equipmentRequests = ProductionEquipment::where('status', 'pending')
-                ->with(['episode', 'requestedBy'])
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'requestedBy'
+                ])
                 ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     });
                 })
                 ->get();
             
             // Budget requests pending approval
             $budgetRequests = Budget::where('status', 'submitted')
-                ->with(['episode', 'requestedBy'])
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'requestedBy'
+                ])
                 ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     });
                 })
                 ->get();
@@ -353,39 +332,76 @@ class ProducerController extends Controller
             // Sound Engineer Recordings pending QC
             $soundEngineerRecordings = SoundEngineerRecording::where('status', 'completed')
                 ->whereNull('reviewed_by')
-                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'musicArrangement', 'createdBy'])
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'musicArrangement',
+                    'createdBy'
+                ])
                 ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     });
                 })
                 ->get();
 
             // Sound Engineer Editing pending approval
             $soundEngineerEditing = SoundEngineerEditing::where('status', 'submitted')
-                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'recording', 'soundEngineer'])
-                ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
-                    })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'recording',
+                    'soundEngineer'
+                ])
+                ->when(!$isProgramManager, function ($query) use ($user) {
+                    $query->where(function ($q) use ($user) {
+                        $q->whereHas('episode', function($epQ) use ($user) {
+                            $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        })
+                        ->orWhereHas('episode', function($epQ) use ($user) {
+                            $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                                $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                    $subQ->withTrashed()->where('producer_id', $user->id);
+                                });
+                            });
+                        });
                     });
                 })
                 ->get();
 
             // Editor Work pending approval
             $editorWorks = EditorWork::where('status', 'submitted')
-                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'createdBy'
+                ])
                 ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     });
                 })
                 ->get();
@@ -421,7 +437,8 @@ class ProducerController extends Controller
                 'budget_requests' => $budgetRequests,
                 'sound_engineer_recordings' => $soundEngineerRecordings,
                 'sound_engineer_editing' => $soundEngineerEditing,
-                'editor_works' => $editorWorks
+                'editor_works' => $editorWorks,
+                'produksi_works' => $productionWorks
             ];
             
             $response = [
@@ -453,8 +470,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -479,23 +497,38 @@ class ProducerController extends Controller
                           ->whereNotNull('reviewed_by'); // Konfirmasi sudah di-review oleh Producer
                       });
                 })
-                ->with(['episode.productionTeam', 'episode.program.productionTeam', 'episode.program', 'createdBy', 'reviewedBy'])
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'createdBy', 
+                    'reviewedBy'
+                ])
                 ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     })
                     ->orWhereHas('episode', function ($subQ) {
-                        $subQ->whereNull('production_team_id')
+                        $subQ->withTrashed()->whereNull('production_team_id')
                             ->where(function ($epQ) {
                                 $epQ->whereDoesntHave('program')
                                     ->orWhereHas('program', function ($pq) {
-                                        $pq->whereNull('production_team_id');
+                                        $pq->withTrashed()->whereNull('production_team_id');
                                     });
                             });
-                    });
+                    })
+                    // ATAU Fallback: Producer ini yang me-review (History mutlak milik yang me-review)
+                    ->orWhere('reviewed_by', $user->id);
                 })
                 ->orderBy('updated_at', 'desc')
                 ->get();
@@ -522,15 +555,18 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
                 ], 403);
             }
 
-            $history = SoundEngineerRecording::whereIn('status', ['reviewed', 'rejected'])
+            // Rejection workflow for recordings resets status back to 'recording' for revision,
+            // so we can't rely on `status = rejected`. Instead, use presence of review metadata.
+            $history = SoundEngineerRecording::whereNotNull('reviewed_by')
                 ->with(['episode.productionTeam', 'episode.program.productionTeam', 'musicArrangement', 'createdBy', 'reviewedBy'])
                 ->where(function ($q) use ($user) {
                     $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
@@ -541,7 +577,17 @@ class ProducerController extends Controller
                     });
                 })
                 ->orderBy('reviewed_at', 'desc')
-                ->get();
+                ->get()
+                ->map(function (SoundEngineerRecording $recording) {
+                    // Producer-approval outcome mapping for frontend compatibility.
+                    // - approve  => status 'reviewed'
+                    // - reject   => status becomes 'recording' but still has reviewed metadata
+                    if ($recording->status !== 'reviewed') {
+                        $recording->status = 'rejected';
+                    }
+                    return $recording;
+                })
+                ->values();
 
             return response()->json([
                 'success' => true,
@@ -565,8 +611,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -574,7 +621,12 @@ class ProducerController extends Controller
             }
 
             // Hanya riwayat hasil editing vokal (sound_engineer_editing), bukan arrangement help
-            $editingRecords = SoundEngineerEditing::whereIn('status', ['approved', 'rejected'])
+            // Rejection workflow for editing uses status 'revision_needed' (for resubmission),
+            // so we can't rely on `status = rejected`. Instead, use approval/rejection metadata.
+            $editingRecords = SoundEngineerEditing::where(function ($q) {
+                    $q->whereNotNull('approved_by')
+                      ->orWhereNotNull('rejected_by');
+                })
                 ->with(['episode.productionTeam', 'episode.program.productionTeam', 'recording', 'soundEngineer', 'approvedBy', 'rejectedBy'])
                 ->where(function ($q) use ($user) {
                     $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
@@ -588,13 +640,14 @@ class ProducerController extends Controller
                 ->get();
 
             $history = $editingRecords->map(function ($record) {
+                $status = $record->status === 'approved' ? 'approved' : 'rejected';
                 return [
                     'id' => $record->id,
                     'source_type' => 'editing_work',
                     'episode_id' => $record->episode_id,
                     'episode' => $record->episode,
                     'sound_engineer' => $record->soundEngineer,
-                    'status' => $record->status,
+                    'status' => $status,
                     'notes' => $record->editing_notes ?? $record->submission_notes,
                     'final_file_link' => $record->final_file_link,
                     'final_file_path' => $record->final_file_path,
@@ -625,8 +678,9 @@ class ProducerController extends Controller
     public function approve(Request $request, int $id): JsonResponse
     {
         $user = auth()->user();
+        $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
         
-        if (!$user || $user->role !== 'Producer') {
+        if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'
@@ -652,7 +706,12 @@ class ProducerController extends Controller
             switch ($request->type) {
                 case 'song_proposal':
                     // Approve song proposal (lagu & penyanyi)
-                    $item = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                    $item = MusicArrangement::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                        'createdBy'
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access (same logic as getApprovals: episode OR program production team, or fallback when no team assigned)
                     $episode = $item->episode;
@@ -692,23 +751,45 @@ class ProducerController extends Controller
                     \App\Helpers\ControllerSecurityHelper::logApproval('song_proposal_approved', $item, [
                         'episode_id' => $item->episode_id,
                         'song_title' => $item->song_title,
-                        'singer_name' => $item->singer_name,
+                        'singer_name' => $item->is_group ? "Group: {$item->group_name}" : $item->singer_name,
+                        'is_group' => $item->is_group,
+                        'group_name' => $item->group_name,
                         'review_notes' => $request->notes
                     ], $request);
                     
                     // Notify Music Arranger
+                    $singerText = $item->is_group ? "grup '{$item->group_name}'" : "penyanyi '{$item->singer_name}'";
                     Notification::create([
                         'user_id' => $item->created_by,
                         'type' => 'song_proposal_approved',
-                        'title' => 'Usulan Lagu & Penyanyi Diterima',
-                        'message' => "Usulan lagu '{$item->song_title}'" . ($item->singer_name ? " dengan penyanyi '{$item->singer_name}'" : '') . " telah diterima. Silakan arrange lagu.",
+                        'title' => 'Usulan Lagu & ' . ($item->is_group ? 'Grup' : 'Penyanyi') . ' Diterima',
+                        'message' => "Usulan lagu '{$item->song_title}' dengan {$singerText} telah diterima. Silakan arrange lagu.",
                         'data' => [
                             'arrangement_id' => $item->id,
                             'episode_id' => $item->episode_id,
-                            'review_notes' => $request->notes
+                            'review_notes' => $request->notes,
+                            'is_group' => $item->is_group,
+                            'group_name' => $item->group_name
                         ]
                     ]);
                     
+                    // Log Workflow State for Song Approval
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $episode,
+                        'music_arrangement',
+                        'music_arranger',
+                        $item->created_by,
+                        "Song proposal approved by Producer: {$item->song_title} by " . ($item->is_group ? "Group '{$item->group_name}'" : "'{$item->singer_name}'"),
+                        $user->id,
+                        [
+                            'action' => 'song_proposal_approved',
+                            'song_title' => $item->song_title,
+                            'singer_name' => $item->is_group ? "Group: {$item->group_name}" : $item->singer_name,
+                            'producer_notes' => $request->notes
+                        ]
+                    );
+
                     return response()->json([
                         'success' => true,
                         'data' => $item->fresh(['episode', 'createdBy']),
@@ -717,7 +798,12 @@ class ProducerController extends Controller
                     
                 case 'music_arrangement':
                     // Approve arrangement file (setelah song approved dan arrangement file submitted)
-                    $item = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                    $item = MusicArrangement::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                        'createdBy'
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
@@ -798,7 +884,19 @@ class ProducerController extends Controller
                     // Notify Music Arranger
                     $approvalMessage = "Arrangement lagu '{$item->song_title}' telah disetujui oleh Producer.";
                     if ($item->producer_modified) {
-                        $approvalMessage .= " Producer telah memodifikasi: Song dari '{$item->original_song_title}' menjadi '{$item->song_title}', Singer dari '{$item->original_singer_name}' menjadi '{$item->singer_name}'.";
+                        $modDetails = [];
+                        if ($item->song_title !== $item->original_song_title) {
+                            $modDetails[] = "Song: '{$item->original_song_title}' -> '{$item->song_title}'";
+                        }
+                        if ($item->is_group) {
+                            $modDetails[] = "Singer: '{$item->original_singer_name}' -> Group: '{$item->group_name}'";
+                        } else if ($item->singer_name !== $item->original_singer_name) {
+                            $modDetails[] = "Singer: '{$item->original_singer_name}' -> '{$item->singer_name}'";
+                        }
+                        
+                        if (!empty($modDetails)) {
+                            $approvalMessage .= " Producer telah memodifikasi: " . implode(', ', $modDetails) . ".";
+                        }
                     }
                     
                     Notification::create([
@@ -872,7 +970,11 @@ class ProducerController extends Controller
                     break;
                     
                 case 'creative_work':
-                    $item = CreativeWork::with(['episode.productionTeam', 'episode.program.productionTeam'])->findOrFail($id);
+                    $item = CreativeWork::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed()
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
@@ -985,16 +1087,16 @@ class ProducerController extends Controller
                     ]);
                     
                     // Update workflow state to production_planning
-                    if ($item->episode->current_workflow_state === 'creative_work') {
-                        $workflowService = app(\App\Services\WorkflowStateService::class);
-                        $workflowService->updateWorkflowState(
-                            $item->episode,
-                            'production_planning',
-                            'production',
-                            null,
-                            'Creative work approved, proceeding to production planning'
-                        );
-                    }
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $item->episode,
+                        'production_planning',
+                        'production',
+                        null,
+                        'Creative work approved by Producer, proceeding to production planning',
+                        $user->id,
+                        ['action' => 'creative_work_approved', 'notes' => $request->notes]
+                    );
                     break;
                     
                 case 'equipment_request':
@@ -1008,7 +1110,11 @@ class ProducerController extends Controller
                     break;
 
                 case 'sound_engineer_recording':
-                    $item = SoundEngineerRecording::with(['episode.program.productionTeam'])->findOrFail($id);
+                    $item = SoundEngineerRecording::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.program' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed()
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access
                     if ($item->episode->program->productionTeam->producer_id !== $user->id) {
@@ -1043,7 +1149,12 @@ class ProducerController extends Controller
                     break;
                     
                 case 'sound_engineer_editing':
-                    $item = SoundEngineerEditing::with(['episode.productionTeam', 'episode.program.productionTeam'])->findOrFail($id);
+                    $item = SoundEngineerEditing::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                        'episode.program' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed()
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access
                     // Support episode.productionTeam langsung atau episode.program.productionTeam
@@ -1058,22 +1169,24 @@ class ProducerController extends Controller
                     $episodeTeam = $episode->productionTeam;
                     $programTeam = $episode->program ? $episode->program->productionTeam : null;
                     
-                    if (!$episodeTeam && !$programTeam) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Production team not found for this episode. Please assign a production team first.'
-                        ], 404);
-                    }
-                    
-                    // Check if producer matches EITHER episode's or program's production team
-                    $episodeMatch = $episodeTeam && $episodeTeam->producer_id === $user->id;
-                    $programMatch = $programTeam && $programTeam->producer_id === $user->id;
-                    
-                    if (!$episodeMatch && !$programMatch) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Unauthorized: This editing work is not from your production team.'
-                        ], 403);
+                    if (!$isProgramManager) {
+                        if (!$episodeTeam && !$programTeam) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Production team not found for this episode. Please assign a production team first.'
+                            ], 404);
+                        }
+                        
+                        // Check if producer matches EITHER episode's or program's production team
+                        $episodeMatch = $episodeTeam && $episodeTeam->producer_id === $user->id;
+                        $programMatch = $programTeam && $programTeam->producer_id === $user->id;
+                        
+                        if (!$episodeMatch && !$programMatch) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Unauthorized: This editing work is not from your production team.'
+                            ], 403);
+                        }
                     }
 
                     if ($item->status !== 'submitted') {
@@ -1127,6 +1240,18 @@ class ProducerController extends Controller
                     }
                     
                     foreach ($editors as $editorId) {
+                        $audioUrl = $item->final_file_path;
+                        if ($item->final_file_link) {
+                            $audioUrl = $item->final_file_link;
+                            if (strpos($audioUrl, 'http') !== 0) {
+                                $audioUrl = 'https://' . $audioUrl;
+                            }
+                        } elseif ($item->final_file_path) {
+                            if (strpos($item->final_file_path, 'http') !== 0) {
+                                $audioUrl = url('storage/' . $item->final_file_path);
+                            }
+                        }
+
                         Notification::create([
                             'user_id' => $editorId,
                             'type' => 'audio_ready_for_editing',
@@ -1135,7 +1260,7 @@ class ProducerController extends Controller
                             'data' => [
                                 'editing_id' => $item->id,
                                 'episode_id' => $episode->id,
-                                'audio_file_path' => $item->final_file_path
+                                'audio_file_path' => $audioUrl
                             ]
                         ]);
                     }
@@ -1154,7 +1279,13 @@ class ProducerController extends Controller
                     break;
                     
                 case 'editor_work':
-                    $item = EditorWork::with(['episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                                        $item = EditorWork::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.program' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                        'createdBy'
+                    ])->findOrFail($id);
+
                     
                     // Validate Producer has access
                     if ($item->episode->program->productionTeam->producer_id !== $user->id) {
@@ -1213,6 +1344,48 @@ class ProducerController extends Controller
                         );
                     }
                     break;
+
+                case 'produksi_work':
+                    $item = ProduksiWork::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed()
+                    ])->findOrFail($id);
+
+                    // Validate Producer has access
+                    if ($item->episode->program->productionTeam->producer_id !== $user->id) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Unauthorized: This production work is not from your production team.'
+                        ], 403);
+                    }
+
+                    if ($item->status !== 'completed') {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Only completed production works can be approved'
+                        ], 400);
+                    }
+
+                    // Approve work
+                    $item->update([
+                        'status' => 'approved',
+                        'completed_at' => now(), // Final completion timestamp
+                        'notes' => $request->notes ?: $item->notes
+                    ]);
+
+                    // Notify Production Team
+                    Notification::create([
+                        'user_id' => $item->completed_by ?: $item->created_by,
+                        'type' => 'produksi_work_approved',
+                        'title' => 'Produksi Work Approved',
+                        'message' => "Produksi work untuk Episode {$item->episode->episode_number} telah disetujui oleh Producer.",
+                        'data' => [
+                            'produksi_work_id' => $item->id,
+                            'episode_id' => $item->episode_id,
+                            'review_notes' => $request->notes
+                        ]
+                    ]);
+                    break;
             }
             
             return response()->json([
@@ -1235,8 +1408,9 @@ class ProducerController extends Controller
     public function reject(Request $request, int $id): JsonResponse
     {
         $user = auth()->user();
+        $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
         
-        if (!$user || $user->role !== 'Producer') {
+        if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'
@@ -1262,7 +1436,12 @@ class ProducerController extends Controller
             switch ($request->type) {
                 case 'song_proposal':
                     // Reject song proposal (lagu & penyanyi)
-                    $item = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                    $item = MusicArrangement::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                        'createdBy'
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access (same logic as getApprovals: episode OR program production team, or fallback when no team assigned)
                     $episode = $item->episode;
@@ -1297,18 +1476,36 @@ class ProducerController extends Controller
                         'reviewed_at' => now(),
                         'rejection_reason' => $request->reason
                     ]);
+
+                    // Log Workflow State for Song Rejection
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $episode,
+                        'music_arrangement',
+                        'music_arranger',
+                        $item->created_by,
+                        "Song proposal rejected by Producer: {$item->song_title}. Reason: {$request->reason}",
+                        $user->id,
+                        [
+                            'action' => 'song_proposal_rejected',
+                            'song_title' => $item->song_title,
+                            'rejection_reason' => $request->reason
+                        ]
+                    );
                     
                     // Notify Music Arranger
+                    $singerInfo = $item->is_group ? "grup '{$item->group_name}'" : "penyanyi '{$item->singer_name}'";
                     Notification::create([
                         'user_id' => $item->created_by,
                         'type' => 'song_proposal_rejected',
-                        'title' => 'Usulan Lagu & Penyanyi Ditolak',
-                        'message' => "Usulan lagu '{$item->song_title}'" . ($item->singer_name ? " dengan penyanyi '{$item->singer_name}'" : '') . " telah ditolak. Alasan: {$request->reason}. Sound Engineer dapat membantu perbaikan.",
+                        'title' => 'Usulan Lagu & ' . ($item->is_group ? 'Grup' : 'Penyanyi') . ' Ditolak',
+                        'message' => "Usulan lagu '{$item->song_title}' dengan {$singerInfo} telah ditolak. Alasan: {$request->reason}. Sound Engineer dapat membantu perbaikan.",
                         'data' => [
                             'arrangement_id' => $item->id,
                             'episode_id' => $item->episode_id,
                             'rejection_reason' => $request->reason,
-                            'needs_sound_engineer_help' => true
+                            'needs_sound_engineer_help' => true,
+                            'is_group' => $item->is_group
                         ]
                     ]);
                     
@@ -1345,7 +1542,12 @@ class ProducerController extends Controller
                     
                 case 'music_arrangement':
                     // Reject arrangement file
-                    $item = MusicArrangement::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                    $item = MusicArrangement::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                        'createdBy'
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
@@ -1417,8 +1619,8 @@ class ProducerController extends Controller
                     
                     if ($productionTeam) {
                         $soundEngineers = $productionTeam->members()
-                            ->where('role', 'sound_eng')
                             ->where('is_active', true)
+                            ->whereRaw('LOWER(role) IN (?, ?, ?)', ['sound_eng', 'sound_engineer', 'sound engineer'])
                             ->get();
 
                         foreach ($soundEngineers as $soundEngineerMember) {
@@ -1439,7 +1641,12 @@ class ProducerController extends Controller
                     break;
                     
                 case 'creative_work':
-                    $item = CreativeWork::with(['episode.productionTeam', 'episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                    $item = CreativeWork::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                        'createdBy'
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access (same logic as getApprovals: episode OR program production team)
                     $episode = $item->episode;
@@ -1500,7 +1707,11 @@ class ProducerController extends Controller
                     break;
 
                 case 'sound_engineer_recording':
-                    $item = SoundEngineerRecording::with(['episode.program.productionTeam'])->findOrFail($id);
+                    $item = SoundEngineerRecording::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.program' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed()
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access
                     if ($item->episode->program->productionTeam->producer_id !== $user->id) {
@@ -1540,7 +1751,12 @@ class ProducerController extends Controller
                     break;
 
                 case 'sound_engineer_editing':
-                    $item = SoundEngineerEditing::with(['episode.productionTeam', 'episode.program.productionTeam'])->findOrFail($id);
+                    $item = SoundEngineerEditing::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                        'episode.program' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed()
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access
                     // Support episode.productionTeam langsung atau episode.program.productionTeam
@@ -1604,7 +1820,12 @@ class ProducerController extends Controller
                     break;
                     
                 case 'editor_work':
-                    $item = EditorWork::with(['episode.program.productionTeam', 'createdBy'])->findOrFail($id);
+                    $item = EditorWork::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.program' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                        'createdBy'
+                    ])->findOrFail($id);
                     
                     // Validate Producer has access
                     if ($item->episode->program->productionTeam->producer_id !== $user->id) {
@@ -1636,6 +1857,40 @@ class ProducerController extends Controller
                         ]
                     ]);
                     break;
+
+                case 'produksi_work':
+                    $item = ProduksiWork::with([
+                        'episode' => fn($q) => $q->withTrashed(),
+                        'episode.program.productionTeam' => fn($q) => $q->withTrashed()
+                    ])->findOrFail($id);
+
+                    // Validate Producer has access
+                    if ($item->episode->program->productionTeam->producer_id !== $user->id) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Unauthorized: This production work is not from your production team.'
+                        ], 403);
+                    }
+
+                    // Reject work - set status back to in_progress for revision
+                    $item->update([
+                        'status' => 'in_progress',
+                        'notes' => "Rejected by Producer: " . $request->reason . "\n" . ($item->notes ?: '')
+                    ]);
+
+                    // Notify Production Team
+                    Notification::create([
+                        'user_id' => $item->completed_by ?: $item->created_by,
+                        'type' => 'produksi_work_rejected',
+                        'title' => 'Produksi Work Rejected',
+                        'message' => "Produksi work untuk Episode {$item->episode->episode_number} telah ditolak oleh Producer. Alasan: {$request->reason}",
+                        'data' => [
+                            'produksi_work_id' => $item->id,
+                            'episode_id' => $item->episode_id,
+                            'rejection_reason' => $request->reason
+                        ]
+                    ]);
+                    break;
             }
             
             return response()->json([
@@ -1660,8 +1915,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1684,10 +1940,12 @@ class ProducerController extends Controller
             
             // Producer hanya bisa melihat program dari ProductionTeam mereka
             // Gunakan whereHas untuk memastikan productionTeam ada dan producer_id sesuai
-            $query->whereHas('productionTeam', function ($q) use ($user) {
-                $q->where('producer_id', $user->id)
-                  ->where('is_active', true); // Hanya production team yang aktif
-            });
+            if (!$isProgramManager) {
+                $query->whereHas('productionTeam', function ($q) use ($user) {
+                    $q->where('producer_id', $user->id)
+                      ->where('is_active', true); // Hanya production team yang aktif
+                });
+            }
             
             // Filter by status
             if ($request->has('status')) {
@@ -1753,8 +2011,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
 
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1771,8 +2030,10 @@ class ProducerController extends Controller
                     'episodes as episodes_finished_count' => fn ($q) => $q->where('status', 'aired'),
                 ])
                 ->whereNotNull('production_team_id')
-                ->whereHas('productionTeam', function ($q) use ($user) {
-                    $q->where('producer_id', $user->id)->where('is_active', true);
+                ->when(!$isProgramManager, function ($q) use ($user) {
+                    $q->whereHas('productionTeam', function ($sub) use ($user) {
+                        $sub->where('producer_id', $user->id)->where('is_active', true);
+                    });
                 })
                 ->findOrFail($id);
 
@@ -1804,8 +2065,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1813,8 +2075,10 @@ class ProducerController extends Controller
             }
             
             $query = Episode::with(['program.productionTeam', 'deadlines', 'workflowStates'])
-                ->whereHas('program.productionTeam', function ($q) use ($user) {
-                    $q->where('producer_id', $user->id);
+                ->when(!$isProgramManager, function ($q) use ($user) {
+                    $q->whereHas('program.productionTeam', function ($sub) use ($user) {
+                        $sub->where('producer_id', $user->id);
+                    });
                 });
             
             // Filter by program
@@ -1969,8 +2233,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1979,18 +2244,39 @@ class ProducerController extends Controller
             
             // Get rejected arrangements from Producer's production teams; fallback: episode/program tanpa PT tetap ditampilkan
             $query = MusicArrangement::whereIn('status', ['arrangement_rejected', 'rejected'])
-                ->with(['episode', 'episode.productionTeam', 'episode.program.productionTeam', 'createdBy', 'reviewedBy', 'soundEngineerHelper'])
-                ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'createdBy',
+                    'reviewedBy',
+                    'soundEngineerHelper'
+                ])
+                ->where(function ($q) use ($user, $isProgramManager) {
+                    if ($isProgramManager) {
+                        $q->whereNotNull('id');
+                        return;
+                    }
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     })
-                    ->orWhereHas('episode', function ($subQ) use ($user) {
-                        $subQ->whereNull('production_team_id')
-                            ->whereHas('program', function ($pq) {
-                                $pq->whereNull('production_team_id');
+                    ->orWhereHas('episode', function ($subQ) {
+                        $subQ->withTrashed()->whereNull('production_team_id')
+                            ->where(function ($epQ) {
+                                $epQ->whereDoesntHave('program')
+                                    ->orWhereHas('program', function ($pq) {
+                                        $pq->withTrashed()->whereNull('production_team_id');
+                                    });
                             });
                     });
                 });
@@ -2031,8 +2317,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -2041,18 +2328,34 @@ class ProducerController extends Controller
             
             // Get approved arrangements from Producer's production teams; fallback: episode/program tanpa PT tetap ditampilkan
             $query = MusicArrangement::whereIn('status', ['arrangement_approved', 'approved'])
-                ->with(['episode', 'episode.productionTeam', 'episode.program.productionTeam', 'createdBy', 'reviewedBy'])
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'createdBy',
+                    'reviewedBy'
+                ])
                 ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
                     })
-                    ->orWhereHas('episode.program.productionTeam', function ($subQ) use ($user) {
-                        $subQ->where('producer_id', $user->id);
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
                     })
                     ->orWhereHas('episode', function ($subQ) {
-                        $subQ->whereNull('production_team_id')
-                            ->whereHas('program', function ($pq) {
-                                $pq->whereNull('production_team_id');
+                        $subQ->withTrashed()->whereNull('production_team_id')
+                            ->where(function ($epQ) {
+                                $epQ->whereDoesntHave('program')
+                                    ->orWhereHas('program', function ($pq) {
+                                        $pq->withTrashed()->whereNull('production_team_id');
+                                    });
                             });
                     });
                 });
@@ -2239,8 +2542,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -2292,10 +2596,15 @@ class ProducerController extends Controller
      */
     public function assignProductionTeams(Request $request, int $creativeWorkId): JsonResponse
     {
+        Log::info('AssignProductionTeams Request', [
+            'creative_work_id' => $creativeWorkId,
+            'payload' => $request->all()
+        ]);
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -2320,7 +2629,10 @@ class ProducerController extends Controller
                 'recording_schedule_id' => 'nullable|exists:music_schedules,id',
                 'shooting_team_notes' => 'nullable|string|max:1000',
                 'setting_team_notes' => 'nullable|string|max:1000',
-                'recording_team_notes' => 'nullable|string|max:1000'
+                'recording_team_notes' => 'nullable|string|max:1000',
+                'shooting_coordinator_id' => 'nullable|exists:users,id',
+                'setting_coordinator_id' => 'nullable|exists:users,id',
+                'recording_coordinator_id' => 'nullable|exists:users,id'
             ]);
 
             if ($validator->fails()) {
@@ -2331,11 +2643,14 @@ class ProducerController extends Controller
                 ], 422);
             }
 
+            Log::info('Fetching creative work', ['id' => $creativeWorkId]);
             $creativeWork = CreativeWork::with(['episode.productionTeam', 'episode.program.productionTeam'])->findOrFail($creativeWorkId);
+            Log::info('Creative work found', ['episode_id' => $creativeWork->episode_id]);
 
             // Validate relationships exist
             $episode = $creativeWork->episode;
             if (!$episode) {
+                Log::warning('Episode not found for creative work', ['creative_work_id' => $creativeWorkId]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Creative work does not have an associated episode.'
@@ -2343,7 +2658,8 @@ class ProducerController extends Controller
             }
 
             // Producer harus punya akses (episode.productionTeam ATAU program.productionTeam)
-            if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
+            if (!$isProgramManager && !$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
+                Log::warning('Producer not authorized', ['user_id' => $user->id, 'episode_id' => $episode->id]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This creative work is not from your production team.'
@@ -2364,17 +2680,23 @@ class ProducerController extends Controller
 
             // Semua user aktif boleh ditambahkan, kecuali Program Manager dan Distribution Manager (dua penulisan untuk PM)
             $excludedRoles = ['Program Manager', 'Manager Program', 'Distribution Manager'];
-            $allActiveUsers = \App\Models\User::where('is_active', true)
+            $allActiveUsers = User::where('is_active', true)
                 ->whereNotIn('role', $excludedRoles)
                 ->pluck('id')
                 ->toArray();
 
             // Validate all selected team members are valid active users (and NOT managers)
             $allTeamMemberIds = array_merge(
-                $request->shooting_team_ids ?? [],
-                $request->setting_team_ids ?? [],
-                $request->recording_team_ids ?? []
+                (array) ($request->shooting_team_ids ?? []),
+                (array) ($request->setting_team_ids ?? []),
+                (array) ($request->recording_team_ids ?? [])
             );
+            
+            Log::info('Validating team members', [
+                'count_active' => count($allActiveUsers),
+                'count_selected' => count($allTeamMemberIds),
+                'allTeamMemberIds' => $allTeamMemberIds
+            ]);
 
             if (!empty($allTeamMemberIds)) {
                 $invalidMembers = array_diff($allTeamMemberIds, $allActiveUsers);
@@ -2397,7 +2719,7 @@ class ProducerController extends Controller
 
             // Validate schedule_id if provided
             if ($request->shooting_schedule_id) {
-                $scheduleExists = \App\Models\MusicSchedule::where('id', $request->shooting_schedule_id)->exists();
+                $scheduleExists = MusicSchedule::where('id', $request->shooting_schedule_id)->exists();
                 if (!$scheduleExists) {
                     return response()->json([
                         'success' => false,
@@ -2407,7 +2729,7 @@ class ProducerController extends Controller
             }
 
             if ($request->recording_schedule_id) {
-                $scheduleExists = \App\Models\MusicSchedule::where('id', $request->recording_schedule_id)->exists();
+                $scheduleExists = MusicSchedule::where('id', $request->recording_schedule_id)->exists();
                 if (!$scheduleExists) {
                     return response()->json([
                         'success' => false,
@@ -2418,160 +2740,185 @@ class ProducerController extends Controller
 
             $episode = $creativeWork->episode;
             $episodeId = $episode->id;
+            
+            // Get production team ID for the producer (required by ProductionTeamMember)
+            $productionTeam = \App\Models\ProductionTeam::where('producer_id', $user->id)->first();
+            $productionTeamId = $productionTeam ? $productionTeam->id : null;
+            
             $assignments = [];
 
             // Start database transaction
             DB::beginTransaction();
 
-            try {
             // Assign shooting team
-            if ($request->has('shooting_team_ids') && count($request->shooting_team_ids) > 0) {
-                $shootingAssignment = \App\Models\ProductionTeamAssignment::create([
-                        'music_submission_id' => null,
+            if ($request->has('shooting_team_ids') && is_array($request->shooting_team_ids) && count($request->shooting_team_ids) > 0) {
+                Log::info('Assigning shooting team');
+                $shootingAssignment = ProductionTeamAssignment::create([
+                    'music_submission_id' => null,
                     'episode_id' => $episodeId,
                     'schedule_id' => $request->shooting_schedule_id,
                     'assigned_by' => $user->id,
                     'team_type' => 'shooting',
-                        'team_name' => $request->shooting_team_name ?? 'Shooting Team',
+                    'team_name' => $request->shooting_team_name ?? 'Shooting Team',
                     'team_notes' => $request->shooting_team_notes,
                     'status' => 'assigned',
                     'assigned_at' => now(),
                 ]);
 
                 foreach ($request->shooting_team_ids as $index => $userId) {
-                        // Check if user already assigned to this assignment (prevent duplicates)
-                        $existingMember = \App\Models\ProductionTeamMember::where('assignment_id', $shootingAssignment->id)
-                            ->where('user_id', $userId)
-                            ->first();
-                        
-                        if ($existingMember) {
-                            continue; // Skip if already assigned
-                        }
+                    $existingMember = ProductionTeamMember::where('assignment_id', $shootingAssignment->id)
+                        ->where('user_id', $userId)
+                        ->first();
+                    
+                    if ($existingMember) {
+                        continue;
+                    }
 
-                    \App\Models\ProductionTeamMember::create([
+                    ProductionTeamMember::create([
+                        // Assignment-based membership: avoid global team-role uniqueness collisions
+                        // (a user can be "leader" in both shooting & setting for the same producer team).
+                        'production_team_id' => null,
                         'assignment_id' => $shootingAssignment->id,
                         'user_id' => $userId,
                         'role' => $index === 0 ? 'leader' : 'crew',
+                        'is_coordinator' => (int) $userId === (int) ($request->shooting_coordinator_id ?? 0),
                         'status' => 'assigned',
                     ]);
                 }
                 $assignments['shooting_team'] = $shootingAssignment;
+                Log::info('Shooting team assigned');
             }
 
             // Assign setting team
-            if ($request->has('setting_team_ids') && count($request->setting_team_ids) > 0) {
-                $settingAssignment = \App\Models\ProductionTeamAssignment::create([
-                        'music_submission_id' => null,
+            if ($request->has('setting_team_ids') && is_array($request->setting_team_ids) && count($request->setting_team_ids) > 0) {
+                Log::info('Assigning setting team');
+                $settingAssignment = ProductionTeamAssignment::create([
+                    'music_submission_id' => null,
                     'episode_id' => $episodeId,
-                        'schedule_id' => $request->shooting_schedule_id, // Usually same as shooting
+                    'schedule_id' => $request->shooting_schedule_id, // Usually same as shooting
                     'assigned_by' => $user->id,
                     'team_type' => 'setting',
-                        'team_name' => $request->setting_team_name ?? 'Setting Team',
+                    'team_name' => $request->setting_team_name ?? 'Setting Team',
                     'team_notes' => $request->setting_team_notes,
                     'status' => 'assigned',
                     'assigned_at' => now(),
                 ]);
 
                 foreach ($request->setting_team_ids as $index => $userId) {
-                        // Check if user already assigned to this assignment (prevent duplicates)
-                        $existingMember = \App\Models\ProductionTeamMember::where('assignment_id', $settingAssignment->id)
-                            ->where('user_id', $userId)
-                            ->first();
-                        
-                        if ($existingMember) {
-                            continue; // Skip if already assigned
-                        }
+                    $existingMember = ProductionTeamMember::where('assignment_id', $settingAssignment->id)
+                        ->where('user_id', $userId)
+                        ->first();
+                    
+                    if ($existingMember) {
+                        continue;
+                    }
 
-                    \App\Models\ProductionTeamMember::create([
+                    ProductionTeamMember::create([
+                        // Assignment-based membership: avoid global team-role uniqueness collisions
+                        'production_team_id' => null,
                         'assignment_id' => $settingAssignment->id,
                         'user_id' => $userId,
                         'role' => $index === 0 ? 'leader' : 'crew',
+                        'is_coordinator' => (int) $userId === (int) ($request->setting_coordinator_id ?? 0),
                         'status' => 'assigned',
                     ]);
                 }
                 $assignments['setting_team'] = $settingAssignment;
+                Log::info('Setting team assigned');
             }
 
             // Assign recording team
-            if ($request->has('recording_team_ids') && count($request->recording_team_ids) > 0) {
-                $recordingAssignment = \App\Models\ProductionTeamAssignment::create([
-                        'music_submission_id' => null,
+            if ($request->has('recording_team_ids') && is_array($request->recording_team_ids) && count($request->recording_team_ids) > 0) {
+                Log::info('Assigning recording team');
+                $recordingAssignment = ProductionTeamAssignment::create([
+                    'music_submission_id' => null,
                     'episode_id' => $episodeId,
                     'schedule_id' => $request->recording_schedule_id,
                     'assigned_by' => $user->id,
                     'team_type' => 'recording',
-                        'team_name' => $request->recording_team_name ?? 'Recording Team',
+                    'team_name' => $request->recording_team_name ?? 'Recording Team',
                     'team_notes' => $request->recording_team_notes,
                     'status' => 'assigned',
                     'assigned_at' => now(),
                 ]);
 
                 foreach ($request->recording_team_ids as $index => $userId) {
-                        // Check if user already assigned to this assignment (prevent duplicates)
-                        $existingMember = \App\Models\ProductionTeamMember::where('assignment_id', $recordingAssignment->id)
-                            ->where('user_id', $userId)
-                            ->first();
-                        
-                        if ($existingMember) {
-                            continue; // Skip if already assigned
-                        }
+                    $existingMember = ProductionTeamMember::where('assignment_id', $recordingAssignment->id)
+                        ->where('user_id', $userId)
+                        ->first();
+                    
+                    if ($existingMember) {
+                        continue;
+                    }
 
-                    \App\Models\ProductionTeamMember::create([
+                    ProductionTeamMember::create([
+                        // Assignment-based membership: avoid global team-role uniqueness collisions
+                        'production_team_id' => null,
                         'assignment_id' => $recordingAssignment->id,
                         'user_id' => $userId,
                         'role' => $index === 0 ? 'leader' : 'crew',
+                        'is_coordinator' => (int) $userId === (int) ($request->recording_coordinator_id ?? 0),
                         'status' => 'assigned',
                     ]);
                 }
                 $assignments['recording_team'] = $recordingAssignment;
+                Log::info('Recording team assigned');
             }
 
-            // Notify team members - BULK INSERT to avoid N+1
+            // Notify team members
+            Log::info('Inserting notifications');
             $notificationsToInsert = [];
             $now = now();
             
+            // Notify team members
+            Log::info('Creating notifications');
+            $now = now();
+            
             foreach ($assignments as $assignment) {
-                    $loadedAssignment = \App\Models\ProductionTeamAssignment::with('members.user', 'episode')->find($assignment->id);
+                $loadedAssignment = ProductionTeamAssignment::with('members.user', 'episode')->find($assignment->id);
+                if (!$loadedAssignment) continue;
+
                 foreach ($loadedAssignment->members as $member) {
-                        $notificationsToInsert[] = [
-                        'user_id' => $member->user_id,
-                        'type' => 'team_assigned',
+                    try {
+                        Notification::create([
+                            'user_id' => $member->user_id,
+                            'type' => 'team_assigned',
                             'title' => 'Ditugaskan ke Tim ' . ucfirst($loadedAssignment->team_type),
                             'message' => "Anda telah ditugaskan ke tim {$loadedAssignment->team_name} untuk Episode {$loadedAssignment->episode->episode_number}.",
-                        'data' => json_encode([
-                            'assignment_id' => $loadedAssignment->id,
+                            'data' => [
+                                'assignment_id' => $loadedAssignment->id,
                                 'episode_id' => $loadedAssignment->episode_id,
-                            'team_type' => $loadedAssignment->team_type
-                        ]),
-                        'created_at' => $now,
-                        'updated_at' => $now
-                    ];
+                                'team_type' => $loadedAssignment->team_type
+                            ],
+                            'status' => 'unread',
+                            'episode_id' => $loadedAssignment->episode_id
+                        ]);
+                    } catch (\Exception $notifyEx) {
+                        Log::error('Failed to create notification for user', [
+                            'user_id' => $member->user_id,
+                            'error' => $notifyEx->getMessage()
+                        ]);
+                        // Don't fail the whole process if one notification fails
+                    }
                 }
             }
-            
-            // Bulk insert all notifications at once (1 query instead of N)
-            if (!empty($notificationsToInsert)) {
-                DB::table('notifications')->insert($notificationsToInsert);
-            }
+            Log::info('Notifications processed');
 
-                DB::commit();
+            DB::commit();
+            Log::info('Transaction committed');
 
             return response()->json([
                 'success' => true,
-                    'data' => [
-                        'assignments' => $assignments,
-                        'episode_id' => $episodeId,
-                        'episode_number' => $episode->episode_number
-                    ],
+                'data' => [
+                    'assignments' => $assignments,
+                    'episode_id' => $episodeId,
+                    'episode_number' => $episode->episode_number
+                ],
                 'message' => 'Production teams assigned successfully'
             ]);
 
         } catch (\Exception $e) {
-                DB::rollBack();
-                throw $e;
-            }
-
-        } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Error assigning production teams', [
                 'creative_work_id' => $creativeWorkId,
                 'error' => $e->getMessage(),
@@ -2593,8 +2940,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -2764,8 +3112,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -2789,7 +3138,10 @@ class ProducerController extends Controller
             $episode = Episode::with(['program'])->findOrFail($episodeId);
 
             // Check if Producer has access to this episode's program
-            if (!$episode->program || $episode->program->productionTeam->producer_id !== $user->id) {
+            if (
+                !$episode->program
+                || (!$isProgramManager && $episode->program->productionTeam->producer_id !== $user->id)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'You do not have access to edit rundown for this episode.'
@@ -2867,8 +3219,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -2880,6 +3233,9 @@ class ProducerController extends Controller
                 'singer_name' => 'nullable|string|max:255',
                 'song_id' => 'nullable|exists:songs,id',
                 'singer_id' => 'nullable|exists:singers,id',
+                'is_group' => 'nullable|boolean',
+                'group_name' => 'nullable|required_if:is_group,true|string|max:255',
+                'group_members' => 'nullable|array',
                 'modification_notes' => 'nullable|string|max:1000'
             ]);
 
@@ -2907,7 +3263,7 @@ class ProducerController extends Controller
             $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null) ?? null;
 
             // Jika ada production team, Producer harus yang ditugaskan; jika belum ada PT (unassigned), izinkan edit oleh Producer mana pun
-            if ($productionTeam && $productionTeam->producer_id !== $user->id) {
+            if (!$isProgramManager && $productionTeam && $productionTeam->producer_id !== $user->id) {
                 \Log::warning('Producer editArrangementSongSinger - Unauthorized access', [
                     'arrangement_id' => $arrangementId,
                     'producer_id' => $user->id,
@@ -2961,7 +3317,16 @@ class ProducerController extends Controller
 
             // Apply modification
             $prevStatus = $arrangement->status;
-            $arrangement->producerModify($newSongTitle, $newSingerName, $songId, $singerId);
+            $isGroup = $request->boolean('is_group');
+            $arrangement->producerModify(
+                $newSongTitle, 
+                $newSingerName, 
+                $songId, 
+                $singerId,
+                $isGroup,
+                $request->group_name,
+                $request->group_members
+            );
 
             // AUTO-APPROVE Logic: If status was song_proposal, approve it automatically
             if ($prevStatus === 'song_proposal') {
@@ -3068,8 +3433,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -3116,8 +3482,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
 
-            if (!$user || $user->role !== 'Producer') {
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -3158,7 +3525,8 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
-            if (!$user || $user->role !== 'Producer') {
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -3202,9 +3570,10 @@ class ProducerController extends Controller
                 ]);
             }
 
-            // Default: hanya anggota production team program ini
-            $productionTeamIds = \App\Models\ProductionTeam::where('producer_id', $user->id)
-                ->pluck('id');
+            // Default: Producer hanya anggota production team miliknya; Program Manager melihat semua tim (oversight)
+            $productionTeamIds = $isProgramManager
+                ? \App\Models\ProductionTeam::pluck('id')
+                : \App\Models\ProductionTeam::where('producer_id', $user->id)->pluck('id');
 
             $query = \App\Models\ProductionTeamMember::whereIn('production_team_id', $productionTeamIds)
                 ->with('user');
@@ -3242,8 +3611,9 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
-            
-            if (!$user || $user->role !== 'Producer') {
+
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -3270,7 +3640,7 @@ class ProducerController extends Controller
             $episode = Episode::with(['program.productionTeam'])->findOrFail($request->episode_id);
 
             // Validate Producer has access
-            if ($episode->program->productionTeam->producer_id !== $user->id) {
+            if (!$isProgramManager && $episode->program->productionTeam->producer_id !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This episode is not from your production team.'
@@ -3907,6 +4277,7 @@ class ProducerController extends Controller
                 'team_type' => 'required|in:shooting,setting,recording',
                 'team_member_ids' => 'required|array|min:1',
                 'team_member_ids.*' => 'exists:users,id',
+                'coordinator_id' => 'nullable|exists:users,id',
                 'team_name' => 'nullable|string|max:255',
                 'team_notes' => 'nullable|string|max:1000',
                 'schedule_id' => 'nullable|exists:music_schedules,id'
@@ -4019,6 +4390,11 @@ class ProducerController extends Controller
                 }
 
             // Add team members
+            $coordinatorId = $request->input('coordinator_id');
+            if (!$coordinatorId) {
+                $coordinatorId = $request->team_member_ids[0] ?? null;
+            }
+
             foreach ($request->team_member_ids as $index => $userId) {
                     // Check if user already assigned to this assignment (prevent duplicates)
                     $existingMember = \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)
@@ -4030,9 +4406,12 @@ class ProducerController extends Controller
                     }
 
                     $member = \App\Models\ProductionTeamMember::create([
+                    'production_team_id' => $productionTeam->id,
                     'assignment_id' => $assignment->id,
                     'user_id' => $userId,
                     'role' => $index === 0 ? 'leader' : 'crew',
+                    'is_active' => true,
+                    'is_coordinator' => $coordinatorId ? ((int) $userId === (int) $coordinatorId) : false,
                     'status' => 'assigned'
                 ]);
 
@@ -5852,11 +6231,11 @@ class ProducerController extends Controller
 
                 // Sync Members
                 // First, remove existing members for this specific assignment
-                \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)->delete();
+                ProductionTeamMember::where('assignment_id', $assignment->id)->delete();
 
                 // Add new members and notify them
                 foreach ($assignmentData['user_ids'] as $userId) {
-                    \App\Models\ProductionTeamMember::create([
+                    ProductionTeamMember::create([
                         'production_team_id' => $productionTeam->id, // Associate with main team for reference
                         'assignment_id' => $assignment->id,
                         'user_id' => $userId,
@@ -6173,10 +6552,10 @@ class ProducerController extends Controller
     private function mapTeamTypeToRole(string $type): string
     {
         return match ($type) {
-            'shooting' => 'production',
-            'setting' => 'art_set_design',
+            'shooting' => 'produksi',
+            'setting' => 'art_set_properti',
             'recording' => 'sound_eng',
-            default => 'production'
+            default => 'produksi'
         };
     }
 
@@ -6268,28 +6647,43 @@ class ProducerController extends Controller
         // 3. Handle Sound Engineer Recording Task
         $recordingId = null;
         if ($item->recording_schedule) {
+            // Find latest approved arrangement so Sound Engineer can see what to record.
+            $approvedArrangement = MusicArrangement::where('episode_id', $item->episode_id)
+                ->whereIn('status', ['approved', 'arrangement_approved'])
+                ->orderByRaw('COALESCE(reviewed_at, submitted_at, updated_at) DESC')
+                ->first();
+            $approvedArrangementId = $approvedArrangement?->id;
+            $approvedArrangementTitle = $approvedArrangement?->song_title;
+
             $existingRecording = SoundEngineerRecording::where('episode_id', $item->episode_id)->first();
             
             if ($existingRecording) {
                 $existingRecording->update([
                     'recording_schedule' => $item->recording_schedule,
-                    'status' => 'scheduled'
+                    'status' => 'pending',
+                    // Fill arrangement id if it's missing (older rows)
+                    'music_arrangement_id' => $existingRecording->music_arrangement_id ?: $approvedArrangementId,
                 ]);
                 $recordingId = $existingRecording->id;
             } else {
                 $productionTeam = $program->productionTeam;
                 $firstSoundEngineer = $productionTeam ? $productionTeam->members()
-                    ->where('role', 'sound_eng')
+                    ->whereRaw('LOWER(role) IN (?, ?, ?)', ['sound_eng', 'sound_engineer', 'sound engineer'])
                     ->where('is_active', true)
                     ->first() : null;
 
+                $createdByUserId = $firstSoundEngineer ? $firstSoundEngineer->user_id : $user->id;
+
                 $recording = SoundEngineerRecording::create([
                     'episode_id' => $item->episode_id,
-                    'music_arrangement_id' => null,
-                    'recording_notes' => "Recording task untuk rekaman vokal Episode {$episode->episode_number}",
+                    'music_arrangement_id' => $approvedArrangementId,
+                    // Include "approved arrangement:" pattern because frontend extracts it.
+                    'recording_notes' => $approvedArrangementTitle
+                        ? "Recording task untuk rekaman vokal Episode {$episode->episode_number}. approved arrangement: {$approvedArrangementTitle}"
+                        : "Recording task untuk rekaman vokal Episode {$episode->episode_number}",
                     'recording_schedule' => $item->recording_schedule,
-                    'status' => 'scheduled',
-                    'created_by' => $firstSoundEngineer ? $firstSoundEngineer->user_id : $user->id
+                    'status' => 'pending',
+                    'created_by' => $createdByUserId,
                 ]);
                 $recordingId = $recording->id;
             }
@@ -6301,7 +6695,10 @@ class ProducerController extends Controller
         if ($recordingId) {
             $productionTeam = $program->productionTeam;
             if ($productionTeam) {
-                $soundEngineers = $productionTeam->members()->where('role', 'sound_eng')->where('is_active', true)->get();
+                $soundEngineers = $productionTeam->members()
+                    ->whereRaw('LOWER(role) IN (?, ?, ?)', ['sound_eng', 'sound_engineer', 'sound engineer'])
+                    ->where('is_active', true)
+                    ->get();
                 foreach ($soundEngineers as $se) {
                     Notification::create([
                         'user_id' => $se->user_id,
@@ -6388,7 +6785,16 @@ class ProducerController extends Controller
                 ])
                 ->where(function ($q) use ($user) {
                     $q->whereHas('episode.productionTeam', fn($s) => $s->where('producer_id', $user->id))
-                      ->orWhereHas('episode.program.productionTeam', fn($s) => $s->where('producer_id', $user->id));
+                      ->orWhereHas('episode.program.productionTeam', fn($s) => $s->where('producer_id', $user->id))
+                      ->orWhereHas('episode', function ($subQ) {
+                          $subQ->withTrashed()->whereNull('production_team_id')
+                               ->where(function ($epQ) {
+                                   $epQ->whereDoesntHave('program')
+                                       ->orWhereHas('program', function ($pq) {
+                                           $pq->withTrashed()->whereNull('production_team_id');
+                                       });
+                               });
+                      });
                 })
                 ->orderBy('updated_at', 'desc')
                 ->get();
@@ -6402,6 +6808,22 @@ class ProducerController extends Controller
                     $sf = is_array($work->source_files) ? $work->source_files : json_decode($work->source_files, true);
                     $missingFiles = $sf['missing_files'] ?? [];
                     $notes = $sf['missing_notes'] ?? $sf['notes'] ?? null;
+
+                    // ✨ NEW: Also check manual_check for issues if reported via confirmFileCompleteness ✨
+                    if (empty($missingFiles) && isset($sf['manual_check'])) {
+                        $mc = $sf['manual_check'];
+                        $fs = $mc['file_status'] ?? [];
+                        foreach ($fs as $category => $status) {
+                            if ($status !== 'ok') {
+                                $missingFiles[] = [
+                                    'file_type' => $category,
+                                    'description' => "Issue reported during manual check: status is {$status}",
+                                    'notes' => $mc['file_notes'][$category] ?? null
+                                ];
+                            }
+                        }
+                        $notes = $notes ?: ($mc['overall_notes'] ?? null);
+                    }
                 }
 
                 return [
@@ -6419,10 +6841,15 @@ class ProducerController extends Controller
                 'message' => 'Editor missing files reports retrieved.'
             ]);
         } catch (\Exception $e) {
-            Log::error('ProducerController@getEditorMissingFiles: ' . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Failed to fetch missing files reports.', 'error' => $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get editor missing files',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
+
+
 
     /**
      * Handle Producer's action for editor missing files.
@@ -6462,9 +6889,9 @@ class ProducerController extends Controller
                 $reshootDate     = $request->reshoot_date;
                 $reshootLocation = $request->reshoot_location;
 
-                // Notify tim syuting members
+                // Notify tim syuting & setting members
                 $shootingMembers = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episode) {
-                    $q->where('episode_id', $episode->id)->where('team_type', 'syuting');
+                    $q->where('episode_id', $episode->id)->whereIn('team_type', ['shooting', 'setting']);
                 })->where('is_active', true)->get();
 
                 $reshootMsg = "Producer menjadwalkan SYUTING ULANG untuk Episode {$episode->episode_number}";
@@ -6526,9 +6953,9 @@ class ProducerController extends Controller
                     $produksiWork->update(['status' => 'in_progress', 'notes' => "File perlu dilengkapi atas permintaan Producer. {$producerNotes}"]);
                 }
 
-                // Notify shooting team members
+                // Notify shooting & setting team members
                 $shootingMembers = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episode) {
-                    $q->where('episode_id', $episode->id)->where('team_type', 'syuting');
+                    $q->where('episode_id', $episode->id)->whereIn('team_type', ['shooting', 'setting']);
                 })->where('is_active', true)->get();
 
                 foreach ($shootingMembers as $member) {
@@ -6584,6 +7011,13 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
 
             $programs = Program::with([
                     'managerProgram',
@@ -6593,9 +7027,11 @@ class ProducerController extends Controller
                 ->whereNotNull('production_team_id')
                 ->where('producer_accepted', false)
                 ->whereNull('producer_rejected_at')
-                ->whereHas('productionTeam', function ($q) use ($user) {
-                    $q->where('producer_id', $user->id)
-                      ->where('is_active', true);
+                ->when(!$isProgramManager, function ($q) use ($user) {
+                    $q->whereHas('productionTeam', function ($subQ) use ($user) {
+                        $subQ->where('producer_id', $user->id)
+                            ->where('is_active', true);
+                    });
                 })
                 ->orderBy('created_at', 'desc')
                 ->get();
@@ -6626,10 +7062,30 @@ class ProducerController extends Controller
     {
         try {
             $user = auth()->user();
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
+            if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
             $program = Program::with('productionTeam')->findOrFail($id);
 
-            // Validate: Producer harus dari ProductionTeam program ini
-            if (!$program->productionTeam || $program->productionTeam->producer_id !== $user->id) {
+            // Pastikan kolom producer acceptance sudah ada (migration sudah dijalankan)
+            if (!\Illuminate\Support\Facades\Schema::hasColumn('programs', 'producer_accepted')) {
+                Log::warning('ProducerController@acceptProgram: Kolom producer_accepted belum ada. Jalankan: php artisan migrate');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Fitur accept program belum siap. Silakan jalankan migrasi: php artisan migrate',
+                    'error' => 'Column producer_accepted does not exist on programs table.'
+                ], 503);
+            }
+
+            // Validate: Producer harus dari ProductionTeam program ini (bandingkan sebagai int)
+            if (
+                !$program->productionTeam
+                || (!$isProgramManager && (int) $program->productionTeam->producer_id !== (int) $user->id)
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: Anda bukan Producer dari program ini.'
@@ -6647,6 +7103,8 @@ class ProducerController extends Controller
 
             DB::beginTransaction();
 
+            // Hanya update kolom acceptance khusus Producer.
+            // Status program tidak diubah di sini untuk menghindari conflict enum/status lama.
             $program->update([
                 'producer_accepted' => true,
                 'producer_accepted_by' => $user->id,
@@ -6654,31 +7112,35 @@ class ProducerController extends Controller
                 // Clear rejection if previously rejected
                 'producer_rejected_at' => null,
                 'producer_rejection_notes' => null,
-                // Set status ke in_production agar program tidak lagi tampil sebagai draft
-                'status' => 'in_production',
             ]);
 
-            // Notify Manager Program
-            Notification::create([
-                'user_id' => $program->manager_program_id,
-                'type' => 'program_accepted_by_producer',
-                'title' => 'Program Diterima oleh Producer',
-                'message' => "Producer {$user->name} telah menerima program '{$program->name}'. Workflow siap berjalan.",
-                'data' => [
-                    'program_id' => $program->id,
-                    'producer_id' => $user->id,
-                    'producer_name' => $user->name,
-                ]
-            ]);
+            // Notify Manager Program (hanya jika manager_program_id ada; user_id di notifications tidak nullable)
+            if ($program->manager_program_id) {
+                Notification::create([
+                    'user_id' => $program->manager_program_id,
+                    'type' => 'program_accepted_by_producer',
+                    'title' => 'Program Diterima oleh Producer',
+                    'message' => "Producer {$user->name} telah menerima program '{$program->name}'. Workflow siap berjalan.",
+                    'data' => [
+                        'program_id' => $program->id,
+                        'producer_id' => $user->id,
+                        'producer_name' => $user->name,
+                    ]
+                ]);
+            }
 
-            // Notify semua team members bahwa program sudah aktif
+            // Notify semua team members bahwa program sudah aktif (hanya user_id yang valid)
             if ($program->productionTeam) {
                 $teamMembers = $program->productionTeam->members()
                     ->where('is_active', true)
                     ->where('user_id', '!=', $user->id)
+                    ->whereNotNull('user_id')
                     ->get();
 
                 foreach ($teamMembers as $member) {
+                    if (empty($member->user_id)) {
+                        continue;
+                    }
                     Notification::create([
                         'user_id' => $member->user_id,
                         'type' => 'program_ready_to_start',
@@ -6686,7 +7148,7 @@ class ProducerController extends Controller
                         'message' => "Program '{$program->name}' telah diterima oleh Producer. Workflow siap berjalan.",
                         'data' => [
                             'program_id' => $program->id,
-                            'role' => $member->role,
+                            'role' => $member->role ?? 'member',
                         ]
                     ]);
                 }
@@ -6697,14 +7159,18 @@ class ProducerController extends Controller
             // Clear cache
             \App\Helpers\QueryOptimizer::clearIndexCache('programs');
 
+            $refreshed = $program->fresh(['productionTeam.members.user', 'managerProgram']);
             return response()->json([
                 'success' => true,
-                'data' => $program->fresh(['productionTeam.members.user', 'managerProgram']),
+                'data' => $refreshed,
                 'message' => 'Program berhasil diterima. Workflow siap berjalan.'
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('ProducerController@acceptProgram: ' . $e->getMessage());
+            Log::error('ProducerController@acceptProgram: ' . $e->getMessage(), [
+                'program_id' => $id,
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menerima program.',

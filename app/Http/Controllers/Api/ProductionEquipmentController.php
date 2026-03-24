@@ -18,8 +18,9 @@ class ProductionEquipmentController extends Controller
     public function index(Request $request): JsonResponse
     {
         $user = auth()->user();
+        $isProgramManager = \App\Helpers\ProgramManagerAuthorization::isProgramManager($user);
         
-        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
+        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment() && !$isProgramManager) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'
@@ -63,8 +64,9 @@ class ProductionEquipmentController extends Controller
     public function getAvailableEquipment(Request $request): JsonResponse
     {
         $user = auth()->user();
+        $isProgramManager = \App\Helpers\ProgramManagerAuthorization::isProgramManager($user);
         
-        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
+        if ($user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment() && !$isProgramManager) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized access.'

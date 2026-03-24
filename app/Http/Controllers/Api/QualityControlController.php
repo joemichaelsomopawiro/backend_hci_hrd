@@ -9,6 +9,8 @@ use App\Models\Episode;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -24,8 +26,8 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            $allowedQCRoles = ['Quality Control', 'QC', 'Manager Broadcasting', 'Distribution Manager'];
-            if (!in_array($user->role, $allowedQCRoles)) {
+            $allowedQCRoles = ['Quality Control', 'QC', 'Manager Broadcasting', 'Distribution Manager', 'Program Manager'];
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Quality Control')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -124,7 +126,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager', 'Program Manager']) && !MusicProgramAuthorization::hasDistributionManagerAccess($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -148,6 +150,18 @@ class QualityControlController extends Controller
                 'reviewed_by' => $user->id, // QualityControlWork uses reviewed_by
                 'reviewed_at' => now()
             ]);
+
+            // Log Workflow State for Start QC
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $control->episode,
+                'quality_control',
+                'quality_control',
+                $user->id,
+                "QC process started by {$user->name} for {$control->title}",
+                $user->id,
+                ['action' => 'qc_started', 'qc_work_id' => $control->id, 'qc_type' => $control->qc_type]
+            );
 
             // Audit logging
             ControllerSecurityHelper::logCrud('quality_control_started', $control, [
@@ -181,7 +195,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager', 'Program Manager']) && !MusicProgramAuthorization::hasDistributionManagerAccess($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -221,6 +235,23 @@ class QualityControlController extends Controller
                 'reviewed_at' => now()
             ]);
 
+            // Log Workflow State for Complete QC
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $control->episode,
+                'quality_control',
+                'quality_control',
+                $user->id,
+                "QC completed by {$user->name} with score {$request->quality_score}",
+                $user->id,
+                [
+                    'action' => 'qc_completed',
+                    'quality_score' => $request->quality_score,
+                    'improvements_needed' => $request->improvements_needed,
+                    'notes' => $request->qc_notes
+                ]
+            );
+
             // Audit logging
             ControllerSecurityHelper::logCrud('quality_control_completed', $control, [
                 'episode_id' => $control->episode_id,
@@ -254,7 +285,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager', 'Program Manager']) && !MusicProgramAuthorization::hasDistributionManagerAccess($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -276,6 +307,21 @@ class QualityControlController extends Controller
                 'status' => 'approved',
                 'review_notes' => $request->get('notes', 'QC Approved') // QualityControlWork uses review_notes
             ]);
+
+            // Log Workflow State for QC Approved
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $control->episode,
+                'quality_control',
+                'quality_control',
+                $user->id,
+                "QC approved by {$user->name}: {$control->title}",
+                $user->id,
+                [
+                    'action' => 'qc_approved',
+                    'notes' => $request->get('notes', 'QC Approved')
+                ]
+            );
 
             // Audit logging
             ControllerSecurityHelper::logApproval('quality_control_approved', $control, [
@@ -310,7 +356,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager']) && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -343,6 +389,21 @@ class QualityControlController extends Controller
                 'status' => 'rejected', // Use rejected status
                 'review_notes' => $request->reason // QualityControlWork uses review_notes
             ]);
+
+            // Log Workflow State for QC Rejected
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $control->episode,
+                'quality_control',
+                'quality_control',
+                $user->id,
+                "QC rejected by {$user->name} for {$control->title}",
+                $user->id,
+                [
+                    'action' => 'qc_rejected',
+                    'reason' => $request->reason
+                ]
+            );
 
             // Audit logging
             ControllerSecurityHelper::logApproval('quality_control_rejected', $control, [
@@ -377,7 +438,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'QC'])) {
+            if (!in_array($user->role, ['Quality Control', 'QC']) && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -442,7 +503,7 @@ class QualityControlController extends Controller
         try {
             $user = Auth::user();
             
-            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager'])) {
+            if (!in_array($user->role, ['Quality Control', 'Manager Broadcasting', 'Distribution Manager']) && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -559,6 +620,23 @@ class QualityControlController extends Controller
                 'status' => 'completed',
                 'qc_completed_at' => now() // Assuming we want to track this, but QualityControlWork might strictly use 'reviewed_at' by 'reviewed_by'
             ]);
+
+            // Log Workflow State for QC Form Submission
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $control->episode,
+                'quality_control',
+                'quality_control',
+                $user->id,
+                "Detailed QC checklist submitted by {$user->name} with score {$request->quality_score}",
+                $user->id,
+                [
+                    'action' => 'submit_qc_form',
+                    'quality_score' => $request->quality_score,
+                    'notes' => $request->overall_notes,
+                    'checklist_items' => count($checklist)
+                ]
+            );
 
             // Notify related roles
             $this->notifyRelatedRoles($control, 'qc_form_submitted');
@@ -786,6 +864,23 @@ class QualityControlController extends Controller
                 'qc_notes' => $request->overall_notes ?? $work->qc_notes,
                 'status' => 'completed'
             ]);
+
+            // Log Workflow State for QC Content
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'quality_control',
+                'quality_control',
+                $user->id,
+                "QC for various content completed by {$user->name}",
+                $user->id,
+                [
+                    'action' => 'qc_content',
+                    'overall_score' => $overallScore,
+                    'notes' => $request->overall_notes,
+                    'results_count' => count($request->qc_results)
+                ]
+            );
 
             return response()->json([
                 'success' => true,
