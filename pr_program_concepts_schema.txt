@@ -1,0 +1,5 @@
+﻿
+Warning: Failed loading Zend extension 'xdebug' (tried: C:\xampp\php\ext\xdebug (The specified module could not be found), C:\xampp\php\ext\php_xdebug.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: Module "ftp" is already loaded in Unknown on line 0
+["id","program_id","concept","objectives","target_audience","content_outline","format_description","external_link","status","approved_by","approved_at","approval_notes","rejected_by","rejected_at","rejection_notes","created_by","read_by","read_at","created_at","updated_at","deleted_at"]

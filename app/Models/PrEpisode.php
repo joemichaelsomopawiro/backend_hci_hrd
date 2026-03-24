@@ -35,7 +35,8 @@ class PrEpisode extends Model
 
     protected $appends = [
         'workflow_completion',
-        'display_status'
+        'display_status',
+        'revisions_count'
     ];
 
     /**
@@ -158,6 +159,14 @@ class PrEpisode extends Model
     }
 
     /**
+     * Relationship dengan Activity Logs
+     */
+    public function activityLogs(): HasMany
+    {
+        return $this->hasMany(PrActivityLog::class, 'episode_id');
+    }
+
+    /**
      * Get current workflow step
      */
     public function currentWorkflowStep()
@@ -180,6 +189,21 @@ class PrEpisode extends Model
 
         $completed = $this->workflowProgress()->where('status', 'completed')->count();
         return round(($completed / $total) * 100, 2);
+    }
+
+    /**
+     * Get revision count from activity logs
+     */
+    public function getRevisionsCountAttribute(): int
+    {
+        // If already eager loaded, use the collection to avoid N+1
+        if ($this->relationLoaded('activityLogs')) {
+            return $this->activityLogs->count();
+        }
+
+        return $this->activityLogs()
+            ->whereIn('action', ['revision_requested', 'reject', 'rejected', 'request_revision'])
+            ->count();
     }
 
     /**

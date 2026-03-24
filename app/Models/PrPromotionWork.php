@@ -24,6 +24,7 @@ class PrPromotionWork extends Model
         'description',
         'created_by',
         'completion_notes',
+        'equipment_list',
     ];
 
     protected $casts = [
@@ -31,6 +32,7 @@ class PrPromotionWork extends Model
         'location_data' => 'array',
         'file_paths' => 'array',
         'sharing_proof' => 'array',
+        'equipment_list' => 'array',
     ];
 
     // Relationships
@@ -42,5 +44,18 @@ class PrPromotionWork extends Model
     public function createdBy()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function equipmentLoans()
+    {
+        return $this->belongsToMany(EquipmentLoan::class, 'equipment_loan_promotion_work', 'pr_promotion_work_id', 'equipment_loan_id')->withTimestamps();
+    }
+
+    /**
+     * Convenience accessor for the latest/active equipment loan for this work.
+     */
+    public function equipmentLoan()
+    {
+        return $this->equipmentLoans()->latest('equipment_loan_promotion_work.created_at');
     }
 }

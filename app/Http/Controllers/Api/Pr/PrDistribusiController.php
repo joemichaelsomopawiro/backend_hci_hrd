@@ -60,7 +60,7 @@ class PrDistribusiController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            $schedules = \App\Models\PrProductionSchedule::where('pr_program_id', $id)
+            $schedules = \App\Models\PrProductionSchedule::where('program_id', $id)
                 ->orderBy('date_start', 'asc')
                 ->get();
 
@@ -137,8 +137,8 @@ class PrDistribusiController extends Controller
             }
 
             $schedule = PrDistributionSchedule::create([
-                'pr_program_id' => $programId,
-                'pr_episode_id' => $request->pr_episode_id,
+                'program_id' => $programId,
+                'episode_id' => $request->pr_episode_id,
                 'air_date' => $request->air_date,
                 'air_time' => $request->air_time,
                 'platform' => $request->platform,
@@ -237,7 +237,7 @@ class PrDistribusiController extends Controller
             }
 
             $report = PrDistributionReport::create([
-                'pr_program_id' => $programId,
+                'program_id' => $programId,
                 'created_by' => Auth::id(),
                 'report_period' => $request->report_period,
                 'metrics' => $request->metrics,
@@ -260,7 +260,7 @@ class PrDistribusiController extends Controller
             $query = PrDistributionReport::with(['program', 'createdBy']);
 
             if ($request->has('pr_program_id')) {
-                $query->where('pr_program_id', $request->pr_program_id);
+                $query->where('program_id', $request->pr_program_id);
             }
 
             $reports = $query->latest()->get();
@@ -304,7 +304,7 @@ class PrDistribusiController extends Controller
     public function viewDistribusiRevisionHistory($id, Request $request): JsonResponse
     {
         try {
-            $history = PrRevisionHistory::where('pr_program_id', $id)
+            $history = PrRevisionHistory::where('program_id', $id)
                 ->with(['createdBy', 'reviewer'])
                 ->latest()
                 ->get();

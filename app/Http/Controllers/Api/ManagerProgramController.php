@@ -996,11 +996,20 @@ class ManagerProgramController extends Controller
         }
         
         try {
-            $program = Program::with(['episodes'])->findOrFail($programId);
+            $program = Program::findOrFail($programId);
             
-            $totalEpisodes = $program->episodes()->whereNull('deleted_at')->count();
-            $episodesWithViews = $program->episodes()->whereNull('deleted_at')->whereNotNull('actual_views')->where('actual_views', '>', 0)->count();
-            $averageViews = $program->episodes()->whereNull('deleted_at')->whereNotNull('actual_views')->where('actual_views', '>', 0)->avg('actual_views') ?? 0;
+            $stats = $program->episodes()
+                ->whereNull('deleted_at')
+                ->selectRaw('
+                    COUNT(*) as total_episodes,
+                    SUM(CASE WHEN actual_views > 0 THEN 1 ELSE 0 END) as episodes_with_views,
+                    AVG(CASE WHEN actual_views > 0 THEN actual_views ELSE NULL END) as average_views
+                ')
+                ->first();
+
+            $totalEpisodes = $stats->total_episodes ?? 0;
+            $episodesWithViews = $stats->episodes_with_views ?? 0;
+            $averageViews = $stats->average_views ?? 0;
             $targetViews = $program->target_views_per_episode ?? 0;
             
             // Calculate performance

@@ -178,19 +178,28 @@ class AnalyticsController extends Controller
      */
     private function getProgramPerformance()
     {
-        $programs = Program::with(['episodes', 'managerProgram'])->get();
+        $programs = Program::with(['managerProgram'])
+            ->withCount([
+                'episodes',
+                'episodes as completed_episodes_count' => function ($query) {
+                    $query->where('status', 'completed');
+                }
+            ])
+            ->get();
         
         $performance = [];
         foreach ($programs as $program) {
-            $episodes = $program->episodes;
+            $totalEpisodes = $program->episodes_count ?? 0;
+            $completedEpisodes = $program->completed_episodes_count ?? 0;
+
             $performance[] = [
                 'program_id' => $program->id,
                 'program_name' => $program->name,
                 'manager' => $program->managerProgram->name ?? 'N/A',
-                'total_episodes' => $episodes->count(),
-                'completed_episodes' => $episodes->where('status', 'completed')->count(),
-                'completion_rate' => $episodes->count() > 0 ? 
-                    round(($episodes->where('status', 'completed')->count() / $episodes->count()) * 100, 2) : 0,
+                'total_episodes' => $totalEpisodes,
+                'completed_episodes' => $completedEpisodes,
+                'completion_rate' => $totalEpisodes > 0 ? 
+                    round(($completedEpisodes / $totalEpisodes) * 100, 2) : 0,
                 'average_episode_duration' => $this->getAverageEpisodeDuration($program->id),
                 'budget_utilization' => $this->getBudgetUtilization($program->id),
                 'quality_score' => $this->getProgramQualityScore($program->id)

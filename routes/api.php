@@ -731,6 +731,20 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/episodes/{id}/approve-budget', [PrManagerProgramController::class, 'approveBudget']); // Approve special budget
         Route::post('/episodes/{id}/reject-budget', [PrManagerProgramController::class, 'rejectBudget']); // Reject special budget
 
+        Route::get('/history', [PrManagerProgramController::class, 'getArchivedPrograms']); // Get archived programs
+        Route::get('/performance-data', [PrManagerProgramController::class, 'getPerformanceData']); // Get performance data
+        Route::post('/programs/{id}/reactivate', [PrManagerProgramController::class, 'reactivateProgram']); // Reactivate program
+        Route::post('/programs/{id}/deactivate', [PrManagerProgramController::class, 'deactivateProgram']); // Deactivate program
+        Route::post('/programs/{id}/clone', [PrManagerProgramController::class, 'cloneProgram']); // Clone program for next year
+
+        // Team Presets
+        Route::get('/team-presets', [PrManagerProgramController::class, 'getTeamPresets']);
+        Route::post('/team-presets', [PrManagerProgramController::class, 'saveTeamPreset']);
+        Route::delete('/team-presets/{presetId}', [PrManagerProgramController::class, 'deleteTeamPreset']);
+
+        // Budget History
+        Route::get('/budget-history', [PrManagerProgramController::class, 'getBudgetHistory']);
+
         // Team Members Management
         Route::get('/programs/{id}/team-members', [PrProgramCrewController::class, 'index']); // List team
         Route::post('/programs/{id}/team-members', [PrProgramCrewController::class, 'store']); // Add team member

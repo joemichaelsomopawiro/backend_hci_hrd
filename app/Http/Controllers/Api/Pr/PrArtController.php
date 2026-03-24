@@ -31,7 +31,7 @@ class PrArtController extends Controller
     public function getInventory(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -57,7 +57,7 @@ class PrArtController extends Controller
     public function createInventoryItem(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -105,7 +105,7 @@ class PrArtController extends Controller
     public function updateInventoryItem(Request $request, $id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -157,7 +157,7 @@ class PrArtController extends Controller
     public function deleteInventoryItem($id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -196,7 +196,7 @@ class PrArtController extends Controller
     public function getLoans(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -249,7 +249,7 @@ class PrArtController extends Controller
     public function approveLoan(Request $request, $id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -316,7 +316,7 @@ class PrArtController extends Controller
     public function rejectLoan(Request $request, $id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -437,7 +437,7 @@ class PrArtController extends Controller
     public function getLoanHistory(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -492,7 +492,7 @@ class PrArtController extends Controller
     public function approveReturn(Request $request, int $id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -561,7 +561,7 @@ class PrArtController extends Controller
     public function createPreset(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
         }
         $request->validate([
@@ -596,7 +596,7 @@ class PrArtController extends Controller
     public function updatePreset(Request $request, $id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
         }
         $request->validate([
@@ -631,7 +631,7 @@ class PrArtController extends Controller
     public function deletePreset($id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
+        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
             return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
         }
         EquipmentPreset::findOrFail($id)->delete();
