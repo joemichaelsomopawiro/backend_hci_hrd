@@ -28,31 +28,46 @@ class PrProgramCrewController extends Controller
      */
     public function index($programId)
     {
-        $program = PrProgram::find($programId);
+        try {
+            $user = Auth::user();
+            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized - Only Program Manager can view team members'
+                ], 403);
+            }
 
-        if (!$program) {
+            // Include soft-deleted programs to allow viewing archived programs
+            $program = PrProgram::withTrashed()->find($programId);
+
+            if (!$program) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Program tidak ditemukan'
+                ], 404);
+            }
+
+            $crews = PrProgramCrew::with([
+                'user' => function ($query) {
+                    // Select only relevant user fields, adding profile_picture for avatar display
+                    $query->select('id', 'name', 'email', 'role', 'profile_picture');
+                }
+            ])
+                ->where('program_id', $programId)
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $crews,
+                'is_archived' => $program->trashed(),
+                'archive_type' => $program->trashed() ? 'deleted' : ($program->status === 'cancelled' ? 'cancelled' : 'active')
+            ]);
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Program tidak ditemukan'
-            ], 404);
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
         }
-
-        // Optional: Check permissions specific to viewing crew
-        // For now, allow authenticated users to view
-
-        $crews = PrProgramCrew::with([
-            'user' => function ($query) {
-                // Select only relevant user fields, adding profile_picture for avatar display
-                $query->select('id', 'name', 'email', 'role', 'profile_picture');
-            }
-        ])
-            ->where('program_id', $programId)
-            ->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => $crews
-        ]);
     }
 
     /**

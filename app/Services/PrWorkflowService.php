@@ -697,6 +697,14 @@ class PrWorkflowService
                 ];
             })->values()->toArray();
 
+            // Calculate is_late
+            $isLate = false;
+            if ($progress->completed_at && $progress->deadline_at) {
+                $isLate = $progress->completed_at->greaterThan($progress->deadline_at);
+            } elseif (!$progress->completed_at && $progress->deadline_at) {
+                $isLate = now()->greaterThan($progress->deadline_at);
+            }
+
             return [
                 'step_number' => $progress->workflow_step,
                 'step_name' => $progress->step_name,
@@ -708,6 +716,8 @@ class PrWorkflowService
                 'role_completions' => $roleCompletions,
                 'started_at' => $progress->started_at?->toIso8601String(),
                 'completed_at' => $progress->completed_at?->toIso8601String(),
+                'deadline_at' => $progress->deadline_at?->toIso8601String(),
+                'is_late' => $isLate,
                 'duration_hours' => $progress->duration,
                 'notes' => $progress->notes,
                 'activities' => $stepActivities

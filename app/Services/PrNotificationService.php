@@ -320,7 +320,7 @@ class PrNotificationService
                 'data' => [
                     'creative_work_id' => $work->id,
                     'pr_episode_id' => $work->pr_episode_id,
-                    'pr_program_id' => $program->id,
+                    'program_id' => $program->id,
                     'program_name' => $program->name,
                     'episode_number' => $work->episode->episode_number
                 ],

@@ -169,7 +169,7 @@ class ProgramPerformanceService
      */
     public function getWeeklyPerformanceReport(int $programId): array
     {
-        $program = Program::with('episodes')->findOrFail($programId);
+        $program = Program::findOrFail($programId);
         
         // Get episodes aired dalam 4 minggu terakhir
         $recentEpisodes = $program->episodes()

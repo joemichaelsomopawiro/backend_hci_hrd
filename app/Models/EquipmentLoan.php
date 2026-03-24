@@ -36,6 +36,11 @@ class EquipmentLoan extends Model
         return $this->belongsToMany(PrProduksiWork::class, 'equipment_loan_produksi_work', 'equipment_loan_id', 'pr_produksi_work_id')->withTimestamps();
     }
 
+    public function promotionWorks()
+    {
+        return $this->belongsToMany(PrPromotionWork::class, 'equipment_loan_promotion_work', 'equipment_loan_id', 'pr_promotion_work_id')->withTimestamps();
+    }
+
     /**
      * Convenience accessor – returns first linked produksi work (for back-compat in some views).
      */

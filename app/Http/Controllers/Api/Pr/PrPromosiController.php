@@ -21,6 +21,10 @@ use App\Models\PrEditorPromosiWork;
 use App\Models\PrEditorWork;
 use App\Models\PrDesignGrafisWork;
 use App\Constants\Role;
+use App\Models\EquipmentLoan;
+use App\Models\EquipmentLoanItem;
+use Illuminate\Support\Facades\DB;
+use App\Services\PrNotificationService;
 
 class PrPromosiController extends Controller
 {
@@ -195,10 +199,22 @@ class PrPromosiController extends Controller
                 return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
-            $work = PrPromotionWork::findOrFail($id);
+            $work = PrPromotionWork::with('equipmentLoans')->findOrFail($id);
 
             if ($work->created_by !== $user->id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            // Check if equipment is returned (mirror production logic)
+            $unreturnedLoan = $work->equipmentLoans()
+                ->whereIn('status', ['pending', 'approved', 'active', 'return_requested'])
+                ->first();
+
+            if ($unreturnedLoan) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Konten tidak dapat diupload karena ada alat yang belum dikembalikan (Loan ID: ' . $unreturnedLoan->id . ').'
+                ], 400);
             }
 
             $work->update([
@@ -234,10 +250,22 @@ class PrPromosiController extends Controller
                 return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
-            $work = PrPromotionWork::findOrFail($id);
+            $work = PrPromotionWork::with('equipmentLoans')->findOrFail($id);
 
             if ($work->created_by !== $user->id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            // Check if equipment is returned (mirror production logic)
+            $unreturnedLoan = $work->equipmentLoans()
+                ->whereIn('status', ['pending', 'approved', 'active', 'return_requested'])
+                ->first();
+
+            if ($unreturnedLoan) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Konten tidak dapat dishare karena ada alat yang belum dikembalikan (Loan ID: ' . $unreturnedLoan->id . ').'
+                ], 400);
             }
 
             $sharingProof = $work->sharing_proof ?? [];
@@ -337,17 +365,22 @@ class PrPromosiController extends Controller
                 $data['location_data'] = $request->location_data;
             }
 
+            DB::beginTransaction();
             $work->update($data);
 
-            // Check workflow progress if completed
+            $work->update($data);
+
+            // Sync Step 5 if completed
             if ($work->status === 'completed') {
                 app(\App\Services\PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
             }
 
+            DB::commit();
+
             return response()->json([
                 'success' => true,
                 'message' => 'Work updated successfully.',
-                'data' => $work
+                'data' => $work->fresh(['episode', 'episode.program', 'equipmentLoans.loanItems.inventoryItem'])
             ]);
 
         } catch (\Exception $e) {
@@ -363,9 +396,21 @@ class PrPromosiController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            $work = PrPromotionWork::find($id);
+            $work = PrPromotionWork::with('equipmentLoans')->find($id);
             if (!$work) {
                 return response()->json(['success' => false, 'message' => 'Work not found.'], 404);
+            }
+
+            // Check if equipment is returned (mirror production logic)
+            $unreturnedLoan = $work->equipmentLoans()
+                ->whereIn('status', ['pending', 'approved', 'active', 'return_requested'])
+                ->first();
+
+            if ($unreturnedLoan) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pekerjaan promosi tidak dapat diselesaikan karena ada alat yang belum dikembalikan (Loan ID: ' . $unreturnedLoan->id . ').'
+                ], 400);
             }
 
             $work->update([
@@ -404,6 +449,199 @@ class PrPromosiController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function requestEquipment(Request $request, int $id): JsonResponse
+    {
+        DB::beginTransaction();
+        try {
+            $user = Auth::user();
+
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 401);
+            }
+
+            // Allow staff roles OR any crew coordinator for this episode
+            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            if (!$isStaff) {
+                // Check if user is a coordinator on this specific work's episode
+                $work = PrPromotionWork::with('episode.crews')->find($id);
+                $crew = $work?->episode?->crews?->where('user_id', $user->id)->first();
+                if (!$crew || !$crew->is_coordinator) {
+                    return response()->json(['success' => false, 'message' => 'Hanya koordinator atau staff promosi yang dapat mengajukan peminjaman alat.'], 403);
+                }
+            }
+
+            $validator = Validator::make($request->all(), [
+                'equipment_list' => 'required|array|min:1',
+                'equipment_list.*.inventory_item_id' => 'required|exists:inventory_items,id',
+                'equipment_list.*.quantity' => 'required|integer|min:1',
+                'request_notes' => 'nullable|string',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            $work = PrPromotionWork::findOrFail($id);
+
+            // Verify the work doesn't already have a pending/approved loan
+            $activeLoan = $work->equipmentLoans()
+                ->whereIn('status', ['pending', 'approved', 'active'])
+                ->first();
+
+            if ($activeLoan) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Pekerjaan promosi ini sudah memiliki permintaan alat yang sedang aktif (ID Loan: {$activeLoan->id}). Harap selesaikan atau batalkan terlebih dahulu."
+                ], 400);
+            }
+
+            // Update work data
+            $work->equipment_list = $request->equipment_list;
+            $work->save();
+
+            // Create the Equipment Loan
+            $loan = EquipmentLoan::create([
+                'borrower_id' => $user->id,
+                'status' => 'pending',
+                'request_notes' => $request->request_notes ?? 'Promotion equipment request',
+            ]);
+
+            // Associate work to this loan
+            $work->equipmentLoans()->attach($loan->id);
+
+            // Attach loan items
+            foreach ($request->equipment_list as $item) {
+                EquipmentLoanItem::create([
+                    'equipment_loan_id' => $loan->id,
+                    'inventory_item_id' => $item['inventory_item_id'],
+                    'quantity' => $item['quantity'],
+                    'notes' => $item['notes'] ?? null,
+                ]);
+            }
+
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'promotion_equipment_requested',
+                "Equipment requested for promotion (Loan ID: {$loan->id}). Items: " . count($request->equipment_list),
+                ['step' => 5, 'loan_id' => $loan->id]
+            );
+
+            // Notify Art & Set staff
+            app(\App\Services\PrNotificationService::class)->notifyArtSetLoanRequested($loan);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['equipmentLoans.loanItems.inventoryItem']),
+                'message' => 'Equipment requested successfully',
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function requestReturn(Request $request, int $id): JsonResponse
+    {
+        DB::beginTransaction();
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 401);
+            }
+
+            $work = PrPromotionWork::with(['episode.crews', 'equipmentLoans'])->findOrFail($id);
+
+            // Check coordinator status
+            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            if (!$isStaff) {
+                $crew = $work->episode->crews->where('user_id', $user->id)->first();
+                if (!$crew || !$crew->is_coordinator) {
+                    return response()->json(['success' => false, 'message' => 'Hanya koordinator yang dapat mengajukan pengembalian barang.'], 403);
+                }
+            }
+
+            // Find the active loan (approved or active)
+            $activeLoan = $work->equipmentLoans()
+                ->whereIn('status', ['approved', 'active'])
+                ->first();
+
+            if (!$activeLoan) {
+                return response()->json(['success' => false, 'message' => 'Tidak ada peminjaman alat yang aktif untuk episode ini.'], 400);
+            }
+
+            $activeLoan->update([
+                'status' => 'return_requested',
+                'return_notes' => $request->input('return_notes'),
+            ]);
+
+            // Notify Art & Set staff
+            app(\App\Services\PrNotificationService::class)->notifyArtSetReturnRequested($activeLoan);
+
+            DB::commit();
+            return response()->json(['success' => true, 'data' => $activeLoan->fresh(), 'message' => 'Permintaan pengembalian barang berhasil diajukan.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function cancelLoan(Request $request, int $id): JsonResponse
+    {
+        DB::beginTransaction();
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 401);
+            }
+
+            $work = PrPromotionWork::with(['episode.crews', 'equipmentLoans.loanItems'])->findOrFail($id);
+
+            // Check coordinator status
+            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            if (!$isStaff) {
+                $crew = $work->episode->crews->where('user_id', $user->id)->first();
+                if (!$crew || !$crew->is_coordinator) {
+                    return response()->json(['success' => false, 'message' => 'Hanya koordinator yang dapat membatalkan peminjaman alat.'], 403);
+                }
+            }
+
+            // Only cancel loans that are pending or return_requested (not active/completed)
+            $cancelableLoan = $work->equipmentLoans()
+                ->whereIn('status', ['pending', 'return_requested'])
+                ->first();
+
+            if (!$cancelableLoan) {
+                return response()->json(['success' => false, 'message' => 'Tidak ada peminjaman yang bisa dibatalkan. Hanya status Menunggu Persetujuan yang bisa dibatalkan.'], 400);
+            }
+
+            // Restore stock for each item in the loan IF it was already approved/decremented
+            // Actually 'pending' hasn't decremented stock yet usually, but 'return_requested' was active.
+            // Let's check markAsBorrowed in EquipmentLoan. it decrements on 'active'.
+            // So if it's 'return_requested', it was 'active', so we need to increment.
+            // If it's 'pending', it NEVER reached 'active', so no increment needed?
+            // Wait, in ArtController, does approve decrement?
+            // Let's check PrArtController markAsBorrowed.
+            if ($cancelableLoan->status === 'return_requested' || $cancelableLoan->status === 'active') {
+                foreach ($cancelableLoan->loanItems as $loanItem) {
+                    \App\Models\InventoryItem::where('id', $loanItem->inventory_item_id)
+                        ->increment('available_quantity', $loanItem->quantity);
+                }
+            }
+
+            $cancelableLoan->update(['status' => 'cancelled']);
+
+            DB::commit();
+            return response()->json(['success' => true, 'data' => $work->fresh(['equipmentLoans']), 'message' => 'Peminjaman alat berhasil dibatalkan.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }

@@ -29,7 +29,8 @@ class PrProgram extends Model
         'producer_id',
         'manager_distribusi_id',
         'read_by_producer',
-        'read_at'
+        'read_at',
+        'max_budget_per_episode'
     ];
 
     protected $casts = [
@@ -126,6 +127,14 @@ class PrProgram extends Model
     public function crews(): HasMany
     {
         return $this->hasMany(PrProgramCrew::class, 'program_id');
+    }
+
+    /**
+     * Relationship dengan Team Presets
+     */
+    public function teamPresets(): HasMany
+    {
+        return $this->hasMany(PrProgramTeamPreset::class, 'manager_program_id', 'manager_program_id');
     }
 
     /**
