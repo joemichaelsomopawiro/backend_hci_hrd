@@ -19,15 +19,14 @@ class AddCorsHeaders
         // Handle preflight requests
         $origin = $request->header('Origin');
         $allowedOrigins = [
+            'https://hopemedia.id',
+            'https://api.hopemedia.id',
             'http://localhost:3000',
-            'http://localhost:8080',
             'http://localhost:5173',
-            'http://127.0.0.1:3000',
-            'http://127.0.0.1:8080',
-            'http://127.0.0.1:5173',
+            'http://localhost:8080',
             'http://localhost:8000',
             'http://127.0.0.1:8000',
-            'https://hopemedia.id'
+            'http://127.0.0.1:5173'
         ];
 
         if ($request->isMethod('OPTIONS')) {
@@ -45,15 +44,14 @@ class AddCorsHeaders
         // Add CORS headers to all responses
         $origin = $request->header('Origin');
         $allowedOrigins = [
+            'https://hopemedia.id',
+            'https://api.hopemedia.id',
             'http://localhost:3000',
-            'http://localhost:8080',
             'http://localhost:5173',
-            'http://127.0.0.1:3000',
-            'http://127.0.0.1:8080',
-            'http://127.0.0.1:5173',
+            'http://localhost:8080',
             'http://localhost:8000',
             'http://127.0.0.1:8000',
-            'https://hopemedia.id'
+            'http://127.0.0.1:5173'
         ];
 
         if (in_array($origin, $allowedOrigins)) {

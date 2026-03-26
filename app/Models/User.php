@@ -68,8 +68,8 @@ class User extends Authenticatable
     public function getProfilePictureUrlAttribute()
     {
         if ($this->profile_picture) {
-            // Use localhost:8000 for development
-            return 'http://localhost:8000/storage/' . $this->profile_picture;
+            // Gunakan asset() agar otomatis mengikuti APP_URL di .env
+            return asset('storage/' . $this->profile_picture);
         }
         return null;
     }
