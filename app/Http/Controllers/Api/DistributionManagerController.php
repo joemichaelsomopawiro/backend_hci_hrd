@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use App\Helpers\ProgramManagerAuthorization;
 
 class DistributionManagerController extends Controller
 {
@@ -31,7 +32,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -115,7 +116,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -159,7 +160,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

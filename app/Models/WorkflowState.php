@@ -15,6 +15,7 @@ class WorkflowState extends Model
         'current_state',
         'assigned_to_role',
         'assigned_to_user_id',
+        'performing_user_id',
         'notes',
         'metadata'
     ];
@@ -37,6 +38,14 @@ class WorkflowState extends Model
     public function assignedToUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_to_user_id');
+    }
+
+    /**
+     * Relationship dengan User yang melakukan aksi
+     */
+    public function performingUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'performing_user_id');
     }
 
     /**

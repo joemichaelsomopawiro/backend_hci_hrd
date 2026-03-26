@@ -34,7 +34,7 @@ class WorkflowAutomationTest extends TestCase
         parent::setUp();
 
         // Create Users
-        $this->producer = User::factory()->create(['role' => 'Production', 'name' => 'Producer User']);
+        $this->producer = User::factory()->create(['role' => 'Producer', 'name' => 'Producer User']);
         $this->designer = User::factory()->create(['role' => 'Graphic Design', 'name' => 'Designer User']);
         $this->editor = User::factory()->create(['role' => 'Editor', 'name' => 'Editor User']);
         $this->editorPromosi = User::factory()->create(['role' => 'Editor Promotion', 'name' => 'Editor Promosi User']);
@@ -168,6 +168,41 @@ class WorkflowAutomationTest extends TestCase
             // Check if file_paths JSON contains the editor link
             $this->assertNotNull($work->file_paths['editor_file_link'] ?? null);
             $this->assertEquals('http://drive.com/edited_file.mp4', $work->file_paths['editor_file_link']);
+        }
+    }
+
+    /** @test */
+    public function monitor_workflow_returns_comprehensive_data()
+    {
+        // 1. Generate Deadlines
+        $this->episode->generateDeadlines();
+        
+        // 2. Create some works to show progress
+        MusicArrangement::create([
+            'episode_id' => $this->episode->id,
+            'song_title' => 'Test Song',
+            'status' => 'song_proposal',
+            'created_by' => $this->promosi->id
+        ]);
+        
+        // 3. Call Monitor API
+        $response = $this->actingAs($this->producer)
+            ->getJson("/api/live-tv/episodes/{$this->episode->id}/monitor-workflow");
+            
+        $response->assertStatus(200)
+            ->assertJsonPath('data.episode.episode_number', 1)
+            ->assertJsonPath('data.workflow_steps.music_arrangement.status', 'song_proposal_submitted')
+            ->assertJsonPath('data.workflow_steps.promotion.status', 'pending');
+            
+        // 4. Verify all 8 deadlines exist in the response
+        $this->assertCount(8, $response->json('data.deadlines'));
+        
+        $roles = ['editor', 'kreatif', 'produksi', 'musik_arr', 'sound_eng', 'quality_control', 'promotion', 'broadcasting'];
+        foreach ($roles as $role) {
+            $this->assertNotNull(
+                collect($response->json('data.deadlines'))->where('role', $role)->first(),
+                "Deadline for $role missing in response"
+            );
         }
     }
 }

@@ -30,7 +30,8 @@ class ProduksiWork extends Model
         'setting_completed_at',
         'setting_completed_by',
         'completed_at',
-        'completed_by'
+        'completed_by',
+        'crew_attendances'
     ];
 
     protected $appends = ['episode_display'];
@@ -43,6 +44,7 @@ class ProduksiWork extends Model
         'shooting_files' => 'array',
         'shooting_file_links' => 'array',
         'producer_requests' => 'array',
+        'crew_attendances' => 'array',
         'setting_completed_at' => 'datetime',
         'completed_at' => 'datetime'
     ];

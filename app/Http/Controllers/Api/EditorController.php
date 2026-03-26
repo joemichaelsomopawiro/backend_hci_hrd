@@ -14,6 +14,8 @@ use App\Helpers\FileUploadHelper;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
 use App\Services\WorkAssignmentService;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -31,7 +33,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -85,7 +87,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -120,6 +122,9 @@ class EditorController extends Controller
                 $user->id             // Fallback to current user
             );
 
+            // Program Manager can execute all steps, but ownership stays on Program Manager.
+            $createdByUserId = ProgramManagerAuthorization::isProgramManager($user) ? $user->id : $assignedUserId;
+
             $work = EditorWork::create([
                 'episode_id' => $request->episode_id,
                 'work_type' => $request->work_type,
@@ -127,7 +132,7 @@ class EditorController extends Controller
                 'source_files' => $request->source_files,
                 'status' => 'draft',
                 'file_complete' => false,
-                'created_by' => $assignedUserId,         // AUTO-ASSIGNED (may be different from current user)
+                'created_by' => $createdByUserId,
                 'originally_assigned_to' => null,         // Reset for new task
                 'was_reassigned' => false                 // Reset for new task
             ]);
@@ -161,18 +166,18 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
-            }
-
             $work = EditorWork::with([
                 'episode.program',
                 'createdBy',
                 'reviewedBy'
             ])->findOrFail($id);
+
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Editor')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
 
             // Get production files
             $produksiWork = ProduksiWork::where('episode_id', $work->episode_id)
@@ -201,13 +206,17 @@ class EditorController extends Controller
                     'approved_audio' => $approvedAudio ? [
                         'id' => $approvedAudio->id,
                         'final_file_path' => $approvedAudio->final_file_path,
-                        'final_file_link' => $approvedAudio->final_file_link ? (strpos($approvedAudio->final_file_link, 'http') === 0 ? $approvedAudio->final_file_link : 'https://' . $approvedAudio->final_file_link) : null,
+                        'final_file_link' => $approvedAudio->final_file_link 
+                            ? (strpos($approvedAudio->final_file_link, 'http') === 0 ? $approvedAudio->final_file_link : 'https://' . $approvedAudio->final_file_link) 
+                            : ($approvedAudio->final_file_path && strpos($approvedAudio->final_file_path, 'http') === 0 ? $approvedAudio->final_file_path : null),
                         'editing_notes' => $approvedAudio->editing_notes
                     ] : null,
                     'approved_vocal' => $approvedVocal ? [
                         'id' => $approvedVocal->id,
                         'file_path' => $approvedVocal->file_path,
-                        'file_link' => $approvedVocal->file_link ? (strpos($approvedVocal->file_link, 'http') === 0 ? $approvedVocal->file_link : 'https://' . $approvedVocal->file_link) : null,
+                        'file_link' => $approvedVocal->file_link 
+                            ? (strpos($approvedVocal->file_link, 'http') === 0 ? $approvedVocal->file_link : 'https://' . $approvedVocal->file_link) 
+                            : ($approvedVocal->file_path && strpos($approvedVocal->file_path, 'http') === 0 ? $approvedVocal->file_path : null),
                         'review_notes' => $approvedVocal->review_notes
                     ] : null
                 ],
@@ -231,7 +240,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -251,6 +260,18 @@ class EditorController extends Controller
                 'status' => 'editing',
                 'created_by' => $user->id
             ]);
+
+            // Log Workflow State for Accept Work
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'editing',
+                'editor',
+                $user->id,
+                "Editor work accepted by {$user->name}",
+                $user->id,
+                ['action' => 'editor_work_accepted']
+            );
 
             // Notify Producer
             $episode = $work->episode;
@@ -300,7 +321,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -309,19 +330,7 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode'])->findOrFail($id);
 
-            // Team-based authorization: allow if creator OR production team member
-            $productionTeam = $work->episode->program->productionTeam;
-            $isTeamMember = false;
-            
-            if ($productionTeam) {
-                $isTeamMember = $productionTeam->members()
-                    ->where('user_id', $user->id)
-                    ->where('role', 'editor')
-                    ->where('is_active', true)
-                    ->exists();
-            }
-            
-            if ($work->created_by !== $user->id && !$isTeamMember) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you or your production team.'
@@ -361,11 +370,22 @@ class EditorController extends Controller
             if ($hasAudio && $approvedAudio) {
                 $audioUrl = $approvedAudio->final_file_link;
                 if ($audioUrl) {
-                    if (strpos($audioUrl, 'http') !== 0) {
+                    // If it's a full URL (http or www), ensure it has protocol
+                    if (preg_match('/^https?:\/\//i', $audioUrl)) {
+                        // Already has protocol
+                    } elseif (preg_match('/^www\./i', $audioUrl) || preg_match('/^(localhost|127\.0\.0\.1)/i', $audioUrl) || preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $audioUrl)) {
                         $audioUrl = 'https://' . $audioUrl;
                     }
                 } elseif ($approvedAudio->final_file_path) {
-                    $audioUrl = url('storage/' . $approvedAudio->final_file_path);
+                    $path = $approvedAudio->final_file_path;
+                    // Check if path is actually a full URL
+                    if (preg_match('/^https?:\/\//i', $path)) {
+                        $audioUrl = $path;
+                    } elseif (preg_match('/^www\./i', $path) || preg_match('/^(localhost|127\.0\.0\.1)/i', $path) || (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $path) && !preg_match('/^(shooting|audio|video|export|vocal)\//i', $path))) {
+                        $audioUrl = 'https://' . $path;
+                    } else {
+                        $audioUrl = url('storage/' . ltrim($path, '/'));
+                    }
                 }
 
                 $sourceFiles['approved_audio'] = [
@@ -381,11 +401,20 @@ class EditorController extends Controller
             if ($approvedVocal) {
                 $vocalUrl = $approvedVocal->file_link;
                 if ($vocalUrl) {
-                    if (strpos($vocalUrl, 'http') !== 0) {
+                    if (preg_match('/^https?:\/\//i', $vocalUrl)) {
+                        // OK
+                    } elseif (preg_match('/^www\./i', $vocalUrl) || preg_match('/^(localhost|127\.0\.0\.1)/i', $vocalUrl) || preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $vocalUrl)) {
                         $vocalUrl = 'https://' . $vocalUrl;
                     }
                 } elseif ($approvedVocal->file_path) {
-                    $vocalUrl = url('storage/' . $approvedVocal->file_path);
+                    $path = $approvedVocal->file_path;
+                    if (preg_match('/^https?:\/\//i', $path)) {
+                        $vocalUrl = $path;
+                    } elseif (preg_match('/^www\./i', $path) || preg_match('/^(localhost|127\.0\.0\.1)/i', $path) || (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $path) && !preg_match('/^(shooting|audio|video|export|vocal)\//i', $path))) {
+                        $vocalUrl = 'https://' . $path;
+                    } else {
+                        $vocalUrl = url('storage/' . ltrim($path, '/'));
+                    }
                 }
 
                 $sourceFiles['approved_vocal'] = [
@@ -478,7 +507,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -522,6 +551,22 @@ class EditorController extends Controller
                 'file_complete' => false,
                 'status' => 'file_incomplete'
             ]);
+
+            // Log Workflow State for Missing Files
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'editing',
+                'editor',
+                $user->id,
+                "Editor reported missing files for Episode {$work->episode->episode_number}",
+                $user->id,
+                [
+                    'action' => 'report_missing_files',
+                    'missing_files' => $request->missing_files,
+                    'notes' => $request->notes
+                ]
+            );
 
             // Notify Producer
             $episode = $work->episode;
@@ -576,7 +621,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -605,19 +650,7 @@ class EditorController extends Controller
 
             $work = EditorWork::with(['episode.program.productionTeam'])->findOrFail($id);
 
-            // Team-based authorization
-            $productionTeam = $work->episode->program->productionTeam;
-            $isTeamMember = false;
-            
-            if ($productionTeam) {
-                $isTeamMember = $productionTeam->members()
-                    ->where('user_id', $user->id)
-                    ->where('role', 'editor')
-                    ->where('is_active', true)
-                    ->exists();
-            }
-            
-            if ($work->created_by !== $user->id && !$isTeamMember) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you or your production team.'
@@ -650,6 +683,21 @@ class EditorController extends Controller
                     'status' => 'editing'
                 ]);
 
+                // Log Workflow State for File Confirmation (OK)
+                $workflowService = app(\App\Services\WorkflowStateService::class);
+                $workflowService->updateWorkflowState(
+                    $work->episode,
+                    'editing',
+                    'editor',
+                    $user->id,
+                    "Editor confirmed all source files are complete for Episode {$work->episode->episode_number}",
+                    $user->id,
+                    [
+                        'action' => 'confirm_file_completeness',
+                        'result' => 'complete'
+                    ]
+                );
+
                 return response()->json([
                     'success' => true,
                     'data' => $work->fresh(['episode', 'createdBy']),
@@ -679,7 +727,8 @@ class EditorController extends Controller
             $work->update([
                 'file_complete' => false,
                 'file_notes' => ($work->file_notes ? $work->file_notes . "\n\n" : '') . $issueNotes,
-                'source_files' => $sourceFiles
+                'source_files' => $sourceFiles,
+                'status' => 'file_incomplete' // ✨ NEW: Set status so Producer can see it in "Missing Files" tab
             ]);
 
             // Notify Producer
@@ -740,7 +789,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -819,7 +868,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -901,7 +950,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1007,7 +1056,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1102,7 +1151,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1164,6 +1213,22 @@ class EditorController extends Controller
                     "[Submitted - " . now()->format('Y-m-d H:i:s') . "]\n" .
                     ($request->submission_notes ?? '')
             ]);
+
+            // Log Workflow State for Submit
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'editing',
+                'editor',
+                $user->id,
+                "Video editing submitted by {$user->name}",
+                $user->id,
+                [
+                    'action' => 'editor_work_submitted',
+                    'file_link' => $work->file_link,
+                    'submission_notes' => $request->submission_notes
+                ]
+            );
 
             // Notify Producer
             $episode = $work->episode;
@@ -1495,7 +1560,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1521,15 +1586,19 @@ class EditorController extends Controller
                     'approved_audio_files' => $approvedAudio->map(function($audio) {
                         $audioUrl = $audio->final_file_link;
                         if ($audioUrl) {
-                            if (strpos($audioUrl, 'http') !== 0) {
+                            if (preg_match('/^https?:\/\//i', $audioUrl)) {
+                                // OK
+                            } elseif (preg_match('/^www\./i', $audioUrl) || preg_match('/^(localhost|127\.0\.0\.1)/i', $audioUrl) || preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $audioUrl)) {
                                 $audioUrl = 'https://' . $audioUrl;
                             }
                         } elseif ($audio->final_file_path) {
-                            // Cek apakah final_file_path sudah merupakan absolute URL
-                            if (strpos($audio->final_file_path, 'http') === 0) {
-                                $audioUrl = $audio->final_file_path;
+                            $path = $audio->final_file_path;
+                            if (preg_match('/^https?:\/\//i', $path)) {
+                                $audioUrl = $path;
+                            } elseif (preg_match('/^www\./i', $path) || preg_match('/^(localhost|127\.0\.0\.1)/i', $path) || (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $path) && !preg_match('/^(shooting|audio|video|export|vocal)\//i', $path))) {
+                                $audioUrl = 'https://' . $path;
                             } else {
-                                $audioUrl = url('storage/' . $audio->final_file_path);
+                                $audioUrl = url('storage/' . ltrim($path, '/'));
                             }
                         }
 
@@ -1554,15 +1623,19 @@ class EditorController extends Controller
                         ->map(function($vocal) {
                             $vocalUrl = $vocal->file_link;
                             if ($vocalUrl) {
-                                if (strpos($vocalUrl, 'http') !== 0) {
+                                if (preg_match('/^https?:\/\//i', $vocalUrl)) {
+                                    // OK
+                                } elseif (preg_match('/^www\./i', $vocalUrl) || preg_match('/^(localhost|127\.0\.0\.1)/i', $vocalUrl) || preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $vocalUrl)) {
                                     $vocalUrl = 'https://' . $vocalUrl;
                                 }
                             } elseif ($vocal->file_path) {
-                                // Cek apakah file_path sudah merupakan absolute URL
-                                if (strpos($vocal->file_path, 'http') === 0) {
-                                    $vocalUrl = $vocal->file_path;
+                                $path = $vocal->file_path;
+                                if (preg_match('/^https?:\/\//i', $path)) {
+                                    $vocalUrl = $path;
+                                } elseif (preg_match('/^www\./i', $path) || preg_match('/^(localhost|127\.0\.0\.1)/i', $path) || (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}/i', $path) && !preg_match('/^(shooting|audio|video|export|vocal)\//i', $path))) {
+                                    $vocalUrl = 'https://' . $path;
                                 } else {
-                                    $vocalUrl = url('storage/' . $vocal->file_path);
+                                    $vocalUrl = url('storage/' . ltrim($path, '/'));
                                 }
                             }
 
@@ -1600,7 +1673,7 @@ class EditorController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Editor') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

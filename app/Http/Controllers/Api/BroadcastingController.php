@@ -8,6 +8,8 @@ use App\Models\Episode;
 use App\Models\Notification;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use App\Services\ProgramWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -25,7 +27,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -51,6 +53,11 @@ class BroadcastingController extends Controller
 
             // Get works for current user or all pending/preparing works (available for acceptance)
             $query->where(function($q) use ($user) {
+                if (ProgramManagerAuthorization::isProgramManager($user) || MusicProgramAuthorization::hasDistributionManagerAccess($user)) {
+                    // Program Manager and Distribution Manager can view all works
+                    $q->whereNotNull('id');
+                    return;
+                }
                 $q->where('created_by', $user->id)
                   ->orWhereIn('status', ['pending', 'preparing']); // Pending works from DM are available for acceptance
             });
@@ -80,7 +87,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -184,7 +191,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -234,7 +241,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -292,7 +299,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -328,7 +335,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -386,7 +393,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -445,7 +452,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -469,6 +476,22 @@ class BroadcastingController extends Controller
             }
 
             $work->markAsPublished();
+
+            // Log Workflow State for Publish
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'broadcasting',
+                'broadcasting',
+                $user->id,
+                "Episode published by {$user->name}",
+                $user->id,
+                [
+                    'action' => 'publish_episode',
+                    'youtube_url' => $work->youtube_url,
+                    'website_url' => $work->website_url
+                ]
+            );
 
             // Episode reference
             $episode = $work->episode;
@@ -556,7 +579,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -610,7 +633,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -632,6 +655,18 @@ class BroadcastingController extends Controller
                 'status' => 'preparing',
                 'created_by' => $user->id
             ]);
+
+            // Log Workflow State for Accept Work
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'broadcasting',
+                'broadcasting',
+                $user->id,
+                "Broadcasting work accepted by {$user->name}",
+                $user->id,
+                ['action' => 'broadcasting_work_accepted']
+            );
 
             // Notify Producer
             $episode = $work->episode;
@@ -675,7 +710,7 @@ class BroadcastingController extends Controller
         try {
             $user = Auth::user();
             
-            if (!$user || $user->role !== 'Broadcasting') {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Broadcasting')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -735,6 +770,22 @@ class BroadcastingController extends Controller
             }
 
             $work->update($updateData);
+
+            // Log Workflow State for YouTube Upload
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'broadcasting',
+                'broadcasting',
+                $user->id,
+                "Video uploaded to YouTube by {$user->name}: {$request->title}",
+                $user->id,
+                [
+                    'action' => 'upload_youtube',
+                    'youtube_url' => $request->youtube_url,
+                    'title' => $request->title
+                ]
+            );
 
             $this->syncBroadcastingLinksToPromotionWorks($work->fresh());
 
@@ -1073,6 +1124,23 @@ class BroadcastingController extends Controller
                 $updatePayload['website_url'] = $work->website_url;
             }
             $work->update($updatePayload);
+
+            // Log Workflow State for Complete Work
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'broadcasting',
+                'broadcasting',
+                $user->id,
+                "Broadcasting work completed by {$user->name}",
+                $user->id,
+                [
+                    'action' => 'broadcasting_work_completed',
+                    'youtube_url' => $work->youtube_url,
+                    'website_url' => $work->website_url,
+                    'notes' => $request->completion_notes
+                ]
+            );
 
             // Notify Manager Program
             $episode = $work->episode;

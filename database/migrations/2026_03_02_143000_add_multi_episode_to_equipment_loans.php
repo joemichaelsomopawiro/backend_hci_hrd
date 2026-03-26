@@ -23,7 +23,7 @@ return new class extends Migration {
                 $table->timestamps();
 
                 // Ensure unique combination
-                $table->unique(['equipment_loan_id', 'pr_produksi_work_id']);
+                $table->unique(['equipment_loan_id', 'pr_produksi_work_id'], 'loan_work_unique');
             });
         }
 

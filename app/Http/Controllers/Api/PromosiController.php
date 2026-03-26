@@ -8,10 +8,17 @@ use App\Models\Notification;
 use App\Models\CreativeWork;
 use App\Models\DesignGrafisWork;
 use App\Models\Episode;
+use App\Models\InventoryItem;
+use App\Models\ProductionEquipment;
+use App\Models\User;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use App\Models\PromotionActivityLog;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
 use App\Helpers\FileUploadHelper;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -37,8 +44,7 @@ class PromosiController extends Controller
                 ], 401);
             }
             
-            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
-            if (!$isPromotionRole && $user->role !== 'Production' && !$user->hasAnyMusicTeamAssignment()) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -178,8 +184,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
-            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -239,8 +244,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
-            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -328,8 +332,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
-            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -354,6 +357,22 @@ class PromosiController extends Controller
                 'status' => 'shooting',
                 'created_by' => $user->id
             ]);
+
+            // Log Workflow State for Accept Work
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'promotion',
+                'promotion',
+                $user->id,
+                "Promotion work accepted by {$user->name} ({$work->work_type})",
+                $user->id,
+                [
+                    'action' => 'promosi_work_accepted',
+                    'work_type' => $work->work_type,
+                    'promotion_work_id' => $work->id
+                ]
+            );
 
             // Activity log
             $this->logActivity($work, $user, 'work_accepted', 'Pekerjaan diterima oleh ' . $user->name, [
@@ -405,8 +424,7 @@ class PromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
-            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion')) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -467,8 +485,7 @@ class PromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
-            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion')) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -521,18 +538,18 @@ class PromosiController extends Controller
 
             if ($request->hasFile('file_paths')) {
                 foreach ($request->file('file_paths') as $uploaded) {
-                    $stored = FileUploadHelper::storeUploadedFile(
+                    $stored = FileUploadHelper::uploadFile(
                         $uploaded,
                         'promosi/talent-photos',
-                        [
-                            'uploaded_by' => $user->id,
-                            'promotion_work_id' => $work->id,
-                        ]
+                        ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'],
+                        ['jpg', 'jpeg', 'png', 'webp'],
+                        5 * 1024 * 1024,
+                        false
                     );
 
                     $filePaths[] = [
                         'type' => 'talent_photo',
-                        'file_path' => $stored['path'] ?? null,
+                        'file_path' => $stored['file_path'] ?? null,
                         'file_id' => $stored['id'] ?? null,
                         'original_name' => $stored['original_name'] ?? $uploaded->getClientOriginalName(),
                         'uploaded_at' => now()->toDateTimeString(),
@@ -599,8 +616,7 @@ class PromosiController extends Controller
         try {
             $user = Auth::user();
             
-            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
-            if (!$user || (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment())) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -710,6 +726,23 @@ class PromosiController extends Controller
                         ($request->completion_notes ? "[Selesai] " . $request->completion_notes : '')
                 ]);
             }
+
+            // Log Workflow State for Complete Work
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'promotion',
+                'promotion',
+                $user->id,
+                "Promotion work marked as {$newStatus} by {$user->name} ({$work->work_type})",
+                $user->id,
+                [
+                    'action' => 'promosi_work_completed',
+                    'new_status' => $newStatus,
+                    'notes' => $request->completion_notes,
+                    'work_type' => $work->work_type
+                ]
+            );
 
             $episode = $work->episode;
             $productionTeam = $episode->program?->productionTeam;
@@ -1210,17 +1243,17 @@ class PromosiController extends Controller
             if ($request->hasFile('files')) {
                 $storedFiles = [];
                 foreach ($request->file('files') as $uploaded) {
-                    $stored = FileUploadHelper::storeUploadedFile(
+                    $stored = FileUploadHelper::uploadFile(
                         $uploaded,
                         'promosi/social-proof',
-                        [
-                            'uploaded_by' => $user->id,
-                            'promotion_work_id' => $work->id,
-                        ]
+                        ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'application/pdf', 'video/mp4'],
+                        ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'mp4'],
+                        100 * 1024 * 1024,
+                        false
                     );
 
                     $storedFiles[] = [
-                        'file_path' => $stored['path'] ?? null,
+                        'file_path' => $stored['file_path'] ?? null,
                         'file_id' => $stored['id'] ?? null,
                         'original_name' => $stored['original_name'] ?? $uploaded->getClientOriginalName(),
                         'uploaded_at' => now()->toDateTimeString(),
@@ -1729,6 +1762,469 @@ class PromosiController extends Controller
         } catch (\Exception $e) {
             // Silent fail — logging should never break the main workflow
             \Log::warning('Failed to log promotion activity: ' . $e->getMessage());
+        }
+    }
+    /**
+     * Get available equipment for Promotion role
+     */
+    public function getAvailableEquipment(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+        if (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized access.'
+            ], 403);
+        }
+        
+        // Return unique names with effective availability (available - reserved pending)
+        $availableEquipment = InventoryItem::where('status', 'active') // InventoryItem uses 'active' status for available
+            ->select(['id', 'equipment_id', 'name', 'category', 'available_quantity', 'total_quantity'])
+            ->orderBy('name')
+            ->get();
+            
+        return response()->json([
+            'success' => true,
+            'data' => $availableEquipment,
+            'message' => 'Available equipment retrieved successfully'
+        ]);
+    }
+
+    /**
+     * Request Equipment - Promotion request equipment ke Art & Set Properti
+     * POST /api/live-tv/promosi/works/{id}/request-equipment
+     */
+    public function requestEquipment(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'equipment_list' => 'required|array|min:1',
+                'equipment_list.*.equipment_name' => 'required|string|max:255',
+                'equipment_list.*.equipment_id' => 'nullable|integer|exists:equipment_inventory,id',
+                'equipment_list.*.quantity' => 'required|integer|min:1',
+                'equipment_list.*.return_date' => 'required|date|after_or_equal:today',
+                'equipment_list.*.notes' => 'nullable|string|max:1000',
+                'request_notes' => 'nullable|string|max:1000',
+                'request_group_id' => 'nullable|string|max:64',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = PromotionWork::with(['episode'])->findOrFail($id);
+
+            // Access check: only owner can request equipment for their work
+            if ($work->created_by !== $user->id && !ProgramManagerAuthorization::isProgramManager($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You do not have access to this work.'
+                ], 403);
+            }
+
+            $equipmentRequestIds = [];
+            $unavailableEquipment = [];
+            $scheduleDt = $work->shooting_date ? Carbon::parse($work->shooting_date . ' ' . ($work->shooting_time ?? '00:00:00')) : null;
+
+            // Normalize and aggregate requested quantities by equipment name
+            $normalizedItems = [];
+            foreach ($request->equipment_list as $equipment) {
+                $equipmentName = $equipment['equipment_name'];
+
+                if (!empty($equipment['equipment_id'])) {
+                    $inventoryItem = InventoryItem::find($equipment['equipment_id']);
+                    if ($inventoryItem) {
+                        $equipmentName = $inventoryItem->name;
+                    }
+                }
+
+                $qty = (int) ($equipment['quantity'] ?? 0);
+                if ($qty < 1) continue;
+                $normalizedItems[] = [
+                    'name' => $equipmentName,
+                    'quantity' => $qty,
+                    'notes' => $equipment['notes'] ?? null,
+                ];
+            }
+
+            $qtyByName = [];
+            foreach ($normalizedItems as $it) {
+                $qtyByName[$it['name']] = ($qtyByName[$it['name']] ?? 0) + (int) $it['quantity'];
+            }
+
+            // Check availability per name (total qty) in master inventory
+            $inventoryCounts = InventoryItem::whereIn('name', array_keys($qtyByName))
+                ->get()
+                ->pluck('available_quantity', 'name');
+
+            foreach ($qtyByName as $name => $qty) {
+                $availableCount = $inventoryCounts->get($name, 0);
+
+                if ($availableCount < $qty) {
+                    $unavailableEquipment[] = [
+                        'equipment_name' => $name,
+                        'requested_quantity' => $qty,
+                        'available_count' => $availableCount,
+                        'reason' => 'Equipment tidak tersedia dalam jumlah yang cukup di stok pusat'
+                    ];
+                }
+            }
+
+            if (!empty($unavailableEquipment)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Some equipment is not available or currently in use',
+                    'unavailable_equipment' => $unavailableEquipment
+                ], 400);
+            }
+
+            // Create ONE pending request per (episode, requester).
+            $equipmentList = [];
+            foreach ($qtyByName as $name => $qty) {
+                for ($i = 0; $i < $qty; $i++) $equipmentList[] = $name;
+            }
+
+            $notesLines = [];
+            foreach ($normalizedItems as $it) {
+                if (!empty($it['notes'])) {
+                    $notesLines[] = "{$it['name']}: {$it['notes']}";
+                }
+            }
+            if (!empty($request->request_notes)) {
+                $notesLines[] = (string) $request->request_notes;
+            }
+
+            $existingPending = ProductionEquipment::where('episode_id', $work->episode_id)
+                ->where('requested_by', $user->id)
+                ->where('status', 'pending')
+                ->orderBy('created_at', 'desc')
+                ->first();
+
+            if ($existingPending) {
+                $existingList = is_array($existingPending->equipment_list)
+                    ? $existingPending->equipment_list
+                    : (json_decode($existingPending->equipment_list, true) ?? []);
+
+                $mergedList = array_values(array_merge($existingList, $equipmentList));
+
+                $appendNotes = !empty($notesLines) ? implode("\n", $notesLines) : null;
+                $mergedNotes = $existingPending->request_notes;
+                if (!empty($appendNotes)) {
+                    $mergedNotes = trim((string) $mergedNotes);
+                    $mergedNotes = $mergedNotes !== ''
+                        ? ($mergedNotes . "\n" . $appendNotes)
+                        : $appendNotes;
+                }
+
+                $existingQtyMap = is_array($existingPending->equipment_quantities)
+                    ? $existingPending->equipment_quantities
+                    : (json_decode($existingPending->equipment_quantities, true) ?? []);
+                if (!is_array($existingQtyMap)) {
+                    $existingQtyMap = [];
+                }
+                foreach ($qtyByName as $k => $v) {
+                    $existingQtyMap[$k] = (int) ($existingQtyMap[$k] ?? 0) + (int) ($v ?? 0);
+                }
+
+                $existingPending->update([
+                    'program_id' => $existingPending->program_id ?: ($work->episode ? $work->episode->program_id : null),
+                    'request_group_id' => $existingPending->request_group_id ?: ($request->request_group_id ?: null),
+                    'equipment_list' => $mergedList,
+                    'equipment_quantities' => $existingQtyMap,
+                    'request_notes' => $mergedNotes ?: null,
+                    'scheduled_date' => $existingPending->scheduled_date ?: ($scheduleDt ? $scheduleDt->toDateString() : null),
+                    'scheduled_time' => $existingPending->scheduled_time ?: ($scheduleDt ? $scheduleDt->format('H:i:s') : null),
+                ]);
+
+                $equipmentRequest = $existingPending->fresh();
+            } else {
+                $equipmentRequest = ProductionEquipment::create([
+                    'episode_id' => $work->episode_id,
+                    'program_id' => $work->episode ? $work->episode->program_id : null,
+                    'request_group_id' => $request->request_group_id ?: null,
+                    'equipment_list' => $equipmentList,
+                    'equipment_quantities' => $qtyByName,
+                    'request_notes' => !empty($notesLines) ? implode("\n", $notesLines) : null,
+                    'scheduled_date' => $scheduleDt ? $scheduleDt->toDateString() : null,
+                    'scheduled_time' => $scheduleDt ? $scheduleDt->format('H:i:s') : null,
+                    'status' => 'pending',
+                    'requested_by' => $user->id,
+                    'requested_at' => now()
+                ]);
+            }
+
+            $equipmentRequestIds[] = $equipmentRequest->id;
+
+            // Notify Art & Set Properti
+            $artSetUsers = User::where('role', 'Art & Set Properti')->get();
+            foreach ($artSetUsers as $artSetUser) {
+                Notification::create([
+                    'user_id' => $artSetUser->id,
+                    'type' => $existingPending ? 'equipment_request_updated' : 'equipment_request_created',
+                    'title' => $existingPending ? 'Update Permintaan Alat' : 'Permintaan Alat Baru',
+                    'message' => $existingPending
+                        ? "Tim Promosi menambahkan item pada permintaan equipment Episode {$work->episode->episode_number}."
+                        : "Tim Promosi meminta equipment untuk Episode {$work->episode->episode_number}.",
+                    'data' => [
+                        'equipment_request_ids' => $equipmentRequestIds,
+                        'episode_id' => $work->episode_id,
+                        'promotion_work_id' => $work->id
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'work' => $work->fresh(['episode']),
+                    'equipment_requests' => ProductionEquipment::whereIn('id', $equipmentRequestIds)->get()
+                ],
+                'message' => 'Equipment requests created successfully. Art & Set Properti has been notified.'
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error requesting equipment: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Batalkan permintaan alat
+     */
+    public function cancelEquipmentRequest(int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment()) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $equipment = ProductionEquipment::where('id', $id)
+                ->where('requested_by', $user->id)
+                ->where('status', 'pending')
+                ->first();
+
+            if (!$equipment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Permintaan tidak ditemukan atau sudah tidak dapat dibatalkan.'
+                ], 404);
+            }
+
+            $equipment->delete();
+            return response()->json([
+                'success' => true,
+                'message' => 'Permintaan alat berhasil dibatalkan.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Notify Art & Set Properti that equipment has been returned physically
+     */
+    public function notifyReturn(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $equipment = ProductionEquipment::find($id);
+            
+            if (!$equipment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Equipment request not found.'
+                ], 404);
+            }
+
+            // Verify status
+            if ($equipment->status !== 'in_use' && $equipment->status !== 'approved') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Equipment must be in "approved" or "in_use" status to notify return.'
+                ], 400);
+            }
+
+            // Update return notes
+            $currentNotes = $equipment->return_notes ?? '';
+            $timestamp = now()->format('Y-m-d H:i');
+            $newNote = "[User Return Notification] Promosi {$user->name} reported equipment returned at {$timestamp}.";
+            
+            $equipment->update([
+                'return_notes' => $currentNotes ? $currentNotes . "\n" . $newNote : $newNote
+            ]);
+
+            // Notify Art & Set Properti
+            $artSetUsers = User::where('role', 'Art & Set Properti')->get();
+            foreach ($artSetUsers as $artSetUser) {
+                Notification::create([
+                    'user_id' => $artSetUser->id,
+                    'type' => 'equipment_return_notification',
+                    'title' => 'Pengembalian Alat (Promosi Reported)',
+                    'message' => "Tim Promosi ({$user->name}) melaporkan telah mengembalikan alat: ID {$equipment->id}. Harap cek fisik & konfirmasi return.",
+                    'data' => [
+                        'equipment_id' => $equipment->id,
+                        'reported_by' => $user->name,
+                        'role' => $user->role
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Notifikasi pengembalian berhasil dikirim ke Art & Set Properti. Harap tunggu konfirmasi final mereka.',
+                'data' => $equipment
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error sending return notification: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Return Equipment to Art & Set Properti
+     */
+    public function returnEquipment(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'equipment_request_ids' => 'required|array|min:1',
+                'equipment_request_ids.*' => 'required|integer|exists:production_equipment,id',
+                'return_condition' => 'required|array|min:1',
+                'return_condition.*.equipment_request_id' => 'required|integer',
+                'return_condition.*.condition' => 'required|in:good,damaged,lost',
+                'return_condition.*.notes' => 'nullable|string|max:1000',
+                'return_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = PromotionWork::with(['episode'])->findOrFail($id);
+            $equipmentRequestIds = $request->equipment_request_ids;
+            $returnConditions = collect($request->return_condition)->keyBy('equipment_request_id');
+
+            $returnedEquipment = [];
+            $failedEquipment = [];
+
+            foreach ($equipmentRequestIds as $equipmentRequestId) {
+                $equipment = ProductionEquipment::find($equipmentRequestId);
+                
+                if (!$equipment) {
+                    $failedEquipment[] = ['id' => $equipmentRequestId, 'reason' => 'Not found'];
+                    continue;
+                }
+
+                if ($equipment->episode_id !== $work->episode_id) {
+                    $failedEquipment[] = ['id' => $equipmentRequestId, 'reason' => 'Episode mismatch'];
+                    continue;
+                }
+
+                if ($equipment->status !== 'approved' && $equipment->status !== 'in_use') {
+                    $failedEquipment[] = ['id' => $equipmentRequestId, 'reason' => 'Invalid status: ' . $equipment->status];
+                    continue;
+                }
+
+                $conditionData = $returnConditions->get($equipmentRequestId);
+                if (!$conditionData) {
+                    $failedEquipment[] = ['id' => $equipmentRequestId, 'reason' => 'No condition data'];
+                    continue;
+                }
+
+                $equipment->update([
+                    'status' => 'returned',
+                    'return_condition' => $conditionData['condition'],
+                    'return_notes' => ($conditionData['notes'] ?? '') . ($request->return_notes ? "\n" . $request->return_notes : ''),
+                    'returned_at' => now(),
+                    'returned_by' => $user->id
+                ]);
+
+                // NOTE: We no longer increment available_quantity here.
+                // It will be handled by Art & Set Properti when they confirm the return.
+                
+                $returnedEquipment[] = $equipment->fresh();
+            }
+
+            // Notify Art & Set Properti
+            if (!empty($returnedEquipment)) {
+                $artSetUsers = User::where('role', 'Art & Set Properti')->get();
+                foreach ($artSetUsers as $artSetUser) {
+                    Notification::create([
+                        'user_id' => $artSetUser->id,
+                        'type' => 'equipment_returned',
+                        'title' => 'Alat Dikembalikan oleh Tim Promosi',
+                        'message' => "Tim Promosi ({$user->name}) telah mengembalikan alat untuk Episode {$work->episode->episode_number}.",
+                        'data' => [
+                            'episode_id' => $work->episode_id,
+                            'returned_by' => $user->id
+                        ]
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'returned_equipment' => $returnedEquipment,
+                    'failed_equipment' => $failedEquipment
+                ],
+                'message' => 'Equipment return process completed.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error returning equipment: ' . $e->getMessage()
+            ], 500);
         }
     }
 }

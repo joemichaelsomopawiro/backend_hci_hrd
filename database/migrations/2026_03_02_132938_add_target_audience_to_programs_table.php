@@ -10,6 +10,9 @@ return new class extends Migration {
      */
     public function up(): void
     {
+        if (Schema::hasColumn('programs', 'target_audience')) {
+            return;
+        }
         Schema::table('programs', function (Blueprint $table) {
             $table->string('target_audience')->nullable();
         });
@@ -20,6 +23,9 @@ return new class extends Migration {
      */
     public function down(): void
     {
+        if (!Schema::hasColumn('programs', 'target_audience')) {
+            return;
+        }
         Schema::table('programs', function (Blueprint $table) {
             $table->dropColumn('target_audience');
         });

@@ -11,6 +11,8 @@ use App\Models\Notification;
 use App\Helpers\FileUploadHelper;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
+use App\Helpers\ProgramManagerAuthorization;
+use App\Helpers\MusicProgramAuthorization;
 use App\Services\WorkAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -30,8 +32,9 @@ class DesignGrafisController extends Controller
             $user = Auth::user();
             $role = strtolower($user->role ?? '');
             $allowedRoles = ['graphic design', 'graphic designer', 'design grafis', 'graphis design'];
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user instanceof \App\Models\User ? $user : null);
 
-            if (!$user || !in_array($role, $allowedRoles)) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work ?? null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -99,7 +102,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -140,6 +143,9 @@ class DesignGrafisController extends Controller
                 $user->id
             );
 
+            // Program Manager can execute all steps, but ownership stays on Program Manager.
+            $createdByUserId = ProgramManagerAuthorization::isProgramManager($user) ? $user->id : $assignedUserId;
+
             $work = DesignGrafisWork::create([
                 'episode_id' => $request->episode_id,
                 'work_type' => $request->work_type,
@@ -153,10 +159,26 @@ class DesignGrafisController extends Controller
                 'deadline' => $request->deadline,
                 'platform' => $request->platform,
                 'status' => 'draft',
-                'created_by' => $assignedUserId,           // AUTO-ASSIGNED
+                'created_by' => $createdByUserId,
                 'originally_assigned_to' => null,           // Reset
                 'was_reassigned' => false                   // Reset
             ]);
+
+            // Log Workflow State for Design Creation
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $episode,
+                'distribution',
+                'distribution',
+                $user->id,
+                "Design work created by {$user->name}: {$work->title} ({$work->work_type})",
+                $user->id,
+                [
+                    'action' => 'design_created',
+                    'work_type' => $work->work_type,
+                    'design_work_id' => $work->id
+                ]
+            );
 
             // Auto-fetch source files from Produksi and Promosi
             $this->fetchSourceFiles($work);
@@ -190,7 +212,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -229,7 +251,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -253,6 +275,22 @@ class DesignGrafisController extends Controller
                 'status' => 'in_progress',
                 'assigned_to' => $user->id
             ]);
+
+            // Log Workflow State for Accept Work
+            $workflowService = app(\App\Services\WorkflowStateService::class);
+            $workflowService->updateWorkflowState(
+                $work->episode,
+                'distribution',
+                'distribution',
+                $user->id,
+                "Design work accepted by {$user->name} ({$work->work_type})",
+                $user->id,
+                [
+                    'action' => 'design_accepted',
+                    'work_type' => $work->work_type,
+                    'design_work_id' => $work->id
+                ]
+            );
 
             // Notify Producer
             $episode = $work->episode;
@@ -303,7 +341,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -348,7 +386,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -467,7 +505,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -587,7 +625,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -671,7 +709,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -740,7 +778,7 @@ class DesignGrafisController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !in_array($user->role, ['Graphic Design', 'Graphic Designer', 'Design Grafis', 'Graphis Design'])) {
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1269,6 +1307,23 @@ class DesignGrafisController extends Controller
                 "[Completed - " . now()->format('Y-m-d H:i:s') . "]\n" .
                 ($notes ?? '')
         ]);
+
+        // Log Workflow State for Completion
+        $workflowService = app(\App\Services\WorkflowStateService::class);
+        $workflowService->updateWorkflowState(
+            $work->episode,
+            'distribution',
+            'distribution',
+            $user->id,
+            "Design work completed by {$user->name} ({$work->work_type})",
+            $user->id,
+            [
+                'action' => 'design_completed',
+                'work_type' => $work->work_type,
+                'notes' => $notes,
+                'file_path' => $work->file_path
+            ]
+        );
 
         // Notify Producer
         $episode = $work->episode;

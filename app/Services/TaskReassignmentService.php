@@ -143,7 +143,8 @@ class TaskReassignmentService
         string $taskType,
         int $taskId,
         int $newUserId,
-        int $reassignedByUserId
+        int $reassignedByUserId,
+        bool $bypassRoleCheck = false
     ): array {
         // Check task type valid
         $modelClass = self::$taskTypeMapping[$taskType] ?? null;
@@ -384,8 +385,15 @@ class TaskReassignmentService
     /**
      * Get available users for task type
      */
-    public static function getAvailableUsers(string $taskType): array
+    public static function getAvailableUsers(string $taskType, bool $allUsers = false): array
     {
+        if ($allUsers) {
+            return User::where('is_active', true)
+                ->select('id', 'name', 'email', 'role')
+                ->get()
+                ->toArray();
+        }
+
         // Map task types to required roles
         $roleMapping = [
             'music_arrangement' => 'Music Arranger',

@@ -48,12 +48,14 @@ class TaskReassignmentController extends Controller
             }
 
             // Perform reassignment
+            $bypassRoleCheck = in_array($user->role, ['Program Manager', 'Manager Program', 'Manager']);
             $result = TaskReassignmentService::reassignTask(
                 $request->task_type,
                 $request->task_id,
                 $request->new_user_id,
                 $user->id,
-                $request->reason
+                $request->reason,
+                $bypassRoleCheck
             );
 
             if (!$result['success']) {
@@ -150,7 +152,8 @@ class TaskReassignmentController extends Controller
                 ], 422);
             }
 
-            $users = TaskReassignmentService::getAvailableUsers($request->task_type);
+            $allUsers = $request->boolean('all_users', false) && in_array($user->role, ['Program Manager', 'Manager Program', 'Manager']);
+            $users = TaskReassignmentService::getAvailableUsers($request->task_type, $allUsers);
 
             return response()->json([
                 'success' => true,
