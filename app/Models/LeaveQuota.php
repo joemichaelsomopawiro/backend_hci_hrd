@@ -33,6 +33,30 @@ class LeaveQuota extends Model
         return $this->belongsTo(Employee::class);
     }
 
+    /**
+     * Ringkasan kuota untuk API (konsisten di leave-requests, manager, HR).
+     */
+    public function toSummaryArray(): array
+    {
+        return [
+            'year' => (int) $this->year,
+            'annual_leave_quota' => (int) $this->annual_leave_quota,
+            'annual_leave_used' => (int) $this->annual_leave_used,
+            'sick_leave_quota' => (int) $this->sick_leave_quota,
+            'sick_leave_used' => (int) $this->sick_leave_used,
+            'emergency_leave_quota' => (int) $this->emergency_leave_quota,
+            'emergency_leave_used' => (int) $this->emergency_leave_used,
+            'maternity_leave_quota' => (int) $this->maternity_leave_quota,
+            'maternity_leave_used' => (int) $this->maternity_leave_used,
+            'paternity_leave_quota' => (int) $this->paternity_leave_quota,
+            'paternity_leave_used' => (int) $this->paternity_leave_used,
+            'marriage_leave_quota' => (int) $this->marriage_leave_quota,
+            'marriage_leave_used' => (int) $this->marriage_leave_used,
+            'bereavement_leave_quota' => (int) $this->bereavement_leave_quota,
+            'bereavement_leave_used' => (int) $this->bereavement_leave_used,
+        ];
+    }
+
     // Getter untuk sisa cuti tahunan
     public function getRemainingAnnualLeaveAttribute()
     {

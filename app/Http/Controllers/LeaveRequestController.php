@@ -115,8 +115,28 @@ class LeaveRequestController extends Controller
             // Load relasi setelah query untuk menghindari masalah dengan join
             $requests->load(['employee.user', 'approvedBy.user']);
 
+            // Batch-load kuota per (employee_id, tahun start_date) untuk employee.leave_quotas
+            $quotaKeys = $requests->map(function ($leave) {
+                try {
+                    $year = (int) Carbon::parse($leave->start_date)->year;
+                } catch (\Exception $e) {
+                    $year = (int) date('Y');
+                }
+                return ['employee_id' => $leave->employee_id, 'year' => $year];
+            })->unique(fn ($p) => ($p['employee_id'] ?? '0') . '-' . ($p['year'] ?? '0'));
+
+            $quotaByKey = collect();
+            if ($quotaKeys->isNotEmpty()) {
+                $empIds = $quotaKeys->pluck('employee_id')->filter()->unique()->values();
+                $years = $quotaKeys->pluck('year')->unique()->values();
+                $quotaByKey = LeaveQuota::whereIn('employee_id', $empIds)
+                    ->whereIn('year', $years)
+                    ->get()
+                    ->keyBy(fn ($q) => $q->employee_id . '-' . $q->year);
+            }
+
             // Tambahkan leave_dates pada setiap data cuti dengan error handling
-            $transformed = $requests->map(function ($leave) {
+            $transformed = $requests->map(function ($leave) use ($quotaByKey) {
                 try {
                     $start = \Carbon\Carbon::parse($leave->start_date);
                     $end = \Carbon\Carbon::parse($leave->end_date);
@@ -126,6 +146,12 @@ class LeaveRequestController extends Controller
                     }
                     $data = $leave->toArray();
                     $data['leave_dates'] = $dates;
+                    $year = (int) $start->year;
+                    $qKey = $leave->employee_id . '-' . $year;
+                    $quota = $quotaByKey->get($qKey);
+                    if (!empty($data['employee']) && is_array($data['employee'])) {
+                        $data['employee']['leave_quotas'] = $quota ? [$quota->toSummaryArray()] : [];
+                    }
                     return $data;
                 } catch (\Exception $e) {
                     Log::error('Error transforming leave request', [
@@ -134,6 +160,9 @@ class LeaveRequestController extends Controller
                     ]);
                     $data = $leave->toArray();
                     $data['leave_dates'] = [];
+                    if (!empty($data['employee']) && is_array($data['employee'])) {
+                        $data['employee']['leave_quotas'] = [];
+                    }
                     return $data;
                 }
             });
