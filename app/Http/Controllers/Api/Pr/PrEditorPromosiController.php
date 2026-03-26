@@ -59,22 +59,35 @@ class PrEditorPromosiController extends Controller
         // For works already assigned (in_progress, etc), we show them regardless.
 
         $works = $query->orderBy('created_at', 'desc')->get();
+        
+        // SELF-HEALING: Automatically transition 'waiting_editor' to 'pending' if Editor is now ready
+        // This handles records created before the workflow trigger fix was implemented
+        foreach ($works as $work) {
+            if ($work->status === 'waiting_editor' || (!$work->pr_editor_work_id && $work->status === 'pending')) {
+                // Try to find the editor work if it's missing or if we're waiting
+                $mainEditorWork = null;
+                if (!$work->pr_editor_work_id) {
+                    $mainEditorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
+                        ->where('work_type', 'main_episode')
+                        ->first();
+                    if ($mainEditorWork) {
+                        $work->update(['pr_editor_work_id' => $mainEditorWork->id]);
+                        $work->refresh(); // Refresh relationship
+                    }
+                }
 
+                $editorReady = $work->editorWork && in_array($work->editorWork->status, ['pending_qc', 'completed']);
+                if ($editorReady && $work->status === 'waiting_editor') {
+                    $work->update(['status' => 'pending']);
+                }
+            }
+        }
+        
         // Filter works based on readiness if status is 'pending' or 'waiting_editor'
         // This is done in memory for simplicity, or complex query joins could be used.
         // Given the requirement: "episode itu di editor statusnya sudah Sedang Proses QC ... link promosi selesai"
 
-        $filteredWorks = $works->filter(function ($work) use ($request) {
-            // For works already in progress/submitted/completed, always show
-            if (!in_array($work->status, ['pending', 'waiting_editor'])) {
-                return true;
-            }
-
-            // For pending/waiting_editor: only require Promotion to be completed.
-            // editorReady is informational only (shown as badge on frontend).
-            $promotionReady = $work->promotionWork && $work->promotionWork->status === 'completed';
-            return $promotionReady;
-        });
+        $filteredWorks = $works;
 
         return response()->json([
             'success' => true,
@@ -124,14 +137,29 @@ class PrEditorPromosiController extends Controller
 
             $work = PrEditorPromosiWork::findOrFail($id);
 
+            // RECOVERY: If editor link is missing, try to find it now
+            if (!$work->pr_editor_work_id) {
+                $mainEditorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
+                    ->where('work_type', 'main_episode')
+                    ->first();
+                if ($mainEditorWork) {
+                    $work->update(['pr_editor_work_id' => $mainEditorWork->id]);
+                    $work->load('editorWork'); // Reload relationship
+                }
+            }
+
             // Check availability again
             $editorReady = $work->editorWork && in_array($work->editorWork->status, ['pending_qc', 'completed']);
             $promotionReady = $work->promotionWork && $work->promotionWork->status === 'completed';
 
             if (!$editorReady || !$promotionReady) {
+                $reasons = [];
+                if (!$editorReady) $reasons[] = "Editor must be in QC/Completed status";
+                if (!$promotionReady) $reasons[] = "Promotion must be completed (BTS files uploaded)";
+                
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work is not ready yet. Editor must be in QC and Promotion must be completed.'
+                    'message' => 'Work is not ready yet: ' . implode(' & ', $reasons)
                 ], 400);
             }
 
@@ -169,7 +197,7 @@ class PrEditorPromosiController extends Controller
             'tv_ad_link' => 'nullable|string',
             'ig_highlight_link' => 'nullable|string',
             'tv_highlight_link' => 'nullable|string',
-            'fb_highlight_link' => 'nullable|string',
+            'fb_highlight_link' => 'nullable',
             'notes' => 'nullable|string'
         ]);
 
@@ -215,13 +243,21 @@ class PrEditorPromosiController extends Controller
             $work = PrEditorPromosiWork::findOrFail($id);
 
             // Validate all 5 required links
-            $requiredFields = ['bts_video_link', 'tv_ad_link', 'ig_highlight_link', 'tv_highlight_link', 'fb_highlight_link'];
+            $requiredFields = ['bts_video_link', 'tv_ad_link', 'ig_highlight_link', 'tv_highlight_link'];
             $missingFields = [];
 
             foreach ($requiredFields as $field) {
                 if (empty($work->$field)) {
                     $missingFields[] = $field;
                 }
+            }
+            
+            // Validate Facebook Highlights (Array)
+            $fbLinks = $work->fb_highlight_link;
+            $filledFbLinks = is_array($fbLinks) ? array_filter($fbLinks, fn($link) => !empty($link)) : (!empty($fbLinks) ? [$fbLinks] : []);
+            
+            if (count($filledFbLinks) < 2) {
+                $missingFields[] = 'fb_highlight_link (min. 2 required)';
             }
 
             if (count($missingFields) > 0) {
@@ -238,6 +274,16 @@ class PrEditorPromosiController extends Controller
                     return response()->json([
                         'success' => false,
                         'message' => "Field $field is not a valid URL"
+                    ], 400);
+                }
+            }
+            
+            // Validate FB URLs
+            foreach ($filledFbLinks as $link) {
+                if (!filter_var($link, FILTER_VALIDATE_URL)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "One of the Facebook Reel links is not a valid URL"
                     ], 400);
                 }
             }

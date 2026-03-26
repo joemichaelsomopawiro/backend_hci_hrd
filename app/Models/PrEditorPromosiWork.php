@@ -31,6 +31,7 @@ class PrEditorPromosiWork extends Model
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
         'submitted_at' => 'datetime',
+        'fb_highlight_link' => 'array',
     ];
 
     // Relationships

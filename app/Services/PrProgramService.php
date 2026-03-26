@@ -32,6 +32,8 @@ class PrProgramService
                 'broadcast_channel' => $data['broadcast_channel'] ?? null,
                 'target_audience' => $data['target_audience'] ?? null,
                 'program_year' => $data['program_year'],
+                'target_views' => $data['target_views'] ?? 0,
+                'target_likes' => $data['target_likes'] ?? 0,
                 'status' => 'draft'
             ]);
 

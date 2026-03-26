@@ -938,6 +938,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/works/{id}/accept-work', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'acceptWork']);
         Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'updateProgress']);
         Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'submit']);
+        Route::post('/works/{id}/cancel', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'cancelSubmit']);
     });
 
 

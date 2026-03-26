@@ -75,7 +75,15 @@ class PrProducerController extends Controller
                         });
                 });
             }
-            $query->with(['managerProgram', 'producer', 'managerDistribusi', 'episodes.creativeWork']);
+            $query->with(['managerProgram', 'producer', 'managerDistribusi', 'episodes.creativeWork'])
+                ->withCount([
+                    'episodes',
+                    'episodes as completed_episodes_count' => function ($q) {
+                        $q->whereHas('workflowProgress', function ($subQ) {
+                            $subQ->where('workflow_step', 7)->where('status', 'completed');
+                        });
+                    }
+                ]);
 
             // Role-based filtering
             if ($filterByRole && $filterByRole !== 'all') {

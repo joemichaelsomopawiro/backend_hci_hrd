@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use App\Constants\Role;
+use Carbon\Carbon;
 use App\Services\PrActivityLogService;
 use App\Services\PrWorkflowService;
 use App\Services\PrNotificationService;
@@ -268,6 +269,7 @@ class PrDesignGrafisController extends Controller
         $request->validate([
             'youtube_thumbnail_link' => 'nullable|string',
             'bts_thumbnail_link' => 'nullable|string',
+            'episode_poster_link' => 'nullable|string',
             'notes' => 'nullable|string'
         ]);
 
@@ -277,6 +279,7 @@ class PrDesignGrafisController extends Controller
             $updateData = $request->only([
                 'youtube_thumbnail_link',
                 'bts_thumbnail_link',
+                'episode_poster_link',
                 'notes'
             ]);
 
@@ -311,10 +314,10 @@ class PrDesignGrafisController extends Controller
             $work = PrDesignGrafisWork::findOrFail($id);
 
             // Validate required fields
-            if (empty($work->youtube_thumbnail_link) || empty($work->bts_thumbnail_link)) {
+            if (empty($work->youtube_thumbnail_link) || empty($work->bts_thumbnail_link) || empty($work->episode_poster_link)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Please upload both YouTube and BTS thumbnails before submitting'
+                    'message' => 'Please upload YouTube, BTS thumbnails, and Episode Poster before submitting'
                 ], 400);
             }
 
@@ -375,4 +378,67 @@ class PrDesignGrafisController extends Controller
         }
     }
 
+    /**
+     * Cancel submission and go back to in_progress
+     */
+    public function cancelSubmit($id)
+    {
+        try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $work = PrDesignGrafisWork::findOrFail($id);
+
+            if ($work->status !== 'pending_qc' && $work->status !== 'submitted') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work can only be cancelled when status is pending QC or submitted'
+                ], 400);
+            }
+
+            // Check if QC is already completed
+            $qcWork = PrQualityControlWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            if ($qcWork && $qcWork->status === 'completed') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot cancel submission because Quality Control has been completed'
+                ], 400);
+            }
+
+            DB::beginTransaction();
+
+            $work->update([
+                'status' => 'in_progress',
+                'submitted_at' => null
+            ]);
+
+            // Sync workflow step 6 back to in_progress
+            PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
+                ->where('workflow_step', 6)
+                ->update(['status' => 'in_progress']);
+
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'design_grafis_cancelled',
+                "Design Grafis submission cancelled by user.",
+                ['step' => 6, 'work_id' => $work->id]
+            );
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Submission cancelled successfully',
+                'data' => $work
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to cancel submission: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

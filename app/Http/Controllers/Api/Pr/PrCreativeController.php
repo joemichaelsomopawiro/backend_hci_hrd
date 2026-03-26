@@ -305,10 +305,12 @@ class PrCreativeController extends Controller
     {
         try {
             $user = Auth::user();
-            $isProducer = strtolower($user->role) === 'producer' || $user->role === 'Producer';
+            $isProgramManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER]);
+            $isProducer = Role::inArray($user->role, [Role::PRODUCER]);
             $isCreative = strtolower($user->role) === 'kreatif' || strtolower($user->role) === 'creative';
+            $isSuperRole = $isProgramManager || $isProducer;
 
-            if (!$user || (!$isCreative && !$isProducer)) {
+            if (!$user || (!$isCreative && !$isSuperRole)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -317,16 +319,16 @@ class PrCreativeController extends Controller
 
             $work = PrCreativeWork::findOrFail($id);
 
-            // If not Producer, enforce ownership
-            if (!$isProducer && $work->created_by !== $user->id) {
+            // If not a super role (PM or Producer), enforce ownership
+            if (!$isSuperRole && $work->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
                 ], 403);
             }
 
-            // If not Producer, enforce status check
-            if (!$isProducer && !in_array($work->status, ['draft', 'in_progress', 'rejected', 'revised'])) {
+            // If not a super role (PM or Producer), enforce status check
+            if (!$isSuperRole && !in_array($work->status, ['draft', 'in_progress', 'rejected', 'revised'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Work cannot be updated in current status: ' . $work->status
@@ -409,7 +411,8 @@ class PrCreativeController extends Controller
 
             $work = PrCreativeWork::with('episode.program.producer')->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            $isSuperRole = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            if (!$isSuperRole && $work->created_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: This work is not assigned to you.'
@@ -423,15 +426,35 @@ class PrCreativeController extends Controller
                 ], 400);
             }
 
-            // Validate required fields
-            if (!$work->script_content || !$work->budget_data || !$work->shooting_schedule) {
+            // Validate required fields.
+            // Note: budget_data can be an array/object (even all-zeros), so use is_null() instead
+            // of PHP's falsy check (!$x) which would incorrectly flag an empty array/object as missing.
+            
+            // Check if script exists either as text or uploaded file
+            $hasScriptText = !empty($work->script_content);
+            $hasScriptFile = \App\Models\PrProgramFile::where('episode_id', $work->pr_episode_id)
+                ->where('category', 'script')
+                ->exists();
+            $missingScript = !$hasScriptText && !$hasScriptFile;
+
+            $missingBudget   = is_null($work->budget_data);
+            $missingSchedule = empty($work->shooting_schedule);
+
+            if ($missingScript || $missingBudget || $missingSchedule) {
+                $missingFields = [];
+                if ($missingScript) $missingFields[] = "Naskah/Script (Teks atau File PDF)";
+                if ($missingBudget) $missingFields[] = "Rencana Anggaran (Budget)";
+                if ($missingSchedule) $missingFields[] = "Jadwal Shooting";
+
+                $fieldsList = implode(', ', $missingFields);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Please complete required fields: script_content, budget_data, and shooting_schedule before submitting',
+                    'message' => "Gagal submit. Harap lengkapi bidang berikut: $fieldsList",
                     'missing' => [
-                        'script_content' => !$work->script_content,
-                        'budget_data' => !$work->budget_data,
-                        'shooting_schedule' => !$work->shooting_schedule
+                        'script_content'   => $missingScript,
+                        'budget_data'      => $missingBudget,
+                        'shooting_schedule' => $missingSchedule
                     ]
                 ], 400);
             }
@@ -488,7 +511,10 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+            $isSuperRole = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            $isCreative = strtolower($user->role ?? '') === 'kreatif' || strtolower($user->role ?? '') === 'creative';
+
+            if (!$user || (!$isCreative && !$isSuperRole)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -498,17 +524,19 @@ class PrCreativeController extends Controller
             $episode = PrEpisode::with('program')->findOrFail($episodeId);
             $program = $episode->program;
 
-            // Check assignment
-            $isAssigned = \App\Models\PrProgramCrew::where('user_id', $user->id)
-                ->where('program_id', $program->id)
-                ->whereIn('role', ['kreatif', 'Creative', 'creative'])
-                ->exists();
+            // Check assignment (bypass for Program Manager and Producer)
+            if (!$isSuperRole) {
+                $isAssigned = \App\Models\PrProgramCrew::where('user_id', $user->id)
+                    ->where('program_id', $program->id)
+                    ->whereIn('role', ['kreatif', 'Creative', 'creative'])
+                    ->exists();
 
-            if (!$isAssigned) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. You are not assigned to this program.'
-                ], 403);
+                if (!$isAssigned) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized. You are not assigned to this program.'
+                    ], 403);
+                }
             }
 
             $validator = Validator::make($request->all(), [
@@ -604,7 +632,10 @@ class PrCreativeController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || (strtolower($user->role) !== 'kreatif' && strtolower($user->role) !== 'creative')) {
+            $isSuperRole = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            $isCreative = strtolower($user->role ?? '') === 'kreatif' || strtolower($user->role ?? '') === 'creative';
+
+            if (!$user || (!$isCreative && !$isSuperRole)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -615,8 +646,8 @@ class PrCreativeController extends Controller
                 ->where('episode_id', $episodeId)
                 ->firstOrFail();
 
-            // Check if user is the uploader
-            if ($file->uploaded_by !== $user->id) {
+            // Check if user is the uploader (bypass for Program Manager and Producer)
+            if (!$isSuperRole && $file->uploaded_by !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You can only delete files you uploaded.'
