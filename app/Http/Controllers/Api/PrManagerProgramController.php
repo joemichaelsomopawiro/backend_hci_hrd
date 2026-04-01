@@ -39,6 +39,19 @@ class PrManagerProgramController extends Controller
         $this->notificationService = $notificationService;
         $this->activityLogService = $activityLogService;
     }
+    private function canViewProgramRegular($user): bool
+    {
+        $role = \App\Constants\Role::normalize($user->role);
+        $allowed = array_values(array_unique(array_merge(
+            \App\Constants\Role::getManagerRoles(),
+            [\App\Constants\Role::PRODUCER, \App\Constants\Role::QUALITY_CONTROL],
+            \App\Constants\Role::getProductionTeamRoles(),
+            \App\Constants\Role::getDistributionTeamRoles()
+        )));
+
+        return in_array($role, $allowed);
+    }
+
 
     /**
      * Create program baru (hanya Manager Program)
@@ -197,7 +210,7 @@ class PrManagerProgramController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+            if (!$this->canViewProgramRegular($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized - Access restricted'
@@ -540,7 +553,7 @@ class PrManagerProgramController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
+            if (!$this->canViewProgramRegular($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized - Access restricted'

@@ -522,6 +522,7 @@ class PrWorkflowService
                 $updateData['design_grafis_file_locations'] = [
                     'youtube_thumbnail' => $designGrafisWork->youtube_thumbnail_link,
                     'bts_thumbnail' => $designGrafisWork->bts_thumbnail_link,
+                    'episode_poster' => $designGrafisWork->episode_poster_link,
                 ];
             }
 

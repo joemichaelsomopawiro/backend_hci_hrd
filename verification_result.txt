@@ -1,0 +1,8 @@
+--- VERIFICATION FOR EMPLOYEE ID 20 ---
+ID: 20
+Nama: Editor Test
+Is Trashed: NO
+Deleted At: NULL
+User ID: 16
+User Name: Editor Test
+User Is Active: YES

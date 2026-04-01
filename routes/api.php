@@ -36,6 +36,7 @@ use App\Http\Controllers\Api\TaskVisibilityController;
 use App\Http\Controllers\Api\TaskReassignmentController;
 use App\Http\Controllers\Api\Pr\PrCreativeController;
 use App\Http\Controllers\Api\Pr\PrTalentController;
+use App\Http\Controllers\Api\GlobalSearchController;
 
 /*
 |--------------------------------------------------------------------------
@@ -256,6 +257,10 @@ Route::get('/test-cors', function () {
     ]);
 });
 
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/global-search', [GlobalSearchController::class, 'search']);
+});
+
 // Auth routes - dengan rate limiting untuk prevent brute force
 Route::prefix('auth')->group(function () {
     Route::post('/send-register-otp', [AuthController::class, 'sendRegisterOtp'])->middleware('throttle:auth');
@@ -272,6 +277,7 @@ Route::prefix('auth')->group(function () {
         Route::post('/refresh', [AuthController::class, 'refresh'])->middleware('throttle:sensitive'); // Refresh token
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
+        Route::get('/user', [AuthController::class, 'me']); // Alias for frontend compatibility
         Route::get('/check-employee-status', [AuthController::class, 'checkEmployeeStatus']);
         Route::post('/upload-profile-picture', [AuthController::class, 'uploadProfilePicture'])->middleware('throttle:uploads');
         Route::delete('/delete-profile-picture', [AuthController::class, 'deleteProfilePicture']);
