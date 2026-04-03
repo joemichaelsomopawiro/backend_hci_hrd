@@ -12,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use App\Services\PrActivityLogService;
+use App\Constants\Role;
 
 class PrBroadcastingController extends Controller
 {
@@ -22,14 +23,27 @@ class PrBroadcastingController extends Controller
         $this->activityLogService = $activityLogService;
     }
 
+    /**
+     * Check if user is authorized for broadcasting actions
+     */
+    private function authorizeBroadcasting()
+    {
+        $user = Auth::user();
+        if (!$user) return false;
+
+        return Role::inArray($user->role, [
+            Role::BROADCASTING,
+            Role::PROGRAM_MANAGER,
+            Role::DISTRIBUTION_MANAGER,
+            Role::PRODUCER
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         try {
-            $user = Auth::user();
-
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
-            if (!$user || !in_array($user->role, $allowedRoles)) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access. Role: ' . ($user->role ?? 'none')], 403);
+            if (!$this->authorizeBroadcasting()) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             // Auto-sync: Find episodes that have finished Manager Distribusi QC (completed)
@@ -69,10 +83,7 @@ class PrBroadcastingController extends Controller
     public function acceptWork(int $id): JsonResponse
     {
         try {
-            $user = Auth::user();
-
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
-            if (!$user || !in_array($user->role, $allowedRoles)) {
+            if (!$this->authorizeBroadcasting()) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -84,7 +95,7 @@ class PrBroadcastingController extends Controller
 
             $work->update([
                 'status' => 'in_progress', // still in progress until upload/publish
-                'created_by' => $user->id
+                'created_by' => Auth::id()
             ]);
 
             return response()->json(['success' => true, 'data' => $work->fresh(['episode', 'createdBy']), 'message' => 'Work accepted successfully']);
@@ -97,10 +108,7 @@ class PrBroadcastingController extends Controller
     public function show(int $id): JsonResponse
     {
         try {
-            $user = Auth::user();
-
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
-            if (!$user || !in_array($user->role, $allowedRoles)) {
+            if (!$this->authorizeBroadcasting()) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -129,17 +137,18 @@ class PrBroadcastingController extends Controller
     public function update(Request $request, int $id): JsonResponse
     {
         try {
-            $user = Auth::user();
-
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
-            if (!$user || !in_array($user->role, $allowedRoles)) {
+            if (!$this->authorizeBroadcasting()) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $work = PrBroadcastingWork::findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
-                // return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            // Allow manager to update any work, but broadcasting staff only their own in-progress work
+            $user = Auth::user();
+            $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER]);
+            
+            if (!$isManager && $work->created_by !== $user->id) {
+                return response()->json(['success' => false, 'message' => 'You are not assigned to this work.'], 403);
             }
 
             $work->update($request->all());
@@ -153,18 +162,13 @@ class PrBroadcastingController extends Controller
 
     public function uploadYouTube(Request $request, int $id): JsonResponse
     {
-        // Legacy or specific action? Frontend calls generic update mostly.
-        // But if needed:
         return $this->update($request, $id);
     }
 
     public function publish(int $id): JsonResponse
     {
         try {
-            $user = Auth::user();
-
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
-            if (!$user || !in_array($user->role, $allowedRoles)) {
+            if (!$this->authorizeBroadcasting()) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -190,8 +194,8 @@ class PrBroadcastingController extends Controller
 
             // Auto-create Promotion work for sharing if not exists
             \App\Models\PrPromotionWork::firstOrCreate(
-                ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'share_facebook'],
-                ['status' => 'pending', 'title' => 'Share Episode to Facebook']
+                ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'bts_video'],
+                ['status' => 'planning', 'shooting_notes' => 'Auto-created after publishing']
             );
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Episode published successfully']);
@@ -204,50 +208,50 @@ class PrBroadcastingController extends Controller
     public function finish(Request $request, int $id): JsonResponse
     {
         try {
-            $user = Auth::user();
-
-            $allowedRoles = ['Broadcasting', 'broadcasting', 'Manager Broadcasting', 'manager_broadcasting', 'Program Manager', 'program_manager', 'Manager Program', 'manager_program', 'Distribution Manager', 'distribution_manager', 'Manager Distribusi', 'distributionmanager'];
-            if (!$user || !in_array($user->role, $allowedRoles)) {
+            if (!$this->authorizeBroadcasting()) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $request->validate([
                 'title' => 'required|string',
-                'description' => 'nullable|string',
+                'description' => 'required|string',
                 'youtube_url' => 'required|url',
-                'thumbnail_small_url' => 'nullable|string'
+                'thumbnail_small_url' => 'nullable|string',
+                'tags' => 'nullable|string',
+                'jetstream_url' => 'required|url',
+                'visibility' => 'nullable|string',
+                'playlist' => 'nullable|string'
             ]);
 
             $work = PrBroadcastingWork::findOrFail($id);
+
+            $meta = is_array($work->metadata) ? $work->metadata : [];
+            $meta['tags'] = $request->tags;
+            $meta['jetstream_url'] = $request->jetstream_url;
+            $meta['visibility'] = $request->visibility;
+            $meta['playlist'] = $request->playlist;
 
             $work->update([
                 'title' => $request->title,
                 'description' => $request->description,
                 'youtube_url' => $request->youtube_url,
                 'thumbnail_path' => $request->thumbnail_small_url,
+                'metadata' => $meta,
                 'status' => 'published',
                 'published_at' => now(),
-                'created_by' => $user->id
+                'created_by' => Auth::id()
             ]);
 
             // Mark Step 9 as completed
-            $stepProgress = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $work->pr_episode_id)
-                ->where('workflow_step', 9)
-                ->first();
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 9);
 
-            if ($stepProgress && $stepProgress->status !== 'completed') {
-                // We'll let PrWorkflowService handle the status update and logging
-                app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 9);
-
-                // Log activity
-                $this->activityLogService->logEpisodeActivity(
-                    $work->episode,
-                    'broadcasting_finish',
-                    "Episode published to YouTube: {$request->youtube_url}",
-                    ['step' => 9, 'youtube_url' => $request->youtube_url],
-                    $work->id
-                );
-            }
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'broadcasting_finish',
+                "Episode published to YouTube: {$request->youtube_url}",
+                ['step' => 9, 'youtube_url' => $request->youtube_url]
+            );
 
             // Mark episode as broadcasting_complete so Step 9 shows green checkmark in progress banner
             $work->episode->update(['status' => 'broadcasting_complete']);

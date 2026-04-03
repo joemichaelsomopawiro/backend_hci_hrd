@@ -92,16 +92,24 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $combinedData->map(function ($record) {
+                $status = $record['status'];
+                $attendanceTime = $this->formatAttendanceTimeForResponse(
+                    $record['join_time'] ?? null,
+                    $record['date'] ?? null,
+                    $status,
+                    $record['created_at'] ?? null
+                );
+
                 return [
                     'id' => $record['id'],
                     'employee_id' => $record['employee_id'],
                     'name' => $record['employee_name'],
                     'position' => $record['employee_position'] ?? '-',
                     'date' => $record['date'],
-                    'attendance_time' => $record['join_time'] ?
-                        Carbon::parse($record['join_time'])->format('H:i') : '-',
-                    'status' => $record['status'],
-                    'status_label' => $this->getStatusLabel($record['status']),
+                    'attendance_time' => $attendanceTime,
+                    'join_time' => $attendanceTime,
+                    'status' => $status,
+                    'status_label' => $this->getStatusLabel($status),
                     'testing_mode' => $record['testing_mode'] ?? false,
                     'created_at' => $record['created_at'],
                     'data_source' => $record['data_source'],
@@ -213,6 +221,14 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $combinedData->map(function ($record) {
+                $status = $record['status'];
+                $attendanceTime = $this->formatAttendanceTimeForResponse(
+                    $record['join_time'] ?? null,
+                    $record['date'] ?? null,
+                    $status,
+                    $record['created_at'] ?? null
+                );
+
                 return [
                     'id' => $record['id'],
                     'employee_id' => $record['employee_id'],
@@ -223,10 +239,9 @@ class GaDashboardController extends Controller
                         'jabatan_saat_ini' => $record['employee_position'] ?? '-'
                     ],
                     'date' => $record['date'],
-                    'join_time' => $record['join_time'],
-                    'attendance_time' => $record['join_time'] ?
-                        Carbon::parse($record['join_time'])->format('H:i') : '-',
-                    'status' => $record['status'],
+                    'join_time' => $attendanceTime,
+                    'attendance_time' => $attendanceTime,
+                    'status' => $status,
                     'attendance_method' => $record['attendance_method'] ?? 'online',
                     'attendance_source' => $record['attendance_source'] ?? 'zoom'
                 ];
@@ -316,6 +331,14 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $combinedData->map(function ($record) {
+                $status = $record['status'];
+                $attendanceTime = $this->formatAttendanceTimeForResponse(
+                    $record['join_time'] ?? null,
+                    $record['date'] ?? null,
+                    $status,
+                    $record['created_at'] ?? null
+                );
+
                 return [
                     'id' => $record['id'],
                     'employee_id' => $record['employee_id'],
@@ -326,10 +349,9 @@ class GaDashboardController extends Controller
                         'jabatan_saat_ini' => $record['employee_position'] ?? '-'
                     ],
                     'date' => $record['date'],
-                    'join_time' => $record['join_time'],
-                    'attendance_time' => $record['join_time'] ?
-                        Carbon::parse($record['join_time'])->format('H:i') : '-',
-                    'status' => $record['status'],
+                    'join_time' => $attendanceTime,
+                    'attendance_time' => $attendanceTime,
+                    'status' => $status,
                     'attendance_method' => $record['attendance_method'] ?? 'online',
                     'attendance_source' => $record['attendance_source'] ?? 'zoom'
                 ];
@@ -410,6 +432,14 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $combinedData->map(function ($record) {
+                $status = $record['status'];
+                $attendanceTime = $this->formatAttendanceTimeForResponse(
+                    $record['join_time'] ?? null,
+                    $record['date'] ?? null,
+                    $status,
+                    $record['created_at'] ?? null
+                );
+
                 return [
                     'id' => $record['id'],
                     'employee_id' => $record['employee_id'],
@@ -420,10 +450,9 @@ class GaDashboardController extends Controller
                         'jabatan_saat_ini' => $record['employee_position'] ?? '-'
                     ],
                     'date' => $record['date'],
-                    'join_time' => $record['join_time'],
-                    'attendance_time' => $record['join_time'] ?
-                        Carbon::parse($record['join_time'])->format('H:i') : '-',
-                    'status' => $record['status'],
+                    'join_time' => $attendanceTime,
+                    'attendance_time' => $attendanceTime,
+                    'status' => $status,
                     'attendance_method' => $record['attendance_method'] ?? 'online',
                     'attendance_source' => $record['attendance_source'] ?? 'zoom'
                 ];
@@ -489,16 +518,24 @@ class GaDashboardController extends Controller
 
             // Transform data untuk frontend
             $transformedData = $attendances->getCollection()->map(function ($attendance) {
+                $status = $this->mapAttendanceStatus($attendance->status);
+                $attendanceTime = $this->formatAttendanceTimeForResponse(
+                    $attendance->join_time,
+                    $attendance->date?->format('Y-m-d'),
+                    $status,
+                    $attendance->created_at
+                );
+
                 return [
                     'id' => $attendance->id,
                     'employee_id' => $attendance->employee_id,
                     'name' => $attendance->employee ? $attendance->employee->nama_lengkap : 'Karyawan Tidak Ditemukan',
                     'position' => $attendance->employee ? $attendance->employee->jabatan_saat_ini : '-',
                     'date' => $attendance->date->format('Y-m-d'),
-                    'attendance_time' => $attendance->join_time ?
-                        $attendance->join_time->format('H:i') : '-',
-                    'status' => $this->mapAttendanceStatus($attendance->status),
-                    'status_label' => $this->getStatusLabel($this->mapAttendanceStatus($attendance->status)),
+                    'attendance_time' => $attendanceTime,
+                    'join_time' => $attendanceTime,
+                    'status' => $status,
+                    'status_label' => $this->getStatusLabel($status),
                     'testing_mode' => $attendance->testing_mode ?? false,
                     'created_at' => $attendance->created_at->format('Y-m-d H:i:s'),
                     'data_source' => 'attendance',
@@ -1505,6 +1542,55 @@ class GaDashboardController extends Controller
     private function mapAttendanceStatus($status)
     {
         return $this->normalizeStatus(strtolower($status));
+    }
+
+    /**
+     * Format waktu kehadiran ke ISO 8601 Asia/Jakarta.
+     * - present/late: kirim waktu (fallback ke created_at bila join_time kosong)
+     * - absent/leave/izin: null
+     */
+    private function formatAttendanceTimeForResponse($joinTime, $date, string $status, $createdAt = null): ?string
+    {
+        if (!in_array($status, ['present', 'late'], true)) {
+            return null;
+        }
+
+        $tz = 'Asia/Jakarta';
+
+        if ($joinTime) {
+            try {
+                if ($joinTime instanceof Carbon) {
+                    return $joinTime->copy()->setTimezone($tz)->toIso8601String();
+                }
+
+                $join = Carbon::parse($joinTime, $tz);
+                return $join->setTimezone($tz)->toIso8601String();
+            } catch (\Exception $e) {
+                // fallback handled below
+            }
+        }
+
+        if ($createdAt) {
+            try {
+                if ($createdAt instanceof Carbon) {
+                    return $createdAt->copy()->setTimezone($tz)->toIso8601String();
+                }
+
+                return Carbon::parse($createdAt, $tz)->setTimezone($tz)->toIso8601String();
+            } catch (\Exception $e) {
+                // no-op
+            }
+        }
+
+        if ($date) {
+            try {
+                return Carbon::parse($date . ' 07:30:00', $tz)->toIso8601String();
+            } catch (\Exception $e) {
+                // no-op
+            }
+        }
+
+        return null;
     }
 
     /**

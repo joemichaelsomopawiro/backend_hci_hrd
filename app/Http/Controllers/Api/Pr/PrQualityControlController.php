@@ -138,6 +138,7 @@ class PrQualityControlController extends Controller
             if ($designWork) {
                 if ($designWork->youtube_thumbnail_link) $designLocations['youtube_thumbnail'] = $designWork->youtube_thumbnail_link;
                 if ($designWork->bts_thumbnail_link) $designLocations['bts_thumbnail'] = $designWork->bts_thumbnail_link;
+                if ($designWork->episode_poster_link) $designLocations['episode_poster'] = $designWork->episode_poster_link;
             }
 
             $work->editor_promosi_file_locations = $editorLocations;
@@ -161,17 +162,32 @@ class PrQualityControlController extends Controller
 
             $request->validate([
                 'item_key' => 'required|string', // e.g., 'bts_video', 'youtube_thumbnail'
-                'status' => 'required|in:approved,revision',
+                'status' => 'nullable|in:approved,revision',
                 'note' => 'nullable|string',
             ]);
 
             $work = PrQualityControlWork::findOrFail($id);
 
             if ($work->status === 'completed' || $work->status === 'approved') {
-                // Allow editing but maybe warn? For now allow.
+                return response()->json(['success' => false, 'message' => 'Cannot modify items once QC is finished.'], 400);
             }
 
             $checklist = $work->qc_checklist ?? [];
+
+            if ($request->status === null) {
+                // Determine if we're cancelling a revision
+                $wasRevision = isset($checklist[$request->item_key]) && $checklist[$request->item_key]['status'] === 'revision';
+                
+                unset($checklist[$request->item_key]);
+                $work->qc_checklist = $checklist;
+                $work->save();
+
+                if ($wasRevision) {
+                    $this->handleRevisionCancelCleanup($work, $request->item_key);
+                }
+
+                return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Item reset to pending']);
+            }
             $checklist[$request->item_key] = [
                 'status' => $request->status,
                 'note' => $request->note,
@@ -209,7 +225,7 @@ class PrQualityControlController extends Controller
     private function handleRevisionRequest(PrQualityControlWork $work, string $itemKey, ?string $note)
     {
         $editorKeys = ['bts_video', 'tv_ad', 'ig_highlight', 'tv_highlight', 'fb_highlight'];
-        $designKeys = ['youtube_thumbnail', 'bts_thumbnail'];
+        $designKeys = ['youtube_thumbnail', 'bts_thumbnail', 'episode_poster'];
 
         $episode = PrEpisode::with('program')->find($work->pr_episode_id);
         if (!$episode) return;
@@ -258,6 +274,30 @@ class PrQualityControlController extends Controller
         );
     }
 
+    private function handleRevisionCancelCleanup(PrQualityControlWork $work, string $itemKey)
+    {
+        $editorKeys = ['bts_video', 'tv_ad', 'ig_highlight', 'tv_highlight', 'fb_highlight'];
+        $designKeys = ['youtube_thumbnail', 'bts_thumbnail', 'episode_poster'];
+        
+        $checklist = $work->qc_checklist ?? [];
+        $otherRevisions = false;
+        
+        foreach ($checklist as $key => $item) {
+            if (($item['status'] ?? '') === 'revision') {
+                if (in_array($itemKey, $editorKeys) && in_array($key, $editorKeys)) $otherRevisions = true;
+                if (in_array($itemKey, $designKeys) && in_array($key, $designKeys)) $otherRevisions = true;
+            }
+        }
+
+        if (!$otherRevisions) {
+            if (in_array($itemKey, $editorKeys)) {
+                PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'submitted']);
+            } elseif (in_array($itemKey, $designKeys)) {
+                PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'submitted']);
+            }
+        }
+    }
+
     public function cancelRevision(Request $request, int $id): JsonResponse
     {
         try {
@@ -279,25 +319,7 @@ class PrQualityControlController extends Controller
             $work->qc_checklist = $checklist;
             $work->save();
 
-            // Check if any other revisions left for this source
-            $editorKeys = ['bts_video', 'tv_ad', 'ig_highlight', 'tv_highlight', 'fb_highlight'];
-            $designKeys = ['youtube_thumbnail', 'bts_thumbnail'];
-            
-            $otherRevisions = false;
-            foreach ($checklist as $key => $item) {
-                if ($item['status'] === 'revision') {
-                    if (in_array($request->item_key, $editorKeys) && in_array($key, $editorKeys)) $otherRevisions = true;
-                    if (in_array($request->item_key, $designKeys) && in_array($key, $designKeys)) $otherRevisions = true;
-                }
-            }
-
-            if (!$otherRevisions) {
-                if (in_array($request->item_key, $editorKeys)) {
-                    PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'submitted']);
-                } elseif (in_array($request->item_key, $designKeys)) {
-                    PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'submitted']);
-                }
-            }
+            $this->handleRevisionCancelCleanup($work, $request->item_key);
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Revision cancelled successfully']);
         } catch (\Exception $e) {
@@ -317,7 +339,7 @@ class PrQualityControlController extends Controller
             $checklist = $work->qc_checklist ?? [];
 
             // Define required items (based on user request)
-            $requiredItems = ['bts_video', 'tv_ad', 'ig_highlight', 'fb_highlight', 'tv_highlight', 'youtube_thumbnail', 'bts_thumbnail'];
+            $requiredItems = ['bts_video', 'tv_ad', 'ig_highlight', 'fb_highlight', 'tv_highlight', 'youtube_thumbnail', 'bts_thumbnail', 'episode_poster'];
 
             // Identify currently present file keys to avoid failing on stale checklist items
             $presentKeys = array_merge(

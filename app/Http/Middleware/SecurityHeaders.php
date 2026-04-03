@@ -31,7 +31,7 @@ class SecurityHeaders
         // Content Security Policy
         // Allow media (audio/video) from same origin and localhost for development
         $appUrl = config('app.url');
-        $csp = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; media-src 'self' {$appUrl} http://localhost:8000 https://localhost:8000;";
+        $csp = "default-src 'self' https://hopemedia.id https://api.hopemedia.id; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://hopemedia.id https://api.hopemedia.id; media-src 'self' {$appUrl} http://localhost:8000 https://localhost:8000;";
         $response->headers->set('Content-Security-Policy', $csp);
         
         // Permissions Policy

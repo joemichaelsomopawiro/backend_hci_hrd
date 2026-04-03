@@ -36,6 +36,8 @@ use App\Http\Controllers\Api\TaskVisibilityController;
 use App\Http\Controllers\Api\TaskReassignmentController;
 use App\Http\Controllers\Api\Pr\PrCreativeController;
 use App\Http\Controllers\Api\Pr\PrTalentController;
+use App\Http\Controllers\Api\Pr\PrDatabaseController;
+use App\Http\Controllers\Api\GlobalSearchController;
 
 /*
 |--------------------------------------------------------------------------
@@ -256,6 +258,10 @@ Route::get('/test-cors', function () {
     ]);
 });
 
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/global-search', [GlobalSearchController::class, 'search']);
+});
+
 // Auth routes - dengan rate limiting untuk prevent brute force
 Route::prefix('auth')->group(function () {
     Route::post('/send-register-otp', [AuthController::class, 'sendRegisterOtp'])->middleware('throttle:auth');
@@ -272,6 +278,7 @@ Route::prefix('auth')->group(function () {
         Route::post('/refresh', [AuthController::class, 'refresh'])->middleware('throttle:sensitive'); // Refresh token
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
+        Route::get('/user', [AuthController::class, 'me']); // Alias for frontend compatibility
         Route::get('/check-employee-status', [AuthController::class, 'checkEmployeeStatus']);
         Route::post('/upload-profile-picture', [AuthController::class, 'uploadProfilePicture'])->middleware('throttle:uploads');
         Route::delete('/delete-profile-picture', [AuthController::class, 'deleteProfilePicture']);
@@ -708,6 +715,14 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
     Route::get('/accessible-roles', [PrRoleFilterController::class, 'getAccessibleRoles']); // Get list role yang bisa di-filter
     Route::get('/validate-role-access/{targetRole}', [PrRoleFilterController::class, 'validateRoleAccess']); // Validate akses ke role tertentu
 
+    // Database Aggregation Routes
+    Route::prefix('database')->group(function () {
+        Route::get('/programs', [PrDatabaseController::class, 'getPrograms']);
+        Route::post('/import', [PrDatabaseController::class, 'importData']);
+        Route::post('/import-from-sheet', [PrDatabaseController::class, 'importFromSheet']);
+        Route::get('/export', [PrDatabaseController::class, 'exportData']);
+    });
+
     // Manager Program Routes
     Route::prefix('manager-program')->group(function () {
         Route::get('/budget-approvals', [PrManagerProgramController::class, 'getPendingBudgetApprovals']); // Get pending budget approvals
@@ -938,6 +953,7 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
         Route::post('/works/{id}/accept-work', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'acceptWork']);
         Route::put('/works/{id}', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'updateProgress']);
         Route::post('/works/{id}/submit', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'submit']);
+        Route::post('/works/{id}/cancel', [App\Http\Controllers\Api\Pr\PrDesignGrafisController::class, 'cancelSubmit']);
     });
 
 

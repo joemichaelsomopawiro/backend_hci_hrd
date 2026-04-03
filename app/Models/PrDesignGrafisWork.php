@@ -17,6 +17,7 @@ class PrDesignGrafisWork extends Model
         'status',
         'youtube_thumbnail_link',
         'bts_thumbnail_link',
+        'episode_poster_link',
         'notes',
         'deadline',
         'started_at',

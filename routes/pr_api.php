@@ -133,6 +133,10 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/works', [PrPromosiController::class, 'store']); // Create new work
         Route::get('/works/{id}', [PrPromosiController::class, 'show']); // Get work detail
         Route::post('/works/{id}/update', [PrPromosiController::class, 'update']); // Alias for frontend
+        Route::post('/works/{id}/accept', [PrPromosiController::class, 'acceptWork']); // Accept work
+        Route::post('/works/{id}/complete', [PrPromosiController::class, 'complete']); // Mark as complete
+        Route::post('/works/{id}/upload-content', [PrPromosiController::class, 'uploadContent']);
+        Route::post('/works/{id}/share-content', [PrPromosiController::class, 'shareContent']);
         Route::post('/works/{id}/request-equipment', [PrPromosiController::class, 'requestEquipment']);
         Route::post('/works/{id}/request-return', [PrPromosiController::class, 'requestReturn']);
         Route::post('/works/{id}/cancel-loan', [PrPromosiController::class, 'cancelLoan']);
@@ -156,6 +160,7 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/works/{id}/accept-work', [PrDesignGrafisController::class, 'acceptWork']);
         Route::put('/works/{id}', [PrDesignGrafisController::class, 'updateProgress']);
         Route::post('/works/{id}/submit', [PrDesignGrafisController::class, 'submit']);
+        Route::post('/works/{id}/cancel', [PrDesignGrafisController::class, 'cancelSubmit']);
     });
 
     // ==================== QUALITY CONTROL ROUTES ====================

@@ -178,6 +178,25 @@ class PrWorkflowService
                 // If Editor is done, trigger Step 7 QC (Manager Distribusi)
                 if ($roleCompletions['Editor'] ?? false) {
                     $this->createStep7WorkRecord($episode);
+
+                    // Also wake up any Editor Promosi work that was waiting for the Editor to finish
+                    $promoEditorWork = PrEditorPromosiWork::where('pr_episode_id', $episodeId)
+                        ->where('status', 'waiting_editor')
+                        ->first();
+                    if ($promoEditorWork) {
+                        // SELF-HEALING: If it's missing the editor_work link, but we know Editor is done, find it
+                        if (!$promoEditorWork->pr_editor_work_id) {
+                            $editorWork = PrEditorWork::where('pr_episode_id', $episodeId)
+                                ->where('work_type', 'main_episode')
+                                ->first();
+                            if ($editorWork) {
+                                $promoEditorWork->pr_editor_work_id = $editorWork->id;
+                            }
+                        }
+                        
+                        $promoEditorWork->update(['status' => 'pending']);
+                        Log::info("Transitioned PrEditorPromosiWork for Episode [{$episodeId}] from waiting_editor to pending");
+                    }
                 }
 
                 // If Editor Promosi AND Design Grafis are both done, trigger Step 8 QC (QC Final)
@@ -503,6 +522,7 @@ class PrWorkflowService
                 $updateData['design_grafis_file_locations'] = [
                     'youtube_thumbnail' => $designGrafisWork->youtube_thumbnail_link,
                     'bts_thumbnail' => $designGrafisWork->bts_thumbnail_link,
+                    'episode_poster' => $designGrafisWork->episode_poster_link,
                 ];
             }
 

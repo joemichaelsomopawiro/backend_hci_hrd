@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Employee;
+use App\Models\LeaveQuota;
 use App\Models\LeaveRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -154,7 +155,7 @@ class ManagerController extends Controller
     public function getSubordinateLeaveQuotas(Request $request): JsonResponse
     {
         $manager = auth()->user();
-        $currentYear = $request->input('year', date('Y'));
+        $currentYear = (int) $request->input('year', date('Y'));
 
         if (!$manager->employee) {
             return response()->json([
@@ -163,29 +164,44 @@ class ManagerController extends Controller
             ], 404);
         }
 
-        // ===================================================================
-        // INI ADALAH PERUBAHAN UTAMA
-        // Sekarang, kode ini secara spesifik mengambil BAWAHAN LANGSUNG
-        // dari manajer yang login, menggunakan relasi 'subordinates()'
-        // yang bergantung pada kolom 'manager_id'.
-        // ===================================================================
-        $subordinates = $manager->employee->subordinates()
-            ->with([
+        // Selaras dengan GET /leave-requests: bawahan = role di bawah hierarki atasan, bukan hanya manager_id.
+        $subordinates = $manager->employee->getSubordinatesByDepartment()
+            ->load([
                 'leaveQuotas' => function ($query) use ($currentYear) {
                     $query->where('year', $currentYear);
                 },
                 'todaysAttendance',
-                'approvedLeaveForToday'
+                'approvedLeaveForToday',
             ])
-            ->orderBy('nama_lengkap', 'asc')
-            ->get();
+            ->sortBy('nama_lengkap')
+            ->values();
 
-        // Pastikan accessor 'current_status' tetap ditambahkan
         $subordinates->each->append('current_status');
+
+        $idsForQuota = $subordinates->pluck('id');
+        $quotaByEmployeeId = $idsForQuota->isEmpty()
+            ? collect()
+            : LeaveQuota::whereIn('employee_id', $idsForQuota)
+                ->where('year', $currentYear)
+                ->get()
+                ->keyBy('employee_id');
+
+        $data = $subordinates->map(function (Employee $emp) use ($quotaByEmployeeId) {
+            $quota = $quotaByEmployeeId->get($emp->id) ?? $emp->leaveQuotas->first();
+            return [
+                'id' => $emp->id,
+                'nama_lengkap' => $emp->nama_lengkap,
+                'jabatan_saat_ini' => $emp->jabatan_saat_ini,
+                'leave_quotas' => $quota ? [$quota->toSummaryArray()] : [],
+                'current_status' => $emp->current_status,
+                'todays_attendance' => $emp->todaysAttendance,
+                'approved_leave_for_today' => $emp->approvedLeaveForToday,
+            ];
+        })->values();
 
         return response()->json([
             'success' => true,
-            'data' => $subordinates
+            'data' => $data
         ]);
     }
 }

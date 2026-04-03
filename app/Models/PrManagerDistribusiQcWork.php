@@ -5,6 +5,8 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Models\PrEditorWork;
+use App\Models\PrDesignGrafisWork;
 
 class PrManagerDistribusiQcWork extends Model
 {
@@ -26,6 +28,11 @@ class PrManagerDistribusiQcWork extends Model
         'qc_checklist' => 'array',
         'qc_completed_at' => 'datetime',
         'recieved_at' => 'datetime',
+    ];
+
+    protected $appends = [
+        'editor_file_path',
+        'episode_poster_link'
     ];
 
     public function episode()
@@ -61,5 +68,29 @@ class PrManagerDistribusiQcWork extends Model
     public function markAsInProgress()
     {
         $this->update(['status' => 'in_progress']);
+    }
+
+    /**
+     * Get Editor's File Path for QC
+     * Virtual attribute for frontend access
+     */
+    public function getEditorFilePathAttribute()
+    {
+        // Try to get the main episode file from editor work
+        $editorWork = PrEditorWork::where('pr_episode_id', $this->pr_episode_id)
+            ->where('work_type', 'main_episode')
+            ->first();
+
+        return $editorWork ? $editorWork->file_path : null;
+    }
+
+    /**
+     * Get Graphic Design Episode Poster for QC
+     * Virtual attribute for frontend access
+     */
+    public function getEpisodePosterLinkAttribute()
+    {
+        $designGrafisWork = PrDesignGrafisWork::where('pr_episode_id', $this->pr_episode_id)->first();
+        return $designGrafisWork ? $designGrafisWork->episode_poster_link : null;
     }
 }

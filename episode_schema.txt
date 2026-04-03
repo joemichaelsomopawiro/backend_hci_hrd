@@ -1,0 +1,143 @@
+Array
+(
+    [0] => stdClass Object
+        (
+            [Field] => id
+            [Type] => bigint(20) unsigned
+            [Null] => NO
+            [Key] => PRI
+            [Default] => 
+            [Extra] => auto_increment
+        )
+
+    [1] => stdClass Object
+        (
+            [Field] => program_id
+            [Type] => bigint(20) unsigned
+            [Null] => YES
+            [Key] => MUL
+            [Default] => 
+            [Extra] => 
+        )
+
+    [2] => stdClass Object
+        (
+            [Field] => episode_number
+            [Type] => int(11)
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [3] => stdClass Object
+        (
+            [Field] => title
+            [Type] => varchar(255)
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [4] => stdClass Object
+        (
+            [Field] => description
+            [Type] => text
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [5] => stdClass Object
+        (
+            [Field] => air_date
+            [Type] => date
+            [Null] => YES
+            [Key] => MUL
+            [Default] => 
+            [Extra] => 
+        )
+
+    [6] => stdClass Object
+        (
+            [Field] => air_time
+            [Type] => time
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [7] => stdClass Object
+        (
+            [Field] => production_date
+            [Type] => date
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [8] => stdClass Object
+        (
+            [Field] => status
+            [Type] => enum('scheduled','production','editing','ready_for_review','manager_approved','manager_rejected','ready_for_distribusi','distribusi_approved','scheduled_to_air','aired','cancelled','step_6_completed','broadcasting','completed','broadcasting_complete','promoted')
+            [Null] => NO
+            [Key] => 
+            [Default] => scheduled
+            [Extra] => 
+        )
+
+    [9] => stdClass Object
+        (
+            [Field] => production_notes
+            [Type] => text
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [10] => stdClass Object
+        (
+            [Field] => editing_notes
+            [Type] => text
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [11] => stdClass Object
+        (
+            [Field] => created_at
+            [Type] => timestamp
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [12] => stdClass Object
+        (
+            [Field] => updated_at
+            [Type] => timestamp
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+    [13] => stdClass Object
+        (
+            [Field] => deleted_at
+            [Type] => timestamp
+            [Null] => YES
+            [Key] => 
+            [Default] => 
+            [Extra] => 
+        )
+
+)

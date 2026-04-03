@@ -30,10 +30,17 @@ class PrProgramCrewController extends Controller
     {
         try {
             $user = Auth::user();
-            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+            $role = Role::normalize($user->role);
+            $allowedRoles = array_values(array_unique(array_merge(
+                Role::getManagerRoles(),
+                [Role::PRODUCER, Role::QUALITY_CONTROL],
+                Role::getProductionTeamRoles(),
+                Role::getDistributionTeamRoles()
+            )));
+            if (!in_array($role, $allowedRoles)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized - Only Program Manager can view team members'
+                    'message' => 'Unauthorized - Access restricted'
                 ], 403);
             }
 

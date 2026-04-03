@@ -1,0 +1,15 @@
+LOG START
+FATAL ERROR: SQLSTATE[HY000] [2002] No connection could be made because the target machine actively refused it (Connection: mysql, SQL: select * from `users` where `role` = Quality Control limit 1)
+#0 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Connection.php(983): Illuminate\Database\Connection->runQueryCallback('select * from `...', Array, Object(Closure))
+#1 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Connection.php(962): Illuminate\Database\Connection->tryAgainIfCausedByLostConnection(Object(Illuminate\Database\QueryException), 'select * from `...', Array, Object(Closure))
+#2 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Connection.php(785): Illuminate\Database\Connection->handleQueryException(Object(Illuminate\Database\QueryException), 'select * from `...', Array, Object(Closure))
+#3 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Connection.php(414): Illuminate\Database\Connection->run('select * from `...', Array, Object(Closure))
+#4 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Query\Builder.php(2913): Illuminate\Database\Connection->select('select * from `...', Array, true)
+#5 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Query\Builder.php(2902): Illuminate\Database\Query\Builder->runSelect()
+#6 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Query\Builder.php(3456): Illuminate\Database\Query\Builder->Illuminate\Database\Query\{closure}()
+#7 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Query\Builder.php(2901): Illuminate\Database\Query\Builder->onceWithColumns(Array, Object(Closure))
+#8 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Builder.php(739): Illuminate\Database\Query\Builder->get(Array)
+#9 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Eloquent\Builder.php(723): Illuminate\Database\Eloquent\Builder->getModels(Array)
+#10 C:\xampp\htdocs\backend_hci\vendor\laravel\framework\src\Illuminate\Database\Concerns\BuildsQueries.php(333): Illuminate\Database\Eloquent\Builder->get(Array)
+#11 C:\xampp\htdocs\backend_hci\test_controller.php(9): Illuminate\Database\Eloquent\Builder->first()
+#12 {main}

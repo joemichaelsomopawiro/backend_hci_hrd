@@ -30,7 +30,9 @@ class PrProgram extends Model
         'manager_distribusi_id',
         'read_by_producer',
         'read_at',
-        'max_budget_per_episode'
+        'max_budget_per_episode',
+        'target_views',
+        'target_likes'
     ];
 
     protected $casts = [
@@ -38,7 +40,9 @@ class PrProgram extends Model
         'air_time' => 'datetime:H:i',
         'program_year' => 'integer',
         'read_by_producer' => 'boolean',
-        'read_at' => 'datetime'
+        'read_at' => 'datetime',
+        'target_views' => 'integer',
+        'target_likes' => 'integer'
     ];
 
     /**

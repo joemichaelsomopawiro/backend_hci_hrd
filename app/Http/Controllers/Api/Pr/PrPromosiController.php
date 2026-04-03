@@ -40,7 +40,7 @@ class PrPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -123,7 +123,7 @@ class PrPromosiController extends Controller
             // ROLE-BASED FILTERING: Matching PrProduksiController logic
             // Only allow designated roles to see all, others only see assigned
             $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER]);
-            $isPromosiFull = Role::normalize($user->role) === Role::PROMOTION;
+            $isPromosiFull = Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION]);
 
             if (!$isManager && !$isPromosiFull) {
                 // If they are specific promotion crew (e.g. from Episode Crew), filter by their assignment
@@ -160,7 +160,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -187,7 +187,7 @@ class PrPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -201,7 +201,7 @@ class PrPromosiController extends Controller
 
             $work = PrPromotionWork::with('equipmentLoans')->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            if ($work->created_by !== $user->id && !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
@@ -213,7 +213,7 @@ class PrPromosiController extends Controller
             if ($unreturnedLoan) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Konten tidak dapat diupload karena ada alat yang belum dikembalikan (Loan ID: ' . $unreturnedLoan->id . ').'
+                    'message' => 'Content cannot be uploaded because there are unreturned items (Loan ID: ' . $unreturnedLoan->id . ').'
                 ], 400);
             }
 
@@ -237,7 +237,7 @@ class PrPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -252,7 +252,7 @@ class PrPromosiController extends Controller
 
             $work = PrPromotionWork::with('equipmentLoans')->findOrFail($id);
 
-            if ($work->created_by !== $user->id) {
+            if ($work->created_by !== $user->id && !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
@@ -264,7 +264,7 @@ class PrPromosiController extends Controller
             if ($unreturnedLoan) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Konten tidak dapat dishare karena ada alat yang belum dikembalikan (Loan ID: ' . $unreturnedLoan->id . ').'
+                    'message' => 'Content cannot be shared because there are unreturned items (Loan ID: ' . $unreturnedLoan->id . ').'
                 ], 400);
             }
 
@@ -297,7 +297,12 @@ class PrPromosiController extends Controller
     {
         try {
             // Find work with relationships
-            $work = PrPromotionWork::with(['episode.program', 'episode.creativeWork', 'createdBy'])->find($id);
+            $work = PrPromotionWork::with([
+                'episode.program', 
+                'episode.creativeWork', 
+                'createdBy',
+                'equipmentLoans.loanItems.inventoryItem'
+            ])->find($id);
 
             if (!$work) {
                 return response()->json(['success' => false, 'message' => 'Work not found.'], 404);
@@ -317,7 +322,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -392,7 +397,7 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -409,7 +414,7 @@ class PrPromosiController extends Controller
             if ($unreturnedLoan) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Pekerjaan promosi tidak dapat diselesaikan karena ada alat yang belum dikembalikan (Loan ID: ' . $unreturnedLoan->id . ').'
+                    'message' => 'Promotion work cannot be completed because there are unreturned items (Loan ID: ' . $unreturnedLoan->id . ').'
                 ], 400);
             }
 
@@ -464,13 +469,13 @@ class PrPromosiController extends Controller
             }
 
             // Allow staff roles OR any crew coordinator for this episode
-            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
             if (!$isStaff) {
                 // Check if user is a coordinator on this specific work's episode
                 $work = PrPromotionWork::with('episode.crews')->find($id);
                 $crew = $work?->episode?->crews?->where('user_id', $user->id)->first();
                 if (!$crew || !$crew->is_coordinator) {
-                    return response()->json(['success' => false, 'message' => 'Hanya koordinator atau staff promosi yang dapat mengajukan peminjaman alat.'], 403);
+                    return response()->json(['success' => false, 'message' => 'Only coordinators or promotion staff can request equipment loans.'], 403);
                 }
             }
 
@@ -495,7 +500,7 @@ class PrPromosiController extends Controller
             if ($activeLoan) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Pekerjaan promosi ini sudah memiliki permintaan alat yang sedang aktif (ID Loan: {$activeLoan->id}). Harap selesaikan atau batalkan terlebih dahulu."
+                    'message' => "This promotion work already has an active equipment request (Loan ID: {$activeLoan->id}). Please complete or cancel it first."
                 ], 400);
             }
 
@@ -560,11 +565,11 @@ class PrPromosiController extends Controller
             $work = PrPromotionWork::with(['episode.crews', 'equipmentLoans'])->findOrFail($id);
 
             // Check coordinator status
-            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
             if (!$isStaff) {
                 $crew = $work->episode->crews->where('user_id', $user->id)->first();
                 if (!$crew || !$crew->is_coordinator) {
-                    return response()->json(['success' => false, 'message' => 'Hanya koordinator yang dapat mengajukan pengembalian barang.'], 403);
+                    return response()->json(['success' => false, 'message' => 'Only coordinators can request equipment returns.'], 403);
                 }
             }
 
@@ -586,7 +591,7 @@ class PrPromosiController extends Controller
             app(\App\Services\PrNotificationService::class)->notifyArtSetReturnRequested($activeLoan);
 
             DB::commit();
-            return response()->json(['success' => true, 'data' => $activeLoan->fresh(), 'message' => 'Permintaan pengembalian barang berhasil diajukan.']);
+            return response()->json(['success' => true, 'data' => $activeLoan->fresh(), 'message' => 'Equipment return request submitted successfully.']);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
@@ -605,11 +610,11 @@ class PrPromosiController extends Controller
             $work = PrPromotionWork::with(['episode.crews', 'equipmentLoans.loanItems'])->findOrFail($id);
 
             // Check coordinator status
-            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
+            $isStaff = Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER]);
             if (!$isStaff) {
                 $crew = $work->episode->crews->where('user_id', $user->id)->first();
                 if (!$crew || !$crew->is_coordinator) {
-                    return response()->json(['success' => false, 'message' => 'Hanya koordinator yang dapat membatalkan peminjaman alat.'], 403);
+                    return response()->json(['success' => false, 'message' => 'Only coordinators can cancel equipment loans.'], 403);
                 }
             }
 
@@ -619,7 +624,7 @@ class PrPromosiController extends Controller
                 ->first();
 
             if (!$cancelableLoan) {
-                return response()->json(['success' => false, 'message' => 'Tidak ada peminjaman yang bisa dibatalkan. Hanya status Menunggu Persetujuan yang bisa dibatalkan.'], 400);
+                return response()->json(['success' => false, 'message' => 'No loans can be cancelled. Only Pending Approval status can be cancelled.'], 400);
             }
 
             // Restore stock for each item in the loan IF it was already approved/decremented
@@ -639,7 +644,7 @@ class PrPromosiController extends Controller
             $cancelableLoan->update(['status' => 'cancelled']);
 
             DB::commit();
-            return response()->json(['success' => true, 'data' => $work->fresh(['equipmentLoans']), 'message' => 'Peminjaman alat berhasil dibatalkan.']);
+            return response()->json(['success' => true, 'data' => $work->fresh(['equipmentLoans']), 'message' => 'Equipment loan cancelled successfully.']);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
@@ -656,8 +661,8 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $episodes = PrEpisode::with(['program', 'promotionWork', 'broadcastingWork', 'editorPromosiWork'])
@@ -678,6 +683,7 @@ class PrPromosiController extends Controller
                         'title' => $episode->title ?? ('Episode ' . $episode->episode_number),
                         'program_name' => $episode->program?->name ?? '',
                         'youtube_link' => $episode->broadcastingWork?->youtube_url ?? null,
+                        'jetstream_url' => $episode->broadcastingWork?->metadata['jetstream_url'] ?? null,
                         'work_status' => $workStatus,
                         'last_edited' => $episode->promotionWork?->updated_at ? $episode->promotionWork->updated_at->format('Y-m-d H:i') : null,
                         'status' => $episode->status,
@@ -697,8 +703,8 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $promotionWork = PrPromotionWork::where('pr_episode_id', $episodeId)->first();
@@ -730,6 +736,7 @@ class PrPromosiController extends Controller
                 'data' => $tasks,
                 'ig_highlight_link' => $igHighlightLink,
                 'fb_highlight_link' => $fbHighlightLink,
+                'jetstream_url' => $promotionWork->episode->broadcastingWork?->metadata['jetstream_url'] ?? null,
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
@@ -743,8 +750,8 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
             $promotionWork = PrPromotionWork::with(['episode.program'])->where('pr_episode_id', $episodeId)->first();
@@ -800,11 +807,8 @@ class PrPromosiController extends Controller
                 }
             }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Share Konten tasks saved successfully',
-                'data' => $tasks
-            ]);
+            return response()->json(['success' => true, 'message' => 'Share Konten tasks finalized successfully']);
+
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }

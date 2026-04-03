@@ -39,6 +39,19 @@ class PrManagerProgramController extends Controller
         $this->notificationService = $notificationService;
         $this->activityLogService = $activityLogService;
     }
+    private function canViewProgramRegular($user): bool
+    {
+        $role = \App\Constants\Role::normalize($user->role);
+        $allowed = array_values(array_unique(array_merge(
+            \App\Constants\Role::getManagerRoles(),
+            [\App\Constants\Role::PRODUCER, \App\Constants\Role::QUALITY_CONTROL],
+            \App\Constants\Role::getProductionTeamRoles(),
+            \App\Constants\Role::getDistributionTeamRoles()
+        )));
+
+        return in_array($role, $allowed);
+    }
+
 
     /**
      * Create program baru (hanya Manager Program)
@@ -76,7 +89,9 @@ class PrManagerProgramController extends Controller
                 'broadcast_channel' => 'nullable|string|max:255',
                 'target_audience' => 'nullable|string|max:255',
                 'program_year' => 'nullable|integer|min:2020|max:2100',
-                'max_budget_per_episode' => 'nullable|numeric|min:0'
+                'max_budget_per_episode' => 'nullable|numeric|min:0',
+                'target_views' => 'nullable|integer|min:0',
+                'target_likes' => 'nullable|integer|min:0'
             ]);
 
             if ($validator->fails()) {
@@ -195,10 +210,10 @@ class PrManagerProgramController extends Controller
     {
         try {
             $user = Auth::user();
-            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+            if (!$this->canViewProgramRegular($user)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized - Only Program Manager can view program details'
+                    'message' => 'Unauthorized - Access restricted'
                 ], 403);
             }
 
@@ -212,6 +227,13 @@ class PrManagerProgramController extends Controller
                 'productionSchedules',
                 'distributionSchedules',
                 'distributionReports'
+            ])->withCount([
+                'episodes',
+                'episodes as completed_episodes_count' => function ($q) {
+                    $q->whereHas('workflowProgress', function ($subQ) {
+                        $subQ->where('workflow_step', 7)->where('status', 'completed');
+                    });
+                }
             ])->findOrFail($id);
 
             // Add archive status info
@@ -531,10 +553,10 @@ class PrManagerProgramController extends Controller
     {
         try {
             $user = Auth::user();
-            if (Role::normalize($user->role) !== Role::PROGRAM_MANAGER) {
+            if (!$this->canViewProgramRegular($user)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized - Only Program Manager can view program schedules'
+                    'message' => 'Unauthorized - Access restricted'
                 ], 403);
             }
 
@@ -634,7 +656,9 @@ class PrManagerProgramController extends Controller
                 'target_audience' => 'nullable|string|max:255',
                 'apply_from_episode' => 'nullable|integer|min:1|max:53',
                 'new_episode_date' => 'nullable|date',
-                'max_budget_per_episode' => 'nullable|numeric|min:0'
+                'max_budget_per_episode' => 'nullable|numeric|min:0',
+                'target_views' => 'nullable|integer|min:0',
+                'target_likes' => 'nullable|integer|min:0'
             ]);
 
             if ($validator->fails()) {
@@ -653,7 +677,9 @@ class PrManagerProgramController extends Controller
                 'duration_minutes',
                 'broadcast_channel',
                 'target_audience',
-                'max_budget_per_episode'
+                'max_budget_per_episode',
+                'target_views',
+                'target_likes'
             ]));
 
             // Apply schedule changes to episodes if requested
@@ -731,7 +757,16 @@ class PrManagerProgramController extends Controller
                 'program.managerProgram',
                 'program.managerDistribusi',
                 'creativeWork',
-                'crews.user'
+                'crews.user',
+                'productionWork.equipmentLoans.loanItems.inventoryItem',
+                'qualityControlWork',
+                'broadcastingWork',
+                'promotionWork',
+                'editorPromosiWork',
+                'designGrafisWork',
+                'managerDistribusiQcWork',
+                'editorWork',
+                'files',
             ])->findOrFail($episodeId);
 
             return response()->json([

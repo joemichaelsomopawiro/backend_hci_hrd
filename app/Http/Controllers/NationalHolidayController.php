@@ -493,10 +493,12 @@ class NationalHolidayController extends Controller
             if (empty($apiKey)) {
                 Log::warning('Google Calendar API key not configured');
                 return response()->json([
-                    'success' => false,
-                    'message' => 'Google Calendar API key not configured. Please add GOOGLE_CALENDAR_API_KEY to .env file',
-                    'data' => []
-                ], 500);
+                    'success' => true,
+                    'message' => 'Google Calendar API key not configured. Using local data only.',
+                    'data' => [],
+                    'year' => (int)$year,
+                    'count' => 0
+                ]);
             }
             
             $googleCalendarService = new GoogleCalendarService();

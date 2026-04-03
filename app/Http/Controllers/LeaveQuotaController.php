@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\LeaveQuota;
 use App\Models\Employee;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -11,7 +12,24 @@ class LeaveQuotaController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = LeaveQuota::with('employee');
+        if ($request->filled('employee_id')) {
+            $user = $request->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Autentikasi diperlukan untuk melihat jatah cuti karyawan tertentu.',
+                ], 401);
+            }
+            $targetEmployeeId = (int) $request->employee_id;
+            if (!$this->userMayViewEmployeeLeaveQuota($user, $targetEmployeeId)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Anda tidak berwenang melihat jatah cuti karyawan ini.',
+                ], 403);
+            }
+        }
+
+        $query = LeaveQuota::query()->orderBy('employee_id')->orderBy('year');
 
         if ($request->has('employee_id')) {
             $query->where('employee_id', $request->employee_id);
@@ -23,10 +41,55 @@ class LeaveQuotaController extends Controller
 
         $quotas = $query->get();
 
+        // Kontrak ringkas + employee_id eksplisit untuk filter by employee (HR / fallback FE)
+        if ($request->filled('employee_id')) {
+            $data = $quotas->map(function (LeaveQuota $q) {
+                return array_merge(
+                    [
+                        'id' => $q->id,
+                        'employee_id' => $q->employee_id,
+                    ],
+                    $q->toSummaryArray()
+                );
+            })->values();
+        } else {
+            $data = $quotas->load('employee');
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $quotas
+            'data' => $data
         ]);
+    }
+
+    /**
+     * HR / atasan / karyawan sendiri / atasan langsung (manager_id) boleh melihat kuota.
+     */
+    private function userMayViewEmployeeLeaveQuota(User $user, int $employeeId): bool
+    {
+        if ($user->employee_id && (int) $user->employee_id === $employeeId) {
+            return true;
+        }
+
+        if (in_array($user->role, ['HR', 'HR Manager', 'General Affairs', 'Admin'], true)) {
+            return true;
+        }
+
+        if (\App\Services\RoleHierarchyService::isHrManager($user->role)) {
+            return true;
+        }
+
+        if ($user->canViewEmployee($employeeId)) {
+            return true;
+        }
+
+        if ($user->employee) {
+            return Employee::where('id', $employeeId)
+                ->where('manager_id', $user->employee->id)
+                ->exists();
+        }
+
+        return false;
     }
 
     public function store(Request $request): JsonResponse

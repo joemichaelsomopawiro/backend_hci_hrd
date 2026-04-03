@@ -374,6 +374,8 @@ class EmployeeController extends Controller
                 'benefits.*.benefit_type' => 'nullable|string|max:100',
                 'benefits.*.amount' => 'nullable|numeric|min:0',
                 'benefits.*.start_date' => 'nullable|date',
+                'email' => 'nullable|email|unique:users,email,' . optional($employee->user)->id,
+                'phone' => 'nullable|string|max:20|unique:users,phone,' . optional($employee->user)->id,
             ]);
             // --- AKHIR PERUBAHAN VALIDASI ---
 
@@ -488,7 +490,9 @@ class EmployeeController extends Controller
                 if ($employee->user) {
                     $employee->user->update([
                         'name' => $validated['nama_lengkap'],
-                        'role' => $validated['jabatan_saat_ini'] // Sinkronisasi role
+                        'role' => $validated['jabatan_saat_ini'], // Sinkronisasi role
+                        'email' => $validated['email'] ?? $employee->user->email,
+                        'phone' => $validated['phone'] ?? $employee->user->phone,
                     ]);
                     $userLinked = true;
                     $linkedUser = $employee->user;
@@ -536,7 +540,11 @@ class EmployeeController extends Controller
                 // Nama tidak berubah, tapi tetap periksa apakah perlu sinkronisasi role
                 if ($employee->user) {
                     // Employee sudah punya user, update role-nya
-                    $employee->user->update(['role' => $validated['jabatan_saat_ini']]);
+                    $employee->user->update([
+                        'role' => $validated['jabatan_saat_ini'],
+                        'email' => $validated['email'] ?? $employee->user->email,
+                        'phone' => $validated['phone'] ?? $employee->user->phone,
+                    ]);
                     $userLinked = true;
                     $linkedUser = $employee->user;
                     
