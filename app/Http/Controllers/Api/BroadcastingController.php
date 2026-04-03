@@ -719,8 +719,13 @@ class BroadcastingController extends Controller
 
             // Very relaxed validation: hanya pastikan title ada, lainnya opsional
             $validator = Validator::make($request->all(), [
-                'title' => 'required|string|max:255',
-                'description' => 'nullable|string',
+                'title' => 'required|string|max:100',
+                'description' => 'required|string|max:5000',
+                'tags' => 'required|array',
+                'category_id' => 'required|string',
+                'privacy_status' => 'required|in:public,unlisted,private',
+                'youtube_url' => 'nullable|url',
+                'youtube_video_id' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
@@ -1232,9 +1237,24 @@ class BroadcastingController extends Controller
                     ]
                 );
 
-                // Update ALL Promosi works (Story IG, Reels FB, Share FB, Share WA) with latest links
+                // Ensure WhatsApp Story exists
+                \App\Models\PromotionWork::firstOrCreate(
+                    [
+                        'episode_id' => $episode->id,
+                        'work_type' => 'whatsapp_story'
+                    ],
+                    [
+                        'title' => "WhatsApp Story - Episode {$episode->episode_number}",
+                        'description' => "Buat WhatsApp Story untuk Episode {$episode->episode_number}. YouTube URL sudah tersedia.",
+                        'status' => 'planning',
+                        'created_by' => $promosiUsers->first()->id,
+                        'social_media_links' => []
+                    ]
+                );
+
+                // Update ALL Promosi works (Story IG, Reels FB, Share FB, Share WA, WA Story) with latest links
                 \App\Models\PromotionWork::where('episode_id', $episode->id)
-                    ->whereIn('work_type', ['story_ig', 'reels_facebook', 'share_facebook', 'share_wa_group'])
+                    ->whereIn('work_type', ['story_ig', 'reels_facebook', 'share_facebook', 'share_wa_group', 'whatsapp_story'])
                     ->get()
                     ->each(function($promoWork) use ($work) {
                         $socialLinks = $promoWork->social_media_links ?? [];
@@ -1318,7 +1338,7 @@ class BroadcastingController extends Controller
         $thumbnailPath = $work->thumbnail_path ?? null;
 
         \App\Models\PromotionWork::where('episode_id', $episodeId)
-            ->whereIn('work_type', ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'])
+            ->whereIn('work_type', ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook', 'whatsapp_story'])
             ->get()
             ->each(function ($promoWork) use ($youtubeUrl, $websiteUrl, $thumbnailPath) {
                 $socialLinks = $promoWork->social_media_links ?? [];

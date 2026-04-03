@@ -159,7 +159,12 @@ class MusicArrangementObserver
                         'creative_work',
                         'Creative',
                         $creativeUser,
-                        'Music arrangement approved, proceeding to creative work'
+                        'Music arrangement approved, proceeding to creative work',
+                        $arrangement->reviewed_by, // Producer ID
+                        [
+                            'action' => 'music_arrangement_approved',
+                            'review_notes' => $arrangement->review_notes
+                        ]
                     );
                 }
 

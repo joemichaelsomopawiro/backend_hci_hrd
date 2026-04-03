@@ -252,7 +252,7 @@ class GeneralAffairsController extends Controller
 
         // Notify Producer bahwa dana telah diberikan (bisa lihat bukti transfer di Permohonan Dana Saya)
         if ($budgetRequest->requestedBy) {
-            $amount = $budgetRequest->approved_amount ?? $budgetRequest->requested_amount;
+            $amount = (float) ($budgetRequest->approved_amount ?? $budgetRequest->requested_amount);
             $programName = $budgetRequest->program?->name ?? 'program';
             Notification::create([
                 'user_id' => $budgetRequest->requested_by,
@@ -347,7 +347,7 @@ class GeneralAffairsController extends Controller
             return response()->json(['message' => 'Invalid path'], 400);
         }
 
-        $fullPath = Storage::disk('public')->path($path);
+        $fullPath = storage_path('app/public/' . $path);
         if (!file_exists($fullPath) || !is_file($fullPath)) {
             \Log::warning('GeneralAffairs showReceiptFile: file not found', ['path' => $path, 'fullPath' => $fullPath]);
             return response()->json(['message' => 'File not found'], 404);
@@ -381,7 +381,7 @@ class GeneralAffairsController extends Controller
         if (!$resolved) {
             return response()->json(['message' => 'Invalid path'], 400);
         }
-        $fullPath = Storage::disk('public')->path($resolved);
+        $fullPath = storage_path('app/public/' . $resolved);
         if (!file_exists($fullPath) || !is_file($fullPath)) {
             return response()->json(['message' => 'File not found'], 404);
         }
@@ -410,7 +410,7 @@ class GeneralAffairsController extends Controller
         if (!$path) {
             return response()->json(['message' => 'Link expired or invalid'], 404);
         }
-        $fullPath = Storage::disk('public')->path($path);
+        $fullPath = storage_path('app/public/' . $path);
         if (!file_exists($fullPath) || !is_file($fullPath)) {
             return response()->json(['message' => 'File not found'], 404);
         }

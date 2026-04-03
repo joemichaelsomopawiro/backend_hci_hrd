@@ -83,7 +83,7 @@ class SoundEngineerEditing extends Model
     /**
      * Relationship: Created By
      */
-    public function creator(): BelongsTo
+    public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }

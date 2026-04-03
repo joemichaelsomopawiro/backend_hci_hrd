@@ -58,6 +58,10 @@ class ProgramController extends Controller
             $programs = \App\Helpers\QueryOptimizer::remember($cacheKey, 300, function () use ($request, $user) {
                 // Optimize eager loading - jangan load semua episodes, hanya count
                 $query = Program::withCount('episodes')
+                    ->withCount(['episodes as completed_episodes_count' => function ($q) {
+                        $q->where('status', 'aired')
+                          ->orWhereIn('current_workflow_state', ['broadcasting', 'program_manager', 'program_dikredit']);
+                    }])
                     ->with([
                         'managerProgram',
                         'productionTeam.members.user', // Fix N+1 problem
@@ -123,7 +127,7 @@ class ProgramController extends Controller
                         'producer_id' => $user->id,
                         'total_programs' => $result->total(),
                         'current_page' => $result->currentPage(),
-                        'program_ids' => $result->pluck('id')->toArray()
+                        'program_ids' => collect($result->items())->pluck('id')->toArray()
                     ]);
                 }
                 
@@ -131,9 +135,8 @@ class ProgramController extends Controller
             });
             
             // Mapping episode_count from withCount result
-            $programs->getCollection()->transform(function ($program) {
+            collect($programs->items())->each(function ($program) {
                 // episode_count automatically added by withCount('episodes')
-                return $program;
             });
             
             return response()->json([

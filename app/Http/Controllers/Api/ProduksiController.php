@@ -11,6 +11,7 @@ use App\Models\MediaFile;
 use App\Models\Notification;
 use App\Models\QualityControlWork;
 use App\Models\DesignGrafisWork;
+use App\Models\BroadcastingWork;
 use App\Services\WorkAssignmentService;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\ProgramManagerAuthorization;
@@ -55,9 +56,11 @@ class ProduksiController extends Controller
             // Use cache with 5 minutes TTL
             $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request, $isProductionRole, $user) {
                 $query = ProduksiWork::with([
+                    'episode' => function($q) { $q->withTrashed(); },
+                    'episode.program' => function($q) { $q->withTrashed(); },
                     'episode.program.productionTeam',
                     'episode.teamAssignments' => function ($q) {
-                        $q->whereIn('team_type', ['setting', 'shooting'])->where('status', '!=', 'cancelled');
+                        $q->whereIn('team_type', ['setting', 'shooting', 'recording'])->where('status', '!=', 'cancelled');
                     },
                     'episode.teamAssignments.members.user:id,name,email',
                     'creativeWork.latestApprovedMusicArrangement',
@@ -65,19 +68,22 @@ class ProduksiController extends Controller
                     'createdBy',
                     'equipmentRequests' => function ($q) {
                         $q->whereIn('status', ['pending', 'approved', 'in_use', 'returned'])
+                            ->whereIn('team_type', ['setting', 'shooting'])
                             ->with(['assignedUser:id,name', 'crewLeader:id,name'])
                             ->orderBy('requested_at', 'desc');
                     }
                 ]);
 
-                // If not global Production role, show works where the user is a member of Tim Syuting OR Tim Setting for that episode
+                // ... (filtering logic)
                 if (!$isProductionRole) {
                     $query->where(function ($q) use ($user) {
                         $q->whereHas('episode.teamAssignments', function ($aq) use ($user) {
                             $aq->whereIn('team_type', ['shooting', 'setting'])
                                 ->where('status', '!=', 'cancelled')
                                 ->whereHas('members', function ($mq) use ($user) {
-                                    $mq->where('user_id', $user->id)->where('is_active', true);
+                                    $mq->where('user_id', $user->id)
+                                        ->where('is_active', true)
+                                        ->where('is_coordinator', true);
                                 });
                         });
                     });
@@ -86,9 +92,20 @@ class ProduksiController extends Controller
                 // Filter by status
                 if ($request->has('status')) {
                     $query->where('status', $request->status);
+                } else {
+                    // Default view: show active tasks including needs_revision
+                    $query->whereIn('status', ['pending', 'in_progress', 'needs_revision']);
                 }
 
-                return $query->orderBy('created_at', 'desc')->paginate(15);
+                $paginated = $query->orderBy('created_at', 'desc')->paginate(15);
+                
+                // Add is_coordinator to each item
+                $paginated->through(function($work) use ($user) {
+                    $work->is_coordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, ['setting', 'shooting']);
+                    return $work;
+                });
+                
+                return $paginated;
             });
 
             return response()->json([
@@ -117,22 +134,22 @@ class ProduksiController extends Controller
             $work = ProduksiWork::with([
                 'episode.program:id,name',
                 'episode.teamAssignments' => function ($q) {
-                    $q->whereIn('team_type', ['setting', 'shooting'])->where('status', '!=', 'cancelled');
+                    $q->whereIn('team_type', ['setting', 'shooting', 'recording'])->where('status', '!=', 'cancelled');
                 },
                 'episode.teamAssignments.members.user:id,name,email',
+                'episode.editorWorks' => function ($q) {
+                    $q->where('status', 'file_incomplete')->orderBy('created_at', 'desc');
+                },
                 'creativeWork',
                 'createdBy',
                 'completedBy',
                 'runSheet',
-                'equipmentRequests' => function ($q) {
-                    $q->orderBy('requested_at', 'desc')->with(['returnedByUser:id,name', 'assignedUser:id,name', 'crewLeader:id,name']);
-                }
             ])->findOrFail($id);
 
             if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Production')) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
+                    'message' => 'Unauthorized access. You are not assigned to the shooting, setting, or recording team for this episode.'
                 ], 403);
             }
 
@@ -145,6 +162,25 @@ class ProduksiController extends Controller
                 : null;
             $data['shooting_file_links'] = $work->shooting_file_links ?? [];
             $data['shooting_files'] = $work->shooting_files ?? [];
+            
+            // Add Editor or Producer feedback if available for revision context
+            $latestEditorWork = $work->episode->editorWorks()->where('status', 'file_incomplete')->orderBy('created_at', 'desc')->first();
+            $data['editor_feedback'] = $latestEditorWork ? [
+                'id' => $latestEditorWork->id,
+                'status' => $latestEditorWork->status,
+                'formatted_report' => $latestEditorWork->formatted_missing_report,
+                'source_files' => $latestEditorWork->source_files,
+                'file_notes' => $latestEditorWork->file_notes,
+                'created_at' => $latestEditorWork->created_at
+            ] : null;
+
+            // Dedicated field for frontend revision display
+            $data['revision_notes'] = $work->status === 'needs_revision' && $latestEditorWork 
+                ? $latestEditorWork->formatted_missing_report 
+                : null;
+            
+            // Add is_coordinator flag
+            $data['is_coordinator'] = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, ['setting', 'shooting']);
 
             return response()->json([
                 'success' => true,
@@ -177,16 +213,14 @@ class ProduksiController extends Controller
             
             $work = ProduksiWork::findOrFail($id);
 
-            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
+            // Authorization: Production role OR Coordinator for this episode
+            $isProductionRole = MusicProgramAuthorization::hasProducerAccess($user) || $user->role === 'Production';
+            $isCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, ['setting', 'shooting']);
 
-
-
-
-
-            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Production')) {
+            if (!$isProductionRole && !$isCoordinator) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
+                    'message' => 'Unauthorized access. Hanya Coordinator (Setting/Syuting) atau role Production yang boleh menerima pekerjaan ini.'
                 ], 403);
             }
 
@@ -199,10 +233,10 @@ class ProduksiController extends Controller
                 ]);
             }
 
-            if ($work->status !== 'pending') {
+            if (!in_array($work->status, ['pending', 'needs_revision'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be accepted when status is pending. Current status: ' . $work->status
+                    'message' => 'Work can only be accepted when status is pending or needs_revision. Current status: ' . $work->status
                 ], 400);
             }
 
@@ -242,13 +276,20 @@ class ProduksiController extends Controller
     {
         try {
             $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'User not authenticated.'], 401);
+            }
 
             $work = ProduksiWork::findOrFail($id);
+            $isProductionRole = MusicProgramAuthorization::hasProducerAccess($user) || $user->role === 'Production';
             
-            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $work, 'Production')) {
+            // Re-validate coordinator status strictly if not a global role
+            $isCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, ['setting', 'shooting']);
+
+            if (!$isProductionRole && !$isCoordinator) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Hanya Coordinator Tim Setting yang boleh mengajukan permintaan alat (pinjam barang).'
+                    'message' => 'Unauthorized. Hanya Coordinator Tim (Setting/Shooting) yang boleh mengajukan permintaan alat.'
                 ], 403);
             }
 
@@ -287,10 +328,10 @@ class ProduksiController extends Controller
             $work = ProduksiWork::findOrFail($id);
 
 
-            if ($work->status !== 'in_progress') {
+            if (!in_array($work->status, ['in_progress', 'needs_revision'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work must be in progress to request equipment'
+                    'message' => 'Work must be in progress or needs revision to request equipment'
                 ], 400);
             }
 
@@ -433,6 +474,7 @@ class ProduksiController extends Controller
                 'crew_leader_id' => $request->crew_leader_id,
                 'crew_member_ids' => $request->crew_member_ids,
                 'requested_at' => now(),
+                'team_type' => $request->team_type ?? 'setting',
             ]);
 
             $equipmentRequests = [$equipmentRequest->id];
@@ -525,11 +567,19 @@ class ProduksiController extends Controller
         }
 
         $user = Auth::user();
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'User not authenticated.'], 401);
+        }
+
         $episodeIds = array_unique($request->episode_ids);
         $created = [];
         $skipped = [];
 
+        // Global role check
+        $isGlobalRole = MusicProgramAuthorization::hasProducerAccess($user) || $user->role === 'Production';
+
         $useNewSchema = Schema::hasColumn('equipment_inventory', 'equipment_name');
+        // ... (remaining setup)
         $nameColumn = $useNewSchema ? 'equipment_name' : 'name';
         $flatList = [];
         $notesParts = [];
@@ -571,14 +621,15 @@ class ProduksiController extends Controller
                 $skipped[] = ['episode_id' => $episodeId, 'reason' => $work ? 'Work not in progress' : 'No produksi work'];
                 continue;
             }
-            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
-            $isProductionRole = $user->role === 'Production' || $isProgramManager;
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
-            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
-            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
-                $skipped[] = ['episode_id' => $episodeId, 'reason' => 'Unauthorized'];
+            
+            // Check coordinator status for each episode if not a global role
+            $isCoordinatorForEp = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $episodeId, ['setting', 'shooting']);
+            
+            if (!$isGlobalRole && !$isCoordinatorForEp) {
+                $skipped[] = ['episode_id' => $episodeId, 'reason' => 'Unauthorized: Hanya Coordinator yang diperbolehkan pinjam alat.'];
                 continue;
             }
+            
             $programId = $work->episode->program_id ?? null;
             $equipmentRequest = ProductionEquipment::create([
                 'episode_id' => $work->episode_id,
@@ -597,6 +648,7 @@ class ProduksiController extends Controller
                 'crew_leader_id' => $request->crew_leader_id,
                 'crew_member_ids' => $request->crew_member_ids ?? [],
                 'requested_at' => now(),
+                'team_type' => $request->team_type ?? 'setting',
             ]);
             $work->update([
                 'equipment_list' => $request->equipment_list,
@@ -742,13 +794,26 @@ class ProduksiController extends Controller
 
             $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             $isProductionRole = $user->role === 'Production' || $isProgramManager || MusicProgramAuthorization::hasProducerAccess($user);
+            
+            // Strict coordinator check
+            $isShootingCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, 'setting');
+
+            if (!$isProductionRole && !$isShootingCoordinator && !$isSettingCoordinator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Hanya Coordinator Tim (Setting/Syuting) yang diperbolehkan menyelesaikan pekerjaan.'
+                ], 403);
+            }
+            
+            // Keep member flags for team-specific logic below
             $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
             $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
 
-            if ($work->status !== 'in_progress') {
+            if (!in_array($work->status, ['in_progress', 'needs_revision'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work can only be completed when status is in_progress'
+                    'message' => 'Work can only be completed when status is in_progress or needs_revision'
                 ], 400);
             }
 
@@ -970,13 +1035,15 @@ class ProduksiController extends Controller
 
             $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             $isProductionRole = $user->role === 'Production' || $isProgramManager;
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
-            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
+            
+            // Coordinator check
+            $isShootingCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+            if (!$isProductionRole && !$isShootingCoordinator && !$isSettingCoordinator) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Hanya anggota Tim Syuting, Tim Setting, atau role Production yang boleh membuka kembali.'
+                    'message' => 'Unauthorized. Hanya Coordinator Tim (Setting/Syuting) yang boleh membuka kembali pekerjaan.'
                 ], 403);
             }
 
@@ -1095,16 +1162,16 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
+            // Authorization: Production role OR Coordinator for this episode
             $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             $isProductionRole = $user->role === 'Production' || $isProgramManager;
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
-            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
+            $isShootingCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+            if (!$isProductionRole && !$isShootingCoordinator && !$isSettingCoordinator) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
+                    'message' => 'Unauthorized access. Hanya Coordinator Tim (Syuting/Setting) atau role Production yang diperbolehkan.'
                 ], 403);
             }
 
@@ -1141,10 +1208,10 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
 
-            if ($work->status !== 'in_progress') {
+            if (!in_array($work->status, ['in_progress', 'needs_revision'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work must be in progress to create run sheet'
+                    'message' => 'Work must be in progress or in revision to create run sheet'
                 ], 400);
             }
 
@@ -1205,16 +1272,16 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::findOrFail($id);
             
-            // Authorization: Production role OR member of Tim Syuting / Tim Setting for this episode
+            // Authorization: Production role OR Coordinator for this episode
             $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             $isProductionRole = $user->role === 'Production' || $isProgramManager;
-            $isShootingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'shooting');
-            $isSettingMember = \App\Models\ProductionTeamMember::isMemberForEpisode($user->id, $work->episode_id, 'setting');
+            $isShootingCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, 'shooting');
+            $isSettingCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, 'setting');
 
-            if (!$isProductionRole && !$isShootingMember && !$isSettingMember) {
+            if (!$isProductionRole && !$isShootingCoordinator && !$isSettingCoordinator) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized access. You are not assigned to the shooting or setting team for this episode.'
+                    'message' => 'Unauthorized access. Hanya Coordinator Tim (Syuting/Setting) atau role Production yang diperbolehkan.'
                 ], 403);
             }
 
@@ -1234,10 +1301,10 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::with(['episode', 'runSheet'])->findOrFail($id);
 
-            if ($work->status !== 'in_progress') {
+            if (!in_array($work->status, ['in_progress', 'needs_revision'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Work must be in progress to upload shooting results'
+                    'message' => 'Work must be in progress or in revision to upload shooting results'
                 ], 400);
             }
 
@@ -1484,8 +1551,11 @@ class ProduksiController extends Controller
 
             $work = ProduksiWork::with(['episode.program'])->findOrFail($id);
 
-            if ($work->status !== 'in_progress') {
-                // We'll allow link input even if not in_progress if needed, but let's stick to current status flow
+            if (!in_array($work->status, ['in_progress', 'needs_revision'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Work must be in progress or in revision to input file links'
+                ], 400);
             }
 
             // Normalize links (ensure absolute URLs for external links)
@@ -2080,6 +2150,7 @@ class ProduksiController extends Controller
         $availableEquipment = InventoryItem::where('status', 'active') // InventoryItem uses 'active' status for available
             ->select(['id', 'equipment_id', 'name', 'category', 'available_quantity', 'total_quantity'])
             ->orderBy('name')
+            ->get()
             ->values();
             
         return response()->json([

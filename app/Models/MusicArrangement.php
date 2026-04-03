@@ -63,7 +63,7 @@ class MusicArrangement extends Model
      *
      * @var array
      */
-    protected $appends = ['file_url', 'episode_display'];
+    protected $appends = ['file_url', 'episode_display', 'group_members_list', 'group_full_display', 'singer_display'];
 
     /**
      * Relationship dengan Episode
@@ -326,5 +326,42 @@ class MusicArrangement extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
+    }
+
+    /**
+     * Get member names as a comma-separated string.
+     */
+    public function getGroupMembersListAttribute(): ?string
+    {
+        if (!$this->is_group || !$this->group_members || !is_array($this->group_members)) {
+            return null;
+        }
+        return implode(', ', $this->group_members);
+    }
+
+    /**
+     * Get full group display: "Group Name (Member 1, Member 2, ...)"
+     */
+    public function getGroupFullDisplayAttribute(): ?string
+    {
+        if (!$this->is_group) {
+            return null;
+        }
+        
+        $name = $this->group_name ?? 'Unnamed Group';
+        $members = $this->group_members_list;
+        
+        return $members ? "{$name} ({$members})" : $name;
+    }
+
+    /**
+     * Get singer display: group_name if is_group, otherwise singer_name
+     */
+    public function getSingerDisplayAttribute(): ?string
+    {
+        if ($this->is_group) {
+            return $this->group_name;
+        }
+        return $this->singer_name;
     }
 }

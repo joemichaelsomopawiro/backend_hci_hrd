@@ -37,6 +37,8 @@ class EditorWork extends Model
         'file_complete' => 'boolean'
     ];
 
+    protected $appends = ['formatted_missing_report'];
+
     /**
      * Relationship dengan Episode
      */
@@ -191,5 +193,44 @@ class EditorWork extends Model
     public function scopeApproved($query)
     {
         return $query->where('status', 'approved');
+    }
+
+    public function getFormattedMissingReportAttribute(): string
+    {
+        $sourceFiles = is_array($this->source_files) ? $this->source_files : [];
+        $missingFiles = $sourceFiles['missing_files'] ?? [];
+        $notes = $sourceFiles['missing_notes'] ?? '';
+
+        // Check if $notes already seems to contain a report (to avoid recursion or double-formatting)
+        $hasMissingFiles = !empty($missingFiles);
+        $notesHasList = str_contains($notes, 'Daftar File Bermasalah/Kurang') || str_contains($notes, '• [');
+
+        if (!$hasMissingFiles && empty($notes)) {
+            return "Catatan kekurangan dari Editor: Tidak ada catatan tambahan.";
+        }
+
+        // If notes already contain the report, just return them
+        if ($notesHasList) return trim($notes);
+
+        $report = "Daftar File Bermasalah/Kurang:\n";
+        if ($hasMissingFiles) {
+            foreach ($missingFiles as $f) {
+                $type = strtoupper($f['file_type'] ?? 'UMUM');
+                $desc = $f['description'] ?? 'Tidak ada deskripsi';
+                $report .= "• [{$type}] {$desc}";
+                if (!empty($f['notes'])) {
+                    if ($f['notes'] !== $desc) {
+                        $report .= " (Catatan: " . $f['notes'] . ")";
+                    }
+                }
+                $report .= "\n";
+            }
+        }
+
+        if (!empty($notes) && !$notesHasList) {
+            $report .= "\nCatatan Tambahan Editor:\n" . $notes;
+        }
+
+        return trim($report);
     }
 }

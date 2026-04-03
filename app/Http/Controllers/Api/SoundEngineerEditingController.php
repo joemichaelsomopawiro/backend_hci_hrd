@@ -31,7 +31,7 @@ class SoundEngineerEditingController extends Controller
         }
         
         $role = strtolower($user->role ?? '');
-        // Sound Engineer OR Production role OR anyone with a music team assignment (for dashboard visibility)
+        // Sound Engineer OR Production role
         if (in_array($role, [
             'sound engineer',
             'sound_engineer',
@@ -40,15 +40,18 @@ class SoundEngineerEditingController extends Controller
             return true;
         }
 
+        // Broaden to include Vocal Recording team: anyone with a 'recording' team assignment
+        $hasRecordingAssignment = \App\Models\ProductionTeamMember::where('user_id', $user->id)
+            ->where('is_active', true)
+            ->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'recording')
+                    ->where('status', '!=', 'cancelled');
+            })->exists();
+
         // Also allow if has any music team assignment (for visibility across dashboards)
-        $hasAssignment = $user->hasAnyMusicTeamAssignment();
-        \Illuminate\Support\Facades\Log::info('SoundEngineerEditing Access Check', [
-            'user_id' => $user->id,
-            'role' => $role,
-            'has_assignment' => $hasAssignment
-        ]);
+        $hasAnyAssignment = $user->hasAnyMusicTeamAssignment();
         
-        return $hasAssignment;
+        return $hasRecordingAssignment || $hasAnyAssignment;
     }
 
     /**
@@ -74,9 +77,10 @@ class SoundEngineerEditingController extends Controller
         // by Producer (script/storyboard/budget approved -> final approve).
         $query->whereHas('episode', function ($eq) {
             $eq->whereHas('creativeWorks', function ($cq) {
-                $cq->where('status', 'approved');
+                    $cq->where('status', 'approved');
+                }
+                );
             });
-        });
 
         // Restrict to this sound engineer's scope:
         // - editing work assigned to this user, OR
@@ -85,8 +89,18 @@ class SoundEngineerEditingController extends Controller
             $q->where('sound_engineer_id', $user->id)
                 ->orWhereHas('episode.program.productionTeam.members', function ($mq) use ($user) {
                     $mq->where('user_id', $user->id)
-                        ->whereRaw('LOWER(role) IN (?, ?, ?)', ['sound_eng', 'sound_engineer', 'sound engineer'])
+                        ->whereIn('role', ['sound_eng', 'sound_engineer', 'sound engineer', 'recording', 'vocal_recording', 'recording_team'])
                         ->where('is_active', true);
+                });
+        });
+        
+        // Also include recording team assignments
+        $query->orWhereHas('episode.teamAssignments', function($aq) use ($user) {
+             $aq->where('team_type', 'recording')
+                ->where('status', '!=', 'cancelled')
+                ->whereHas('members', function($mq) use ($user) {
+                    $mq->where('user_id', $user->id)
+                       ->where('is_active', true);
                 });
         });
 
@@ -132,7 +146,7 @@ class SoundEngineerEditingController extends Controller
             'editing_notes' => 'nullable|string',
             'estimated_completion' => 'nullable|date'
         ]);
-        
+
         // Require either vocal_file_path or vocal_file_link
         if (!$request->has('vocal_file_path') && !$request->has('vocal_file_link')) {
             return response()->json([
@@ -220,14 +234,15 @@ class SoundEngineerEditingController extends Controller
                         ->where('role', 'sound_eng')
                         ->where('is_active', true)
                         ->exists();
-                    
+
                     if (!$hasAccess) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Unauthorized: This editing work is not assigned to you.'
                         ], 403);
                     }
-                } else {
+                }
+                else {
                     return response()->json([
                         'success' => false,
                         'message' => 'Unauthorized: This editing work is not assigned to you.'
@@ -249,7 +264,7 @@ class SoundEngineerEditingController extends Controller
                 'status' => 'in_progress',
                 'sound_engineer_id' => $user->id
             ];
-            
+
             // Reset submission fields if work was rejected (revision_needed)
             if ($work->status === 'revision_needed') {
                 $updateData['rejected_by'] = null;
@@ -257,14 +272,14 @@ class SoundEngineerEditingController extends Controller
                 $updateData['rejection_reason'] = null;
                 $updateData['submitted_at'] = null; // Reset submitted_at for resubmission
             }
-            
+
             $work->update($updateData);
 
             // Notify Producer
             $episode = $work->episode;
             $productionTeam = $episode->program->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
-            
+
             if ($producer) {
                 Notification::create([
                     'user_id' => $producer->id,
@@ -285,7 +300,8 @@ class SoundEngineerEditingController extends Controller
                 'data' => $work->fresh(['episode.program', 'soundEngineer', 'recording'])
             ]);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error accepting work: ' . $e->getMessage()
@@ -352,7 +368,8 @@ class SoundEngineerEditingController extends Controller
                 'message' => 'Sound engineer editing work updated successfully',
                 'data' => $work->load(['episode.program', 'soundEngineer', 'recording'])
             ]);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error updating work: ' . $e->getMessage()
@@ -392,7 +409,7 @@ class SoundEngineerEditingController extends Controller
             'final_file_link' => 'nullable|string|max:2048', // External storage link
             'submission_notes' => 'nullable|string'
         ]);
-        
+
         // Require either final_file_path or final_file_link
         if (!$request->has('final_file_path') && !$request->has('final_file_link')) {
             return response()->json([
@@ -417,7 +434,7 @@ class SoundEngineerEditingController extends Controller
             'status' => 'submitted',
             'submitted_at' => now()
         ];
-        
+
         if ($work->status === 'revision_needed') {
             $updateData['rejected_by'] = null;
             $updateData['rejected_at'] = null;
@@ -491,7 +508,8 @@ class SoundEngineerEditingController extends Controller
                 ]
             ]);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error processing vocal link: ' . $e->getMessage()
@@ -517,7 +535,7 @@ class SoundEngineerEditingController extends Controller
             'revision_needed' => SoundEngineerEditing::where('status', 'revision_needed')->count(),
             'my_works' => SoundEngineerEditing::where('sound_engineer_id', $user->id)->count(),
             'my_completed' => SoundEngineerEditing::where('sound_engineer_id', $user->id)
-                ->where('status', 'completed')->count()
+            ->where('status', 'completed')->count()
         ];
 
         return response()->json([
@@ -534,7 +552,7 @@ class SoundEngineerEditingController extends Controller
         $producers = User::where('role', 'Producer')->get();
         $notifications = [];
         $now = now();
-        
+
         foreach ($producers as $producer) {
             $notifications[] = [
                 'user_id' => $producer->id,
@@ -564,7 +582,7 @@ class SoundEngineerEditingController extends Controller
         $producers = User::where('role', 'Producer')->get();
         $notifications = [];
         $now = now();
-        
+
         foreach ($producers as $producer) {
             $notifications[] = [
                 'user_id' => $producer->id,
@@ -586,14 +604,3 @@ class SoundEngineerEditingController extends Controller
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-

@@ -41,6 +41,11 @@ class EquipmentLoan extends Model
         return $this->belongsToMany(PrPromotionWork::class, 'equipment_loan_promotion_work', 'equipment_loan_id', 'pr_promotion_work_id')->withTimestamps();
     }
 
+    public function vocalRecordings()
+    {
+        return $this->belongsToMany(SoundEngineerRecording::class, 'equipment_loan_vocal_recording', 'equipment_loan_id', 'sound_engineer_recording_id')->withTimestamps();
+    }
+
     /**
      * Convenience accessor – returns first linked produksi work (for back-compat in some views).
      */

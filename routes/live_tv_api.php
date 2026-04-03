@@ -28,6 +28,7 @@ use App\Http\Controllers\Api\BroadcastingController;
 use App\Http\Controllers\Api\ArtSetPropertiController;
 use App\Http\Controllers\Api\PromosiController;
 use App\Http\Controllers\Api\ProduksiController;
+use App\Http\Controllers\Api\VocalRecordingController;
 use App\Http\Controllers\Api\ProductionEquipmentController;
 use App\Http\Controllers\Api\ManagerBroadcastingController;
 
@@ -502,6 +503,36 @@ Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->g
         Route::post('/recordings/{id}/return-equipment', [SoundEngineerController::class, 'returnEquipment']); // Kembalikan alat ke Art & Set Properti
         Route::post('/recordings/{id}/complete-work', [SoundEngineerController::class, 'completeWork']); // Selesaikan pekerjaan setelah input list alat
     });
+
+    // Tim Rekam Vokal (Vocal Recording Team) — Dedicated Routes
+    Route::prefix('vocal-recording')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+        // Dashboard
+        Route::get('/works', [VocalRecordingController::class, 'index'])->middleware('throttle:60,1');
+        Route::get('/works/{id}', [VocalRecordingController::class, 'show'])->middleware('throttle:60,1');
+
+        // Workflow Actions
+        Route::post('/works/{id}/accept-schedule', [VocalRecordingController::class, 'acceptSchedule'])->middleware('throttle:sensitive'); // Terima jadwal rekaman
+        Route::post('/works/{id}/accept-work', [VocalRecordingController::class, 'acceptWork'])->middleware('throttle:sensitive'); // Terima pekerjaan
+        Route::post('/works/{id}/start-recording', [VocalRecordingController::class, 'startRecording'])->middleware('throttle:sensitive'); // Mulai rekaman
+        Route::post('/works/{id}/upload-recording-link', [VocalRecordingController::class, 'uploadRecordingLink'])->middleware('throttle:sensitive'); // Input link file rekaman
+        Route::post('/works/{id}/complete-work', [VocalRecordingController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan → kirim ke Sound Engineer
+
+        // Equipment Management
+        Route::get('/equipment/available', [VocalRecordingController::class, 'getAvailableEquipment'])->middleware('throttle:60,1'); // Cek stok alat
+        Route::post('/works/{id}/request-equipment', [VocalRecordingController::class, 'requestEquipment'])->middleware('throttle:sensitive'); // Pinjam alat
+        Route::delete('/equipment-requests/{id}', [VocalRecordingController::class, 'cancelEquipmentRequest'])->middleware('throttle:sensitive'); // Batalkan permintaan
+        Route::post('/equipment/{id}/notify-return', [VocalRecordingController::class, 'notifyReturn'])->middleware('throttle:sensitive'); // Notify return
+        Route::post('/works/{id}/transfer-equipment', [VocalRecordingController::class, 'transferEquipment'])->middleware('throttle:sensitive'); // Transfer alat (Lanjut Pakai)
+        Route::post('/works/{id}/handover-equipment', [VocalRecordingController::class, 'handoverEquipment'])->middleware('throttle:sensitive'); // Serah terima alat ke user lain
+        Route::post('/handovers/{transferId}/accept', [VocalRecordingController::class, 'acceptHandover'])->middleware('throttle:sensitive'); // Terima alat
+        Route::post('/works/{id}/return-equipment', [VocalRecordingController::class, 'returnEquipment'])->middleware('throttle:sensitive'); // Kembalikan alat
+
+        // Statistics
+        Route::get('/statistics', [VocalRecordingController::class, 'statistics'])->middleware('throttle:60,1');
+
+        // Team discovery for handover
+        Route::get('/episodes/{id}/team', [VocalRecordingController::class, 'getEpisodeTeam'])->middleware('throttle:60,1');
+    });
     
     // Editor Routes
     Route::prefix('editor')->middleware(['auth:sanctum', 'throttle:api'])->group(function () {
@@ -531,6 +562,7 @@ Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->g
         Route::get('/shared-files', [DesignGrafisController::class, 'getSharedFiles'])->middleware('throttle:60,1'); // Terima lokasi file dari produksi & promosi
         Route::post('/works/{id}/upload-thumbnail-youtube', [DesignGrafisController::class, 'uploadThumbnailYouTube'])->middleware('throttle:uploads'); // Buat Thumbnail YouTube
         Route::post('/works/{id}/upload-thumbnail-bts', [DesignGrafisController::class, 'uploadThumbnailBTS'])->middleware('throttle:uploads'); // Buat Thumbnail BTS
+        Route::post('/works/{id}/upload-poster', [DesignGrafisController::class, 'uploadPoster'])->middleware('throttle:uploads'); // Buat Poster
         Route::post('/works/{id}/upload-files', [DesignGrafisController::class, 'uploadFiles'])->middleware('throttle:uploads'); // Upload files generic
         Route::post('/works/{id}/complete-work', [DesignGrafisController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesai pekerjaan
         Route::post('/works/{id}/submit-to-qc', [DesignGrafisController::class, 'submitToQC'])->middleware('throttle:sensitive'); // Submit ke QC (optional)

@@ -340,6 +340,14 @@ class Episode extends Model
     }
 
     /**
+     * Relationship dengan Sound Engineer Editings
+     */
+    public function soundEngineerEditings(): HasMany
+    {
+        return $this->hasMany(SoundEngineerEditing::class);
+    }
+
+    /**
      * Relationship dengan Editor Works
      */
     public function editorWorks(): HasMany

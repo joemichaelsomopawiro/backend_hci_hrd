@@ -86,7 +86,7 @@ class PromosiController extends Controller
 
             // Untuk sharing works: selalu isi social_media_links dari BroadcastingWork agar Link Website/YouTube terbaru tampil
             $sharingTypes = ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'];
-            $episodeIds = $works->getCollection()
+            $episodeIds = collect($works->items())
                 ->filter(fn ($w) => in_array($w->work_type ?? '', $sharingTypes, true))
                 ->pluck('episode_id')
                 ->unique()
@@ -98,7 +98,7 @@ class PromosiController extends Controller
                     ->get()
                     ->keyBy('episode_id');
             }
-            $works->getCollection()->transform(function ($work) use ($sharingTypes, $broadcastingByEpisode) {
+            collect($works->items())->each(function ($work) use ($sharingTypes, $broadcastingByEpisode) {
                 if (!in_array($work->work_type ?? '', $sharingTypes, true)) {
                     return $work;
                 }
@@ -193,7 +193,7 @@ class PromosiController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
-                'work_type' => 'required|in:bts_video,bts_photo,highlight_ig,highlight_facebook,highlight_tv,story_ig,reels_facebook,tiktok,website_content',
+                'work_type' => 'required|in:bts_video,bts_photo,highlight_ig,highlight_facebook,highlight_tv,story_ig,reels_facebook,tiktok,website_content,whatsapp_story',
                 'title' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'shooting_date' => 'nullable|date',
@@ -395,6 +395,7 @@ class PromosiController extends Controller
                 'share_facebook' => 'Work accepted successfully. You can now share the website link to Facebook and upload proof (file or link).',
                 'share_wa_group' => 'Work accepted successfully. You can now share to WA group and upload proof (file or link).',
                 'story_ig' => 'Work accepted successfully. You can now create and upload Story IG highlight with proof (file or link).',
+                'whatsapp_story' => 'Work accepted successfully. You can now create and upload WhatsApp Story with proof (file or link/printscreen).',
                 'reels_facebook' => 'Work accepted successfully. You can now create and upload Reels Facebook highlight with proof (file or link).',
                 'bts_video' => 'Work accepted successfully. You can now upload BTS video and talent photos.',
                 'bts_photo' => 'Work accepted successfully. You can now upload BTS video and talent photos.'
@@ -1631,7 +1632,11 @@ class PromosiController extends Controller
             $validator = Validator::make($request->all(), [
                 'proof_link' => 'required|url',
                 'group_name' => 'nullable|string',
-                'notes' => 'nullable|string'
+                'notes' => 'nullable|string',
+                'groups' => 'sometimes|array',
+                'groups.*.proof_link' => 'required|url',
+                'groups.*.group_name' => 'nullable|string',
+                'groups.*.notes' => 'nullable|string'
             ]);
 
             if ($validator->fails()) {
@@ -1639,15 +1644,35 @@ class PromosiController extends Controller
             }
 
             $work = PromotionWork::findOrFail($id);
-
             $socialProof = $work->social_media_proof ?? [];
-            $socialProof['wa_group_share'] = [
-                'proof_link' => $request->proof_link,
-                'group_name' => $request->group_name,
-                'shared_at' => now()->toDateTimeString(),
-                'shared_by' => $user->id,
-                'notes' => $request->notes
-            ];
+            if (!isset($socialProof['wa_group_shares']) || !is_array($socialProof['wa_group_shares'])) {
+                $socialProof['wa_group_shares'] = [];
+            }
+
+            // If request has multiple groups (new format)
+            if ($request->has('groups') && is_array($request->groups)) {
+                foreach ($request->groups as $group) {
+                    $socialProof['wa_group_shares'][] = [
+                        'proof_link' => $group['proof_link'] ?? '',
+                        'group_name' => $group['group_name'] ?? '',
+                        'shared_at' => now()->toDateTimeString(),
+                        'shared_by' => $user->id,
+                        'notes' => $group['notes'] ?? $request->notes
+                    ];
+                }
+            } else {
+                // Backward compatibility (old format)
+                $socialProof['wa_group_shares'][] = [
+                    'proof_link' => $request->proof_link,
+                    'group_name' => $request->group_name,
+                    'shared_at' => now()->toDateTimeString(),
+                    'shared_by' => $user->id,
+                    'notes' => $request->notes
+                ];
+            }
+
+            // Legacy field for backward compatibility
+            $socialProof['wa_group_share'] = end($socialProof['wa_group_shares']);
 
             $work->update([
                 'social_media_proof' => $socialProof,
@@ -1661,6 +1686,54 @@ class PromosiController extends Controller
             ]);
 
             return response()->json(['success' => true, 'message' => 'WA Group proof link saved.']);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Upload WhatsApp Story Proof
+     * POST /api/live-tv/promosi/works/{id}/upload-whatsapp-story
+     */
+    public function uploadWhatsAppStory(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$user || $user->role !== 'Promotion') {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'proof_link' => 'required|string', // URL printscreen
+                'notes' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            $work = PromotionWork::findOrFail($id);
+
+            $socialProof = $work->social_media_proof ?? [];
+            $socialProof['whatsapp_story'] = [
+                'proof_link' => $request->proof_link,
+                'uploaded_at' => now()->toDateTimeString(),
+                'uploaded_by' => $user->id,
+                'notes' => $request->notes
+            ];
+
+            $work->update([
+                'social_media_proof' => $socialProof,
+                'status' => 'published'
+            ]);
+
+            // Activity log
+            $this->logActivity($work, $user, 'whatsapp_story_uploaded', 'Bukti WhatsApp Story (Printscreen) diunggah', [
+                'proof_link' => $request->proof_link
+            ]);
+
+            return response()->json(['success' => true, 'message' => 'WhatsApp Story proof saved.']);
 
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);

@@ -140,7 +140,8 @@ class DesignGrafisWork extends Model
             'thumbnail_bts' => 'Thumbnail BTS',
             'graphics_ig' => 'Graphics Instagram',
             'graphics_facebook' => 'Graphics Facebook',
-            'banner_website' => 'Banner Website'
+            'banner_website' => 'Banner Website',
+            'poster' => 'Poster'
         ];
 
         return $labels[$this->work_type] ?? $this->work_type;

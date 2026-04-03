@@ -31,7 +31,24 @@ class SoundEngineerController extends Controller
             return false;
         }
 
-        return MusicProgramAuthorization::canUserPerformTask($user, null, 'Sound Engineer');
+        // Global Sound Engineer role
+        if (MusicProgramAuthorization::canUserPerformTask($user, null, 'Sound Engineer')) {
+            return true;
+        }
+
+        // Program Manager or Producer oversight
+        if (MusicProgramAuthorization::hasProducerAccess($user)) {
+            return true;
+        }
+
+        // Broaden to include users assigned to the 'recording' team type (Vocal Recording Team)
+        // Check if user has ANY active recording team assignment globally
+        return \App\Models\ProductionTeamMember::where('user_id', $user->id)
+            ->where('is_active', true)
+            ->whereHas('assignment', function ($q) {
+                $q->where('team_type', 'recording')
+                    ->where('status', '!=', 'cancelled');
+            })->exists();
     }
 
     /**
@@ -92,7 +109,7 @@ class SoundEngineerController extends Controller
         // Access members in program team
         return $productionTeam->members()
             ->where('user_id', $user->id)
-            ->whereIn('role', ['sound_eng', 'sound_engineer', 'sound engineer', 'recording', 'vocal_recording'])
+            ->whereIn('role', ['sound_eng', 'sound_engineer', 'sound engineer', 'recording', 'vocal_recording', 'recording_team'])
             ->where('is_active', true)
             ->exists();
     }
@@ -122,9 +139,8 @@ class SoundEngineerController extends Controller
                 'musicArrangement.singer',
                 'createdBy',
                 'reviewedBy',
-                'equipmentRequests' => function($q) use ($user) {
-                    $q->where('requested_by', $user->id)
-                      ->with([
+                'equipmentRequests' => function($q) {
+                    $q->with([
                           'episode' => function($eq) { $eq->withTrashed(); }, 
                           'episode.program' => function($pq) { $pq->withTrashed(); }
                       ]);
@@ -184,7 +200,7 @@ class SoundEngineerController extends Controller
             $recordings = $query->orderBy('created_at', 'desc')->paginate(15);
 
             // Add convenience fields and only include equipment requests made by current user
-            $recordings->getCollection()->transform(function ($recording) use ($user) {
+            collect($recordings->items())->each(function ($recording) use ($user) {
                 $episode = $recording->episode;
                 $program = $episode?->program;
 
@@ -211,11 +227,12 @@ class SoundEngineerController extends Controller
 
                 $recording->recording_link = $recording->file_link; // alias for frontend
                 
+                // Add is_coordinator flag for frontend button visibility
+                $recording->is_coordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, 'recording');
+
                 // Equipment requests already filtered in 'with' query for efficiency
                 // but we still ensure the relation is set correctly
                 $recording->setRelation('equipmentRequests', $recording->equipmentRequests);
-                
-                return $recording;
             });
             
             return response()->json([
@@ -246,7 +263,7 @@ class SoundEngineerController extends Controller
                     'message' => 'Your account role (' . ($user->role ?? 'unknown') . ') does not have access to the music workflow system. Please contact your administrator if you believe this is an error.'
                 ], 403);
             }
--
+
             $recording = SoundEngineerRecording::with([
                 'episode' => function($q) { $q->withTrashed(); },
                 'episode.program' => function($q) { $q->withTrashed(); },
@@ -254,9 +271,8 @@ class SoundEngineerController extends Controller
                 'musicArrangement',
                 'createdBy',
                 'reviewedBy',
-                'equipmentRequests' => function($q) use ($user) {
-                    $q->where('requested_by', $user->id)
-                      ->with([
+                'equipmentRequests' => function($q) {
+                    $q->with([
                           'episode' => function($eq) { $eq->withTrashed(); },
                           'episode.program' => function($pq) { $pq->withTrashed(); }
                       ]);
@@ -297,6 +313,9 @@ class SoundEngineerController extends Controller
 
             $recording->recording_link = $recording->file_link; // alias for frontend
             
+            // Add is_coordinator flag for frontend button visibility
+            $recording->is_coordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, 'recording');
+
             // Equipment requests already filtered in 'with' query
             $recording->setRelation('equipmentRequests', $recording->equipmentRequests);
             
@@ -492,11 +511,14 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
-            // Check if user has access to this recording
-            if (!$this->hasRecordingAccess($user, $recording)) {
+            // Authorization: Coordinator or producer roles required to START recording
+            $isCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, 'recording');
+            $hasProducerAccess = MusicProgramAuthorization::hasProducerAccess($user);
+
+            if (!$isCoordinator && !$hasProducerAccess) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: You do not have access to this recording.'
+                    'message' => 'Unauthorized: Hanya Coordinator (Tim Rekam Vokal) atau Producer yang boleh memulai rekaman ini.'
                 ], 403);
             }
             
@@ -542,15 +564,16 @@ class SoundEngineerController extends Controller
 
             $recording = SoundEngineerRecording::with(['episode.program.productionTeam.members'])->findOrFail($id);
             
-            // Check if user has access to this recording
-            if (!$this->hasRecordingAccess($user, $recording)) {
+            // Authorization: Coordinator or producer roles required to COMPLETE recording
+            $isCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, 'recording');
+            $hasProducerAccess = MusicProgramAuthorization::hasProducerAccess($user);
+
+            if (!$isCoordinator && !$hasProducerAccess) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized: You do not have access to this recording.'
+                    'message' => 'Unauthorized: Hanya Coordinator (Tim Rekam Vokal) atau Producer yang boleh menyelesaikan rekaman ini.'
                 ], 403);
             }
-
-            $isCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, 'recording');
             
             if ($recording->status !== 'recording') {
                 return response()->json([
@@ -925,7 +948,7 @@ class SoundEngineerController extends Controller
                 ->paginate(15);
             
             // Add convenience fields
-            $recordings->getCollection()->transform(function ($recording) {
+            collect($recordings->items())->each(function ($recording) {
                 $episode = $recording->episode;
                 $program = $episode?->program;
 
@@ -948,7 +971,6 @@ class SoundEngineerController extends Controller
                 }
 
                 $recording->recording_link = $recording->file_link;
-                return $recording;
             });
             
             return response()->json([
@@ -1809,7 +1831,10 @@ class SoundEngineerController extends Controller
                 
                 // Notify Producer - Arrangement ready for approval
                 $episode = $arrangement->episode;
-                $productionTeam = $episode->productionTeam ?? $episode->program->productionTeam;
+                $productionTeam = null;
+                if ($episode) {
+                    $productionTeam = $episode->productionTeam ?? ($episode->program ? $episode->program->productionTeam : null);
+                }
                 $producer = $productionTeam ? $productionTeam->producer : null;
                 
                 if ($producer) {
@@ -1817,7 +1842,7 @@ class SoundEngineerController extends Controller
                         'user_id' => $producer->id,
                         'type' => 'arrangement_fixed_by_sound_engineer',
                         'title' => 'Arrangement Diperbaiki - Siap Review',
-                        'message' => "Sound Engineer {$user->name} telah memperbaiki arrangement '{$arrangement->song_title}' dan siap untuk direview.",
+                        'message' => "Sound Engineer {$user->name} telah memperbaiki arrangement '{$arrangement->song_title}' and siap untuk direview.",
                         'data' => [
                             'arrangement_id' => $arrangement->id,
                             'episode_id' => $arrangement->episode_id,
@@ -2158,9 +2183,11 @@ class SoundEngineerController extends Controller
                 ->first();
 
             if ($existingPending) {
-                $existingList = is_array($existingPending->equipment_list)
-                    ? $existingPending->equipment_list
-                    : (json_decode($existingPending->equipment_list, true) ?? []);
+                $existingVal = $existingPending->equipment_list;
+                $existingList = is_array($existingVal)
+                    ? $existingVal
+                    : (is_string($existingVal) ? json_decode($existingVal, true) : []);
+                $existingList = $existingList ?? [];
 
                 $mergedList = array_values(array_merge($existingList, $equipmentList));
 
@@ -2173,9 +2200,10 @@ class SoundEngineerController extends Controller
                         : $appendNotes;
                 }
 
-                $existingQtyMap = is_array($existingPending->equipment_quantities)
-                    ? $existingPending->equipment_quantities
-                    : (json_decode($existingPending->equipment_quantities, true) ?? []);
+                $existingQtyVal = $existingPending->equipment_quantities;
+                $existingQtyMap = is_array($existingQtyVal)
+                    ? $existingQtyVal
+                    : (is_string($existingQtyVal) ? json_decode($existingQtyVal, true) : []);
                 if (!is_array($existingQtyMap)) {
                     $existingQtyMap = [];
                 }

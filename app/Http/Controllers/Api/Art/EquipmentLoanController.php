@@ -19,7 +19,13 @@ class EquipmentLoanController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = EquipmentLoan::with(['loanItems.inventoryItem', 'borrower', 'produksiWorks.episode', 'produksiWorks.episode.program']);
+            $query = EquipmentLoan::with([
+                'loanItems.inventoryItem', 
+                'borrower', 
+                'produksiWorks.episode.program', 
+                'promotionWorks.episode.program',
+                'vocalRecordings.episode.program'
+            ]);
 
             if ($request->has('status')) {
                 $query->where('status', $request->status);
@@ -98,7 +104,7 @@ class EquipmentLoanController extends Controller
     {
         try {
             $user = Auth::user();
-            $loan = EquipmentLoan::with(['loanItems', 'produksiWorks'])->findOrFail($id);
+            $loan = EquipmentLoan::with(['loanItems', 'produksiWorks', 'vocalRecordings'])->findOrFail($id);
 
             if ($loan->status !== 'pending') {
                 return response()->json(['success' => false, 'message' => 'Loan is not pending approval'], 400);
@@ -151,6 +157,13 @@ class EquipmentLoanController extends Controller
             // Update ALL linked Production Work statuses to in_progress
             foreach ($loan->produksiWorks as $work) {
                 $work->update(['status' => 'in_progress']);
+            }
+
+            // Update ALL linked Vocal Recordings to recording status
+            foreach ($loan->vocalRecordings as $recording) {
+                if ($recording->status === 'pending' || $recording->status === 'draft') {
+                    $recording->update(['status' => 'recording', 'recording_started_at' => now()]);
+                }
             }
 
             DB::commit();
@@ -210,7 +223,7 @@ class EquipmentLoanController extends Controller
     public function returnLoan(Request $request, int $id): JsonResponse
     {
         try {
-            $loan = EquipmentLoan::with(['loanItems', 'produksiWorks'])->findOrFail($id);
+            $loan = EquipmentLoan::with(['loanItems', 'produksiWorks', 'vocalRecordings'])->findOrFail($id);
 
             \Illuminate\Support\Facades\Log::info("Trying to return loan ID: {$id}. Status: {$loan->status}");
 
@@ -239,6 +252,17 @@ class EquipmentLoanController extends Controller
                     'status' => 'finished_shooting',
                     'completion_notes' => 'Completed automatically upon Art & Set Property equipment return.'
                 ]);
+            }
+
+            // Update ALL linked Vocal Recordings to completed status
+            foreach ($loan->vocalRecordings as $recording) {
+                if ($recording->status === 'recording') {
+                    $recording->update([
+                        'status' => 'completed',
+                        'recording_completed_at' => now(),
+                        'recording_notes' => ($recording->recording_notes ? $recording->recording_notes . "\n" : "") . "Completed automatically upon Art & Set Property equipment return."
+                    ]);
+                }
             }
 
             DB::commit();

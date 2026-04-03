@@ -647,7 +647,12 @@ class Program extends Model
         if ($totalEpisodes === 0)
             return 0;
 
-        $completedEpisodes = $this->episodes()->where('status', 'aired')->count();
+        $completedEpisodes = $this->episodes()
+            ->where(function($q) {
+                $q->where('status', 'aired')
+                  ->orWhereIn('current_workflow_state', ['broadcasting', 'program_manager', 'program_dikredit']);
+            })
+            ->count();
         return round(($completedEpisodes / $totalEpisodes) * 100, 2);
     }
 

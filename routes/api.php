@@ -404,7 +404,7 @@ Route::prefix('personal')->group(function () {
 
 // ===== EMPLOYEE SYNC ROUTES =====
 // Routes untuk sinkronisasi employee (dengan autentikasi)
-Route::prefix('employee-sync')->middleware(['auth:sanctum'])->group(function () {
+Route::group(['prefix' => 'employee-sync', 'middleware' => ['auth:sanctum']], function () {
     // Sync by name
     Route::post('/sync-by-name', [\App\Http\Controllers\EmployeeSyncController::class, 'syncByName']);
 
@@ -423,7 +423,7 @@ Route::prefix('employee-sync')->middleware(['auth:sanctum'])->group(function () 
 
 // ===== GA DASHBOARD ROUTES =====
 // Routes untuk GA Dashboard - OPEN TO ALL USERS - Menampilkan SEMUA data tanpa batasan role
-Route::prefix('ga-dashboard')->middleware(['auth:sanctum'])->group(function () {
+Route::group(['prefix' => 'ga-dashboard', 'middleware' => ['auth:sanctum']], function () {
     // Worship attendance routes
     Route::get('/worship-attendance', [GaDashboardController::class, 'getAllWorshipAttendance']);
     Route::get('/worship-attendance/week', [GaDashboardController::class, 'getWorshipAttendanceWeek']);
@@ -694,9 +694,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
 // // ===== MUSIC PROGRAM ROUTES =====
 // // Load Music System API routes
-// Route::prefix('music')->group(function () {
-//     require __DIR__.'/music_api.php';
-// });
+Route::prefix('music')->middleware(['auth:sanctum'])->group(function () {
+    require __DIR__.'/music_api.php';
+});
 
 // // Include Live TV Program API Routes
 // require __DIR__.'/live_tv_api.php';

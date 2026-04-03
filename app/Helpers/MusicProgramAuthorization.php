@@ -14,7 +14,7 @@ class MusicProgramAuthorization
     {
         if (!$user) return false;
 
-        $role = Role::normalize((string) $user->role);
+        $role = Role::normalize((string) data_get($user, 'role'));
         
         return $role === Role::PRODUCER || $role === Role::PROGRAM_MANAGER;
     }
@@ -26,7 +26,7 @@ class MusicProgramAuthorization
     {
         if (!$user) return false;
 
-        $role = Role::normalize((string) $user->role);
+        $role = Role::normalize((string) data_get($user, 'role'));
         
         return $role === Role::DISTRIBUTION_MANAGER || $role === Role::PROGRAM_MANAGER;
     }
@@ -86,11 +86,11 @@ class MusicProgramAuthorization
     {
         if (!$user) return false;
 
-        $userRole = \App\Constants\Role::normalize((string) $user->role);
-        $primaryRole = \App\Constants\Role::normalize($primaryRole);
+        $userRole = Role::normalize((string) data_get($user, 'role'));
+        $primaryRole = Role::normalize($primaryRole);
 
         // 1. Explicitly assigned to this specific work (handles reassignment)
-        if ($work && $work->$userField === $user->id) {
+        if ($work && data_get($work, $userField) === data_get($user, 'id')) {
             return true;
         }
 
@@ -100,17 +100,73 @@ class MusicProgramAuthorization
         }
 
         // 3. User is Program Manager (always allowed)
-        if ($userRole === \App\Constants\Role::PROGRAM_MANAGER) {
+        if ($userRole === Role::PROGRAM_MANAGER) {
             return true;
         }
 
         // 4. User is Producer (allowed based on specific access list)
-        if ($userRole === \App\Constants\Role::PRODUCER && self::canProducerAccessRole($primaryRole)) {
+        if ($userRole === Role::PRODUCER && self::canProducerAccessRole($primaryRole)) {
             return true;
         }
 
         // 5. User is Distribution Manager (allowed based on specific access list)
-        if ($userRole === \App\Constants\Role::DISTRIBUTION_MANAGER && self::canDistributionManagerAccessRole($primaryRole)) {
+        if ($userRole === Role::DISTRIBUTION_MANAGER && self::canDistributionManagerAccessRole($primaryRole)) {
+            return true;
+        }
+
+        // 6. Episode-specific team assignment check (for Production / Vocal tasks)
+        // If the user doesn't have the global role, they might still be assigned to this specific episode's team.
+        if ($work && isset($work->episode_id)) {
+            $epId = (int) $work->episode_id;
+            
+            // Allow if assigned to ANY tech team for this episode (setting, shooting, recording)
+            $isAssigned = \App\Models\ProductionTeamMember::where('user_id', $user->id)
+                ->whereHas('assignment', function ($q) use ($epId) {
+                    $q->where('episode_id', $epId)->where('status', '!=', 'cancelled');
+                })->exists();
+                
+            if ($isAssigned) return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if a user has access to Art & Set Properti resources
+     * (Inventory, Requests, Templates)
+     */
+    public static function canAccessArtSetProperti(?\Illuminate\Contracts\Auth\Authenticatable $user): bool
+    {
+        if (!$user) return false;
+
+        $role = Role::normalize((string) data_get($user, 'role'));
+
+        // 1. Roles with direct access
+        $directAccessRoles = [
+            Role::ART_SET_PROPERTI,
+            Role::PRODUCTION,
+            Role::SOUND_ENGINEER, // Explicitly include Sound Engineer
+            Role::PRODUCER,
+            Role::PROGRAM_MANAGER,
+            Role::DISTRIBUTION_MANAGER,
+        ];
+
+        if (in_array($role, $directAccessRoles)) {
+            return true;
+        }
+
+        // 2. Promotion & Social Media (view context)
+        if (in_array($role, [Role::PROMOTION, Role::SOCIAL_MEDIA])) {
+            return true;
+        }
+
+        // 3. User with Music Team assignment
+        if (method_exists($user, 'hasAnyMusicTeamAssignment') && $user->hasAnyMusicTeamAssignment()) {
+            return true;
+        }
+
+        // 4. Special setting assignment
+        if (method_exists($user, 'hasMusicTeamAssignment') && $user->hasMusicTeamAssignment('setting')) {
             return true;
         }
 

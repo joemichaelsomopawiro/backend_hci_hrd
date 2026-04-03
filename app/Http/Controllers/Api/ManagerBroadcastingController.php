@@ -119,25 +119,20 @@ class ManagerBroadcastingController extends Controller
                 }
             }
 
-            $works = $query->orderBy('created_at', 'desc')->paginate(15);
-
-            // Untuk History tab: work dengan status 'pending' + approved_at = sudah di-approve QC → tampilkan sebagai 'approved'
-            $items = $works->getCollection()->map(function ($work) {
-                $item = $work->toArray();
+            $paginator = $query->orderBy('created_at', 'desc')->paginate(15);
+            collect($paginator->items())->each(function ($work) {
                 if ($work->status === 'pending' && $work->approved_at) {
-                    $item['display_status'] = 'approved';
+                    $work->display_status = 'approved';
                 } elseif ($work->status === 'rejected') {
-                    $item['display_status'] = 'rejected';
+                    $work->display_status = 'rejected';
                 } else {
-                    $item['display_status'] = $work->status;
+                    $work->display_status = $work->status;
                 }
-                return $item;
             });
-            $works->setCollection($items);
 
             return response()->json([
                 'success' => true,
-                'data' => $works,
+                'data' => $paginator,
                 'message' => 'Broadcasting works retrieved successfully'
             ]);
 

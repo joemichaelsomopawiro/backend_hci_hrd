@@ -106,7 +106,7 @@ class ProduksiWork extends Model
     }
 
     /**
-     * Accept work
+     * Accept work (from pending or needs_revision)
      */
     public function acceptWork(int $userId): void
     {
@@ -146,7 +146,7 @@ class ProduksiWork extends Model
      */
     public function canBeCompleted(): bool
     {
-        return $this->status === 'in_progress';
+        return in_array($this->status, ['in_progress', 'needs_revision']);
     }
 
     /** Apakah bagian Tim Setting sudah ditandai selesai */

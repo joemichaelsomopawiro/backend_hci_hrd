@@ -111,7 +111,7 @@ class DesignGrafisController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
-                'work_type' => 'required|in:thumbnail_youtube,thumbnail_bts,graphics_ig,graphics_facebook,banner_website',
+                'work_type' => 'required|in:thumbnail_youtube,thumbnail_bts,graphics_ig,graphics_facebook,banner_website,poster',
                 'title' => 'required|string|max:255',
                 'description' => 'nullable|string|max:5000',
                 'design_brief' => 'nullable|string|max:5000',
@@ -617,6 +617,124 @@ class DesignGrafisController extends Controller
     }
 
     /**
+     * Upload poster
+     * POST /api/live-tv/design-grafis/works/{id}/upload-poster
+     */
+    public function uploadPoster(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Design Grafis')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'file_link' => 'required|url',
+                'design_notes' => 'nullable|string|max:5000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
+
+            if ($work->assigned_to !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: This work is not assigned to you.'
+                ], 403);
+            }
+
+            if ($work->work_type !== 'poster') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This endpoint is for Poster only. Work type: ' . $work->work_type
+                ], 400);
+            }
+
+            $allowedStatuses = ['in_progress', 'completed', 'reviewed', 'revision_needed'];
+            if (!in_array($work->status, $allowedStatuses, true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Work must be in progress or under review to upload poster. Current status: {$work->status}"
+                ], 400);
+            }
+
+            // Link-based implementation (Strict Link Only)
+            $uploadedFile = [
+                'file_path' => $request->file_link,
+                'file_name' => 'External Link',
+                'file_size' => 0,
+                'mime_type' => 'url',
+                'original_name' => 'External Link'
+            ];
+            
+            // Delete old physical file if exists
+            if ($work->file_path && !filter_var($work->file_path, FILTER_VALIDATE_URL) && Storage::disk('public')->exists($work->file_path)) {
+                Storage::disk('public')->delete($work->file_path);
+            }
+
+            // Update file paths (support multiple files)
+            $filePaths = $work->file_paths ?? [];
+            if ($uploadedFile) {
+                $filePaths[] = array_merge($uploadedFile, [
+                    'type' => 'poster',
+                    'uploaded_at' => now()->toDateTimeString(),
+                    'uploaded_by' => $user->id
+                ]);
+
+                $work->update([
+                    'file_path' => $uploadedFile['file_path'], // Main file path
+                    'file_name' => $uploadedFile['file_name'],
+                    'file_size' => $uploadedFile['file_size'],
+                    'mime_type' => $uploadedFile['mime_type'],
+                    'file_paths' => $filePaths,
+                    'design_notes' => ($work->design_notes ? $work->design_notes . "\n\n" : '') .
+                        "[Poster Uploaded/Linked - " . now()->format('Y-m-d H:i:s') . "]\n" .
+                        ($request->design_notes ?? '')
+                ]);
+            }
+
+            // Audit logging
+            ControllerSecurityHelper::logFileOperation(
+                'upload',
+                $uploadedFile['mime_type'],
+                $uploadedFile['original_name'] ?? 'External Link',
+                $uploadedFile['file_size'],
+                $work,
+                $request
+            );
+
+            // Automate task completion and QC setup
+            $this->finalizeCompletion($work, $user, $request->design_notes ?? '');
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'createdBy']),
+                'message' => 'Poster uploaded and task completed successfully.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading poster: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Update design grafis work
      * PUT /api/live-tv/design-grafis/works/{id}
      */
@@ -1103,7 +1221,8 @@ class DesignGrafisController extends Controller
                     'thumbnail_bts' => $typeStats->get('thumbnail_bts', 0),
                     'graphics_ig' => $typeStats->get('graphics_ig', 0),
                     'graphics_facebook' => $typeStats->get('graphics_facebook', 0),
-                    'banner_website' => $typeStats->get('banner_website', 0)
+                    'banner_website' => $typeStats->get('banner_website', 0),
+                    'poster' => $typeStats->get('poster', 0)
                 ]
             ];
 
@@ -1192,7 +1311,7 @@ class DesignGrafisController extends Controller
 
         foreach ($promotionWorks as $work) {
             // Check file_links
-            $links = is_string($work->file_links) ? json_decode($work->file_links, true) : ($work->file_links ?? []);
+            $links = $work->file_links ?? [];
             if (is_array($links)) {
                 foreach ($links as $link) {
                     if (is_array($link)) {
@@ -1216,7 +1335,7 @@ class DesignGrafisController extends Controller
             }
 
             // Check file_paths
-            $paths = is_string($work->file_paths) ? json_decode($work->file_paths, true) : ($work->file_paths ?? []);
+            $paths = $work->file_paths ?? [];
             if (is_array($paths)) {
                 foreach ($paths as $path) {
                     if (is_array($path)) {
@@ -1356,7 +1475,8 @@ class DesignGrafisController extends Controller
             'thumbnail_youtube' => 'thumbnail_yt',
             'thumbnail_bts' => 'thumbnail_bts',
             'graphics_ig' => 'highlight_ig',
-            'graphics_facebook' => 'highlight_facebook'
+            'graphics_facebook' => 'highlight_facebook',
+            'poster' => 'poster'
         ];
 
         if (isset($qcTypeMap[$work->work_type])) {

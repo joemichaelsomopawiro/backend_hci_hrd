@@ -55,13 +55,14 @@ class TaskReassignmentService
         int $taskId,
         int $newUserId,
         int $reassignedByUserId,
-        ?string $reason = null
+        ?string $reason = null,
+        bool $bypassRoleCheck = false
     ): array {
         try {
             DB::beginTransaction();
 
             // Validate reassignment
-            $validation = self::validateReassignment($taskType, $taskId, $newUserId, $reassignedByUserId);
+            $validation = self::validateReassignment($taskType, $taskId, $newUserId, $reassignedByUserId, $bypassRoleCheck);
             if (!$validation['valid']) {
                 return [
                     'success' => false,

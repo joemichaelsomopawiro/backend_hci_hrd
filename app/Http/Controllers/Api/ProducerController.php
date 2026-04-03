@@ -30,6 +30,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use App\Helpers\ProgramManagerAuthorization;
+use App\Services\WorkflowStateService;
 
 class ProducerController extends Controller
 {
@@ -391,6 +392,34 @@ class ProducerController extends Controller
                     'createdBy'
                 ])
                 ->where(function ($q) use ($user) {
+                    $q->whereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                            $subQ->withTrashed()->where('producer_id', $user->id);
+                        });
+                    })
+                    ->orWhereHas('episode', function($epQ) use ($user) {
+                        $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
+                            $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
+                                $subQ->withTrashed()->where('producer_id', $user->id);
+                            });
+                        });
+                    });
+                })
+                ->get();
+
+            // Produksi Work pending approval (shooting results submitted)
+            $productionWorks = ProduksiWork::where('status', 'completed')
+                ->with([
+                    'episode' => fn($q) => $q->withTrashed(),
+                    'episode.productionTeam' => fn($q) => $q->withTrashed(),
+                    'episode.program.productionTeam' => fn($q) => $q->withTrashed(),
+                    'runSheet',
+                    'createdBy'
+                ])
+                ->where(function ($q) use ($user, $isProgramManager) {
+                    if ($isProgramManager) {
+                        return;
+                    }
                     $q->whereHas('episode', function($epQ) use ($user) {
                         $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
                             $subQ->withTrashed()->where('producer_id', $user->id);
@@ -774,6 +803,7 @@ class ProducerController extends Controller
                     ]);
                     
                     // Log Workflow State for Song Approval
+                    /** @var \App\Services\WorkflowStateService $workflowService */
                     $workflowService = app(\App\Services\WorkflowStateService::class);
                     $workflowService->updateWorkflowState(
                         $episode,
@@ -1087,6 +1117,7 @@ class ProducerController extends Controller
                     ]);
                     
                     // Update workflow state to production_planning
+                    /** @var \App\Services\WorkflowStateService $workflowService */
                     $workflowService = app(\App\Services\WorkflowStateService::class);
                     $workflowService->updateWorkflowState(
                         $item->episode,
@@ -1273,7 +1304,12 @@ class ProducerController extends Controller
                             'editing',
                             'editor',
                             null,
-                            'Sound engineer editing approved, audio ready for video editing'
+                            'Sound engineer editing approved, audio ready for video editing',
+                            $user->id,
+                            [
+                                'action' => 'vocal_editing_approved',
+                                'review_notes' => $request->notes
+                            ]
                         );
                     }
                     break;
@@ -1340,7 +1376,12 @@ class ProducerController extends Controller
                             'quality_control',
                             'quality_control',
                             null,
-                            'Editor work approved, proceeding to quality control'
+                            'Editor work approved, proceeding to quality control',
+                            $user->id,
+                            [
+                                'action' => 'video_editing_approved',
+                                'review_notes' => $request->notes
+                            ]
                         );
                     }
                     break;
@@ -1385,6 +1426,22 @@ class ProducerController extends Controller
                             'review_notes' => $request->notes
                         ]
                     ]);
+
+                    // Update workflow state history
+                    /** @var \App\Services\WorkflowStateService $workflowService */
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $item->episode,
+                        'shooting_recording', // Or current state
+                        'production',
+                        $item->completed_by ?: $item->created_by,
+                        'Production work approved by Producer',
+                        $user->id,
+                        [
+                            'action' => 'shooting_production_approved',
+                            'review_notes' => $request->notes
+                        ]
+                    );
                     break;
             }
             
@@ -1597,6 +1654,22 @@ class ProducerController extends Controller
                         'rejection_reason' => $request->reason,
                         'needs_sound_engineer_help' => true // Mark as needing help when rejected
                     ]);
+
+                    // Log Workflow State for Arrangement Rejection
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $episode,
+                        'music_arrangement',
+                        'music_arranger',
+                        $item->created_by,
+                        "Music arrangement rejected by Producer: {$item->song_title}. Reason: {$request->reason}",
+                        $user->id,
+                        [
+                            'action' => 'music_arrangement_rejected',
+                            'song_title' => $item->song_title,
+                            'rejection_reason' => $request->reason
+                        ]
+                    );
                     
                     // Notify Music Arranger
                     Notification::create([
@@ -1678,7 +1751,23 @@ class ProducerController extends Controller
                         ], 400);
                     }
                     
+                    /** @var \App\Models\CreativeWork $item */
                     $item->reject(auth()->id(), $request->reason);
+
+                    // Log Workflow State for Creative Work Rejection
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $episode,
+                        'creative_work',
+                        'kreatif',
+                        $item->created_by,
+                        "Creative work rejected by Producer. Reason: {$request->reason}",
+                        $user->id,
+                        [
+                            'action' => 'creative_work_rejected',
+                            'rejection_reason' => $request->reason
+                        ]
+                    );
                     
                     // Notify Creative
                     Notification::create([
@@ -1735,6 +1824,21 @@ class ProducerController extends Controller
                         'reviewed_at' => now(),
                         'review_notes' => $request->reason
                     ]);
+
+                    // Log Workflow State for Recording Rejection
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $item->episode,
+                        'vocal_recording',
+                        'sound_eng',
+                        $item->created_by,
+                        "Sound recording rejected by Producer. Reason: {$request->reason}",
+                        $user->id,
+                        [
+                            'action' => 'vocal_recording_rejected',
+                            'rejection_reason' => $request->reason
+                        ]
+                    );
 
                     // Notify Sound Engineer
                     Notification::create([
@@ -1817,6 +1921,21 @@ class ProducerController extends Controller
                             'rejection_reason' => $request->reason
                         ]
                     ]);
+
+                    // Log Workflow State for Editing Rejection
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $episode,
+                        'editing',
+                        'sound_eng',
+                        $item->sound_engineer_id,
+                        "Sound engineer editing rejected by Producer. Reason: {$request->reason}",
+                        $user->id,
+                        [
+                            'action' => 'vocal_editing_rejected', // matched in monitorWorkflow
+                            'rejection_reason' => $request->reason
+                        ]
+                    );
                     break;
                     
                 case 'editor_work':
@@ -1842,6 +1961,7 @@ class ProducerController extends Controller
                         ], 400);
                     }
                     
+                    /** @var \App\Models\CreativeWork $item */
                     $item->reject(auth()->id(), $request->reason);
                     
                     // Notify Editor
@@ -1856,6 +1976,21 @@ class ProducerController extends Controller
                             'rejection_reason' => $request->reason
                         ]
                     ]);
+
+                    // Log Workflow State for Editor Work Rejection
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $item->episode,
+                        'editing',
+                        'editor',
+                        $item->created_by,
+                        "Editor work rejected by Producer. Reason: {$request->reason}",
+                        $user->id,
+                        [
+                            'action' => 'video_editing_rejected',
+                            'rejection_reason' => $request->reason
+                        ]
+                    );
                     break;
 
                 case 'produksi_work':
@@ -1890,6 +2025,21 @@ class ProducerController extends Controller
                             'rejection_reason' => $request->reason
                         ]
                     ]);
+
+                    // Update workflow state history
+                    $workflowService = app(\App\Services\WorkflowStateService::class);
+                    $workflowService->updateWorkflowState(
+                        $item->episode,
+                        'shooting_recording',
+                        'production',
+                        $item->completed_by ?: $item->created_by,
+                        "Production work rejected by Producer. Reason: {$request->reason}",
+                        $user->id,
+                        [
+                            'action' => 'shooting_production_rejected',
+                            'rejection_reason' => $request->reason
+                        ]
+                    );
                     break;
             }
             
@@ -1979,7 +2129,7 @@ class ProducerController extends Controller
                 'producer_id' => $user->id,
                 'total_programs' => $programs->total(),
                 'current_page' => $programs->currentPage(),
-                'program_ids' => $programs->pluck('id')->toArray()
+                'program_ids' => $programs->getCollection()->pluck('id')->toArray()
             ]);
             
             return response()->json([
@@ -2074,7 +2224,13 @@ class ProducerController extends Controller
                 ], 403);
             }
             
-            $query = Episode::with(['program.productionTeam', 'deadlines', 'workflowStates'])
+            $query = Episode::with([
+                'program.productionTeam', 
+                'deadlines', 
+                'workflowStates.performingUser',
+                'musicArrangements.createdBy',
+                'musicArrangements.reviewedBy'
+            ])
                 ->when(!$isProgramManager, function ($q) use ($user) {
                     $q->whereHas('program.productionTeam', function ($sub) use ($user) {
                         $sub->where('producer_id', $user->id);
@@ -3328,26 +3484,8 @@ class ProducerController extends Controller
                 $request->group_members
             );
 
-            // AUTO-APPROVE Logic: If status was song_proposal, approve it automatically
-            if ($prevStatus === 'song_proposal') {
-                $arrangement->update([
-                    'status' => 'song_approved',
-                    'reviewed_by' => $user->id,
-                    'reviewed_at' => now(),
-                    'review_notes' => $request->modification_notes ?? 'Auto-approved after Producer modification.'
-                ]);
-                \Log::info('Producer editArrangementSongSinger - Auto-approved song proposal', ['arrangement_id' => $arrangement->id]);
-            } 
-            // Also handle auto-approval for submitted arrangement if that's preferred
-            elseif (in_array($prevStatus, ['submitted', 'arrangement_submitted'])) {
-                $arrangement->update([
-                    'status' => 'arrangement_approved',
-                    'reviewed_by' => $user->id,
-                    'reviewed_at' => now(),
-                    'review_notes' => $request->modification_notes ?? 'Auto-approved after Producer modification.'
-                ]);
-                \Log::info('Producer editArrangementSongSinger - Auto-approved arrangement file', ['arrangement_id' => $arrangement->id]);
-            }
+            // AUTO-APPROVE Logic removed to allow frontend to explicitly call approve() after editing.
+            // This prevents 400 errors when the frontend calls both edit and approve in sequence.
 
             // Determine who to notify based on arrangement status and who submitted it
             // If status is arrangement_submitted and has sound_engineer_helper_id, it was fixed by Sound Engineer
@@ -5408,7 +5546,7 @@ class ProducerController extends Controller
 
             } else {
                 // Reject
-                $creativeWork->reject($user->id, $request->notes ?? 'Creative work rejected by Producer');
+                $creativeWork->reject((int)$user->id, (string)($request->notes ?? 'Creative work rejected by Producer'));
 
                 // Notify Creative
                 Notification::create([
@@ -5839,117 +5977,7 @@ class ProducerController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
-    }
 
-    /**
-     * Request Produksi to reshoot/complete files/fix
-     * POST /api/live-tv/producer/request-produksi-action
-     */
-    public function requestProduksiAction(Request $request): JsonResponse
-    {
-        try {
-            $user = auth()->user();
-            
-            if (!$user || $user->role !== 'Producer') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized access.'
-                ], 403);
-            }
-
-            $validator = Validator::make($request->all(), [
-                'produksi_work_id' => 'required|exists:produksi_works,id',
-                'request_type' => 'required|in:reshoot,complete_files,fix',
-                'reason' => 'required|string|max:5000',
-                'missing_files' => 'nullable|array', // Untuk complete_files
-                'missing_files.*.file_type' => 'required|string',
-                'missing_files.*.description' => 'required|string',
-                'shooting_schedule' => 'nullable|date|after:now', // Untuk reshoot
-                'editor_work_id' => 'nullable|exists:editor_works,id' // Link ke Editor Work yang report missing files
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-
-            $produksiWork = ProduksiWork::with(['episode.program.productionTeam'])->findOrFail($request->produksi_work_id);
-
-            // Validate Producer has access
-            if ($produksiWork->episode->program->productionTeam->producer_id !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: This produksi work is not from your production team.'
-                ], 403);
-            }
-
-            // Create request entry
-            $requestData = [
-                'id' => uniqid('req_', true),
-                'request_type' => $request->request_type,
-                'reason' => $request->reason,
-                'requested_by' => $user->id,
-                'requested_by_name' => $user->name,
-                'requested_at' => now()->toDateTimeString(),
-                'status' => 'pending',
-                'editor_work_id' => $request->editor_work_id,
-                'missing_files' => $request->missing_files ?? [],
-                'shooting_schedule' => $request->shooting_schedule
-            ];
-
-            // Add to producer_requests array
-            $producerRequests = $produksiWork->producer_requests ?? [];
-            $producerRequests[] = $requestData;
-            $produksiWork->update(['producer_requests' => $producerRequests]);
-
-            // Notify Produksi team
-            $produksiUsers = \App\Models\User::where('role', 'Production')->get();
-            foreach ($produksiUsers as $produksiUser) {
-                Notification::create([
-                    'user_id' => $produksiUser->id,
-                    'type' => 'producer_request_produksi_action',
-                    'title' => 'Permintaan Producer',
-                    'message' => "Producer {$user->name} meminta Produksi untuk " . 
-                        ($request->request_type === 'reshoot' ? 'syuting ulang' : 
-                         ($request->request_type === 'complete_files' ? 'melengkapi file' : 'perbaikan')) . 
-                        " untuk Episode {$produksiWork->episode->episode_number}.",
-                    'data' => [
-                        'produksi_work_id' => $produksiWork->id,
-                        'episode_id' => $produksiWork->episode_id,
-                        'request_id' => $requestData['id'],
-                        'request_type' => $request->request_type,
-                        'reason' => $request->reason,
-                        'missing_files' => $request->missing_files ?? [],
-                        'shooting_schedule' => $request->shooting_schedule,
-                        'requested_by' => $user->id,
-                        'requested_by_name' => $user->name
-                    ]
-                ]);
-            }
-
-            // Update ProduksiWork status jika belum in_progress
-            if ($produksiWork->status === 'completed') {
-                $produksiWork->update(['status' => 'in_progress']);
-            }
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'produksi_work' => $produksiWork->fresh(['episode']),
-                    'request' => $requestData
-                ],
-                'message' => 'Request sent to Produksi successfully. Produksi team has been notified.'
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error requesting produksi action: ' . $e->getMessage()
-            ], 500);
-        }
     }
 
     /**
@@ -6765,236 +6793,296 @@ class ProducerController extends Controller
     }
 
     /**
-     * Get Editor Missing Files reports for Producer.
-     * Returns EditorWork records with status 'file_incomplete'.
+     * Get Editor missing files reports for Producer's review.
      */
     public function getEditorMissingFiles(Request $request): JsonResponse
     {
         try {
             $user = auth()->user();
-            if (!$user || strtolower($user->role) !== 'producer') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
-            }
-
-            $works = EditorWork::where('status', 'file_incomplete')
-                ->with([
-                    'episode.program',
-                    'episode.productionTeam',
-                    'episode.program.productionTeam',
-                    'createdBy',
-                ])
-                ->where(function ($q) use ($user) {
-                    $q->whereHas('episode.productionTeam', fn($s) => $s->where('producer_id', $user->id))
-                      ->orWhereHas('episode.program.productionTeam', fn($s) => $s->where('producer_id', $user->id))
-                      ->orWhereHas('episode', function ($subQ) {
-                          $subQ->withTrashed()->whereNull('production_team_id')
-                               ->where(function ($epQ) {
-                                   $epQ->whereDoesntHave('program')
-                                       ->orWhereHas('program', function ($pq) {
-                                           $pq->withTrashed()->whereNull('production_team_id');
-                                       });
-                               });
-                      });
-                })
-                ->orderBy('updated_at', 'desc')
-                ->get();
-
-            $reports = $works->map(function ($work) {
-                $missingFiles = [];
-                $notes = null;
-
-                // Extract from source_files json
-                if ($work->source_files) {
-                    $sf = is_array($work->source_files) ? $work->source_files : json_decode($work->source_files, true);
-                    $missingFiles = $sf['missing_files'] ?? [];
-                    $notes = $sf['missing_notes'] ?? $sf['notes'] ?? null;
-
-                    // ✨ NEW: Also check manual_check for issues if reported via confirmFileCompleteness ✨
-                    if (empty($missingFiles) && isset($sf['manual_check'])) {
-                        $mc = $sf['manual_check'];
-                        $fs = $mc['file_status'] ?? [];
-                        foreach ($fs as $category => $status) {
-                            if ($status !== 'ok') {
-                                $missingFiles[] = [
-                                    'file_type' => $category,
-                                    'description' => "Issue reported during manual check: status is {$status}",
-                                    'notes' => $mc['file_notes'][$category] ?? null
-                                ];
-                            }
-                        }
-                        $notes = $notes ?: ($mc['overall_notes'] ?? null);
-                    }
+            
+            $reports = EditorWork::where(function($q) {
+                $q->where('file_complete', false)
+                  ->orWhere('status', 'issue')
+                  ->orWhere('status', 'file_incomplete');
+            })
+            ->with(['episode', 'episode.productionTeam', 'episode.program', 'createdBy'])
+            ->get()
+            ->filter(fn($work) => $this->isProducerAuthorizedForEpisode($work->episode, $user->id))
+            ->values()
+            ->map(function($work) {
+                // Ensure the frontend always has a clean report to show in the 'Detail' modal
+                $work->editor_report_summary = $work->formatted_missing_report;
+                
+                // If missing_notes is empty in the underlying JSON, we provide the formatted report as a fallback
+                // for UIs that only read source_files.missing_notes
+                if (isset($work->source_files) && empty($work->source_files['missing_notes'] ?? '')) {
+                    $newSourceFiles = $work->source_files;
+                    $newSourceFiles['missing_notes'] = $work->formatted_missing_report;
+                    $work->source_files = $newSourceFiles;
                 }
-
-                return [
-                    'editor_work' => $work,
-                    'editor' => $work->createdBy,
-                    'missing_files' => $missingFiles,
-                    'notes' => $notes ?: $work->file_notes,
-                    'reported_at' => $work->updated_at,
-                ];
+                
+                return $work;
             });
 
             return response()->json([
                 'success' => true,
                 'data' => $reports,
-                'message' => 'Editor missing files reports retrieved.'
+                'message' => 'Laporan file kurang dari Editor berhasil diambil.'
             ]);
         } catch (\Exception $e) {
+            Log::error('ProducerController@getEditorMissingFiles: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to get editor missing files',
+                'message' => 'Gagal mengambil laporan file kurang.',
                 'error' => $e->getMessage()
             ], 500);
         }
     }
 
-
-
     /**
-     * Handle Producer's action for editor missing files.
-     * action_type: 'reshoot' | 'complete_files'
+     * Handle actions for missing files reported by Editor.
+     * Actions: reshoot, request_missing, ignore.
+     *
+     * POST /api/live-tv/producer/editor-works/{editorWorkId}/handle-missing-files
      */
     public function handleMissingFilesAction(Request $request, int $editorWorkId): JsonResponse
     {
+        $validator = Validator::make($request->all(), [
+            'action' => 'required_without:action_type|in:reshoot,request_missing,ignore,complete_files',
+            'action_type' => 'required_without:action|in:reshoot,request_missing,ignore,complete_files',
+            'notes' => 'nullable|string|max:2000',
+            'team_type' => 'nullable|string|in:shooting,creative,arrangement,vocal,sound_engineer',
+            'reshoot_date' => 'nullable|date',
+            'reshoot_location' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
         try {
-            $user = auth()->user();
-            if (!$user || strtolower($user->role) !== 'producer') {
-                return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
-            }
-
-            $validator = Validator::make($request->all(), [
-                'action_type' => 'required|in:reshoot,complete_files',
-                'notes'       => 'nullable|string|max:1000',
-                'reshoot_date' => 'nullable|date',
-                'reshoot_location' => 'nullable|string|max:255',
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
-            }
-
-            $editorWork = EditorWork::with(['episode.program', 'createdBy'])->findOrFail($editorWorkId);
-            $episode    = $editorWork->episode;
-            $actionType = $request->action_type;
-            $producerNotes = $request->notes ?? '';
-
-            // Find Produksi work for this episode
-            $produksiWork = ProduksiWork::where('episode_id', $episode->id)->first();
-
             DB::beginTransaction();
+            $user = auth()->user();
+            $editorWork = EditorWork::with(['episode', 'episode.productionTeam'])->findOrFail($editorWorkId);
 
-            if ($actionType === 'reshoot') {
-                // ---- Reshoot: notify Tim Syuting ----
-                $reshootDate     = $request->reshoot_date;
-                $reshootLocation = $request->reshoot_location;
-
-                // Notify tim syuting & setting members
-                $shootingMembers = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episode) {
-                    $q->where('episode_id', $episode->id)->whereIn('team_type', ['shooting', 'setting']);
-                })->where('is_active', true)->get();
-
-                $reshootMsg = "Producer menjadwalkan SYUTING ULANG untuk Episode {$episode->episode_number}";
-                if ($reshootDate) $reshootMsg .= " pada tanggal " . date('d M Y', strtotime($reshootDate));
-                if ($reshootLocation) $reshootMsg .= " di {$reshootLocation}";
-                $reshootMsg .= ". Catatan: {$producerNotes}";
-
-                foreach ($shootingMembers as $member) {
-                    Notification::create([
-                        'user_id' => $member->user_id,
-                        'type'    => 'reshoot_scheduled',
-                        'title'   => 'Jadwal Syuting Ulang',
-                        'message' => $reshootMsg,
-                        'data'    => [
-                            'episode_id'      => $episode->id,
-                            'editor_work_id'  => $editorWork->id,
-                            'reshoot_date'    => $reshootDate,
-                            'reshoot_location'=> $reshootLocation,
-                            'producer_notes'  => $producerNotes,
-                        ]
-                    ]);
-                }
-
-                // Also reopen produksi work if exists
-                if ($produksiWork) {
-                    $produksiWork->update(['status' => 'pending', 'notes' => "Syuting ulang dijadwalkan oleh Producer. {$producerNotes}"]);
-                }
-
-                // Notify editor
-                Notification::create([
-                    'user_id' => $editorWork->created_by,
-                    'type'    => 'reshoot_scheduled',
-                    'title'   => 'Syuting Ulang Dijadwalkan',
-                    'message' => "Producer telah menjadwalkan syuting ulang untuk Episode {$episode->episode_number}. File baru akan tersedia setelah syuting selesai.",
-                    'data'    => ['episode_id' => $episode->id, 'editor_work_id' => $editorWork->id]
-                ]);
-
-                $message = 'Tim Syuting telah diberitahu untuk syuting ulang.';
-
-            } else {
-                // ---- Complete Files: notify Tim Produksi ----
-                $completeMsg = "Producer meminta Tim Produksi untuk MELENGKAPI FILE yang kurang untuk Episode {$episode->episode_number}. Catatan: {$producerNotes}";
-
-                if ($produksiWork) {
-                    // Notify owner of produksi work
-                    Notification::create([
-                        'user_id' => $produksiWork->created_by ?? $produksiWork->assigned_to,
-                        'type'    => 'complete_missing_files',
-                        'title'   => 'Lengkapi File Syuting',
-                        'message' => $completeMsg,
-                        'data'    => [
-                            'episode_id'     => $episode->id,
-                            'editor_work_id' => $editorWork->id,
-                            'producer_notes' => $producerNotes,
-                        ]
-                    ]);
-
-                    // Reopen the produksi work
-                    $produksiWork->update(['status' => 'in_progress', 'notes' => "File perlu dilengkapi atas permintaan Producer. {$producerNotes}"]);
-                }
-
-                // Notify shooting & setting team members
-                $shootingMembers = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episode) {
-                    $q->where('episode_id', $episode->id)->whereIn('team_type', ['shooting', 'setting']);
-                })->where('is_active', true)->get();
-
-                foreach ($shootingMembers as $member) {
-                    Notification::create([
-                        'user_id' => $member->user_id,
-                        'type'    => 'complete_missing_files',
-                        'title'   => 'Lengkapi File Syuting',
-                        'message' => $completeMsg,
-                        'data'    => ['episode_id' => $episode->id, 'editor_work_id' => $editorWork->id]
-                    ]);
-                }
-
-                // Notify editor
-                Notification::create([
-                    'user_id' => $editorWork->created_by,
-                    'type'    => 'complete_missing_files',
-                    'title'   => 'Producer Telah Meminta File Dilengkapi',
-                    'message' => "Producer telah meminta Tim Produksi melengkapi file yang kurang untuk Episode {$episode->episode_number}. Tunggu file baru dari Tim Produksi.",
-                    'data'    => ['episode_id' => $episode->id]
-                ]);
-
-                $message = 'Tim Produksi telah diberitahu untuk melengkapi file.';
+            // Authorization Check
+            if (!$this->isProducerAuthorizedForEpisode($editorWork->episode, $user->id)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: Anda bukan Producer dari program ini.'
+                ], 403);
             }
 
-            // Update editor work status back to awaiting files
-            $editorWork->update(['status' => 'pending']);
+            $action = $request->action ?? $request->action_type; // Support both naming styles
+            $notes = $request->notes;
+            $episode = $editorWork->episode;
+
+            $resolutionData = [
+                'action' => $action,
+                'resolved_by' => $user->id,
+                'resolved_by_name' => $user->name,
+                'resolved_at' => now(),
+                'notes' => $notes
+            ];
+
+            // Extract detailed missing files report to include in notifications
+            $missingItemsSummary = "";
+            $missingFiles = $editorWork->source_files['missing_files'] ?? [];
+            $issueCategories = [];
+
+            foreach ($missingFiles as $f) {
+                if (($f['status'] ?? '') === 'issue') {
+                    $cat = $f['file_type'] ?? 'General';
+                    $desc = $f['description'] ?? ($f['notes'] ?? 'No detail');
+                    $missingItemsSummary .= "- " . strtoupper($cat) . ": " . $desc . "\n";
+                    $issueCategories[] = strtolower($cat);
+                }
+            }
+
+            if (empty($missingItemsSummary)) {
+                $missingItemsSummary = "Detail: " . ($editorWork->source_files['missing_notes'] ?? 'Tidak ada detail spesifik.');
+            }
+
+            $fullMessageHeader = "Laporan dari Editor:\n" . $missingItemsSummary . "\nCatatan Producer: " . ($notes ?: '-');
+
+            if ($action === 'reshoot') {
+                $reshootDate = $request->reshoot_date;
+                $reshootLocation = $request->reshoot_location;
+                
+                // Find ProduksiWork (Shooting task)
+                $produksiWork = ProduksiWork::where('episode_id', $editorWork->episode_id)->first();
+                if ($produksiWork) {
+                    $produksiWork->update([
+                        'status' => 'needs_revision', // Updated from 'pending' to 'needs_revision'
+                        'completed_at' => null,
+                        'completed_by' => null,
+                        'producer_requests' => array_merge($produksiWork->producer_requests ?? [], [
+                            [
+                                'type' => 'reshoot',
+                                'requested_by' => $user->id,
+                                'at' => now(),
+                                'notes' => $notes,
+                                'reshoot_date' => $reshootDate,
+                                'reshoot_location' => $reshootLocation,
+                                'editor_report' => $missingItemsSummary // Keep the report in the work record
+                            ]
+                        ])
+                    ]);
+
+                    // Notify Shooting Team Members
+                    $shootingMembers = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episode) {
+                        $q->where('episode_id', $episode->id)->whereIn('team_type', ['shooting', 'setting']);
+                    })->where('is_active', true)->get();
+
+                    $reshootMsg = "Producer meminta SYUTING ULANG untuk episode {$episode->episode_number}.\n\n$fullMessageHeader";
+                    if ($reshootDate) $reshootMsg .= "\n\nRencana Syuting Ulang: " . date('d M Y', strtotime($reshootDate)) . ($reshootLocation ? " di $reshootLocation" : "");
+
+                    foreach ($shootingMembers as $member) {
+                        Notification::create([
+                            'user_id' => $member->user_id,
+                            'episode_id' => $episode->id,
+                            'type' => 'reshoot_requested',
+                            'title' => 'Permintaan Syuting Ulang (Reshoot)',
+                            'message' => $reshootMsg,
+                            'priority' => 'urgent',
+                            'data' => [
+                                'editor_work_id' => $editorWorkId, 
+                                'reshoot_date' => $reshootDate,
+                                'original_report' => $missingItemsSummary
+                            ]
+                        ]);
+                    }
+                }
+            } elseif ($action === 'request_missing' || $action === 'complete_files') {
+                // SMART ROUTING: Notify ALL relevant teams based on issue categories detected
+                
+                // If the Producer didn't specify a team, notify everyone based on categories
+                $teamsToNotify = empty($request->team_type) ? array_unique($issueCategories) : [$request->team_type];
+                
+                // If no specific categories found, default to shooting/production
+                if (empty($teamsToNotify)) $teamsToNotify = ['shooting'];
+
+                // Update ProduksiWork status if 'shooting' or 'setting' is involved
+                if (in_array('shooting', $teamsToNotify) || in_array('setting', $teamsToNotify)) {
+                    $produksiWork = ProduksiWork::where('episode_id', $editorWork->episode_id)->first();
+                    if ($produksiWork) {
+                        $produksiWork->update([
+                            'status' => 'needs_revision',
+                            'completed_at' => null,
+                            'producer_requests' => array_merge($produksiWork->producer_requests ?? [], [
+                                [
+                                    'type' => 'repair',
+                                    'requested_by' => $user->id,
+                                    'at' => now(),
+                                    'notes' => $notes,
+                                    'editor_report' => $missingItemsSummary
+                                ]
+                            ])
+                        ]);
+                    }
+                }
+
+                foreach ($teamsToNotify as $teamType) {
+                    $rolesToNotify = [];
+                    $teamLabel = 'Produksi';
+                    $targetUserIds = [];
+
+                    $roleMap = [
+                        'creative' => ['creative', 'kreatif'],
+                        'arrangement' => ['musik_arr', 'music_arranger'],
+                        'vocal' => ['sound_eng', 'sound_engineer'],
+                        'audio' => ['sound_eng', 'sound_engineer'],
+                        'sound_engineer' => ['sound_eng', 'sound_engineer'],
+                        'shooting' => ['production', 'produksi'],
+                        'production_files' => ['production', 'produksi'],
+                        'setting' => ['art_set_design']
+                    ];
+
+                    $rolesToNotify = $roleMap[$teamType] ?? ['production', 'produksi'];
+
+                    // Routing based on specific work records
+                    switch ($teamType) {
+                        case 'creative':
+                            $targetUserIds[] = CreativeWork::where('episode_id', $episode->id)->value('created_by');
+                            $teamLabel = 'Tim Kreatif';
+                            break;
+                        case 'arrangement':
+                            $targetUserIds[] = MusicArrangement::where('episode_id', $episode->id)->value('created_by');
+                            $teamLabel = 'Music Arranger';
+                            break;
+                        case 'vocal':
+                        case 'audio':
+                            $targetUserIds[] = SoundEngineerEditing::where('episode_id', $episode->id)->value('created_by');
+                            $teamLabel = 'Sound Engineer';
+                            break;
+                        default:
+                            $targetUserIds[] = ProduksiWork::where('episode_id', $episode->id)->value('created_by');
+                            $teamLabel = 'Tim Produksi';
+                    }
+
+                    // Fallback to assigned members
+                    if (empty(array_filter($targetUserIds))) {
+                        $teamMapping = [
+                            'creative' => 'creative',
+                            'arrangement' => 'music',
+                            'vocal' => 'vocal',
+                            'audio' => 'vocal',
+                            'shooting' => 'shooting',
+                            'production_files' => 'shooting',
+                            'setting' => 'setting'
+                        ];
+                        $targetUserIds = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($episode, $teamType, $teamMapping) {
+                            $q->where('episode_id', $episode->id)->where('team_type', $teamMapping[$teamType] ?? 'shooting');
+                        })->whereIn('role', $rolesToNotify)->where('is_active', true)->pluck('user_id')->unique()->toArray();
+                    }
+
+                    foreach (array_filter($targetUserIds) as $targetId) {
+                        Notification::create([
+                            'user_id' => $targetId,
+                            'episode_id' => $episode->id,
+                            'type' => 'missing_material_requested',
+                            'title' => "Permintaan Kelengkapan File ({$teamLabel})",
+                            'message' => "Producer meminta kelengkapan file untuk episode {$episode->episode_number}.\n\n$fullMessageHeader",
+                            'priority' => 'high',
+                            'data' => [
+                                'editor_work_id' => $editorWorkId, 
+                                'team_type' => $teamType,
+                                'requested_by' => $user->id
+                            ]
+                        ]);
+                    }
+
+                    // ProduksiWork status is already handled as 'needs_revision' above
+                }
+            }
+
+            // Update EditorWork with resolution info
+            $sourceFiles = $editorWork->source_files ?? [];
+            $sourceFiles['producer_resolution'] = $resolutionData;
+            
+            $editorWork->update([
+                'source_files' => $sourceFiles,
+                'status' => 'file_incomplete' // Keep in Draft/Revision until files are ready
+            ]);
 
             DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => $message,
-                'action_type' => $actionType,
+                'message' => 'Tindakan Producer berhasil disimpan dan tim terkait telah diberitahu.'
             ]);
-
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('ProducerController@handleMissingFilesAction: ' . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Gagal memproses tindakan.', 'error' => $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menangani laporan file.',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 
@@ -7181,9 +7269,6 @@ class ProducerController extends Controller
 
     /**
      * Producer rejects a program.
-     * Program akan kembali ke Manager Program untuk direvisi.
-     *
-     * POST /api/live-tv/producer/programs/{id}/reject
      */
     public function rejectProgram(Request $request, $id): JsonResponse
     {
@@ -7192,73 +7277,89 @@ class ProducerController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
         try {
             $user = auth()->user();
             $program = Program::with('productionTeam')->findOrFail($id);
 
-            // Validate: Producer harus dari ProductionTeam program ini
             if (!$program->productionTeam || $program->productionTeam->producer_id !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized: Anda bukan Producer dari program ini.'
-                ], 403);
-            }
-
-            // Validate: Belum di-accept sebelumnya
-            if ($program->producer_accepted) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Program ini sudah diterima, tidak bisa ditolak.'
-                ], 400);
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
             DB::beginTransaction();
-
             $program->update([
                 'producer_accepted' => false,
                 'producer_rejected_at' => now(),
                 'producer_rejection_notes' => $request->rejection_notes,
             ]);
 
-            // Notify Manager Program
             Notification::create([
                 'user_id' => $program->manager_program_id,
                 'type' => 'program_rejected_by_producer',
                 'title' => 'Program Ditolak oleh Producer',
-                'message' => "Producer {$user->name} menolak program '{$program->name}'. Alasan: {$request->rejection_notes}",
-                'data' => [
-                    'program_id' => $program->id,
-                    'producer_id' => $user->id,
-                    'producer_name' => $user->name,
-                    'rejection_notes' => $request->rejection_notes,
-                ]
+                'message' => "Producer menolak program '{$program->name}'. Alasan: {$request->rejection_notes}",
+                'data' => ['program_id' => $program->id]
             ]);
 
             DB::commit();
-
-            // Clear cache
-            \App\Helpers\QueryOptimizer::clearIndexCache('programs');
-
-            return response()->json([
-                'success' => true,
-                'data' => $program->fresh(['productionTeam', 'managerProgram']),
-                'message' => 'Program ditolak. Manager Program telah diberitahu.'
-            ]);
+            return response()->json(['success' => true, 'message' => 'Program ditolak.']);
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('ProducerController@rejectProgram: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Gagal menolak program.',
-                'error' => $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Generic Producer request action for Produksi.
+     */
+    public function requestProduksiAction(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'episode_id' => 'required|exists:episodes,id',
+            'action' => 'required|in:reshoot,fix_material,complete_files',
+            'notes' => 'required|string|max:2000'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+            $user = auth()->user();
+            $episodeId = $request->episode_id;
+            $episode = Episode::with('productionTeam')->findOrFail($episodeId);
+
+            if (!$this->isProducerAuthorizedForEpisode($episode, $user->id)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $produksiWork = ProduksiWork::firstOrCreate(['episode_id' => $episodeId], ['status' => 'pending']);
+            
+            $requests = $produksiWork->producer_requests ?? [];
+            $requests[] = ['at' => now(), 'by' => $user->id, 'action' => $request->action, 'notes' => $request->notes];
+
+            $produksiWork->update([
+                'producer_requests' => $requests,
+                'status' => $request->action === 'reshoot' ? 'pending' : 'in_progress'
+            ]);
+
+            Notification::create([
+                'user_id' => $produksiWork->created_by ?: $user->id,
+                'episode_id' => $episodeId,
+                'type' => 'producer_action_requested',
+                'title' => "Permintaan Producer: " . $request->action,
+                'message' => $request->notes,
+                'priority' => 'high'
+            ]);
+
+            DB::commit();
+            return response()->json(['success' => true, 'message' => 'Permintaan dikirim.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 }

@@ -415,6 +415,7 @@ class MusicArrangerController extends Controller
     public function inputLink(Request $request, $id): JsonResponse
     {
         try {
+            $user = Auth::user();
             if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Music Arranger')) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
@@ -752,7 +753,7 @@ class MusicArrangerController extends Controller
             Log::info('MusicArranger getApprovedArrangementsHistory', [
                 'user_id' => $user->id,
                 'total' => $arrangements->total(),
-                'arrangements' => $arrangements->map(function ($arr) {
+                'arrangements' => collect($arrangements->items())->map(function ($arr) {
                     return [
                         'id' => $arr->id,
                         'status' => $arr->status,
@@ -795,16 +796,59 @@ class MusicArrangerController extends Controller
 
     public function acceptWork(Request $request, int $id): JsonResponse
     {
-        $arrangement = MusicArrangement::findOrFail($id);
-        $arrangement->update(['status' => 'arrangement_in_progress']);
-        return response()->json(['success' => true, 'data' => $arrangement]);
+        try {
+            $user = Auth::user();
+            $arrangement = MusicArrangement::findOrFail($id);
+
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $arrangement, 'Music Arranger')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You can only accept your own assigned arrangements.'
+                ], 403);
+            }
+
+            $arrangement->update(['status' => 'arrangement_in_progress']);
+
+            return response()->json([
+                'success' => true,
+                'data' => $arrangement,
+                'message' => 'Work accepted successfully.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
     }
 
     public function completeWork(Request $request, int $id): JsonResponse
     {
-        $arrangement = MusicArrangement::findOrFail($id);
-        $arrangement->update(['status' => 'arrangement_submitted', 'submitted_at' => now()]);
-        return response()->json(['success' => true, 'data' => $arrangement]);
+        try {
+            $user = Auth::user();
+            $arrangement = MusicArrangement::findOrFail($id);
+
+            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, $arrangement, 'Music Arranger')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: You can only complete your own assigned arrangements.'
+                ], 403);
+            }
+
+            if (!$arrangement->file_link && !$arrangement->file_path) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please upload the arrangement file or link first before completing work.'
+                ], 400);
+            }
+
+            $arrangement->update(['status' => 'arrangement_submitted', 'submitted_at' => now()]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $arrangement,
+                'message' => 'Work completed successfully.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -857,7 +901,7 @@ class MusicArrangerController extends Controller
     public function downloadFile($id, Request $request)
     {
         $arrangement = MusicArrangement::findOrFail($id);
-        $filePath = Storage::disk('public')->path($arrangement->file_path);
+        $filePath = storage_path('app/public/' . $arrangement->file_path);
         return response()->file($filePath);
     }
 }

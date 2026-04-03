@@ -44,7 +44,8 @@ class ProductionEquipment extends Model
         'return_condition',
         'return_notes',
         'assigned_to',
-        'returned_by'
+        'returned_by',
+        'team_type'
     ];
 
     protected $casts = [

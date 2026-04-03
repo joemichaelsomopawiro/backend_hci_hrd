@@ -192,7 +192,7 @@ class TaskVisibilityService
     /**
      * Get task type label
      */
-    protected static function getTaskTypeLabel(string $taskType): string
+    public static function getTaskTypeLabel(string $taskType): string
     {
         return match($taskType) {
             'music_arrangement' => 'Music Arrangement',

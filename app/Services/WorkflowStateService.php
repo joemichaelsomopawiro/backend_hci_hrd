@@ -77,13 +77,14 @@ class WorkflowStateService
             ->first();
             
         if (!$currentState) {
+            $program = $episode->program;
             return [
                 'current_state' => 'program_created',
                 'state_label' => 'Program Created',
                 'assigned_to_role' => 'manager_program',
                 'role_label' => 'Manager Program',
-                'assigned_to_user_id' => $episode->program->manager_program_id,
-                'assigned_to_user_name' => $episode->program->managerProgram->name,
+                'assigned_to_user_id' => $program?->manager_program_id,
+                'assigned_to_user_name' => $program?->managerProgram?->name ?? 'N/A',
                 'notes' => 'Initial workflow state',
                 'created_at' => $episode->created_at
             ];
@@ -272,15 +273,18 @@ class WorkflowStateService
         }
         
         // Notify Manager Program
-        Notification::create([
-            'user_id' => $episode->program->manager_program_id,
-            'type' => 'workflow_state_change',
-            'title' => 'Workflow State Changed',
-            'message' => "Workflow state changed for Episode {$episode->episode_number}: {$episode->title} to {$newState}",
-            'episode_id' => $episode->id,
-            'program_id' => $episode->program_id,
-            'priority' => 'normal'
-        ]);
+        $program = $episode->program;
+        if ($program && $program->manager_program_id) {
+            Notification::create([
+                'user_id' => $program->manager_program_id,
+                'type' => 'workflow_state_change',
+                'title' => 'Workflow State Changed',
+                'message' => "Workflow state changed for Episode {$episode->episode_number}: {$episode->title} to {$newState}",
+                'episode_id' => $episode->id,
+                'program_id' => $episode->program_id,
+                'priority' => 'normal'
+            ]);
+        }
     }
 
     /**

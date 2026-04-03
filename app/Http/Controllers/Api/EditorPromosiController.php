@@ -72,9 +72,8 @@ class EditorPromosiController extends Controller
             $works = $query->orderBy('created_at', 'desc')->paginate(15);
 
             // Add explicit creator_role for frontend safety (handles naming collisions)
-            $works->getCollection()->transform(function ($work) {
+            collect($works->items())->each(function ($work) {
                 $work->creator_role = $work->createdBy->role ?? '';
-                return $work;
             });
 
             return response()->json([
@@ -109,7 +108,7 @@ class EditorPromosiController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'episode_id' => 'required|exists:episodes,id',
-                'work_type' => 'required|in:bts_video,bts_photo,highlight_ig,highlight_facebook,highlight_tv,iklan_episode_tv,story_ig,reels_facebook,tiktok,website_content',
+                'work_type' => 'required|in:bts_video,bts_photo,highlight_ig,highlight_facebook,highlight_tv,iklan_episode_tv,story_ig,reels_facebook,tiktok,website_content,whatsapp_story',
                 'title' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'content_plan' => 'nullable|string',
@@ -309,6 +308,24 @@ class EditorPromosiController extends Controller
                     'message' => 'Validation failed',
                     'errors' => $validator->errors()
                 ], 422);
+            }
+
+            // Enforce minimum 2 links for reels_facebook
+            if ($work->work_type === 'reels_facebook') {
+                $linkCount = 0;
+                if ($request->has('file_links') && is_array($request->file_links)) {
+                    $linkCount = count(array_filter($request->file_links, function($link) {
+                        $url = is_array($link) ? ($link['url'] ?? $link['file_link'] ?? null) : $link;
+                        return !empty($url);
+                    }));
+                }
+                
+                if ($linkCount < 2) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Upload Reels Facebook minimal 2 link. Silakan tambah link lainnya.'
+                    ], 422);
+                }
             }
 
             $uploadedFiles = [];
@@ -562,7 +579,7 @@ class EditorPromosiController extends Controller
             $allFiles = [];
             
             if ($promotionWork->file_paths) {
-                $filePaths = is_string($promotionWork->file_paths) ? json_decode($promotionWork->file_paths, true) : $promotionWork->file_paths;
+                $filePaths = $promotionWork->file_paths ?? [];
                 if (is_array($filePaths)) {
                     foreach ($filePaths as $file) {
                         if (is_array($file)) {
@@ -576,7 +593,7 @@ class EditorPromosiController extends Controller
 
             // Check file_links
             if ($promotionWork->file_links) {
-                $fileLinks = is_string($promotionWork->file_links) ? json_decode($promotionWork->file_links, true) : $promotionWork->file_links;
+                $fileLinks = $promotionWork->file_links ?? [];
                 if (is_array($fileLinks)) {
                     foreach ($fileLinks as $link) {
                         if (is_array($link)) {

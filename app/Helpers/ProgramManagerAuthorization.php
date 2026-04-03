@@ -20,7 +20,7 @@ class ProgramManagerAuthorization
     {
         if (!$user) return false;
 
-        return Role::normalize((string) $user->role) === Role::PROGRAM_MANAGER;
+        return Role::normalize((string) data_get($user, 'role')) === Role::PROGRAM_MANAGER;
     }
 }
 

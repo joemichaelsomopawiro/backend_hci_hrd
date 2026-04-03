@@ -715,65 +715,150 @@ class EpisodeController extends Controller
             // Workflow Timeline - Tahap demi tahap
             $workflowSteps = [];
             
-            // 1. Music Arrangement
+            // 1. Song Proposal
             $musicArrangement = $episode->musicArrangements()->latest()->first();
-            $musicStatus = 'pending';
+            $songProposalStatus = 'pending';
             if ($musicArrangement) {
-                if (in_array($musicArrangement->status, ['approved', 'arrangement_approved'])) {
-                    $musicStatus = 'completed';
-                } elseif ($musicArrangement->status === 'song_proposal') {
-                    $musicStatus = 'song_proposal_submitted';
-                } elseif ($musicArrangement->status === 'song_approved') {
-                    $musicStatus = 'song_approved_waiting_arrangement';
+                if ($musicArrangement->status === 'song_rejected') {
+                    $songProposalStatus = 'rejected';
                 } else {
-                    $musicStatus = $musicArrangement->status;
+                    $songProposalStatus = 'completed'; // Once created, proposal itself is done
                 }
             }
-            $workflowSteps['music_arrangement'] = [
-                'step_name' => 'Music Arrangement',
-                'status' => $musicStatus,
+            $workflowSteps['song_proposal'] = [
+                'step_key' => 'song_proposal',
+                'step_name' => 'Song Proposal (Music Arranger)',
+                'status' => $songProposalStatus,
+                'rejection_reason' => $musicArrangement->rejection_reason ?? null,
+                'review_notes' => $musicArrangement->review_notes ?? null,
                 'data' => $musicArrangement ? [
                     'id' => $musicArrangement->id,
-                    'status' => $musicArrangement->status,
                     'song_title' => $musicArrangement->song_title,
-                    'arranger_name' => $musicArrangement->arranger_name,
                     'created_at' => $musicArrangement->created_at,
-                    'updated_at' => $musicArrangement->updated_at,
-                    'approved_at' => $musicArrangement->approved_at,
-                    'is_song_proposal' => $musicArrangement->status === 'song_proposal' || $musicArrangement->status === 'song_rejected'
                 ] : null,
                 'deadline' => $episode->deadlines()->where('role', 'musik_arr')->first()
             ];
-            
-            // 2. Creative Work
-            $creativeWork = $episode->creativeWorks()->latest()->first();
-            $creativeStatus = 'pending';
-            if ($creativeWork) {
-                if ($creativeWork->status === 'approved' || ($creativeWork->script_approved && $creativeWork->storyboard_approved)) {
-                    $creativeStatus = 'completed';
-                } else {
-                    $creativeStatus = $creativeWork->status === 'submitted' ? 'submitted' : 'in_progress';
+
+            // 2. Song Proposal Approval
+            $songApprovalStatus = 'pending';
+            if ($musicArrangement) {
+                if (!in_array($musicArrangement->status, ['song_proposal', 'song_rejected', 'draft'])) {
+                    $songApprovalStatus = 'completed';
+                } elseif ($musicArrangement->status === 'song_rejected') {
+                    $songApprovalStatus = 'rejected';
+                } elseif ($musicArrangement->status === 'song_proposal') {
+                    $songApprovalStatus = 'in_progress';
                 }
             }
-            $workflowSteps['creative_work'] = [
-                'step_name' => 'Creative Work',
-                'status' => $creativeStatus,
+            $workflowSteps['song_proposal_approval'] = [
+                'step_key' => 'song_proposal_approval',
+                'step_name' => 'Producer (Approve Song Proposal)',
+                'status' => $songApprovalStatus,
+                'rejection_reason' => $musicArrangement->rejection_reason ?? null,
+                'review_notes' => $musicArrangement->review_notes ?? null,
+                'data' => $musicArrangement ? [
+                    'status' => $musicArrangement->status,
+                    'updated_at' => $musicArrangement->updated_at,
+                ] : null,
+            ];
+
+            // 3. Music Arrangement Link
+            $linkStatus = 'pending';
+            if ($musicArrangement) {
+                if (in_array($musicArrangement->status, ['arrangement_submitted', 'arrangement_approved', 'approved'])) {
+                    $linkStatus = 'completed';
+                } elseif ($musicArrangement->status === 'arrangement_rejected') {
+                    $linkStatus = 'rejected';
+                } elseif ($musicArrangement->status === 'song_approved' || $musicArrangement->status === 'arrangement_in_progress') {
+                    $linkStatus = 'in_progress';
+                }
+            }
+            $workflowSteps['music_arrangement_link'] = [
+                'step_key' => 'music_arrangement_link',
+                'step_name' => 'Music Arrangement Link',
+                'status' => $linkStatus,
+                'rejection_reason' => $musicArrangement->rejection_reason ?? null,
+                'review_notes' => $musicArrangement->review_notes ?? null,
+                'data' => $musicArrangement ? [
+                    'file_link' => $musicArrangement->file_link,
+                    'submitted_at' => $musicArrangement->submitted_at,
+                ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'musik_arr')->first()
+            ];
+
+            // 4. Arrangement Approval
+            $arrApprovalStatus = 'pending';
+            if ($musicArrangement) {
+                if (in_array($musicArrangement->status, ['arrangement_approved', 'approved'])) {
+                    $arrApprovalStatus = 'completed';
+                } elseif ($musicArrangement->status === 'arrangement_rejected') {
+                    $arrApprovalStatus = 'rejected';
+                } elseif ($musicArrangement->status === 'arrangement_submitted') {
+                    $arrApprovalStatus = 'in_progress';
+                }
+            }
+            $workflowSteps['arrangement_approval'] = [
+                'step_key' => 'arrangement_approval',
+                'step_name' => 'Producer (Approve Arrangement)',
+                'status' => $arrApprovalStatus,
+                'rejection_reason' => $musicArrangement->rejection_reason ?? null,
+                'review_notes' => $musicArrangement->review_notes ?? null,
+                'data' => $musicArrangement ? [
+                    'status' => $musicArrangement->status,
+                    'approved_at' => $musicArrangement->approved_at,
+                ] : null,
+            ];
+            
+            // 5. Creative Concept
+            $creativeWork = $episode->creativeWorks()->latest()->first();
+            $conceptStatus = 'pending';
+            if ($creativeWork) {
+                $conceptStatus = 'completed'; // Created is completed for concept itself
+            }
+            $workflowSteps['creative_concept'] = [
+                'step_key' => 'creative_concept',
+                'step_name' => 'Creative Concept',
+                'status' => $conceptStatus,
                 'data' => $creativeWork ? [
                     'id' => $creativeWork->id,
-                    'script_approved' => $creativeWork->script_approved,
-                    'storyboard_approved' => $creativeWork->storyboard_approved,
-                    'status' => $creativeWork->status,
                     'created_at' => $creativeWork->created_at,
-                    'updated_at' => $creativeWork->updated_at
                 ] : null,
                 'deadline' => $episode->deadlines()->where('role', 'kreatif')->first()
             ];
+
+            // 6. Producer Creative Approval
+            $creativeApprStatus = 'pending';
+            if ($creativeWork) {
+                if ($creativeWork->status === 'approved' || ($creativeWork->script_approved && $creativeWork->storyboard_approved)) {
+                    $creativeApprStatus = 'completed';
+                } elseif ($creativeWork->status === 'rejected') {
+                    $creativeApprStatus = 'rejected';
+                } elseif ($creativeWork->status === 'submitted') {
+                    $creativeApprStatus = 'in_progress';
+                } else {
+                    $creativeApprStatus = 'draft';
+                }
+            }
+            $workflowSteps['producer_creative_approval'] = [
+                'step_key' => 'producer_creative_approval',
+                'step_name' => 'Producer (Approve Creative Concept)',
+                'status' => $creativeApprStatus,
+                'rejection_reason' => $creativeWork->rejection_reason ?? null,
+                'review_notes' => $creativeWork->review_notes ?? null,
+                'data' => $creativeWork ? [
+                    'status' => $creativeWork->status,
+                    'updated_at' => $creativeWork->updated_at,
+                ] : null,
+            ];
             
-            // 3. Sound Engineer Recording
+            // 7. Sound Recording
             $soundRecording = $episode->soundEngineerRecordings()->latest()->first();
-            $workflowSteps['sound_recording'] = [
+            $workflowSteps['vocal_recording'] = [
+                'step_key' => 'vocal_recording',
                 'step_name' => 'Sound Recording',
                 'status' => $soundRecording ? ($soundRecording->status === 'completed' ? 'completed' : $soundRecording->status) : 'pending',
+                'rejection_reason' => $soundRecording->rejection_reason ?? null,
+                'review_notes' => $soundRecording->review_notes ?? null,
                 'data' => $soundRecording ? [
                     'id' => $soundRecording->id,
                     'status' => $soundRecording->status,
@@ -784,11 +869,32 @@ class EpisodeController extends Controller
                 'deadline' => $episode->deadlines()->where('role', 'sound_eng')->first()
             ];
             
-            // 4. Production
-            $produksiWork = ProduksiWork::where('episode_id', $episode->id)->latest()->first();
-            $workflowSteps['production'] = [
+            // 8. Vocal Editing
+            $soundEditing = $episode->soundEngineerEditings()->latest()->first();
+            $workflowSteps['vocal_editing'] = [
+                'step_key' => 'vocal_editing',
+                'step_name' => 'Vocal Editing',
+                'status' => $soundEditing ? ($soundEditing->status === 'approved' ? 'completed' : ($soundEditing->status === 'revision_needed' ? 'rejected' : 'in_progress')) : 'pending',
+                'rejection_reason' => $soundEditing->rejection_reason ?? null,
+                'review_notes' => $soundEditing->review_notes ?? null,
+                'data' => $soundEditing ? [
+                    'id' => $soundEditing->id,
+                    'status' => $soundEditing->status,
+                    'created_at' => $soundEditing->created_at,
+                    'updated_at' => $soundEditing->updated_at,
+                    'submitted_at' => $soundEditing->submitted_at
+                ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'sound_eng')->first()
+            ];
+            
+            // 9. Production
+            $produksiWork = \App\Models\ProduksiWork::where('episode_id', $episode->id)->latest()->first();
+            $workflowSteps['shooting_production'] = [
+                'step_key' => 'shooting_production',
                 'step_name' => 'Production',
                 'status' => $produksiWork ? ($produksiWork->status === 'completed' ? 'completed' : $produksiWork->status) : 'pending',
+                'rejection_reason' => $produksiWork->rejection_reason ?? null,
+                'review_notes' => $produksiWork->review_notes ?? null,
                 'data' => $produksiWork ? [
                     'id' => $produksiWork->id,
                     'status' => $produksiWork->status,
@@ -799,11 +905,14 @@ class EpisodeController extends Controller
                 'deadline' => $episode->deadlines()->where('role', 'produksi')->first()
             ];
             
-            // 5. Editor
+            // 9. Editor
             $editorWork = $episode->editorWorks()->latest()->first();
-            $workflowSteps['editing'] = [
+            $workflowSteps['video_editing'] = [
+                'step_key' => 'video_editing',
                 'step_name' => 'Editing',
                 'status' => $editorWork ? ($editorWork->status === 'completed' ? 'completed' : $editorWork->status) : 'pending',
+                'rejection_reason' => $editorWork->rejection_reason ?? null,
+                'review_notes' => $editorWork->review_notes ?? null,
                 'data' => $editorWork ? [
                     'id' => $editorWork->id,
                     'status' => $editorWork->status,
@@ -814,11 +923,14 @@ class EpisodeController extends Controller
                 'deadline' => $episode->deadlines()->where('role', 'editor')->first()
             ];
             
-            // 6. Quality Control
+            // 10. Quality Control
             $qcWork = $episode->qualityControls()->latest()->first();
             $workflowSteps['quality_control'] = [
+                'step_key' => 'quality_control',
                 'step_name' => 'Quality Control',
-                'status' => $qcWork ? ($qcWork->status === 'approved' ? 'completed' : ($qcWork->status === 'rejected' ? 'revision_needed' : $qcWork->status)) : 'pending',
+                'status' => $qcWork ? ($qcWork->status === 'approved' ? 'completed' : ($qcWork->status === 'rejected' ? 'rejected' : $qcWork->status)) : 'pending',
+                'rejection_reason' => $qcWork->status === 'rejected' ? $qcWork->qc_notes : null,
+                'review_notes' => $qcWork->status === 'approved' ? $qcWork->qc_notes : null,
                 'data' => $qcWork ? [
                     'id' => $qcWork->id,
                     'status' => $qcWork->status,
@@ -831,25 +943,24 @@ class EpisodeController extends Controller
                 'deadline' => $episode->deadlines()->where('role', 'quality_control')->first()
             ];
 
-            // 7. Promotion (ENHANCED) - Includes BTS, Highlights & Sharing
+            // 11. Promotion (ENHANCED)
             $promotionMaterials = $episode->promotionMaterials()->get();
             $designWorks = $episode->designGrafisWorks()->get();
             $promotionWorks = $episode->promotionWorks()->get();
             
-            // Determine combined promotion status
             $promoStatus = 'pending';
             if ($promotionWorks->where('status', 'published')->count() > 0 || $promotionMaterials->whereIn('status', ['completed', 'published', 'approved'])->count() > 0) {
                  $promoStatus = 'in_progress_sharing';
-                 // If all expected types are done, it's completed
-                 $isAllDone = $promotionWorks->every(fn($w) => in_array($w->status, ['published', 'completed']));
-                 if ($isAllDone && $promotionWorks->count() > 0) {
+                 $isAllDone = $promotionWorks->count() > 0 && $promotionWorks->every(fn($w) => in_array($w->status, ['published', 'completed']));
+                 if ($isAllDone) {
                      $promoStatus = 'completed';
                  }
             } elseif ($designWorks->where('status', 'completed')->exists() || $promotionWorks->count() > 0) {
                  $promoStatus = 'in_progress';
             }
             
-            $workflowSteps['promotion'] = [
+            $workflowSteps['promotion_sharing'] = [
+                'step_key' => 'promotion_sharing',
                 'step_name' => 'Promotion',
                 'status' => $promoStatus,
                 'data' => [
@@ -860,15 +971,14 @@ class EpisodeController extends Controller
                             'id' => $w->id,
                             'work_type' => $w->work_type,
                             'status' => $w->status,
-                            'has_proof' => !empty($w->social_media_proof),
                             'updated_at' => $w->updated_at
                         ];
                     })
                 ],
                 'deadline' => $episode->deadlines()->where('role', 'promotion')->first()
             ];
-            
-            // 8. Broadcasting
+
+            // 12. Broadcasting
             $broadcastingWork = \App\Models\BroadcastingWork::where('episode_id', $episode->id)->latest()->first();
             $broadcastingStatus = 'pending';
             
@@ -882,7 +992,8 @@ class EpisodeController extends Controller
                 }
             }
             
-            $workflowSteps['broadcasting'] = [
+            $workflowSteps['broadcasting_publishing'] = [
+                'step_key' => 'broadcasting_publishing',
                 'step_name' => 'Broadcasting',
                 'status' => $broadcastingStatus,
                 'data' => $broadcastingWork ? [
@@ -896,7 +1007,94 @@ class EpisodeController extends Controller
                 ] : null,
                 'deadline' => $episode->deadlines()->where('role', 'broadcasting')->first()
             ];
+
+            // 13. Define Workflow Order for Music Programs
+            $workflowOrder = [
+                'program_active',
+                'song_proposal',
+                'song_proposal_approval',
+                'music_arrangement_link',
+                'arrangement_approval',
+                'creative_content',
+                'producer_creative_approval',
+                'vocal_recording',
+                'vocal_editing',
+                'video_editing',
+                'quality_control',
+                'distribution_manager_accept',
+                'broadcasting_schedule'
+            ];
             
+            // Workflow Timeline (History)
+            $workflowStates = $episode->workflowStates()
+                ->with(['assignedToUser', 'performingUser'])
+                ->orderBy('created_at')
+                ->get();
+
+            // Group action history by step
+            $stepHistory = [];
+            foreach ($workflowStates as $state) {
+                $action = $state->metadata['action'] ?? null;
+                if (!$action) continue;
+
+                $targetStep = null;
+                $isRejection = strpos($action, 'rejected') !== false;
+                $isApproval = strpos($action, 'approved') !== false;
+
+                if ($action === 'song_proposal_rejected' || $action === 'song_proposal_approved') {
+                    $targetStep = 'song_proposal_approval';
+                    // Duplicate to song_proposal for visibility
+                    $stepHistory['song_proposal'][] = [
+                        'id' => $state->id . '_dup',
+                        'type' => $isRejection ? 'rejection' : ($isApproval ? 'approval' : 'action'),
+                        'performed_by' => $state->performingUser ? $state->performingUser->name : 'Producer',
+                        'performed_by_role' => $state->performingUser ? $state->performingUser->role : 'Producer',
+                        'notes' => $state->metadata['rejection_reason'] ?? $state->metadata['review_notes'] ?? $state->metadata['notes'] ?? $state->notes,
+                        'timestamp' => $state->created_at,
+                        'timestamp_formatted' => $state->created_at->format('d M Y, H:i')
+                    ];
+                }
+                elseif ($action === 'music_arrangement_rejected' || $action === 'music_arrangement_approved') {
+                    $targetStep = 'arrangement_approval';
+                    // Duplicate to music_arrangement_link for visibility
+                    $stepHistory['music_arrangement_link'][] = [
+                        'id' => $state->id . '_dup',
+                        'type' => $isRejection ? 'rejection' : ($isApproval ? 'approval' : 'action'),
+                        'performed_by' => $state->performingUser ? $state->performingUser->name : 'Producer',
+                        'performed_by_role' => $state->performingUser ? $state->performingUser->role : 'Producer',
+                        'notes' => $state->metadata['rejection_reason'] ?? $state->metadata['review_notes'] ?? $state->metadata['notes'] ?? $state->notes,
+                        'timestamp' => $state->created_at,
+                        'timestamp_formatted' => $state->created_at->format('d M Y, H:i')
+                    ];
+                }
+                elseif ($action === 'creative_work_rejected' || $action === 'creative_work_approved' || $action === 'creative_approved') $targetStep = 'producer_creative_approval';
+                elseif ($action === 'vocal_recording_rejected' || $action === 'vocal_recording_approved' || $action === 'recording_completed') $targetStep = 'vocal_recording';
+                elseif ($action === 'vocal_editing_rejected' || $action === 'vocal_editing_approved' || $action === 'editing_approved') $targetStep = 'vocal_editing';
+                elseif ($action === 'video_editing_rejected' || $action === 'video_editing_approved' || $action === 'editor_submitted') $targetStep = 'video_editing';
+                elseif ($action === 'qc_rejected' || $action === 'qc_approved' || $action === 'qc_revision' || $action === 'qc_finish') $targetStep = 'quality_control';
+                elseif ($action === 'distribution_manager_rejected' || $action === 'distribution_manager_approved') $targetStep = 'distribution_manager_accept';
+
+                if ($targetStep) {
+                    $stepHistory[$targetStep][] = [
+                        'id' => $state->id,
+                        'type' => $isRejection ? 'rejection' : ($isApproval ? 'approval' : 'action'),
+                        'performed_by' => $state->performingUser ? $state->performingUser->name : 'Producer',
+                        'performed_by_role' => $state->performingUser ? $state->performingUser->role : 'Producer',
+                        'notes' => $state->metadata['rejection_reason'] ?? $state->metadata['review_notes'] ?? $state->metadata['notes'] ?? $state->notes,
+                        'timestamp' => $state->created_at,
+                        'timestamp_formatted' => $state->created_at->format('d M Y, H:i')
+                    ];
+                }
+            }
+
+            // Attach history to steps
+            foreach ($workflowSteps as $key => &$step) {
+                $step['history'] = $stepHistory[$key] ?? [];
+                // Backward compatibility for UI if needed
+                $step['rejection_history'] = collect($step['history'])->where('type', 'rejection')->values()->all();
+            }
+            unset($step);
+
             // Calculate Progress
             $completedSteps = collect($workflowSteps)->filter(function($step) {
                 return $step['status'] === 'completed';
@@ -905,12 +1103,8 @@ class EpisodeController extends Controller
             $totalSteps = count($workflowSteps);
             $progressPercentage = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100, 2) : 0;
             
-            // Workflow Timeline (History)
-            $timeline = $episode->workflowStates()
-                ->with(['assignedToUser', 'performingUser'])
-                ->orderBy('created_at')
-                ->get()
-                ->map(function($state) {
+            // Timeline for display
+            $timeline = $workflowStates->map(function($state) {
                     return [
                         'id' => $state->id,
                         'state' => $state->current_state,
@@ -953,6 +1147,7 @@ class EpisodeController extends Controller
                         'name' => $episode->program->name
                     ],
                     'workflow_steps' => $workflowSteps,
+                    'workflow_order' => $workflowOrder,
                     'progress' => [
                         'percentage' => $progressPercentage,
                         'completed_steps' => $completedSteps,

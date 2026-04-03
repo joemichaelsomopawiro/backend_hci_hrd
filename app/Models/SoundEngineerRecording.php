@@ -88,6 +88,11 @@ class SoundEngineerRecording extends Model
         return $this->hasMany(ProductionEquipment::class, 'episode_id', 'episode_id');
     }
 
+    public function equipmentLoans()
+    {
+        return $this->belongsToMany(EquipmentLoan::class, 'equipment_loan_vocal_recording', 'sound_engineer_recording_id', 'equipment_loan_id')->withTimestamps();
+    }
+
     /**
      * Scope untuk recording yang sudah direview
      */

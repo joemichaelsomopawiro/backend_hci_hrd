@@ -90,7 +90,7 @@ class ProductionTeamController extends Controller
             }
             
             // Transform members to include user data explicitly
-            $teams->getCollection()->transform(function ($team) {
+            collect($teams->items())->each(function ($team) {
                 $team->members = $team->members->map(function ($member) {
                     return [
                         'id' => $member->id,
@@ -110,7 +110,6 @@ class ProductionTeamController extends Controller
                 });
                 // Add member count
                 $team->member_count = $team->members->count();
-                return $team;
             });
             
             return response()->json([

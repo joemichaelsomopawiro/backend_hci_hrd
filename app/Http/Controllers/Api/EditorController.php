@@ -7,6 +7,8 @@ use App\Models\EditorWork;
 use App\Models\Episode;
 use App\Models\ProduksiWork;
 use App\Models\ShootingRunSheet;
+use App\Models\CreativeWork;
+use App\Models\MusicArrangement;
 use App\Models\SoundEngineerEditing;
 use App\Models\SoundEngineerRecording;
 use App\Models\Notification;
@@ -184,12 +186,23 @@ class EditorController extends Controller
                 ->where('status', 'completed')
                 ->first();
 
-            // Get approved audio (Mix)
+            // Get creative work (Lyrics/Script)
+            $creativeWork = CreativeWork::where('episode_id', $work->episode_id)
+                ->where('status', 'approved')
+                ->first();
+
+            // Get approved music (Arrangement/Minus One)
+            $approvedArrangement = MusicArrangement::where('episode_id', $work->episode_id)
+                ->whereIn('status', ['approved', 'arrangement_approved'])
+                ->latest()
+                ->first();
+
+            // Get approved audio (Mix from Sound Engineer)
             $approvedAudio = SoundEngineerEditing::where('episode_id', $work->episode_id)
                 ->where('status', 'approved')
                 ->first();
 
-            // Get approved vocal (Recording)
+            // Get approved vocal (Raw Recording)
             $approvedVocal = SoundEngineerRecording::where('episode_id', $work->episode_id)
                 ->where('status', 'reviewed')
                 ->first();
@@ -202,6 +215,19 @@ class EditorController extends Controller
                         'shooting_files' => $produksiWork->shooting_files,
                         'shooting_file_links' => $produksiWork->shooting_file_links,
                         'run_sheet_id' => $produksiWork->run_sheet_id
+                    ] : null,
+                    'creative_files' => $creativeWork ? [
+                        'id' => $creativeWork->id,
+                        'script_link' => $creativeWork->script_link,
+                        'storyboard_link' => $creativeWork->storyboard_link
+                    ] : null,
+                    'approved_arrangement' => $approvedArrangement ? [
+                        'id' => $approvedArrangement->id,
+                        'song_title' => $approvedArrangement->song_title,
+                        'singer_name' => $approvedArrangement->singer_name,
+                        'file_link' => $approvedArrangement->file_link 
+                            ? (strpos($approvedArrangement->file_link, 'http') === 0 ? $approvedArrangement->file_link : 'https://' . $approvedArrangement->file_link) 
+                            : ($approvedArrangement->file_path && strpos($approvedArrangement->file_path, 'http') === 0 ? $approvedArrangement->file_path : null)
                     ] : null,
                     'approved_audio' => $approvedAudio ? [
                         'id' => $approvedAudio->id,
@@ -343,7 +369,18 @@ class EditorController extends Controller
                 ->orderBy('status', 'desc') // completed first
                 ->first();
 
-            // Get approved audio (Mixing/Editing)
+            // Get creative work (Lyrics/Script)
+            $creativeWork = CreativeWork::where('episode_id', $work->episode_id)
+                ->where('status', 'approved')
+                ->first();
+
+            // Get approved music (Arrangement/Minus One)
+            $approvedArrangement = MusicArrangement::where('episode_id', $work->episode_id)
+                ->whereIn('status', ['approved', 'arrangement_approved'])
+                ->latest()
+                ->first();
+
+            // Get approved audio (Mixing/Editing from SE)
             $approvedAudio = SoundEngineerEditing::where('episode_id', $work->episode_id)
                 ->where('status', 'approved')
                 ->first();
@@ -355,17 +392,43 @@ class EditorController extends Controller
 
             // Check completeness
             $hasProductionFiles = $produksiWork && (!empty($produksiWork->shooting_files) || !empty($produksiWork->shooting_file_links));
-            // Check audio from SoundEngineerEditing (support both file_path and file_link)
+            $hasCreative = $creativeWork && !empty($creativeWork->script_link);
+            $hasArrangement = $approvedArrangement && (!empty($approvedArrangement->file_link) || !empty($approvedArrangement->file_path));
             $hasAudio = $approvedAudio && (!empty($approvedAudio->final_file_path) || !empty($approvedAudio->final_file_link));
-            $isComplete = $hasProductionFiles && $hasAudio;
+            $isComplete = $hasProductionFiles && $hasCreative && $hasArrangement && $hasAudio;
 
             // Update work dengan source files lengkap
             $sourceFiles = $work->source_files ?? [];
-            $sourceFiles['produksi_files_available'] = $hasProductionFiles;
+            $sourceFiles['production_files_available'] = $hasProductionFiles;
+            $sourceFiles['creative_available'] = $hasCreative;
+            $sourceFiles['arrangement_available'] = $hasArrangement;
             $sourceFiles['audio_available'] = $hasAudio;
             $sourceFiles['checked_at'] = now()->toDateTimeString();
             $sourceFiles['checked_by'] = $user->id;
             
+            // Creative info
+            if ($hasCreative && $creativeWork) {
+                $sourceFiles['creative_work'] = [
+                    'id' => $creativeWork->id,
+                    'script_link' => $creativeWork->script_link,
+                    'storyboard_link' => $creativeWork->storyboard_link
+                ];
+            }
+
+            // Arrangement info
+            if ($hasArrangement && $approvedArrangement) {
+                $arrUrl = $approvedArrangement->file_link;
+                if ($arrUrl && strpos($arrUrl, 'http') !== 0) {
+                    $arrUrl = 'https://' . $arrUrl;
+                }
+                $sourceFiles['approved_arrangement'] = [
+                    'id' => $approvedArrangement->id,
+                    'song_title' => $approvedArrangement->song_title,
+                    'singer_name' => $approvedArrangement->singer_name,
+                    'file_link' => $arrUrl
+                ];
+            }
+
             // Jika audio available, tambahkan info audio ke source_files
             if ($hasAudio && $approvedAudio) {
                 $audioUrl = $approvedAudio->final_file_link;
@@ -464,16 +527,14 @@ class EditorController extends Controller
             ]);
 
             $missingFiles = [];
-            if (!$hasProductionFiles) {
-                $missingFiles[] = 'Production shooting files';
-            }
-            if (!$hasAudio) {
-                $missingFiles[] = 'Approved audio file from Sound Engineer';
-            }
+            if (!$hasProductionFiles) $missingFiles[] = 'Shooting files (Produksi)';
+            if (!$hasCreative) $missingFiles[] = 'Lyrics/Script (Creative)';
+            if (!$hasArrangement) $missingFiles[] = 'Arrangement (Music Arranger)';
+            if (!$hasAudio) $missingFiles[] = 'Final Mix (Sound Engineer)';
 
             $message = $isComplete 
-                ? 'All files are available. Please review each file and confirm completeness.' 
-                : 'Some files are missing. Please review and report issues to Producer.';
+                ? 'All materials are available. Please review each file and confirm completeness.' 
+                : 'Some materials are missing. Please review and report issues to Producer.';
 
             // Return files for manual review - do NOT auto-advance status
             return response()->json([
@@ -483,6 +544,8 @@ class EditorController extends Controller
                     'file_complete' => $isComplete,
                     'missing_files' => $missingFiles,
                     'has_production_files' => $hasProductionFiles,
+                    'has_creative' => $hasCreative,
+                    'has_arrangement' => $hasArrangement,
                     'has_audio' => $hasAudio,
                     'has_vocal' => !!$approvedVocal,
                     'requires_manual_confirmation' => true
@@ -540,7 +603,7 @@ class EditorController extends Controller
                     is_array($work->source_files) ? $work->source_files : (json_decode($work->source_files, true) ?: []),
                     [
                         'missing_files' => $request->missing_files,
-                        'missing_notes' => $request->notes,
+                        'missing_notes' => $work->formatted_missing_report, // Use the pre-formatted report here
                         'reported_at' => now()->toDateTimeString()
                     ]
                 ),
@@ -578,7 +641,7 @@ class EditorController extends Controller
                     'user_id' => $producer->id,
                     'type' => 'editor_missing_files_reported',
                     'title' => 'Editor Melaporkan File Kurang',
-                    'message' => "Editor {$user->name} melaporkan file yang kurang atau perlu perbaikan untuk Episode {$episode->episode_number}.",
+                    'message' => "Editor {$user->name} melaporkan file yang kurang atau perlu perbaikan untuk Episode {$episode->episode_number}:\n\n{$work->formatted_missing_report}",
                     'data' => [
                         'editor_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
@@ -631,11 +694,15 @@ class EditorController extends Controller
             $validator = Validator::make($request->all(), [
                 'file_status' => 'required|array',
                 'file_status.production_files' => 'required|in:ok,issue,missing',
+                'file_status.creative' => 'required|in:ok,issue,missing',
+                'file_status.arrangement' => 'required|in:ok,issue,missing',
                 'file_status.audio' => 'required|in:ok,issue,missing',
                 'file_status.vocal' => 'nullable|in:ok,issue,missing,not_applicable',
                 'notes' => 'nullable|string|max:5000',
                 'file_notes' => 'nullable|array',
                 'file_notes.production_files' => 'nullable|string|max:2000',
+                'file_notes.creative' => 'nullable|string|max:2000',
+                'file_notes.arrangement' => 'nullable|string|max:2000',
                 'file_notes.audio' => 'nullable|string|max:2000',
                 'file_notes.vocal' => 'nullable|string|max:2000'
             ]);
@@ -661,7 +728,10 @@ class EditorController extends Controller
             $fileNotes = $request->file_notes ?? [];
             
             // Check if all required files are marked as OK
-            $allOk = ($fileStatus['production_files'] === 'ok') && ($fileStatus['audio'] === 'ok');
+            $allOk = ($fileStatus['production_files'] === 'ok') 
+                && ($fileStatus['creative'] === 'ok')
+                && ($fileStatus['arrangement'] === 'ok')
+                && ($fileStatus['audio'] === 'ok');
 
             // Update source_files with manual check results
             $sourceFiles = $work->source_files ?? [];
@@ -732,6 +802,7 @@ class EditorController extends Controller
             ]);
 
             // Notify Producer
+            $productionTeam = $work->episode->program->productionTeam;
             $producer = $productionTeam ? $productionTeam->producer : null;
             
             if ($producer) {

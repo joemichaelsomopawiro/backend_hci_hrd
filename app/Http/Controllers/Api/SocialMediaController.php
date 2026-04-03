@@ -56,20 +56,20 @@ class SocialMediaController extends Controller
                 ], 405);
             }
 
-            $videoPath = $request->video_link;
-            $thumbnailPath = $request->thumbnail_link;
+            $videoPath = $request->input('video_link');
+            $thumbnailPath = $request->input('thumbnail_link');
 
             // Create social media post record
             $post = SocialMediaPost::create([
-                'episode_id' => $request->episode_id,
+                'episode_id' => $request->input('episode_id'),
                 'platform' => 'youtube',
-                'title' => $request->title,
-                'content' => $request->description,
-                'tags' => $request->tags ? json_encode($request->tags) : null,
+                'title' => $request->input('title'),
+                'content' => $request->input('description'),
+                'tags' => $request->input('tags') ? json_encode($request->input('tags')) : null,
                 'media_files' => json_encode([$videoPath]),
                 'thumbnail_url' => $thumbnailPath,
                 'status' => 'scheduled',
-                'scheduled_at' => $request->scheduled_at,
+                'scheduled_at' => $request->input('scheduled_at'),
                 'created_by' => $user->id
             ]);
 
@@ -139,18 +139,18 @@ class SocialMediaController extends Controller
                 ], 405);
             }
 
-            $mediaPaths = $request->media_links ?? [];
+            $mediaPaths = $request->input('media_links', []);
 
             // Create social media post record
             $post = SocialMediaPost::create([
-                'episode_id' => $request->episode_id,
+                'episode_id' => $request->input('episode_id'),
                 'platform' => 'facebook',
                 'title' => 'Facebook Post',
-                'content' => $request->content,
-                'post_url' => $request->link_url,
+                'content' => $request->input('content'),
+                'post_url' => $request->input('link_url'),
                 'media_files' => json_encode($mediaPaths),
                 'status' => 'scheduled',
-                'scheduled_at' => $request->scheduled_at,
+                'scheduled_at' => $request->input('scheduled_at'),
                 'created_by' => $user->id
             ]);
 
@@ -202,16 +202,16 @@ class SocialMediaController extends Controller
                 ], 405);
             }
 
-            $mediaPath = $request->media_link;
+            $mediaPath = $request->input('media_link');
 
             // Create social media post record
             $post = SocialMediaPost::create([
-                'episode_id' => $request->episode_id,
+                'episode_id' => $request->input('episode_id'),
                 'platform' => 'instagram',
                 'title' => 'Instagram Story',
-                'content' => $request->content,
-                'hashtags' => $request->hashtags ? json_encode($request->hashtags) : null,
-                'mentions' => $request->mentions ? json_encode($request->mentions) : null,
+                'content' => $request->input('content'),
+                'hashtags' => $request->input('hashtags') ? json_encode($request->input('hashtags')) : null,
+                'mentions' => $request->input('mentions') ? json_encode($request->input('mentions')) : null,
                 'media_files' => json_encode([$mediaPath]),
                 'status' => 'published',
                 'published_at' => now(),
@@ -282,20 +282,20 @@ class SocialMediaController extends Controller
                 ], 405);
             }
 
-            $mediaPaths = $request->media_links ?? [];
+            $mediaPaths = $request->input('media_links', []);
 
             // Create social media post record
             $post = SocialMediaPost::create([
-                'episode_id' => $request->episode_id,
+                'episode_id' => $request->input('episode_id'),
                 'platform' => 'whatsapp',
                 'title' => 'WhatsApp Group Share',
-                'content' => $request->message,
-                'post_url' => $request->link_url,
+                'content' => $request->input('message'),
+                'post_url' => $request->input('link_url'),
                 'media_files' => json_encode($mediaPaths),
                 'status' => 'published',
                 'published_at' => now(),
                 'created_by' => $user->id,
-                'notes' => "Shared to group: {$request->group_name}"
+                'notes' => "Shared to group: {$request->input('group_name')}"
             ]);
 
             // Simulate WhatsApp API call

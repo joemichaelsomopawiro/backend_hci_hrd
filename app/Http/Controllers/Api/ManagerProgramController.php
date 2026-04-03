@@ -885,7 +885,7 @@ class ManagerProgramController extends Controller
                     'active_programs' => $stats['active_programs'], // Flat for compatibility
                     'total_episodes' => $stats['total_episodes'], // Flat for compatibility
                     'pending_approvals' => $stats['pending_approvals'], // Flat for compatibility
-                    'upcoming_deadlines' => $upcomingDeadlines->count(), // Added
+                    'upcoming_deadlines_count' => $upcomingDeadlines->count(), // Added
                     'budget_requests' => $stats['budget_requests'], // Added
                     'programs' => $programs,
                     'upcoming_deadlines' => $upcomingDeadlines,
@@ -1168,380 +1168,459 @@ class ManagerProgramController extends Controller
      */
     public function monitorEpisodeWorkflow(int $episodeId): JsonResponse
     {
-        $user = auth()->user();
-        
         try {
             $episode = Episode::with([
                 'program',
                 'deadlines',
                 'workflowStates.assignedToUser',
-                'musicArrangements',
-                'creativeWorks',
-                'soundEngineerRecordings',
-                'produksiWorks',
-                'editorWorks',
-                'qualityControls',
+                'musicArrangements.createdBy',
+                'musicArrangements.reviewedBy',
+                'creativeWorks.createdBy',
+                'creativeWorks.reviewedBy',
+                'soundEngineerRecordings.createdBy',
+                'soundEngineerRecordings.reviewedBy',
+                'soundEngineerEditings.createdBy',
+                'soundEngineerEditings.approvedBy',
+                'soundEngineerEditings.rejectedBy',
+                'produksiWorks.createdBy',
+                'produksiWorks.completedBy',
+                'produksiWorks.settingCompletedBy',
+                'editorWorks.createdBy',
+                'editorWorks.reviewedBy',
+                'designGrafisWorks.createdBy',
+                'designGrafisWorks.reviewedBy',
+                'qualityControls.createdBy',
+                'qualityControls.qcBy',
                 'broadcastingSchedules',
-                'broadcastingWorks',
-                'promotionWorks',
-                'designGrafisWorks',
+                'broadcastingWorks.createdBy',
+                'broadcastingWorks.acceptedBy',
+                'promotionWorks.createdBy',
+                'designGrafisWorks.createdBy',
                 'productionTeam.members.user'
             ])->findOrFail($episodeId);
 
-            $buildStep = function ($key, $name, $completed, $status, $reasonIfNotCompleted, $data = null, $deadline = null) {
+            $buildStep = function ($key, $name, $completed, $status, $reason, $data = null, $deadlineRow = null, $completedAt = null, $completedBy = null, $reviewNotes = null, $rejectionReason = null) {
+                $isDeadlineMet = true;
+                if ($completed && $completedAt && $deadlineRow && $deadlineRow->deadline_date) {
+                    $isDeadlineMet = Carbon::parse($completedAt)->startOfDay() <= Carbon::parse($deadlineRow->deadline_date)->startOfDay();
+                }
+
                 $step = [
                     'step_key' => $key,
                     'step_name' => $name,
                     'completed' => (bool) $completed,
                     'status' => $status,
-                    'reason_if_not_completed' => $reasonIfNotCompleted,
+                    'reason_if_not_completed' => $reason,
+                    'review_notes' => $reviewNotes,
+                    'rejection_reason' => $rejectionReason,
+                    'completed_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
+                    'completed_by_name' => $completedBy,
+                    'is_deadline_met' => $isDeadlineMet,
                     'data' => $data,
                 ];
-                if ($deadline !== null) {
-                    $step['deadline'] = $deadline;
+
+                if ($deadlineRow !== null) {
+                    $step['deadline'] = $deadlineRow->deadline_date;
                 }
+
                 return $step;
             };
 
-            // Data Episode
-            $episodeData = [
-                'id' => $episode->id,
-                'episode_number' => $episode->episode_number,
-                'title' => $episode->title,
-                'air_date' => $episode->air_date,
-                'status' => $episode->status,
-                'current_workflow_state' => $episode->current_workflow_state,
-                'days_until_air' => now()->diffInDays($episode->air_date, false),
-                'is_overdue' => now() > $episode->air_date && $episode->status !== 'aired'
-            ];
-
-            // Workflow lengkap Program Musik (urutan tahap) — untuk Aktif Production
+            // Workflow Tracking Logic
             $workflowSteps = [];
-            $dlMusik = $episode->deadlines->where('role', 'musik_arr')->first();
-            $dlKreatif = $episode->deadlines->where('role', 'kreatif')->first();
-            $dlSound = $episode->deadlines->where('role', 'sound_eng')->first();
-            $dlProduksi = $episode->deadlines->where('role', 'produksi')->first();
-            $dlEditor = $episode->deadlines->where('role', 'editor')->first();
+            $deadlines = $episode->deadlines;
 
-            // 1. Program Aktif (kredit program)
-            $programOk = $episode->program && in_array($episode->program->status ?? null, ['active', 'approved', 'in_production'], true);
-            $workflowSteps['program_dikredit'] = $buildStep(
-                'program_dikredit',
-                'Program Aktif',
-                $programOk,
-                $programOk ? 'completed' : 'pending',
+            $workflowOrder = [];
+            if ($episode->program && $episode->program->category === 'musik') {
+                $workflowOrder = [
+                    'program_active', 'song_proposal', 'song_proposal_approval',
+                    'music_arrangement_link', 'arrangement_approval', 'creative_concept',
+                    'producer_creative_approval', 'set_property', 'vocal_recording',
+                    'promotion_content_start', 'shooting_production', 'return_equipment_production',
+                    'return_equipment_vocal', 'vocal_editing', 'video_editing',
+                    'design_promo_editing', 'producer_final_review', 'pm_review',
+                    'quality_control', 'dm_schedule', 'broadcasting_publishing', 'promotion_sharing'
+                ];
+            }
+
+            // --- STEP HISTORY COLLECTION ---
+            $stepHistory = [];
+            
+            // 1. Base Workflow States (Immutable Logs)
+            foreach($episode->workflowStates as $state) {
+                $meta = $state->metadata ?? [];
+                $action = $meta['action'] ?? null;
+                $targetSteps = [$state->current_state];
+                
+                // Smart mapping of actions to dashboard step keys
+                if ($action === 'song_proposal_submitted') $targetSteps = ['song_proposal'];
+                if ($action === 'song_proposal_rejected' || $action === 'song_proposal_approved') $targetSteps = ['song_proposal', 'song_proposal_approval'];
+                
+                if ($action === 'music_arrangement_submitted') $targetSteps = ['music_arrangement_link'];
+                if ($action === 'music_arrangement_rejected' || $action === 'music_arrangement_approved') $targetSteps = ['music_arrangement_link', 'arrangement_approval'];
+                
+                if ($action === 'creative_work_submitted') $targetSteps = ['creative_concept'];
+                if ($action === 'creative_work_rejected' || $action === 'creative_work_approved') $targetSteps = ['creative_concept', 'producer_creative_approval'];
+                
+                if ($action === 'video_editing_submitted') $targetSteps = ['video_editing', 'producer_final_review'];
+                if ($action === 'video_editing_rejected' || $action === 'video_editing_approved') $targetSteps = ['video_editing', 'producer_final_review'];
+                
+                if ($action === 'vocal_editing_submitted') $targetSteps = ['vocal_editing'];
+                if ($action === 'vocal_editing_rejected' || $action === 'vocal_editing_approved') $targetSteps = ['vocal_editing'];
+
+                if ($action === 'shooting_production_completed') $targetSteps = ['shooting_production'];
+
+                $type = 'activity';
+                if (strpos($action ?? '', 'reject') !== false || strpos($state->notes ?? '', 'Reject') !== false) {
+                    $type = 'rejection';
+                } elseif (strpos($action ?? '', 'approve') !== false || strpos($action ?? '', 'completed') !== false) {
+                    $type = 'approval';
+                }
+
+                $logEntry = [
+                    'type' => $type,
+                    'status' => $state->current_state,
+                    'action' => $action,
+                    'notes' => $state->notes,
+                    'reason' => $meta['rejection_reason'] ?? $meta['rejection_notes'] ?? null,
+                    'user' => $state->assignedToUser->name ?? ($state->performingUser->name ?? 'System'),
+                    'created_at' => $state->created_at->toIso8601String()
+                ];
+
+                foreach($targetSteps as $tStep) {
+                   if (!isset($stepHistory[$tStep])) $stepHistory[$tStep] = [];
+                   $stepHistory[$tStep][] = $logEntry;
+                }
+            }
+
+            // 2. Music-Specific History (Fallback from model if WorkflowState is missing)
+            foreach($episode->musicArrangements as $ma) {
+                // Arrangement logs from model as a fallback (will be duplicates but aggregated)
+                if (in_array($ma->status, ['arrangement_rejected', 'arrangement_approved', 'approved'])) {
+                    $arrLog = [
+                        'type' => $ma->status === 'arrangement_rejected' ? 'rejection' : 'approval',
+                        'status' => $ma->status,
+                        'reason' => $ma->rejection_reason,
+                        'notes' => $ma->review_notes,
+                        'user' => $ma->reviewedBy->name ?? 'Producer',
+                        'created_at' => $ma->reviewed_at ? $ma->reviewed_at->toIso8601String() : $ma->updated_at->toIso8601String()
+                    ];
+                    
+                    if (!isset($stepHistory['music_arrangement_link'])) $stepHistory['music_arrangement_link'] = [];
+                    if (!isset($stepHistory['arrangement_approval'])) $stepHistory['arrangement_approval'] = [];
+                    $stepHistory['music_arrangement_link'][] = $arrLog;
+                    $stepHistory['arrangement_approval'][] = $arrLog;
+                }
+            }
+            
+            // --- END HISTORY COLLECTION ---
+            
+            // --- PHASE 1: MUSIC ---
+            $music = $episode->musicArrangements->sortByDesc('created_at')->first();
+            $dlMusik = $deadlines->where('role', 'musik_arr')->first();
+
+            // 1. Program Aktif
+            $programOk = $episode->program && in_array($episode->program->status, ['active', 'approved', 'in_production']);
+            $workflowSteps[] = $buildStep(
+                'program_active', 'Program Aktif', $programOk, $programOk ? 'completed' : 'pending',
                 $programOk ? null : 'Program belum aktif.',
                 ['program_status' => $episode->program->status ?? null]
             );
 
-            // 2. Music Arranger
-            $musicArrangement = $episode->musicArrangements->sortByDesc('created_at')->first();
-            $musicCompleted = $musicArrangement
-                && in_array($musicArrangement->status ?? '', ['approved', 'arrangement_approved'], true);
-            $musicRejected = $musicArrangement && in_array($musicArrangement->status ?? '', ['rejected', 'arrangement_rejected'], true);
-            $workflowSteps['music_arranger'] = $buildStep(
-                'music_arranger',
-                'Music Arranger',
-                $musicCompleted,
-                $musicArrangement ? $musicArrangement->status : 'pending',
-                $musicRejected ? ('Ditolak oleh Producer' . ($musicArrangement->rejection_reason ? ': ' . $musicArrangement->rejection_reason : '')) : (!$musicArrangement ? 'Belum sampai tahap Music Arranger.' : 'Belum disetujui Producer.'),
-                $musicArrangement ? ['id' => $musicArrangement->id, 'status' => $musicArrangement->status, 'song_title' => $musicArrangement->song_title, 'rejection_reason' => $musicArrangement->rejection_reason ?? null] : null,
-                $dlMusik
+            // 2. Song Proposal (Music Arranger)
+            // Proposal is "done" if it's been submitted (status is not draft)
+            $proposalSubmitted = $music && !in_array($music->status, ['draft']);
+            $workflowSteps[] = $buildStep(
+                'song_proposal', 'Song Proposal (Music Arranger)', $proposalSubmitted, 
+                $proposalSubmitted ? 'completed' : ($music ? $music->status : 'pending'),
+                $music && $music->status === 'song_rejected' ? 'Ditolak: ' . $music->rejection_reason : (!$music ? 'Belum diajukan.' : null),
+                $music ? ['song_title' => $music->song_title, 'singer_name' => $music->singer_name] : null,
+                $dlMusik, $music?->created_at, $music?->createdBy?->name,
+                $music?->review_notes,
+                $music?->status === 'song_rejected' ? $music?->rejection_reason : null
             );
 
-            // 3. Producer (approve Music Arranger)
-            $workflowSteps['producer_music_arranger'] = $buildStep(
-                'producer_music_arranger',
-                'Producer (approve Music Arranger)',
-                $musicCompleted,
-                $musicCompleted ? 'completed' : ($musicRejected ? 'rejected' : 'pending'),
-                $musicRejected ? ('Ditolak: ' . ($musicArrangement->rejection_reason ?? 'Alasan tidak dicatat.')) : (!$musicArrangement ? 'Belum ada usulan dari Music Arranger.' : 'Menunggu approval Producer.'),
-                $musicArrangement ? ['reviewed_at' => $musicArrangement->reviewed_at, 'review_notes' => $musicArrangement->review_notes ?? null] : null
+            // 3. Producer (Approve Song Proposal)
+            // Approved if status is beyond song_approved
+            $songAppr = $music && in_array($music->status, ['song_approved', 'arrangement_in_progress', 'arrangement_submitted', 'arrangement_rejected', 'arrangement_approved', 'approved']);
+            $workflowSteps[] = $buildStep(
+                'song_proposal_approval', 'Producer (Approve Song Proposal)', $songAppr,
+                $songAppr ? 'completed' : ($music && $music->status === 'song_rejected' ? 'rejected' : 'pending'),
+                $music && $music->status === 'song_rejected' ? 'Ditolak: ' . $music->rejection_reason : (!$music ? 'Menunggu usulan.' : 'Menunggu review Producer.'),
+                null, null, $music?->reviewed_at, $music?->reviewedBy?->name,
+                $music?->review_notes,
+                $music?->status === 'song_rejected' ? $music?->rejection_reason : null
             );
 
-            // 4. Sound Engineer
-            $soundRecording = $episode->soundEngineerRecordings->sortByDesc('created_at')->first();
-            $soundCompleted = $soundRecording && $soundRecording->status === 'completed';
-            $workflowSteps['sound_engineer'] = $buildStep(
-                'sound_engineer',
-                'Sound Engineer',
-                $soundCompleted,
-                $soundRecording ? $soundRecording->status : 'pending',
-                $soundCompleted ? null : (!$soundRecording ? 'Belum sampai tahap Sound Engineer.' : 'Belum selesai recording.'),
-                $soundRecording ? ['id' => $soundRecording->id, 'status' => $soundRecording->status] : null,
-                $dlSound
+            // 4. Music Arrangement Link
+            // Done if arrangement has been submitted at least once
+            $arrSubmitted = $music && in_array($music->status, ['arrangement_submitted', 'arrangement_approved', 'approved']);
+            $workflowSteps[] = $buildStep(
+                'music_arrangement_link', 'Music Arrangement Link', $arrSubmitted,
+                $arrSubmitted ? 'completed' : ($music && $music->status === 'arrangement_rejected' ? 'rejected' : ($songAppr ? 'pending' : 'blocked')),
+                $music && $music->status === 'arrangement_rejected' ? 'Ditolak: ' . $music->rejection_reason : (!$songAppr ? 'Menunggu approval lagu.' : 'Belum disubmit.'),
+                $music ? ['file_link' => $music->file_link] : null,
+                $dlMusik, $music?->submitted_at, $music?->createdBy?->name,
+                $music?->status === 'arrangement_approved' ? $music?->review_notes : null,
+                $music?->status === 'arrangement_rejected' ? $music?->rejection_reason : null
             );
 
-            // 5. Tim Setting
-            $produksiWork = $episode->produksiWorks->sortByDesc('created_at')->first();
-            $settingDone = $produksiWork && $produksiWork->setting_completed_at !== null;
-            $workflowSteps['tim_setting'] = $buildStep(
-                'tim_setting',
-                'Tim Setting',
-                $settingDone,
-                $settingDone ? 'completed' : ($produksiWork ? 'in_progress' : 'pending'),
-                $settingDone ? null : (!$produksiWork ? 'Belum ada work Produksi.' : 'Tim Setting belum menyelesaikan.'),
-                $produksiWork ? ['setting_completed_at' => $produksiWork->setting_completed_at] : null,
-                $dlProduksi
+            // 5. Producer (Approve Arrangement)
+            $arrAppr = $music && in_array($music->status, ['arrangement_approved', 'approved']);
+            $workflowSteps[] = $buildStep(
+                'arrangement_approval', 'Producer (Approve Arrangement)', $arrAppr,
+                $arrAppr ? 'completed' : ($music && in_array($music->status, ['arrangement_rejected', 'rejected']) ? 'rejected' : 'pending'),
+                $music && in_array($music->status, ['arrangement_rejected', 'rejected']) ? 'Ditolak: ' . $music->rejection_reason : (!$arrSubmitted ? 'Menunggu link.' : 'Menunggu review Producer.'),
+                null, null, $music?->reviewed_at, $music?->reviewedBy?->name,
+                $music?->review_notes,
+                $music?->status === 'arrangement_rejected' ? $music?->rejection_reason : null
             );
 
-            // 6. Tim Shooting
-            $shootingDone = $produksiWork && $produksiWork->status === 'completed';
-            $workflowSteps['tim_shooting'] = $buildStep(
-                'tim_shooting',
-                'Tim Shooting',
-                $shootingDone,
-                $produksiWork ? $produksiWork->status : 'pending',
-                $shootingDone ? null : (!$produksiWork ? 'Belum ada work Produksi.' : 'Tim Shooting belum selesai (run sheet & file syuting).'),
-                $produksiWork ? ['id' => $produksiWork->id, 'status' => $produksiWork->status, 'completed_at' => $produksiWork->completed_at] : null,
-                $dlProduksi
+            // --- PHASE 2: CREATIVE (Depends on Music Approved) ---
+            $creative = $episode->creativeWorks->sortByDesc('created_at')->first();
+            $dlKreatif = $deadlines->where('role', 'kreatif')->first();
+            $creativeDone = $creative && $creative->script_approved && $creative->storyboard_approved;
+
+            // 6. Creative (Script & Storyboard)
+            $creativeActive = $arrAppr;
+            $workflowSteps[] = $buildStep(
+                'creative_concept', 'Creative (Script & Storyboard)', $creativeDone,
+                $creativeDone ? 'completed' : ($creativeActive ? ($creative ? ($creative->status === 'rejected' ? 'rejected' : 'in_progress') : 'pending') : 'blocked'),
+                !$creativeActive ? 'Menunggu aransemen musik di-approve.' : ($creative && $creative->status === 'rejected' ? 'Ditolak: ' . $creative->rejection_reason : (!$creative ? 'Belum diajukan.' : 'Proses script/storyboard.')),
+                null, $dlKreatif, $creative?->created_at, $creative?->createdBy?->name,
+                $creative?->status === 'approved' ? $creative?->review_notes : null,
+                $creative?->status === 'rejected' ? $creative?->rejection_reason : null
             );
 
-            // 7. Creative
-            $creativeWork = $episode->creativeWorks->sortByDesc('created_at')->first();
-            $creativeCompleted = $creativeWork && $creativeWork->script_approved && $creativeWork->storyboard_approved;
-            $creativeRejected = $creativeWork && !empty($creativeWork->rejection_reason);
-            $workflowSteps['creative_work'] = $buildStep(
-                'creative_work',
-                'Creative',
-                $creativeCompleted,
-                $creativeWork ? ($creativeCompleted ? 'completed' : 'in_progress') : 'pending',
-                $creativeRejected ? ('Ditolak/Revisi: ' . ($creativeWork->rejection_reason ?? '')) : (!$creativeWork ? 'Belum sampai tahap Creative.' : 'Script/Storyboard belum disetujui.'),
-                $creativeWork ? ['id' => $creativeWork->id, 'script_approved' => $creativeWork->script_approved, 'storyboard_approved' => $creativeWork->storyboard_approved, 'rejection_reason' => $creativeWork->rejection_reason ?? null] : null,
-                $dlKreatif
+            // 7. Producer (Approve Creative)
+            $workflowSteps[] = $buildStep(
+                'producer_creative_approval', 'Producer (Approve Creative)', $creativeDone,
+                $creativeDone ? 'completed' : ($creative ? ($creative->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
+                $creative && $creative->status === 'rejected' ? 'Ditolak: ' . $creative->rejection_reason : (!$creative ? 'Menunggu output kreatif.' : 'Menunggu review Producer.'),
+                null, null, $creative?->reviewed_at, $creative?->reviewedBy?->name,
+                $creative?->review_notes,
+                $creative?->status === 'rejected' ? $creative?->rejection_reason : null
             );
 
-            // 8. Producer (approve Creative)
-            $workflowSteps['producer_creative'] = $buildStep(
-                'producer_creative',
-                'Producer (approve Creative)',
-                $creativeCompleted,
-                $creativeCompleted ? 'completed' : ($creativeWork ? 'in_progress' : 'pending'),
-                $creativeCompleted ? null : (!$creativeWork ? 'Belum ada Creative Work.' : 'Menunggu approval Producer (script & storyboard).'),
-                $creativeWork ? ['script_approved' => $creativeWork->script_approved, 'storyboard_approved' => $creativeWork->storyboard_approved] : null
+            // --- PHASE 3: PRODUCTION & VOCAL & PROMOTION (Parallel Start after Creative Approved) ---
+            $produksi = $episode->produksiWorks->sortByDesc('created_at')->first();
+            $dlProduksi = $deadlines->where('role', 'produksi')->first();
+            $sound = $episode->soundEngineerRecordings->sortByDesc('created_at')->first();
+            $promo = $episode->promotionWorks ?? collect();
+            $btsPromo = $promo->where('work_type', 'bts_video')->first();
+
+            $prodActive = $creativeDone;
+
+            // 8. Tim Setting (Set & Property)
+            $settingDone = $produksi && $produksi->setting_completed_at !== null;
+            $workflowSteps[] = $buildStep(
+                'set_property', 'Tim Setting (Set & Property)', $settingDone,
+                $settingDone ? 'completed' : ($prodActive ? 'pending' : 'blocked'),
+                !$prodActive ? 'Menunggu script kreatif.' : 'Menyiapkan set lokasi.',
+                null, $dlProduksi, $produksi?->setting_completed_at, $produksi?->settingCompletedBy?->name,
+                $produksi?->setting_notes
             );
 
-            // 9. Program Manager
-            $workflowSteps['program_manager'] = $buildStep(
-                'program_manager',
-                'Program Manager',
-                true,
-                'completed',
-                null,
-                ['note' => 'Monitoring & approval program level']
+            // 9. Tim Rekam Vokal (Proses Recording)
+            $soundRec = $episode->soundEngineerRecordings->sortByDesc('created_at')->first();
+            $soundRecDone = $soundRec && $soundRec->status === 'completed';
+            $workflowSteps[] = $buildStep(
+                'vocal_recording', 'Tim Rekam Vokal (Proses Recording)', $soundRecDone,
+                $soundRecDone ? 'completed' : ($prodActive ? ($soundRec && $soundRec->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
+                !$prodActive ? 'Menunggu script kreatif.' : ($soundRec && $soundRec->status === 'rejected' ? 'Ditolak: ' . $soundRec->review_notes : 'Proses recording vokal.'),
+                null, null, $soundRec?->recording_completed_at, $soundRec?->createdBy?->name,
+                $soundRec?->status === 'reviewed' ? $soundRec?->review_notes : null,
+                $soundRec?->status === 'rejected' ? $soundRec?->review_notes : null
             );
 
-            // 10. Distribution Manager
-            $bcWork = $episode->broadcastingWorks->sortByDesc('created_at')->first();
-            $dmApproved = $bcWork && in_array($bcWork->status ?? '', ['published', 'completed', 'approved'], true);
-            $workflowSteps['distribution_manager'] = $buildStep(
-                'distribution_manager',
-                'Distribution Manager',
-                $dmApproved,
-                $bcWork ? $bcWork->status : 'pending',
-                $dmApproved ? null : (!$bcWork ? 'Belum ada Broadcasting Work.' : 'Menunggu approval/jadwal Distribution Manager.'),
-                $bcWork ? ['id' => $bcWork->id, 'status' => $bcWork->status] : null
+            // 10. Promotion (BTS & Initial Tasks)
+            $promoStarted = $btsPromo !== null;
+            $workflowSteps[] = $buildStep(
+                'promotion_content_start', 'Promotion (BTS & Initial Tasks)', $promoStarted,
+                $promoStarted ? 'completed' : ($prodActive ? 'pending' : 'blocked'),
+                !$prodActive ? 'Menunggu script kreatif.' : 'Memulai konten promosi.',
+                null, null, $btsPromo?->created_at, $btsPromo?->createdBy?->name
             );
 
-            // 11. Art Set / Property
-            $equipmentCount = ProductionEquipment::where('episode_id', $episode->id)->count();
-            $workflowSteps['art_set_property'] = $buildStep(
-                'art_set_property',
-                'Art Set / Property',
-                $produksiWork ? true : false,
-                $produksiWork ? 'completed' : 'pending',
-                $produksiWork ? null : 'Terkait Produksi (request equipment).',
-                ['equipment_requests_count' => $equipmentCount]
+            // 11. Tim Shooting (Production)
+            $shootingDone = $produksi && $produksi->status === 'completed';
+            $workflowSteps[] = $buildStep(
+                'shooting_production', 'Tim Shooting (Production)', $shootingDone,
+                $shootingDone ? 'completed' : ($settingDone ? ($produksi && $produksi->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
+                !$settingDone ? 'Menunggu set lokasi siap.' : ($produksi && $produksi->status === 'rejected' ? 'Ditolak: ' . $produksi->rejection_notes : 'Proses pengambilan gambar.'),
+                null, $dlProduksi, $produksi?->completed_at, $produksi?->completedBy?->name,
+                $produksi?->approval_notes,
+                $produksi?->status === 'rejected' ? $produksi?->rejection_notes : null
             );
 
-            // 12. Promotion (BTS & sharing)
-            $promoWorks = $episode->promotionWorks ?? collect();
-            $promoBts = $promoWorks->where('work_type', 'bts_video')->first();
-            $promoCompleted = $promoBts && in_array($promoBts->status ?? '', ['approved', 'published', 'editing'], true);
-            $workflowSteps['promotion'] = $buildStep(
-                'promotion',
-                'Promotion',
-                $promoCompleted,
-                $promoBts ? $promoBts->status : 'pending',
-                $promoCompleted ? null : (!$promoBts ? 'Belum ada work BTS Video & Talent Photos.' : 'Promotion (BTS/foto) belum selesai/disetujui.'),
-                $promoBts ? ['id' => $promoBts->id, 'status' => $promoBts->status] : null
+            // 12. Return Equipment (Setting & Shooting)
+            $workflowSteps[] = $buildStep(
+                'return_equipment_production', 'Kembalikan Barang (Setting & Shooting)', $shootingDone,
+                $shootingDone ? 'completed' : ($shootingDone ? 'pending' : 'blocked'),
+                !$shootingDone ? 'Menunggu syuting selesai.' : 'Menyiapkan verifikasi barang.',
+                null, null, $produksi?->completed_at, $produksi?->completedBy?->name,
+                $produksi?->approval_notes
             );
 
-            // 13. Broadcasting
-            $bcCompleted = $bcWork && in_array($bcWork->status ?? '', ['published', 'completed'], true);
-            $workflowSteps['broadcasting'] = $buildStep(
-                'broadcasting',
-                'Broadcasting',
-                $bcCompleted || $episode->status === 'aired',
-                $episode->status === 'aired' ? 'completed' : ($bcWork ? $bcWork->status : 'pending'),
-                ($bcCompleted || $episode->status === 'aired') ? null : (!$bcWork ? 'Belum ada Broadcasting Work.' : 'Upload YouTube/Website belum selesai.'),
-                $bcWork ? ['id' => $bcWork->id, 'status' => $bcWork->status, 'youtube_url' => $bcWork->youtube_url ?? null, 'website_url' => $bcWork->website_url ?? null] : null
+            // 13. Return Equipment (Tim Rekam Vokal)
+            $workflowSteps[] = $buildStep(
+                'return_equipment_vocal', 'Kembalikan Barang (Tim Rekam Vokal)', $soundRecDone,
+                $soundRecDone ? 'completed' : ($soundRecDone ? 'pending' : 'blocked'),
+                !$soundRecDone ? 'Menunggu recording selesai.' : 'Menyiapkan verifikasi barang.',
+                null, null, $soundRec?->recording_completed_at, $soundRec?->createdBy?->name,
+                $soundRec?->review_notes
             );
 
-            // 14. Editor Promosi (highlight, iklan, dll)
-            $editorPromoWorks = $promoWorks->whereIn('work_type', ['highlight_ig', 'highlight_tv', 'highlight_facebook', 'iklan_episode_tv']);
-            $editorPromoDone = $editorPromoWorks->isEmpty() ? false : $editorPromoWorks->every(fn ($w) => in_array($w->status ?? '', ['approved', 'published'], true));
-            $workflowSteps['editor_promosi'] = $buildStep(
-                'editor_promosi',
-                'Editor Promosi',
-                $editorPromoDone,
-                $editorPromoDone ? 'completed' : ($editorPromoWorks->isNotEmpty() ? 'in_progress' : 'pending'),
-                $editorPromoDone ? null : ($editorPromoWorks->isEmpty() ? 'Belum ada task Editor Promosi (Highlight/Iklan).' : 'Ada task Editor Promosi belum disetujui.'),
-                ['count' => $editorPromoWorks->count()]
+            // 14. Sound Engineer (Vocal Editing)
+            $soundEdit = $episode->soundEngineerEditings->sortByDesc('created_at')->first();
+            $soundEditDone = $soundEdit && in_array($soundEdit->status, ['completed', 'approved']);
+            $workflowSteps[] = $buildStep(
+                'vocal_editing', 'Sound Engineer (Vocal Editing)', $soundEditDone,
+                $soundEditDone ? 'completed' : ($soundRecDone ? ($soundEdit && $soundEdit->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
+                !$soundRecDone ? 'Menunggu recording selesai.' : ($soundEdit && $soundEdit->status === 'rejected' ? 'Ditolak: ' . $soundEdit->rejection_reason : 'Proses editing vokal.'),
+                [
+                    'rejection_reason' => $soundEdit?->rejection_reason,
+                    'file_link' => $soundEdit?->final_file_link ?? $soundEdit?->vocal_file_link
+                ], 
+                null, $soundEdit?->approved_at ?? $soundEdit?->submitted_at, $soundEdit?->createdBy?->name,
+                $soundEdit?->status === 'approved' ? $soundEdit?->approval_notes : null,
+                $soundEdit?->status === 'rejected' ? $soundEdit?->rejection_reason : null
             );
 
-            // 15. Design Grafis
-            $designWorks = $episode->designGrafisWorks ?? collect();
-            $designLatest = $designWorks->sortByDesc('created_at')->first();
-            $designCompleted = $designLatest && in_array($designLatest->status ?? '', ['completed', 'approved'], true);
-            $workflowSteps['design_grafis'] = $buildStep(
-                'design_grafis',
-                'Design Grafis',
-                $designCompleted,
-                $designLatest ? $designLatest->status : 'pending',
-                $designCompleted ? null : (!$designLatest ? 'Belum ada work Design Grafis.' : 'Design Grafis belum selesai/disetujui.'),
-                $designLatest ? ['id' => $designLatest->id, 'status' => $designLatest->status] : null
+            // --- PHASE 4: POST-PRODUCTION ---
+            $editor = $episode->editorWorks->sortByDesc('created_at')->first();
+            $dlEditor = $deadlines->where('role', 'editor')->first();
+            $editorDone = $editor && $editor->status === 'completed';
+
+            // 15. Editor (Main Episode)
+            $editorActive = $shootingDone && $soundEditDone;
+            $workflowSteps[] = $buildStep(
+                'video_editing', 'Editor (Main Episode)', $editorDone,
+                $editorDone ? 'completed' : ($editorActive ? ($editor && $editor->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
+                !$editorActive ? 'Menunggu Shooting & Vocal Editing selesai.' : ($editor && $editor->status === 'rejected' ? 'Ditolak: ' . $editor->rejection_notes : 'Proses editing video utama.'),
+                null, $dlEditor, $editor?->updated_at, $editor?->createdBy?->name,
+                $editor?->status === 'approved' ? $editor?->approval_notes : null,
+                $editor?->status === 'rejected' ? $editor?->rejection_notes : null
             );
 
-            // 16. Editor (video utama)
-            $editorWork = $episode->editorWorks->sortByDesc('created_at')->first();
-            $editorCompleted = $editorWork && $editorWork->status === 'completed';
-            $workflowSteps['editing'] = $buildStep(
-                'editing',
-                'Editing',
-                $editorCompleted,
-                $editorWork ? $editorWork->status : 'pending',
-                $editorCompleted ? null : (!$editorWork ? 'Belum sampai tahap Editor.' : 'Editor belum menyelesaikan video.'),
-                $editorWork ? ['id' => $editorWork->id, 'status' => $editorWork->status] : null,
-                $dlEditor
+            // 16. Design Grafis & Editor Promotion
+            $design = $episode->designGrafisWorks->sortByDesc('created_at')->first();
+            $designDone = $design && in_array($design->status, ['completed', 'approved']);
+            $promoActive = $promoStarted;
+            $workflowSteps[] = $buildStep(
+                'design_promo_editing', 'Design Grafis & Editor Promotion', $designDone,
+                $designDone ? 'completed' : ($promoActive ? ($design && $design->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
+                !$promoActive ? 'Menunggu task promosi dimulai.' : ($design && $design->status === 'rejected' ? 'Ditolak: ' . $design->rejection_notes : 'Membuat design & promo tools.'),
+                null, null, $design?->updated_at, $design?->createdBy?->name,
+                $design?->status === 'approved' ? $design?->approval_notes : null,
+                $design?->status === 'rejected' ? $design?->rejection_notes : null
             );
 
-            // 17. Quality Control
-            $qcWork = $episode->qualityControls->sortByDesc('created_at')->first();
-            $qcCompleted = $qcWork && $qcWork->status === 'approved';
-            $qcRejected = $qcWork && $qcWork->status === 'rejected';
-            $workflowSteps['quality_control'] = $buildStep(
-                'quality_control',
-                'Quality Control',
-                $qcCompleted,
-                $qcWork ? $qcWork->status : 'pending',
-                $qcRejected ? ('Ditolak: ' . ($qcWork->qc_notes ?? 'Perlu revisi.')) : (!$qcWork ? 'Belum sampai tahap QC.' : 'Menunggu approval QC.'),
-                $qcWork ? ['id' => $qcWork->id, 'status' => $qcWork->status, 'qc_notes' => $qcWork->qc_notes ?? null] : null
+            // --- PHASE 5: REVIEW & QC ---
+            
+            // 17. Producer Final Review (Cek File Kurang)
+            $finalReviewDone = $editorDone && $designDone;
+            $workflowSteps[] = $buildStep(
+                'producer_final_review', 'Producer Final Review', $finalReviewDone,
+                $finalReviewDone ? 'completed' : ($editorDone ? 'pending' : 'blocked'),
+                !$editorDone ? 'Menunggu Editor selesai.' : 'Final review oleh Producer (Cek file/ulang).',
+                null, null, $editor?->updated_at, $editor?->reviewedBy?->name,
+                $editor?->approval_notes
             );
 
-            // Jika episode sudah sampai tahap akhir (sharing works / broadcasting / aired),
-            // semua tahap sebelumnya dianggap selesai (masuk akal: tidak mungkin sampai sharing kalau tahap sebelumnya belum selesai)
-            $promoSharingPublished = $episode->promotionWorks
-                ->whereIn('work_type', ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'])
-                ->where('status', 'published')
-                ->isNotEmpty();
-            $reachedEnd = $episode->status === 'aired'
-                || ($bcWork && in_array($bcWork->status ?? '', ['published', 'completed'], true))
-                || $promoSharingPublished;
-            if ($reachedEnd) {
-                foreach ($workflowSteps as $k => $step) {
-                    $workflowSteps[$k] = array_merge($step, [
-                        'completed' => true,
-                        'status' => 'completed',
-                        'reason_if_not_completed' => null,
-                    ]);
+            // 18. Program Manager Review
+            $workflowSteps[] = $buildStep(
+                'pm_review', 'Program Manager Review', $finalReviewDone,
+                $finalReviewDone ? 'completed' : 'pending',
+                null, null, null, $episode->updated_at, 'System'
+            );
+
+            // 19. Quality Control (Distribution Manager)
+            $qc = $episode->qualityControls->sortByDesc('created_at')->first();
+            $qcDone = $qc && $qc->status === 'approved';
+            $workflowSteps[] = $buildStep(
+                'quality_control', 'Quality Control (Distribution Manager)', $qcDone,
+                $qcDone ? 'completed' : ($finalReviewDone ? ($qc && $qc->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
+                !$finalReviewDone ? 'Menunggu review Producer & PM.' : ($qc && $qc->status === 'rejected' ? 'Ditolak: ' . $qc->qc_notes : 'Pengecekan kualitas teknis (Audio/Video).'),
+                ['qc_notes' => $qc?->qc_notes], null, $qc?->updated_at, $qc?->createdBy?->name,
+                $qc?->status === 'approved' ? $qc?->qc_notes : null,
+                $qc?->status === 'rejected' ? $qc?->qc_notes : null
+            );
+
+            // --- PHASE 6: FINAL & BROADCASTING ---
+
+            // 20. Distribution Manager Accept (Schedule)
+            $bc = $episode->broadcastingWorks->sortByDesc('created_at')->first();
+            $dmDone = $bc && in_array($bc->status, ['approved', 'scheduled', 'published', 'completed']);
+            $workflowSteps[] = $buildStep(
+                'dm_schedule', 'Distribution Manager Accept (Schedule)', $dmDone,
+                $dmDone ? 'completed' : ($qcDone ? 'pending' : 'blocked'),
+                !$qcDone ? 'Menunggu lolos QC.' : 'Plotting jadwal tayang konten.',
+                null, null, $bc?->accepted_at, $bc?->acceptedBy?->name,
+                $bc?->notes
+            );
+
+            // 21. Broadcasting (Published)
+            $bcDone = $bc && in_array($bc->status, ['published', 'completed']);
+            $workflowSteps[] = $buildStep(
+                'broadcasting_publishing', 'Broadcasting (Published)', $bcDone,
+                $bcDone ? 'completed' : ($dmDone ? 'pending' : 'blocked'),
+                !$dmDone ? 'Menunggu jadwal dari DM.' : 'Konten online/tayang di YouTube/TV.',
+                ['youtube_url' => $bc?->youtube_url], null, $bc?->published_time, $bc?->createdBy?->name,
+                $bc?->notes
+            );
+
+            // 22. Promotion Sharing (Socmed Final)
+            $sharing = $promo->whereIn('work_type', ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'])->where('status', 'published')->first();
+            $workflowSteps[] = $buildStep(
+                'promotion_sharing', 'Promotion Sharing (Socmed Final)', $sharing !== null,
+                $sharing ? 'completed' : ($bcDone ? 'pending' : 'blocked'),
+                !$bcDone ? 'Menunggu konten tayang.' : 'Sharing link tayang ke media sosial.',
+                null, null, $sharing?->updated_at, $sharing?->createdBy?->name
+            );
+
+            // Check reached end
+            $reachedEnd = $episode->status === 'aired' || $bcDone;
+            foreach ($workflowSteps as $key => &$st) {
+                $st['history'] = $stepHistory[$st['step_key']] ?? [];
+                
+                // Ensure rejection_reason is available even if step is completed
+                if (empty($st['rejection_reason']) && !empty($st['history'])) {
+                    $lastRej = collect($st['history'])->where('type', 'rejection')->sortByDesc('created_at')->first();
+                    if ($lastRej) {
+                        $st['rejection_reason'] = ($lastRej['reason'] ?? $lastRej['notes'] ?? 'Rejected');
+                    }
                 }
             }
+            unset($st);
 
-            // Urutan tampilan untuk frontend (Aktif Production): flow MULAI dari Music Arranger
-            $workflowOrder = [
-                'music_arranger', 'producer_music_arranger', 'creative_work', 'producer_creative',
-                'sound_engineer', 'tim_setting', 'tim_shooting', 'art_set_property',
-                'promotion', 'design_grafis', 'editor_promosi', 'editing', 'quality_control',
-                'distribution_manager', 'broadcasting', 'program_manager', 'program_dikredit'
-            ];
-            $workflowStepsOrdered = [];
-            foreach ($workflowOrder as $key) {
-                if (isset($workflowSteps[$key])) {
-                    $workflowStepsOrdered[$key] = $workflowSteps[$key];
-                }
-            }
-
-            // Calculate Progress
-            $completedSteps = collect($workflowStepsOrdered)->filter(function ($step) {
-                return !empty($step['completed']);
-            })->count();
-            $totalSteps = count($workflowStepsOrdered);
-            $progressPercentage = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100, 2) : 0;
-            
-            // Workflow Timeline (History)
-            $timeline = $episode->workflowStates()
-                ->with('assignedToUser')
-                ->orderBy('created_at')
-                ->get()
-                ->map(function($state) {
-                    return [
-                        'id' => $state->id,
-                        'state' => $state->current_state,
-                        'state_label' => $state->state_label,
-                        'assigned_to_role' => $state->assigned_to_role,
-                        'assigned_to_user' => $state->assignedToUser ? $state->assignedToUser->name : null,
-                        'notes' => $state->notes,
-                        'created_at' => $state->created_at,
-                        'updated_at' => $state->updated_at
-                    ];
-                });
-            
-            // All Deadlines Summary
-            $deadlinesSummary = $episode->deadlines->map(function($deadline) {
-                return [
-                    'id' => $deadline->id,
-                    'role' => $deadline->role,
-                    'role_label' => $deadline->role_label,
-                    'deadline_date' => $deadline->deadline_date,
-                    'status' => $deadline->status,
-                    'is_completed' => $deadline->is_completed,
-                    'is_overdue' => $deadline->isOverdue(),
-                    'completed_at' => $deadline->completed_at
-                ];
-            });
-            
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'episode' => $episodeData,
-                    'program' => [
-                        'id' => $episode->program->id,
-                        'name' => $episode->program->name
+                    'episode' => [
+                        'id' => $episode->id,
+                        'episode_number' => $episode->episode_number,
+                        'title' => $episode->title,
+                        'air_date' => $episode->air_date,
+                        'status' => $episode->status,
+                        'current_workflow_state' => $episode->current_workflow_state
                     ],
-                    'workflow_steps' => $workflowStepsOrdered,
+                    'workflow_steps' => $workflowSteps,
                     'workflow_order' => $workflowOrder,
-                    'ui_hint' => [
-                        'aktif_production_collapsible' => true,
-                        'aktif_production_default_open' => false,
-                        'reason_clickable' => true,
-                    ],
-                    'progress' => [
-                        'percentage' => $progressPercentage,
-                        'completed_steps' => $completedSteps,
-                        'total_steps' => $totalSteps
-                    ],
-                    'timeline' => $timeline,
-                    'deadlines' => $deadlinesSummary,
-                    'production_team' => $episode->productionTeam ? [
-                        'id' => $episode->productionTeam->id,
-                        'name' => $episode->productionTeam->name,
-                        'members' => $episode->productionTeam->members->map(function($member) {
-                            return [
-                                'id' => $member->id,
-                                'user_id' => $member->user_id,
-                                'user_name' => $member->user->name ?? null,
-                                'role' => $member->role
-                            ];
-                        })
-                    ] : null
+                    'summary' => [
+                        'total_steps' => count($workflowSteps),
+                        'completed_steps' => collect($workflowSteps)->where('completed', true)->count(),
+                        'percentage' => round((collect($workflowSteps)->where('completed', true)->count() / count($workflowSteps)) * 100)
+                    ]
                 ],
-                'message' => 'Episode workflow monitoring data retrieved successfully'
+                'message' => 'Workflow tracking data retrieved successfully'
             ]);
+
         } catch (\Exception $e) {
+            Log::error('Workflow Monitoring Error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to get workflow monitoring',
+                'message' => 'Failed to load workflow data',
                 'error' => $e->getMessage()
             ], 500);
         }
