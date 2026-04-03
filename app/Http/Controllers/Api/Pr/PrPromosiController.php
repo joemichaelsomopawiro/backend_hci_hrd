@@ -683,6 +683,7 @@ class PrPromosiController extends Controller
                         'title' => $episode->title ?? ('Episode ' . $episode->episode_number),
                         'program_name' => $episode->program?->name ?? '',
                         'youtube_link' => $episode->broadcastingWork?->youtube_url ?? null,
+                        'jetstream_url' => $episode->broadcastingWork?->metadata['jetstream_url'] ?? null,
                         'work_status' => $workStatus,
                         'last_edited' => $episode->promotionWork?->updated_at ? $episode->promotionWork->updated_at->format('Y-m-d H:i') : null,
                         'status' => $episode->status,
@@ -735,6 +736,7 @@ class PrPromosiController extends Controller
                 'data' => $tasks,
                 'ig_highlight_link' => $igHighlightLink,
                 'fb_highlight_link' => $fbHighlightLink,
+                'jetstream_url' => $promotionWork->episode->broadcastingWork?->metadata['jetstream_url'] ?? null,
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);

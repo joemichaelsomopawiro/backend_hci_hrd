@@ -216,16 +216,27 @@ class PrBroadcastingController extends Controller
                 'title' => 'required|string',
                 'description' => 'required|string',
                 'youtube_url' => 'required|url',
-                'thumbnail_small_url' => 'nullable|string'
+                'thumbnail_small_url' => 'nullable|string',
+                'tags' => 'nullable|string',
+                'jetstream_url' => 'required|url',
+                'visibility' => 'nullable|string',
+                'playlist' => 'nullable|string'
             ]);
 
             $work = PrBroadcastingWork::findOrFail($id);
+
+            $meta = is_array($work->metadata) ? $work->metadata : [];
+            $meta['tags'] = $request->tags;
+            $meta['jetstream_url'] = $request->jetstream_url;
+            $meta['visibility'] = $request->visibility;
+            $meta['playlist'] = $request->playlist;
 
             $work->update([
                 'title' => $request->title,
                 'description' => $request->description,
                 'youtube_url' => $request->youtube_url,
                 'thumbnail_path' => $request->thumbnail_small_url,
+                'metadata' => $meta,
                 'status' => 'published',
                 'published_at' => now(),
                 'created_by' => Auth::id()
@@ -239,8 +250,7 @@ class PrBroadcastingController extends Controller
                 $work->episode,
                 'broadcasting_finish',
                 "Episode published to YouTube: {$request->youtube_url}",
-                ['step' => 9, 'youtube_url' => $request->youtube_url],
-                $work->id
+                ['step' => 9, 'youtube_url' => $request->youtube_url]
             );
 
             // Mark episode as broadcasting_complete so Step 9 shows green checkmark in progress banner

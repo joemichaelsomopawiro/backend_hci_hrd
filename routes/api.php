@@ -36,6 +36,7 @@ use App\Http\Controllers\Api\TaskVisibilityController;
 use App\Http\Controllers\Api\TaskReassignmentController;
 use App\Http\Controllers\Api\Pr\PrCreativeController;
 use App\Http\Controllers\Api\Pr\PrTalentController;
+use App\Http\Controllers\Api\Pr\PrDatabaseController;
 use App\Http\Controllers\Api\GlobalSearchController;
 
 /*
@@ -713,6 +714,14 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
     // Role Filtering Routes (untuk semua role dengan hierarki)
     Route::get('/accessible-roles', [PrRoleFilterController::class, 'getAccessibleRoles']); // Get list role yang bisa di-filter
     Route::get('/validate-role-access/{targetRole}', [PrRoleFilterController::class, 'validateRoleAccess']); // Validate akses ke role tertentu
+
+    // Database Aggregation Routes
+    Route::prefix('database')->group(function () {
+        Route::get('/programs', [PrDatabaseController::class, 'getPrograms']);
+        Route::post('/import', [PrDatabaseController::class, 'importData']);
+        Route::post('/import-from-sheet', [PrDatabaseController::class, 'importFromSheet']);
+        Route::get('/export', [PrDatabaseController::class, 'exportData']);
+    });
 
     // Manager Program Routes
     Route::prefix('manager-program')->group(function () {

@@ -757,7 +757,16 @@ class PrManagerProgramController extends Controller
                 'program.managerProgram',
                 'program.managerDistribusi',
                 'creativeWork',
-                'crews.user'
+                'crews.user',
+                'productionWork.equipmentLoans.loanItems.inventoryItem',
+                'qualityControlWork',
+                'broadcastingWork',
+                'promotionWork',
+                'editorPromosiWork',
+                'designGrafisWork',
+                'managerDistribusiQcWork',
+                'editorWork',
+                'files',
             ])->findOrFail($episodeId);
 
             return response()->json([
