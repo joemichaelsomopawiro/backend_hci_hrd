@@ -17,6 +17,8 @@ class PrTalent extends Model
         'title',
         'birth_place_date',
         'expertise',
-        'type'
+        'type',
+        'social_media',
+        'phone'
     ];
 }

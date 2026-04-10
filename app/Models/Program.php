@@ -320,12 +320,13 @@ class Program extends Model
                 'updated_at' => now()
             ]);
 
-            // ✅ OPTIMIZED: Collect deadlines for bulk insert instead of calling generateDeadlines()
-            // Deadline 1: Editor (H-7 = 7 hari sebelum tayang)
+            // ✅ OPTIMIZED: Collect deadlines for bulk insert using WorkflowStep constants
+            $dl = \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
+
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'editor',
-                'deadline_date' => $airDate->copy()->subDays(7)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['editor'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline editing episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -333,11 +334,10 @@ class Program extends Model
                 'updated_at' => now()
             ];
 
-            // Deadline 2: Creative (H-9 = 9 hari sebelum tayang)
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'kreatif',
-                'deadline_date' => $airDate->copy()->subDays(9)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['kreatif'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline creative work episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -345,11 +345,10 @@ class Program extends Model
                 'updated_at' => now()
             ];
 
-            // Deadline 3: Produksi (H-9 = 9 hari sebelum tayang)
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'produksi',
-                'deadline_date' => $airDate->copy()->subDays(9)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['produksi'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline production episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -357,11 +356,10 @@ class Program extends Model
                 'updated_at' => now()
             ];
 
-            // Deadline 4: Musik Arr (H-8)
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'musik_arr',
-                'deadline_date' => $airDate->copy()->subDays(8)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['musik_arr'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline music arrangement episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -369,11 +367,10 @@ class Program extends Model
                 'updated_at' => now()
             ];
 
-            // Deadline 5: Sound Engineer (H-8)
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'sound_eng',
-                'deadline_date' => $airDate->copy()->subDays(8)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['sound_eng'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline sound engineering episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -481,11 +478,13 @@ class Program extends Model
                 'updated_at' => now()
             ]);
 
-            // BULK DEADLINES (H-7 Editor, H-9 Creative/Production)
+            // BULK DEADLINES using WorkflowStep constants
+            $dl = \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
+
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'editor',
-                'deadline_date' => $airDate->copy()->subDays(7)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['editor'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline editing episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -495,7 +494,7 @@ class Program extends Model
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'kreatif',
-                'deadline_date' => $airDate->copy()->subDays(9)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['kreatif'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline creative work episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -505,7 +504,7 @@ class Program extends Model
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'produksi',
-                'deadline_date' => $airDate->copy()->subDays(9)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['produksi'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline production episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -513,11 +512,10 @@ class Program extends Model
                 'updated_at' => now()
             ];
 
-            // Deadline 4: Musik Arr (H-8)
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'musik_arr',
-                'deadline_date' => $airDate->copy()->subDays(8)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['musik_arr'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline music arrangement episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,
@@ -525,11 +523,10 @@ class Program extends Model
                 'updated_at' => now()
             ];
 
-            // Deadline 5: Sound Engineer (H-8)
             $deadlinesToInsert[] = [
                 'episode_id' => $episodeId,
                 'role' => 'sound_eng',
-                'deadline_date' => $airDate->copy()->subDays(8)->format('Y-m-d H:i:s'),
+                'deadline_date' => $airDate->copy()->subDays($dl['sound_eng'])->format('Y-m-d H:i:s'),
                 'description' => 'Deadline sound engineering episode',
                 'auto_generated' => true,
                 'created_by' => $currentUserId,

@@ -48,7 +48,7 @@ class PrEditorController extends Controller
 
         // Filter by assigned user
         if ($request->has('assigned_to')) {
-            $query->where('assigned_to', $request->assigned_to);
+            $query->where('originally_assigned_to', $request->assigned_to);
         }
 
         $works = $query->orderBy('created_at', 'desc')->get();
@@ -108,7 +108,7 @@ class PrEditorController extends Controller
 
             $work->update([
                 'status' => 'editing',
-                'assigned_to' => Auth::id(),
+                'originally_assigned_to' => Auth::id(),
                 'started_at' => now()
             ]);
 

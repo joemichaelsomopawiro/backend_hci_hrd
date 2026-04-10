@@ -51,11 +51,12 @@ class PrDesignGrafisWork extends Model
         return $this->belongsTo(User::class, 'assigned_to');
     }
 
-    // Calculate deadline as 1 day before air_date
+    // Calculate deadline as 5 days before air_date (per KPI spreadsheet)
     public function calculateDeadline()
     {
         if ($this->episode && $this->episode->air_date) {
-            $this->deadline = \Carbon\Carbon::parse($this->episode->air_date)->subDay();
+            $daysBefore = \App\Constants\WorkflowStep::getDeadlineDaysForRole('design_grafis');
+            $this->deadline = \Carbon\Carbon::parse($this->episode->air_date)->subDays($daysBefore);
         }
     }
 

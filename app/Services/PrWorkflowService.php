@@ -35,13 +35,8 @@ class PrWorkflowService
             $airDate = \Carbon\Carbon::parse($episode->air_date);
 
             foreach ($steps as $stepNumber => $stepInfo) {
-                // Determine deadline days based on role
-                // 9 days before: Kreatif (3), Produksi & Promosi (5), Promosi (10)
-                // 7 days before: Others
-                $daysBefore = 7;
-                if (in_array((int) $stepNumber, [3, 5, 10])) {
-                    $daysBefore = 9;
-                }
+                // Use deadline_days_before from WorkflowStep constants (based on KPI spreadsheet)
+                $daysBefore = $stepInfo['deadline_days_before'] ?? 7;
 
                 $deadlineAt = $airDate->copy()->subDays($daysBefore)->startOfDay();
 
