@@ -206,23 +206,21 @@ class KpiService
                         $lateCount++;
                     }
                 } else if (!$isCompleted) {
-                    // Check if deadline has passed by more than 7 days
                     if ($deadline && now()->diffInDays(Carbon::parse($deadline)) > 7) {
                         $notDoneCount++;
                     } else {
-                        // Still within grace period, don't count yet
                         $points = 0;
                     }
                 }
-
-                $totalPoints += $points;
-                $maxPoints += $setting->points_on_time;
 
                 // Get quality score if exists
                 $qualityScore = KpiQualityScore::where('employee_id', $userId)
                     ->where('pr_episode_id', $episode->id)
                     ->where('workflow_step', $roleKey)
                     ->first();
+
+                $totalPoints += $qualityScore ? $qualityScore->quality_score : $points;
+                $maxPoints += $setting->points_on_time;
 
                 $items[] = [
                     'episode_id' => $episode->id,
@@ -235,7 +233,9 @@ class KpiService
                     'deadline' => $deadline ? Carbon::parse($deadline)->toIso8601String() : null,
                     'completed_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
                     'status' => $status,
-                    'points' => $points,
+                    'points' => $qualityScore ? $qualityScore->quality_score : $points,
+                    'original_points' => $points,
+                    'is_overridden' => $qualityScore !== null,
                     'max_points' => $setting->points_on_time,
                     'quality_score' => $qualityScore ? $qualityScore->quality_score : null,
                     'quality_max' => $setting->quality_max,
@@ -324,6 +324,11 @@ class KpiService
                 // Sound engineer check specifically Needs SE Help
                 if ($roleKey === 'sound_eng' && !$work->needs_sound_engineer_help) continue;
 
+                $qualityScore = KpiQualityScore::where('employee_id', $userId)
+                    ->where('music_episode_id', $episode->id)
+                    ->where('workflow_step', $roleKey)
+                    ->first();
+
                 $isBackup = $this->isBackupWork($user, $roleKey);
 
                 $status = 'not_done';
@@ -347,13 +352,13 @@ class KpiService
                     }
                 }
 
-                $totalPoints += $points;
-                $maxPoints += $setting->points_on_time;
-
                 $qualityScore = KpiQualityScore::where('employee_id', $userId)
                     ->where('music_episode_id', $episode->id)
                     ->where('workflow_step', $roleKey)
                     ->first();
+
+                $totalPoints += $qualityScore ? $qualityScore->quality_score : $points;
+                $maxPoints += $setting->points_on_time;
 
                 $items[] = [
                     'episode_id' => $episode->id,
@@ -366,7 +371,9 @@ class KpiService
                     'deadline' => $deadline ? Carbon::parse($deadline)->toIso8601String() : null,
                     'completed_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
                     'status' => $status,
-                    'points' => $points,
+                    'points' => $qualityScore ? $qualityScore->quality_score : $points,
+                    'original_points' => $points,
+                    'is_overridden' => $qualityScore !== null,
                     'max_points' => $setting->points_on_time,
                     'quality_score' => $qualityScore ? $qualityScore->quality_score : null,
                     'quality_max' => $setting->quality_max,
@@ -438,7 +445,6 @@ class KpiService
             'absent' => 0,
             'on_leave' => 0,
             'sick_leave' => 0,
-            'permission' => 0,
         ];
 
         $totalWorkHours = 0;
@@ -447,8 +453,15 @@ class KpiService
 
         foreach ($attendances as $att) {
             $status = $att->status ?? 'absent';
-            if (isset($stats[$status])) {
-                $stats[$status]++;
+            
+            // Map permission to absent as per user request (remove izin)
+            $statsStatus = $status;
+            if ($status === 'permission') {
+                $statsStatus = 'absent';
+            }
+
+            if (isset($stats[$statsStatus])) {
+                $stats[$statsStatus]++;
             }
             $totalWorkHours += $att->work_hours ?? 0;
             $totalLateMinutes += $att->late_minutes ?? 0;
@@ -496,7 +509,6 @@ class KpiService
             'Hadir' => 0,
             'Terlambat' => 0,
             'Absen' => 0,
-            'izin' => 0,
             'Cuti' => 0,
         ];
 
@@ -504,8 +516,15 @@ class KpiService
 
         foreach ($attendances as $att) {
             $status = $att->status ?? 'Absen';
-            if (isset($stats[$status])) {
-                $stats[$status]++;
+            
+            // Map izin to Absen as per user request
+            $statsStatus = $status;
+            if (strtolower($status) === 'izin') {
+                $statsStatus = 'Absen';
+            }
+
+            if (isset($stats[$statsStatus])) {
+                $stats[$statsStatus]++;
             }
 
             $dailyData[] = [

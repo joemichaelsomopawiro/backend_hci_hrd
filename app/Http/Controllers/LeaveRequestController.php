@@ -34,11 +34,9 @@ class LeaveRequestController extends Controller
                 ], 401);
             }
 
-            // Gunakan join untuk menghindari error relasi null
+            // Gunakan query builder dasar
             $query = LeaveRequest::query()
                 ->select('leave_requests.*')
-                ->leftJoin('employees', 'leave_requests.employee_id', '=', 'employees.id')
-                ->leftJoin('users', 'employees.id', '=', 'users.employee_id')
                 ->whereNotNull('leave_requests.employee_id'); // Pastikan employee_id tidak null
 
             // ========== BAGIAN 1: OTORISASI (Siapa boleh lihat apa) ========== 
@@ -54,37 +52,30 @@ class LeaveRequestController extends Controller
             }
             // Default logic: Hierarchy based
             elseif (RoleHierarchyService::isHrManager($user->role)) {
-                // HR hanya dapat melihat permohonan dari bawahannya langsung (Finance, General Affairs, Office Assistant)
-                // Tidak bisa melihat permohonan dari Program Manager atau Distribution Manager
+                // HR hanya dapat melihat permohonan dari bawahannya langsung
                 $hrSubordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
                 if (!empty($hrSubordinateRoles)) {
-                    // Filter berdasarkan role user yang ada di join
-                    $query->whereIn('users.role', $hrSubordinateRoles)
-                        ->whereNotNull('users.role'); // Pastikan user ada
+                    $query->whereHas('employee.user', function($q) use ($hrSubordinateRoles) {
+                        $q->whereIn('role', $hrSubordinateRoles);
+                    });
                 } else {
-                    // Jika HR tidak punya bawahan, kembalikan data kosong. 
                     return response()->json(['success' => true, 'data' => []]);
                 }
             } elseif (RoleHierarchyService::isManager($user->role)) {
-                // DIPERBARUI: Manager lain (Program/Distribution) hanya bisa melihat bawahannya
-                // Termasuk role kustom dengan department yang sama
+                // Manager lain hanya bisa melihat bawahannya
                 $subordinateRoles = RoleHierarchyService::getSubordinateRoles($user->role);
 
                 if (!empty($subordinateRoles)) {
-                    // Filter berdasarkan role user yang ada di join
-                    $query->whereIn('users.role', $subordinateRoles)
-                        ->whereNotNull('users.role'); // Pastikan user ada
+                    $query->whereHas('employee.user', function($q) use ($subordinateRoles) {
+                        $q->whereIn('role', $subordinateRoles);
+                    });
                 } else {
-                    // Jika manager tidak punya bawahan, kembalikan data kosong. 
                     return response()->json(['success' => true, 'data' => []]);
                 }
             } else {
                 // Karyawan biasa hanya bisa melihat permohonannya sendiri. 
                 if (!$user->employee_id) {
-                    return response()->json([
-                        'success' => true,
-                        'data' => []
-                    ]);
+                    return response()->json(['success' => true, 'data' => []]);
                 }
                 $query->where('leave_requests.employee_id', $user->employee_id);
             }
@@ -276,6 +267,21 @@ class LeaveRequestController extends Controller
             if (($quota->$usedField + $totalDays) > $quota->$quotaField) {
                 return response()->json(['success' => false, 'message' => 'Jatah cuti tidak mencukupi. Sisa: ' . ($quota->$quotaField - $quota->$usedField) . ' hari'], 400);
             }
+        }
+
+        // 4. Idempotency check: prevent duplicate submissions within 10 seconds
+        $existingRequest = LeaveRequest::where('employee_id', $user->employee_id)
+            ->where('leave_type', $request->leave_type)
+            ->where('start_date', $request->start_date)
+            ->where('end_date', $request->end_date)
+            ->where('created_at', '>=', now()->subSeconds(10))
+            ->first();
+
+        if ($existingRequest) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This leave request has already been submitted. Please wait a moment.'
+            ], 422);
         }
 
         $leaveRequest = LeaveRequest::create([

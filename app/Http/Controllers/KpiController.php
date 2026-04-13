@@ -315,7 +315,7 @@ class KpiController extends Controller
                 'music_episode_id' => 'nullable|integer',
                 'program_type' => 'required|string|in:regular,musik',
                 'workflow_step' => 'required|string',
-                'quality_score' => 'required|integer|min:1|max:5',
+                'quality_score' => 'required|integer',
                 'notes' => 'nullable|string|max:500',
             ]);
 
