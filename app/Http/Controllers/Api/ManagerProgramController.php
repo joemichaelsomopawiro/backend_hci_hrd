@@ -1067,7 +1067,7 @@ class ManagerProgramController extends Controller
     /**
      * Get weekly performance report
      */
-    public function getWeeklyPerformance(int $programId): JsonResponse
+    public function getWeeklyPerformance(Request $request, int $programId): JsonResponse
     {
         $user = auth()->user();
         
@@ -1080,7 +1080,7 @@ class ManagerProgramController extends Controller
         
         try {
             $performanceService = app(ProgramPerformanceService::class);
-            $report = $performanceService->getWeeklyPerformanceReport($programId);
+            $report = $performanceService->getWeeklyPerformanceReport($programId, $request->all());
             
             return response()->json([
                 'success' => true,
@@ -1603,7 +1603,20 @@ class ManagerProgramController extends Controller
                         'title' => $episode->title,
                         'air_date' => $episode->air_date,
                         'status' => $episode->status,
-                        'current_workflow_state' => $episode->current_workflow_state
+                        'current_workflow_state' => $episode->current_workflow_state,
+                        'production_team' => $episode->productionTeam ? [
+                            'id' => $episode->productionTeam->id,
+                            'name' => $episode->productionTeam->name,
+                            'members' => $episode->productionTeam->members->map(function($m) {
+                                return [
+                                    'id' => $m->id,
+                                    'user_id' => $m->user_id,
+                                    'name' => $m->user->name ?? 'Unknown',
+                                    'role' => $m->role,
+                                    'is_active' => $m->is_active
+                                ];
+                            })
+                        ] : null
                     ],
                     'workflow_steps' => $workflowSteps,
                     'workflow_order' => $workflowOrder,
@@ -1681,6 +1694,11 @@ class ManagerProgramController extends Controller
                 ->whereIn('status', ['active', 'in_production', 'approved'])
                 ->whereNotNull('target_views_per_episode')
                 ->where('target_views_per_episode', '>', 0);
+            
+            // Filter by program_id if provided
+            if ($request->has('program_id') && $request->program_id > 0) {
+                $query->where('id', $request->program_id);
+            }
             
             // Filter hanya program dengan poor performance
             $performanceStatus = $request->get('performance_status', 'poor'); // default: poor

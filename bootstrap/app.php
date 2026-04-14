@@ -11,6 +11,18 @@
 |
 */
 
+/*
+|--------------------------------------------------------------------------
+| Manual Autoloader Registration for Excel (Workaround for slow composer)
+|--------------------------------------------------------------------------
+*/
+$loader = require dirname(__DIR__) . '/vendor/autoload.php';
+if ($loader instanceof \Composer\Autoload\ClassLoader) {
+    $loader->addPsr4('Maatwebsite\\Excel\\', dirname(__DIR__) . '/vendor/maatwebsite/excel/src/');
+    $loader->addPsr4('PhpOffice\\PhpSpreadsheet\\', dirname(__DIR__) . '/vendor/phpoffice/phpspreadsheet/src/PhpSpreadsheet/');
+    $loader->addPsr4('Composer\\Semver\\', dirname(__DIR__) . '/vendor/composer/semver/src/');
+}
+
 $app = new Illuminate\Foundation\Application(
     $_ENV['APP_BASE_PATH'] ?? dirname(__DIR__)
 );

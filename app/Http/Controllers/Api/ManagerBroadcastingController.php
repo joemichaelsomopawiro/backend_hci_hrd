@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
+use App\Helpers\ProgramManagerAuthorization;
 
 class ManagerBroadcastingController extends Controller
 {
@@ -34,7 +35,7 @@ class ManagerBroadcastingController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -90,7 +91,7 @@ class ManagerBroadcastingController extends Controller
             }
             
             $allowedRoles = ['Distribution Manager', 'Manager Broadcasting'];
-            if (!in_array($user->role, $allowedRoles)) {
+            if (!in_array($user->role, $allowedRoles) && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -159,7 +160,7 @@ class ManagerBroadcastingController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -230,7 +231,7 @@ class ManagerBroadcastingController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -298,7 +299,7 @@ class ManagerBroadcastingController extends Controller
             }
 
             $allowedRoles = ['Distribution Manager', 'Manager Broadcasting'];
-            if (!in_array($user->role, $allowedRoles)) {
+            if (!in_array($user->role, $allowedRoles) && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -350,7 +351,7 @@ class ManagerBroadcastingController extends Controller
             }
 
             $allowedRoles = ['Distribution Manager', 'Manager Broadcasting'];
-            if (!in_array($user->role, $allowedRoles)) {
+            if (!in_array($user->role, $allowedRoles) && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -570,7 +571,7 @@ class ManagerBroadcastingController extends Controller
             }
 
             $allowedRoles = ['Distribution Manager', 'Manager Broadcasting'];
-            if (!in_array($user->role, $allowedRoles)) {
+            if (!in_array($user->role, $allowedRoles) && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -791,7 +792,7 @@ class ManagerBroadcastingController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -837,7 +838,7 @@ class ManagerBroadcastingController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -983,7 +984,7 @@ class ManagerBroadcastingController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1097,7 +1098,7 @@ class ManagerBroadcastingController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -1145,7 +1146,7 @@ class ManagerBroadcastingController extends Controller
                 ], 401);
             }
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'

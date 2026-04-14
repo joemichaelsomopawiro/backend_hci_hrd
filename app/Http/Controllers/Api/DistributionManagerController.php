@@ -205,7 +205,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -243,7 +243,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -316,7 +316,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -370,7 +370,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -492,7 +492,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -550,7 +550,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
 
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access. Only Distribution Manager can view schedule options.'
@@ -558,6 +558,9 @@ class DistributionManagerController extends Controller
             }
 
             $query = \App\Models\ProgramScheduleOption::with(['program', 'episode', 'submittedBy', 'reviewedBy'])
+                ->withCount(['program as episodes_count' => function($q) {
+                    $q->select(\DB::raw('count(*)'))->from('episodes')->whereColumn('program_id', 'programs.id');
+                }])
                 ->orderBy('created_at', 'desc');
 
             // Filter by status (validate allowed values)
@@ -610,7 +613,7 @@ class DistributionManagerController extends Controller
         try {
             $user = Auth::user();
             
-            if ($user->role !== 'Distribution Manager') {
+            if ($user->role !== 'Distribution Manager' && !ProgramManagerAuthorization::isProgramManager($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access. Only Distribution Manager can approve schedules.'

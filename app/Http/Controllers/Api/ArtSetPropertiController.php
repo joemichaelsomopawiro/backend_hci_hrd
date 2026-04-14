@@ -13,6 +13,7 @@ use App\Helpers\ProgramManagerAuthorization;
 use App\Helpers\MusicProgramAuthorization;
 use App\Helpers\QueryOptimizer;
 use App\Exports\ProductionEquipmentExport;
+use App\Exports\InventoryItemExport;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -828,11 +829,44 @@ class ArtSetPropertiController extends Controller
         if ($request->filled('crew_leader_id')) {
             $query->where('crew_leader_id', $request->crew_leader_id);
         }
+
         $limit = min((int) $request->get('limit', 1000), 5000);
         $items = $query->limit($limit)->get();
 
-        $filename = 'peminjaman_alat_' . now()->format('Y-m-d_His') . '.xlsx';
-        return Excel::download(new ProductionEquipmentExport($items), $filename, \Maatwebsite\Excel\Excel::XLSX);
+        $filename = 'Riwayat_Peminjaman_ArtSet_' . now()->format('Ymd_His') . '.xlsx';
+        return Excel::download(new ProductionEquipmentExport($items), $filename);
+    }
+
+    /**
+     * Export daftar inventaris barang ke Excel.
+     * GET /api/live-tv/art-set-properti/inventory/export
+     */
+    public function exportInventory(Request $request)
+    {
+        $user = Auth::user();
+        if (!MusicProgramAuthorization::canAccessArtSetProperti($user)) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
+        $query = InventoryItem::query()->orderBy('name', 'asc');
+
+        if ($request->filled('category') && $request->category !== 'all') {
+            $query->where('category', $request->category);
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('equipment_id', 'like', "%{$search}%")
+                  ->orWhere('category', 'like', "%{$search}%");
+            });
+        }
+
+        $items = $query->get();
+
+        $filename = 'Data_Inventaris_ArtSet_' . now()->format('Ymd_His') . '.xlsx';
+        return Excel::download(new InventoryItemExport($items), $filename);
     }
 
     /**

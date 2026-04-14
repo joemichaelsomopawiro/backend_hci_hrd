@@ -661,6 +661,7 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
 
         Route::get('/history', [ArtSetPropertiController::class, 'getHistory'])->middleware('throttle:60,1'); // Riwayat pinjam & kembali
         Route::get('/history/export', [ArtSetPropertiController::class, 'exportEquipmentHistory'])->middleware('throttle:60,1'); // Export Excel peminjaman
+        Route::get('/inventory/export', [ArtSetPropertiController::class, 'exportInventory'])->middleware('throttle:60,1'); // Export Excel inventaris
         Route::get('/program-templates', [ArtSetPropertiController::class, 'getProgramTemplates'])->middleware('throttle:60,1');
         Route::get('/programs-list', [ArtSetPropertiController::class, 'getProgramsList'])->middleware('throttle:60,1');
         Route::get('/programs/{programId}/episodes-list', [ArtSetPropertiController::class, 'getEpisodesList'])->middleware('throttle:60,1');

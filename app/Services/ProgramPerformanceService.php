@@ -167,16 +167,26 @@ class ProgramPerformanceService
     /**
      * Get weekly performance report untuk program
      */
-    public function getWeeklyPerformanceReport(int $programId): array
+    public function getWeeklyPerformanceReport(int $programId, array $filters = []): array
     {
         $program = Program::findOrFail($programId);
         
-        // Get episodes aired dalam 4 minggu terakhir
-        $recentEpisodes = $program->episodes()
-            ->where('status', 'aired')
-            ->where('air_date', '>=', now()->subWeeks(4))
-            ->orderBy('air_date', 'desc')
-            ->get();
+        $query = $program->episodes()->where('status', 'aired');
+
+        // Filter by specific Episode Number
+        if (isset($filters['episode_number']) && $filters['episode_number'] > 0) {
+            $query->where('episode_number', $filters['episode_number']);
+        }
+
+        // Custom Date Range or Default Weeks
+        if (isset($filters['start_date']) && isset($filters['end_date'])) {
+            $query->whereBetween('air_date', [$filters['start_date'], $filters['end_date']]);
+        } else {
+            $weeks = $filters['weeks'] ?? 4;
+            $query->where('air_date', '>=', now()->subWeeks($weeks));
+        }
+
+        $recentEpisodes = $query->orderBy('air_date', 'desc')->get();
         
         $targetViews = $program->target_views_per_episode ?? 0;
         $weeklyData = [];
