@@ -80,7 +80,10 @@ class PrManagerDistribusiQcController extends Controller
             }
 
             $work->markAsInProgress();
-            $work->update(['reviewed_by' => $user->id]);
+            $work->update([
+                'reviewed_by' => $user->id,
+                'created_by' => $work->created_by ?? $user->id
+            ]);
 
             return response()->json(['success' => true, 'data' => $work->fresh(['episode', 'reviewedBy']), 'message' => 'Work accepted successfully']);
 
@@ -300,7 +303,8 @@ class PrManagerDistribusiQcController extends Controller
             $work->update([
                 'status' => 'completed',
                 'qc_completed_at' => now(),
-                'reviewed_by' => $user->id
+                'reviewed_by' => $user->id,
+                'created_by' => $work->created_by ?? $user->id
             ]);
 
             // Update Editor Work Status to completed

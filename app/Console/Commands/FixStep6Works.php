@@ -55,7 +55,7 @@ class FixStep6Works extends Command
                         $editorWork = \App\Models\PrEditorWork::create([
                             'pr_episode_id' => $episodeId,
                             'pr_production_work_id' => $productionWork->id,
-                            'assigned_to' => null,
+                            'originally_assigned_to' => null,
                             'status' => 'pending',
                             'files_complete' => false
                         ]);

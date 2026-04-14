@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\AuthController;
@@ -49,6 +50,27 @@ use App\Http\Controllers\Api\GlobalSearchController;
 | be assigned to the "api" middleware group. Make something great!
 |
 */
+
+// Route untuk membersihkan cache (Hostinger fix)
+Route::get('/clear-cache', function () {
+    try {
+        Artisan::call('optimize:clear');
+        Artisan::call('config:clear');
+        Artisan::call('cache:clear');
+        Artisan::call('route:clear');
+        Artisan::call('view:clear');
+        return response()->json([
+            'success' => true,
+            'message' => 'Semua cache berhasil dibersihkan!',
+            'details' => Artisan::output()
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal membersihkan cache: ' . $e->getMessage()
+        ], 500);
+    }
+});
 
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
@@ -882,8 +904,22 @@ Route::prefix('program-regular')->middleware(['auth:sanctum'])->group(function (
     });
 
     // Talent Routes
-    Route::get('/talents', [PrTalentController::class, 'index']);
-    Route::post('/talents', [PrTalentController::class, 'store']);
+    Route::get('/talents', [App\Http\Controllers\Api\Pr\PrTalentController::class, 'index']);
+    Route::post('/talents', [App\Http\Controllers\Api\Pr\PrTalentController::class, 'store']);
+    Route::put('/talents/{id}', [App\Http\Controllers\Api\Pr\PrTalentController::class, 'update']);
+    Route::delete('/talents/{id}', [App\Http\Controllers\Api\Pr\PrTalentController::class, 'destroy']);
+    Route::get('/talent-database', [App\Http\Controllers\Api\Pr\PrTalentController::class, 'dashboard']);
+    Route::get('/talent-database/export', [App\Http\Controllers\Api\Pr\PrTalentController::class, 'exportCsv']);
+    Route::get('/talent-database/export/xlsx', [App\Http\Controllers\Api\Pr\TalentExcelController::class, 'exportXlsx']);
+    Route::post('/talent-database/import', [App\Http\Controllers\Api\Pr\PrTalentController::class, 'importCsv']);
+    Route::post('/talent-database/import-sheet', [App\Http\Controllers\Api\Pr\PrTalentController::class, 'importFromSheet']);
+
+    // Program Regular Database Export
+    Route::get('/database/programs', [App\Http\Controllers\Api\Pr\PrDatabaseController::class, 'getPrograms']);
+    Route::get('/database/export', [App\Http\Controllers\Api\Pr\PrDatabaseController::class, 'exportData']);
+    Route::get('/database/export/xlsx', [App\Http\Controllers\Api\Pr\ProgramRegularExcelController::class, 'exportXlsx']);
+    Route::post('/database/import', [App\Http\Controllers\Api\Pr\PrDatabaseController::class, 'importData']);
+    Route::post('/database/import-from-sheet', [App\Http\Controllers\Api\Pr\PrDatabaseController::class, 'importFromSheet']);
 
     // Program History
     Route::get('/{program}/history', [\App\Http\Controllers\Api\PrHistoryController::class, 'getProgramHistory']);
@@ -1173,6 +1209,17 @@ Route::get('/cleanup-step-6-test', function () {
 require __DIR__ . '/verification_step6_v3.php';
 require __DIR__ . '/verification_step6_v5.php';
 require __DIR__ . '/pr_api.php';
+
+// ===== KPI ROUTES =====
+Route::prefix('kpi')->middleware(['auth:sanctum'])->group(function () {
+    Route::get('/employees', [\App\Http\Controllers\KpiController::class, 'employees']);
+    Route::get('/employee/{id}', [\App\Http\Controllers\KpiController::class, 'employeeDetail']);
+    Route::get('/my', [\App\Http\Controllers\KpiController::class, 'myKpi']);
+    Route::get('/settings', [\App\Http\Controllers\KpiController::class, 'getSettings']);
+    Route::put('/settings', [\App\Http\Controllers\KpiController::class, 'updateSettings']);
+    Route::post('/settings/restore-defaults', [\App\Http\Controllers\KpiController::class, 'restoreDefaults']);
+    Route::put('/employee/{id}/quality-score', [\App\Http\Controllers\KpiController::class, 'updateQualityScore']);
+});
 
 // ===== WHATSAPP BOT ADMIN ROUTES =====
 // Hanya bisa diakses oleh Program Manager

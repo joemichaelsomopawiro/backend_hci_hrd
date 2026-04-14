@@ -31,7 +31,7 @@ class PrArtController extends Controller
     public function getInventory(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -196,7 +196,7 @@ class PrArtController extends Controller
     public function getLoans(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 
@@ -437,7 +437,7 @@ class PrArtController extends Controller
     public function getLoanHistory(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::ART_SET_PROPERTI, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::PROMOTION, Role::EDITOR_PROMOTION])) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
         }
 

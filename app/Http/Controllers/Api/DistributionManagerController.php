@@ -687,11 +687,12 @@ class DistributionManagerController extends Controller
                             
                             $episode->update(['air_date' => $newAirDate]);
                             
-                            // Update deadlines relative to new air date
+                            // Update deadlines relative to new air date using WorkflowStep constants
                             if (method_exists($episode, 'updateDeadline')) {
-                                $episode->updateDeadline('editor', $newAirDate->copy()->subDays(7), 'Reschedule Approved');
-                                $episode->updateDeadline('kreatif', $newAirDate->copy()->subDays(9), 'Reschedule Approved');
-                                $episode->updateDeadline('produksi', $newAirDate->copy()->subDays(9), 'Reschedule Approved');
+                                $dl = \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
+                                $episode->updateDeadline('editor', $newAirDate->copy()->subDays($dl['editor']), 'Reschedule Approved');
+                                $episode->updateDeadline('kreatif', $newAirDate->copy()->subDays($dl['kreatif']), 'Reschedule Approved');
+                                $episode->updateDeadline('produksi', $newAirDate->copy()->subDays($dl['produksi']), 'Reschedule Approved');
                             }
 
                             // Create or update BroadcastingSchedule for this episode (TV platform)
@@ -733,11 +734,12 @@ class DistributionManagerController extends Controller
                         
                         $episode->update(['air_date' => $epAirDate]);
                         
-                        // Update Deadlines
+                        // Update Deadlines using WorkflowStep constants
                         if (method_exists($episode, 'updateDeadline')) {
-                             $episode->updateDeadline('editor', $epAirDate->copy()->subDays(7), 'Program Schedule Approved');
-                             $episode->updateDeadline('kreatif', $epAirDate->copy()->subDays(9), 'Program Schedule Approved');
-                             $episode->updateDeadline('produksi', $epAirDate->copy()->subDays(9), 'Program Schedule Approved');
+                             $dl = \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
+                             $episode->updateDeadline('editor', $epAirDate->copy()->subDays($dl['editor']), 'Program Schedule Approved');
+                             $episode->updateDeadline('kreatif', $epAirDate->copy()->subDays($dl['kreatif']), 'Program Schedule Approved');
+                             $episode->updateDeadline('produksi', $epAirDate->copy()->subDays($dl['produksi']), 'Program Schedule Approved');
                         }
 
                         // Create or update BroadcastingSchedule for this episode (TV platform)

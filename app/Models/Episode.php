@@ -127,72 +127,75 @@ class Episode extends Model
     public function generateDeadlines()
     {
         $airDate = Carbon::parse($this->air_date);
+        $deadlineDays = \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
         
         // Deadline Editor: 7 hari sebelum tayang
         $this->deadlines()->create([
             'role' => 'editor',
-            'deadline_date' => $airDate->copy()->subDays(7),
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['editor']),
             'description' => 'Deadline editing episode',
             'auto_generated' => true,
             'created_by' => auth()->id() ?? 1
         ]);
         
-        // Deadline Creative & Production: 9 hari sebelum tayang
+        // Deadline Creative: 10 hari sebelum tayang
         $this->deadlines()->create([
             'role' => 'kreatif',
-            'deadline_date' => $airDate->copy()->subDays(9),
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['kreatif']),
             'description' => 'Deadline creative work episode',
             'auto_generated' => true,
             'created_by' => auth()->id() ?? 1
         ]);
         
+        // Deadline Produksi: 8 hari sebelum tayang
         $this->deadlines()->create([
             'role' => 'produksi',
-            'deadline_date' => $airDate->copy()->subDays(9),
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['produksi']),
             'description' => 'Deadline production episode',
             'auto_generated' => true,
             'created_by' => auth()->id() ?? 1
         ]);
 
-        // Deadline Musik Arr & Sound Eng: 8 hari sebelum tayang
+        // Deadline Musik Arr: 8 hari sebelum tayang
         $this->deadlines()->create([
             'role' => 'musik_arr',
-            'deadline_date' => $airDate->copy()->subDays(8),
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['musik_arr']),
             'description' => 'Deadline music arrangement episode',
             'auto_generated' => true,
             'created_by' => auth()->id() ?? 1
         ]);
 
+        // Deadline Sound Engineer: 8 hari sebelum tayang
         $this->deadlines()->create([
             'role' => 'sound_eng',
-            'deadline_date' => $airDate->copy()->subDays(8),
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['sound_eng']),
             'description' => 'Deadline sound engineering episode',
             'auto_generated' => true,
             'created_by' => auth()->id() ?? 1
         ]);
 
-        // Deadline Quality Control: 3 hari sebelum tayang
+        // Deadline Quality Control: 6 hari sebelum tayang
         $this->deadlines()->create([
             'role' => 'quality_control',
-            'deadline_date' => $airDate->copy()->subDays(3),
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['quality_control']),
             'description' => 'Deadline quality control episode',
             'auto_generated' => true,
             'created_by' => auth()->id() ?? 1
         ]);
 
-        // Deadline Promotion: 2 hari sebelum tayang
+        // Deadline Promotion (Editor Promosi): 6 hari sebelum tayang
         $this->deadlines()->create([
             'role' => 'promotion',
-            'deadline_date' => $airDate->copy()->subDays(2),
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['editor_promosi']),
             'description' => 'Deadline promotion episode',
             'auto_generated' => true,
             'created_by' => auth()->id() ?? 1
         ]);
 
-        // Deadline Broadcasting: 1 hari sebelum tayang
+        // Deadline Broadcasting: 4 hari sebelum tayang
         $this->deadlines()->create([
             'role' => 'broadcasting',
-            'deadline_date' => $airDate->copy()->subDays(1),
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['broadcasting']),
             'description' => 'Deadline broadcasting episode',
             'auto_generated' => true,
             'created_by' => auth()->id() ?? 1

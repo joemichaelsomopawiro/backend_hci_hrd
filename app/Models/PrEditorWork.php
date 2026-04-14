@@ -13,7 +13,7 @@ class PrEditorWork extends Model
     protected $fillable = [
         'pr_episode_id',
         'pr_production_work_id',
-        'assigned_to',
+        'originally_assigned_to',
         'work_type',
         'status',
         'file_complete',
@@ -45,7 +45,7 @@ class PrEditorWork extends Model
 
     public function assignedUser()
     {
-        return $this->belongsTo(User::class, 'assigned_to');
+        return $this->belongsTo(User::class, 'originally_assigned_to');
     }
 
     public function revisionNotes()
