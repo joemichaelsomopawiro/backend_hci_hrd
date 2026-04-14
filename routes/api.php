@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\AuthController;
@@ -49,6 +50,27 @@ use App\Http\Controllers\Api\GlobalSearchController;
 | be assigned to the "api" middleware group. Make something great!
 |
 */
+
+// Route untuk membersihkan cache (Hostinger fix)
+Route::get('/clear-cache', function () {
+    try {
+        Artisan::call('optimize:clear');
+        Artisan::call('config:clear');
+        Artisan::call('cache:clear');
+        Artisan::call('route:clear');
+        Artisan::call('view:clear');
+        return response()->json([
+            'success' => true,
+            'message' => 'Semua cache berhasil dibersihkan!',
+            'details' => Artisan::output()
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal membersihkan cache: ' . $e->getMessage()
+        ], 500);
+    }
+});
 
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);

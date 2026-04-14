@@ -200,7 +200,7 @@ class AttendanceExportController extends Controller
                     'year' => $year,
                     'daily_data' => [],
                     'total_hadir' => 0,
-                    'total_jam_kerja' => 0,
+                    'total_hour_kerja' => 0,
                     'total_terlambat' => 0,
                     'total_absen' => 0
                 ];
@@ -235,7 +235,7 @@ class AttendanceExportController extends Controller
                                 'work_hours' => $attendance->work_hours ?? 0
                             ];
                             $employeeData['total_hadir']++;
-                            $employeeData['total_jam_kerja'] += $attendance->work_hours ?? 0;
+                            $employeeData['total_hour_kerja'] += $attendance->work_hours ?? 0;
                             if ($isLate) $employeeData['total_terlambat']++;
                         } else {
                             $employeeData['daily_data'][$day] = [
@@ -341,7 +341,7 @@ class AttendanceExportController extends Controller
                 'nama' => $first->user_name, // tampilkan nama asli dari data pertama
                 'card_number' => $first->card_number,
                 'total_hadir' => 0,
-                'total_jam_kerja' => 0,
+                'total_hour_kerja' => 0,
                 'total_absen' => 0,
                 'daily_data' => []
             ];
@@ -372,7 +372,7 @@ class AttendanceExportController extends Controller
                             'work_hours' => $att->work_hours ?? 0
                         ];
                         $row['total_hadir']++;
-                        $row['total_jam_kerja'] += $att->work_hours ?? 0;
+                        $row['total_hour_kerja'] += $att->work_hours ?? 0;
                     } else {
                         $row['daily_data'][$dayKey] = [
                             'status' => 'absent',
@@ -585,7 +585,7 @@ class AttendanceExportController extends Controller
             $html .= '<td class="nama">' . htmlspecialchars($record['nama']) . '</td>';
             $html .= '<td>' . htmlspecialchars($record['user_pin']) . '</td>';
             $html .= '<td class="hadir">' . $record['total_hadir'] . '</td>';
-            $html .= '<td>' . number_format($record['total_jam_kerja'], 2) . '</td>';
+            $html .= '<td>' . number_format($record['total_hour_kerja'], 2) . '</td>';
             $html .= '<td class="terlambat">' . $record['total_terlambat'] . '</td>';
             $html .= '<td class="absen">' . $record['total_absen'] . '</td>';
             $html .= '</tr>';

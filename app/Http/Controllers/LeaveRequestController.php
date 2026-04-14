@@ -39,6 +39,15 @@ class LeaveRequestController extends Controller
                 ->select('leave_requests.*')
                 ->whereNotNull('leave_requests.employee_id'); // Pastikan employee_id tidak null
 
+            // ========== AUTOMATIC EXPIRATION ==========
+            // Tandai permohonan yang sudah lewat tanggal mulai sebagai 'expired'
+            LeaveRequest::where('overall_status', 'pending')
+                ->where('start_date', '<', now()->toDateString())
+                ->update([
+                    'overall_status' => 'expired',
+                    'rejection_reason' => 'Otomatis Expired: Tanggal mulai cuti telah terlewati tanpa persetujuan atasan.'
+                ]);
+
             // ========== BAGIAN 1: OTORISASI (Siapa boleh lihat apa) ========== 
             // Cek apakah request meminta data sendiri (my_requests)
             $viewMode = $request->input('view');
