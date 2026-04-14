@@ -452,6 +452,11 @@ class KpiService
         $dailyData = [];
 
         foreach ($attendances as $att) {
+            // Skip weekends as per user request
+            if ($att->date && ($att->date->isSaturday() || $att->date->isSunday())) {
+                continue;
+            }
+
             $status = $att->status ?? 'absent';
             
             // Map permission to absent as per user request (remove izin)
@@ -486,6 +491,7 @@ class KpiService
             'present_percentage' => $total > 0 ? round(($presentTotal / $total) * 100, 1) : 0,
             'on_time_percentage' => $presentTotal > 0 ? round(($stats['present_ontime'] / $presentTotal) * 100, 1) : 0,
             'avg_work_hours' => $presentTotal > 0 ? round($totalWorkHours / $presentTotal, 2) : 0,
+            'total_work_hours' => round($totalWorkHours, 2),
             'total_late_minutes' => $totalLateMinutes,
             'daily_data' => $dailyData,
         ];
@@ -515,6 +521,11 @@ class KpiService
         $dailyData = [];
 
         foreach ($attendances as $att) {
+            // Skip weekends as per user request
+            if ($att->date && ($att->date->isSaturday() || $att->date->isSunday())) {
+                continue;
+            }
+
             $status = $att->status ?? 'Absen';
             
             // Map izin to Absen as per user request
@@ -543,7 +554,7 @@ class KpiService
             'total_days' => $total,
             'present_total' => $hadirTotal,
             'present_percentage' => $total > 0 ? round(($hadirTotal / $total) * 100, 1) : 0,
-            'on_time_percentage' => $hadirTotal > 0 ? round(($stats['Hadir'] / $hadirTotal) * 100, 1) : 0,
+            'on_time_percentage' => $total > 0 ? round(($stats['Hadir'] / $total) * 100, 1) : 0,
             'daily_data' => $dailyData,
         ];
     }
