@@ -138,8 +138,8 @@ class LeaveRequestController extends Controller
             // Tambahkan leave_dates pada setiap data cuti dengan error handling
             $transformed = $requests->map(function ($leave) use ($quotaByKey) {
                 try {
-                    $start = \Carbon\Carbon::parse($leave->start_date);
-                    $end = \Carbon\Carbon::parse($leave->end_date);
+                    $start = Carbon::parse($leave->start_date);
+                    $end = Carbon::parse($leave->end_date);
                     $dates = [];
                     for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
                         $dates[] = $date->toDateString();
