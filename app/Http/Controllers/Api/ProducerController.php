@@ -452,6 +452,8 @@ class ProducerController extends Controller
                 $arr['program_id'] = $arr['program_id'] ?? $cw->episode?->program_id;
                 $arr['program_name'] = $arr['program_name'] ?? $cw->episode?->program?->name ?? 'N/A';
                 $arr['episode_number'] = $arr['episode_number'] ?? $cw->episode?->episode_number;
+                $arr['total_budget'] = $cw->total_budget;
+                $arr['max_budget_per_episode'] = $cw->episode?->program?->max_budget_per_episode ?? 0;
                 $arr['program'] = $cw->episode?->program
                     ? ['id' => $cw->episode->program->id, 'name' => $cw->episode->program->name]
                     : null;
@@ -1036,7 +1038,7 @@ class ProducerController extends Controller
                         ], 400);
                     }
 
-                    // Check for Special Budget
+                    // Check for Special Budget / Budget Limit Exceeded
                     $hasSpecialBudget = false;
                     $specialBudgetItem = null;
                     if ($item->budget_data) {
@@ -1049,19 +1051,33 @@ class ProducerController extends Controller
                         }
                     }
 
-                    // If "Special Budget" exists AND this is NOT a direct edit (bypass), require Manager Approval
-                    if ($hasSpecialBudget && !$request->has('bypass_manager_approval')) {
+                    // Total Budget Limit Check
+                    $program = $episode->program;
+                    $totalBudget = $item->total_budget;
+                    $maxBudget = $program->max_budget_per_episode;
+                    $isOverBudget = ($maxBudget > 0 && $totalBudget > $maxBudget);
+
+                    // If "Special Budget" exists OR Total Budget > Max Budget, and this is NOT a direct edit (bypass), require Manager Approval
+                    if (($hasSpecialBudget || $isOverBudget) && !$request->has('bypass_manager_approval')) {
+                        $reason = $isOverBudget 
+                            ? "Total budget Rp " . number_format($totalBudget, 0, ',', '.') . " melebihi batas maksimal Rp " . number_format($maxBudget, 0, ',', '.')
+                            : "Creative Work mengandung item Special Budget";
+
                         // Create ProgramApproval request
                         $approval = ProgramApproval::create([
-                            'type' => 'special_budget', // Backwards compat if 'type' column still exists, but schema says 'approval_type'
+                            'type' => 'special_budget',
                             'approval_type' => 'special_budget',
                             'approvable_type' => CreativeWork::class,
                             'approvable_id' => $item->id,
                             'request_data' => [
                                 'creative_work_id' => $item->id,
                                 'episode_id' => $item->episode_id,
+                                'total_budget' => $totalBudget,
+                                'max_budget' => $maxBudget,
+                                'is_over_budget' => $isOverBudget,
                                 'special_budget_amount' => $specialBudgetItem['amount'] ?? 0,
                                 'special_budget_description' => $specialBudgetItem['description'] ?? 'Special Budget Request',
+                                'reason' => $reason,
                                 'notes' => $request->notes
                             ],
                             'requested_by' => $user->id,
@@ -1070,10 +1086,10 @@ class ProducerController extends Controller
 
                         // Update CreativeWork status
                         $item->update([
-                            'status' => 'waiting_manager_approval', // New status
+                            'status' => 'waiting_manager_approval',
                             'requires_special_budget_approval' => true,
                             'special_budget_approval_id' => $approval->id,
-                            'reviewed_by' => $user->id, // Producer reviewed it, but needs manager now
+                            'reviewed_by' => $user->id,
                             'review_notes' => $request->notes
                         ]);
 
@@ -1084,7 +1100,7 @@ class ProducerController extends Controller
                                  'user_id' => $programManager->id,
                                  'type' => 'special_budget_approval',
                                  'title' => 'Persetujuan Special Budget',
-                                 'message' => "Producer mengajukan Special Budget untuk Episode {$episode->episode_number}. Mohon review.",
+                                 'message' => "Producer mengajukan Special Budget (atau Over Budget) untuk Episode {$episode->episode_number}. Mohon review.",
                                  'data' => ['approval_id' => $approval->id]
                              ]);
                          }
@@ -1092,7 +1108,9 @@ class ProducerController extends Controller
                          return response()->json([
                             'success' => true,
                             'data' => $item->fresh(),
-                            'message' => 'Creative Work contains Special Budget. Submitted to Program Manager for approval.'
+                            'message' => $isOverBudget 
+                                ? 'Total budget melebihi batas maksimal. Diajukan ke Program Manager untuk persetujuan.'
+                                : 'Creative Work contains Special Budget. Submitted to Program Manager for approval.'
                         ]);
                     }
                     
@@ -1136,7 +1154,50 @@ class ProducerController extends Controller
                     break;
                     
                 case 'budget_request':
-                    $item = Budget::findOrFail($id);
+                    $item = Budget::with('episode.program')->findOrFail($id);
+                    $episode = $item->episode;
+                    $program = $episode ? $episode->program : null;
+
+                    if ($program && $program->max_budget_per_episode > 0) {
+                        // Calculate total budget for episode: 
+                        // Main CreativeWork budget + All Approved Budgets + THIS request
+                        $creativeWork = CreativeWork::where('episode_id', $episode->id)->where('status', 'approved')->first();
+                        $existingBudgets = Budget::where('episode_id', $episode->id)->where('status', 'approved')->sum('amount');
+                        
+                        $totalCurrent = ($creativeWork ? $creativeWork->total_budget : 0) + $existingBudgets + $item->amount;
+                        
+                        if ($totalCurrent > $program->max_budget_per_episode) {
+                            // Escalate to PM
+                            $approval = ProgramApproval::create([
+                                'type' => 'special_budget',
+                                'approval_type' => 'special_budget',
+                                'approvable_type' => Budget::class,
+                                'approvable_id' => $item->id,
+                                'request_data' => [
+                                    'budget_id' => $item->id,
+                                    'episode_id' => $episode->id,
+                                    'total_budget' => $totalCurrent,
+                                    'max_budget' => $program->max_budget_per_episode,
+                                    'request_amount' => $item->amount,
+                                    'reason' => "Tambahan budget Rp " . number_format($item->amount, 0, ',', '.') . " menyebabkan total budget Rp " . number_format($totalCurrent, 0, ',', '.') . " melebihi batas Rp " . number_format($program->max_budget_per_episode, 0, ',', '.'),
+                                    'notes' => $request->notes
+                                ],
+                                'requested_by' => $user->id,
+                                'status' => 'pending'
+                            ]);
+
+                            $item->update([
+                                'status' => 'waiting_manager_approval',
+                                'approval_notes' => $request->notes
+                            ]);
+
+                            return response()->json([
+                                'success' => true,
+                                'message' => 'Total budget melebihi batas maksimal. Permintaan budget diteruskan ke Program Manager.'
+                            ]);
+                        }
+                    }
+
                     $item->approve(auth()->id(), $request->notes);
                     break;
 

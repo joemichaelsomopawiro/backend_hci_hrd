@@ -94,16 +94,45 @@ class WorkflowStep
         'quality_control' => 6,
         'broadcasting' => 4,
         'promotion' => 0,
-        // Program Musik roles
+        // Default music values (will be handled by MUSIC_ROLE_DEADLINE_DAYS where possible)
         'musik_arr' => 8,
         'sound_eng' => 8,
     ];
 
     /**
+     * Role-specific deadline days for Music Programs.
+     */
+    const MUSIC_ROLE_DEADLINE_DAYS = [
+        'producer' => 10,
+        'kreatif' => 10,
+        'musik_arr' => 10,
+        'sound_eng' => 7,
+        'tim_setting_coord' => 8,
+        'tim_syuting_coord' => 8,
+        'tim_vocal_coord' => 8,
+        'art_set_design' => 0,
+        'art_set_design_return' => 0,
+        'editor' => 7,
+        'quality_control' => 6,
+        'editor_promosi' => 6,
+        'design_grafis' => 5,
+        'broadcasting' => 4,
+        'promotion' => 0,
+        'manager_distribusi' => 6,
+        'general_affairs' => 8,
+        'promosi_syuting' => 8,
+        'program_manager' => 10,
+    ];
+
+    /**
      * Get deadline days before air_date for a specific role
      */
-    public static function getDeadlineDaysForRole(string $role): int
+    public static function getDeadlineDaysForRole(string $role, string $category = 'regular'): int
     {
+        if (strtolower($category) === 'musik') {
+            return self::MUSIC_ROLE_DEADLINE_DAYS[$role] ?? (self::ROLE_DEADLINE_DAYS[$role] ?? 7);
+        }
+        
         return self::ROLE_DEADLINE_DAYS[$role] ?? 7; // Default 7 if role not found
     }
 

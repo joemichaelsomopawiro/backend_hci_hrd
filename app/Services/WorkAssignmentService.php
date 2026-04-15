@@ -29,7 +29,35 @@ class WorkAssignmentService
         ?string $workType = null,
         ?int $fallbackUserId = null
     ): int {
-        // Find previous episode
+        // 1. CHECK FOR EXPLICIT ASSIGNMENT IN DEADLINES TABLE (NEW BACKUP SYSTEM)
+        $roleMap = [
+            'App\Models\CreativeWork' => 'kreatif',
+            'App\Models\EditorWork' => 'editor',
+            'App\Models\MusicArrangement' => 'musik_arr',
+            'App\Models\DesignGrafisWork' => 'design_grafis',
+            'App\Models\QualityControl' => 'quality_control',
+            'App\Models\ProduksiWork' => 'produksi'
+        ];
+
+        $roleKey = $roleMap[$workModelClass] ?? null;
+        if ($roleKey) {
+            $currentEpisode = Episode::where('program_id', $programId)
+                ->where('episode_number', $currentEpisodeNumber)
+                ->first();
+            
+            if ($currentEpisode) {
+                $deadline = \App\Models\Deadline::where('episode_id', $currentEpisode->id)
+                    ->where('role', $roleKey)
+                    ->first();
+                
+                if ($deadline && $deadline->assigned_user_id) {
+                    Log::info("WorkAssignmentService: Found explicit backup assignment (User {$deadline->assigned_user_id}) for {$roleKey} in Episode {$currentEpisodeNumber}.");
+                    return $deadline->assigned_user_id;
+                }
+            }
+        }
+
+        // 2. NORMAL FLOW: Find previous episode to handle continuity or auto-revert
         $previousEpisode = Episode::where('program_id', $programId)
             ->where('episode_number', $currentEpisodeNumber - 1)
             ->first();

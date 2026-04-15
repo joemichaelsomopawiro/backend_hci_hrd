@@ -264,20 +264,28 @@ class ProgramWorkflowService
      */
     private function createInitialWorkflowState(Program $program): void
     {
-        // Create workflow state for all episodes (or at least first few episodes)
-        $episodes = $program->episodes()->orderBy('episode_number')->limit(10)->get(); // Limit to first 10 episodes to avoid too many records
+        // Create workflow state for first 10 episodes to avoid too many records
+        $episodes = $program->episodes()->orderBy('episode_number')->limit(10)->get();
         
+        $workflowStatesToInsert = [];
+        $currentUserId = auth()->id() ?? 1;
+
         foreach ($episodes as $episode) {
-            WorkflowState::create([
+            $workflowStatesToInsert[] = [
                 'episode_id' => $episode->id,
                 'current_state' => 'program_created',
                 'assigned_to_role' => 'manager_program',
                 'assigned_to_user_id' => $program->manager_program_id,
-                'notes' => 'Program created, ready for production'
-            ]);
+                'performing_user_id' => $currentUserId,
+                'notes' => 'Program created, ready for production',
+                'created_at' => now(),
+                'updated_at' => now()
+            ];
         }
-        
-        // For remaining episodes, create workflow state on-demand when needed
+
+        if (!empty($workflowStatesToInsert)) {
+            \DB::table('workflow_states')->insert($workflowStatesToInsert);
+        }
     }
 
     /**
