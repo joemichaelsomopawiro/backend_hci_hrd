@@ -153,7 +153,11 @@ class TaskReassignmentController extends Controller
             }
 
             $allUsers = $request->boolean('all_users', false) && in_array($user->role, ['Program Manager', 'Manager Program', 'Manager']);
-            $users = TaskReassignmentService::getAvailableUsers($request->task_type, $allUsers);
+            $users = TaskReassignmentService::getAvailableUsers(
+                $request->task_type,
+                $request->has('task_id') ? (int) $request->task_id : null,
+                $allUsers
+            );
 
             return response()->json([
                 'success' => true,

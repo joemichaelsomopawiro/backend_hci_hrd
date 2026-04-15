@@ -1315,16 +1315,33 @@ class ManagerProgramController extends Controller
             
             // --- END HISTORY COLLECTION ---
             
+            // --- ALL DEADLINES ---
+            $dlProducer = $deadlines->where('role', 'producer')->first();
+            $dlKreatif = $deadlines->where('role', 'kreatif')->first();
+            $dlMusik = $deadlines->where('role', 'musik_arr')->first();
+            $dlSound = $deadlines->where('role', 'sound_eng')->first();
+            $dlTimVocal = $deadlines->where('role', 'tim_vocal_coord')->first();
+            $dlSetting = $deadlines->where('role', 'tim_setting_coord')->first();
+            $dlShooting = $deadlines->where('role', 'tim_syuting_coord')->first();
+            $dlEditor = $deadlines->where('role', 'editor')->first();
+            $dlDesign = $deadlines->where('role', 'design_grafis')->first();
+            $dlPromo = $deadlines->where('role', 'promotion')->first();
+            $dlQC = $deadlines->where('role', 'quality_control')->first();
+            $dlBC = $deadlines->where('role', 'broadcasting')->first();
+            $dlReturn = $deadlines->where('role', 'art_set_design_return')->first();
+
             // --- PHASE 1: MUSIC ---
             $music = $episode->musicArrangements->sortByDesc('created_at')->first();
-            $dlMusik = $deadlines->where('role', 'musik_arr')->first();
 
             // 1. Program Aktif
-            $programOk = $episode->program && in_array($episode->program->status, ['active', 'approved', 'in_production']);
+            $programOk = $episode->program && (in_array($episode->program->status, ['active', 'approved', 'in_production']) || $episode->program->producer_accepted);
             $workflowSteps[] = $buildStep(
                 'program_active', 'Program Aktif', $programOk, $programOk ? 'completed' : 'pending',
                 $programOk ? null : 'Program belum aktif.',
-                ['program_status' => $episode->program->status ?? null]
+                ['program_status' => $episode->program->status ?? null],
+                null, 
+                $episode->program->producer_accepted_at, 
+                $episode->program->producerAcceptedBy->name ?? 'System'
             );
 
             // 2. Song Proposal (Music Arranger)
@@ -1347,7 +1364,7 @@ class ManagerProgramController extends Controller
                 'song_proposal_approval', 'Producer (Approve Song Proposal)', $songAppr,
                 $songAppr ? 'completed' : ($music && $music->status === 'song_rejected' ? 'rejected' : 'pending'),
                 $music && $music->status === 'song_rejected' ? 'Ditolak: ' . $music->rejection_reason : (!$music ? 'Menunggu usulan.' : 'Menunggu review Producer.'),
-                null, null, $music?->reviewed_at, $music?->reviewedBy?->name,
+                null, $dlProducer, $music?->reviewed_at, $music?->reviewedBy?->name,
                 $music?->review_notes,
                 $music?->status === 'song_rejected' ? $music?->rejection_reason : null
             );
@@ -1371,14 +1388,13 @@ class ManagerProgramController extends Controller
                 'arrangement_approval', 'Producer (Approve Arrangement)', $arrAppr,
                 $arrAppr ? 'completed' : ($music && in_array($music->status, ['arrangement_rejected', 'rejected']) ? 'rejected' : 'pending'),
                 $music && in_array($music->status, ['arrangement_rejected', 'rejected']) ? 'Ditolak: ' . $music->rejection_reason : (!$arrSubmitted ? 'Menunggu link.' : 'Menunggu review Producer.'),
-                null, null, $music?->reviewed_at, $music?->reviewedBy?->name,
+                null, $dlProducer, $music?->reviewed_at, $music?->reviewedBy?->name,
                 $music?->review_notes,
                 $music?->status === 'arrangement_rejected' ? $music?->rejection_reason : null
             );
 
             // --- PHASE 2: CREATIVE (Depends on Music Approved) ---
             $creative = $episode->creativeWorks->sortByDesc('created_at')->first();
-            $dlKreatif = $deadlines->where('role', 'kreatif')->first();
             $creativeDone = $creative && $creative->script_approved && $creative->storyboard_approved;
 
             // 6. Creative (Script & Storyboard)
@@ -1397,7 +1413,7 @@ class ManagerProgramController extends Controller
                 'producer_creative_approval', 'Producer (Approve Creative)', $creativeDone,
                 $creativeDone ? 'completed' : ($creative ? ($creative->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 $creative && $creative->status === 'rejected' ? 'Ditolak: ' . $creative->rejection_reason : (!$creative ? 'Menunggu output kreatif.' : 'Menunggu review Producer.'),
-                null, null, $creative?->reviewed_at, $creative?->reviewedBy?->name,
+                null, $dlProducer, $creative?->reviewed_at, $creative?->reviewedBy?->name,
                 $creative?->review_notes,
                 $creative?->status === 'rejected' ? $creative?->rejection_reason : null
             );
@@ -1417,7 +1433,7 @@ class ManagerProgramController extends Controller
                 'set_property', 'Tim Setting (Set & Property)', $settingDone,
                 $settingDone ? 'completed' : ($prodActive ? 'pending' : 'blocked'),
                 !$prodActive ? 'Menunggu script kreatif.' : 'Menyiapkan set lokasi.',
-                null, $dlProduksi, $produksi?->setting_completed_at, $produksi?->settingCompletedBy?->name,
+                null, $dlSetting, $produksi?->setting_completed_at, $produksi?->settingCompletedBy?->name,
                 $produksi?->setting_notes
             );
 
@@ -1428,7 +1444,7 @@ class ManagerProgramController extends Controller
                 'vocal_recording', 'Tim Rekam Vokal (Proses Recording)', $soundRecDone,
                 $soundRecDone ? 'completed' : ($prodActive ? ($soundRec && $soundRec->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 !$prodActive ? 'Menunggu script kreatif.' : ($soundRec && $soundRec->status === 'rejected' ? 'Ditolak: ' . $soundRec->review_notes : 'Proses recording vokal.'),
-                null, null, $soundRec?->recording_completed_at, $soundRec?->createdBy?->name,
+                null, $dlTimVocal, $soundRec?->recording_completed_at, $soundRec?->createdBy?->name,
                 $soundRec?->status === 'reviewed' ? $soundRec?->review_notes : null,
                 $soundRec?->status === 'rejected' ? $soundRec?->review_notes : null
             );
@@ -1439,7 +1455,7 @@ class ManagerProgramController extends Controller
                 'promotion_content_start', 'Promotion (BTS & Initial Tasks)', $promoStarted,
                 $promoStarted ? 'completed' : ($prodActive ? 'pending' : 'blocked'),
                 !$prodActive ? 'Menunggu script kreatif.' : 'Memulai konten promosi.',
-                null, null, $btsPromo?->created_at, $btsPromo?->createdBy?->name
+                null, $dlPromo, $btsPromo?->created_at, $btsPromo?->createdBy?->name
             );
 
             // 11. Tim Shooting (Production)
@@ -1448,7 +1464,7 @@ class ManagerProgramController extends Controller
                 'shooting_production', 'Tim Shooting (Production)', $shootingDone,
                 $shootingDone ? 'completed' : ($settingDone ? ($produksi && $produksi->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 !$settingDone ? 'Menunggu set lokasi siap.' : ($produksi && $produksi->status === 'rejected' ? 'Ditolak: ' . $produksi->rejection_notes : 'Proses pengambilan gambar.'),
-                null, $dlProduksi, $produksi?->completed_at, $produksi?->completedBy?->name,
+                null, $dlShooting, $produksi?->completed_at, $produksi?->completedBy?->name,
                 $produksi?->approval_notes,
                 $produksi?->status === 'rejected' ? $produksi?->rejection_notes : null
             );
@@ -1458,7 +1474,7 @@ class ManagerProgramController extends Controller
                 'return_equipment_production', 'Kembalikan Barang (Setting & Shooting)', $shootingDone,
                 $shootingDone ? 'completed' : ($shootingDone ? 'pending' : 'blocked'),
                 !$shootingDone ? 'Menunggu syuting selesai.' : 'Menyiapkan verifikasi barang.',
-                null, null, $produksi?->completed_at, $produksi?->completedBy?->name,
+                null, $dlReturn, $produksi?->completed_at, $produksi?->completedBy?->name,
                 $produksi?->approval_notes
             );
 
@@ -1467,7 +1483,7 @@ class ManagerProgramController extends Controller
                 'return_equipment_vocal', 'Kembalikan Barang (Tim Rekam Vokal)', $soundRecDone,
                 $soundRecDone ? 'completed' : ($soundRecDone ? 'pending' : 'blocked'),
                 !$soundRecDone ? 'Menunggu recording selesai.' : 'Menyiapkan verifikasi barang.',
-                null, null, $soundRec?->recording_completed_at, $soundRec?->createdBy?->name,
+                null, $dlReturn, $soundRec?->recording_completed_at, $soundRec?->createdBy?->name,
                 $soundRec?->review_notes
             );
 
@@ -1482,14 +1498,13 @@ class ManagerProgramController extends Controller
                     'rejection_reason' => $soundEdit?->rejection_reason,
                     'file_link' => $soundEdit?->final_file_link ?? $soundEdit?->vocal_file_link
                 ], 
-                null, $soundEdit?->approved_at ?? $soundEdit?->submitted_at, $soundEdit?->createdBy?->name,
+                $dlSound, $soundEdit?->approved_at ?? $soundEdit?->submitted_at, $soundEdit?->createdBy?->name,
                 $soundEdit?->status === 'approved' ? $soundEdit?->approval_notes : null,
                 $soundEdit?->status === 'rejected' ? $soundEdit?->rejection_reason : null
             );
 
             // --- PHASE 4: POST-PRODUCTION ---
             $editor = $episode->editorWorks->sortByDesc('created_at')->first();
-            $dlEditor = $deadlines->where('role', 'editor')->first();
             $editorDone = $editor && $editor->status === 'completed';
 
             // 15. Editor (Main Episode)
@@ -1511,7 +1526,7 @@ class ManagerProgramController extends Controller
                 'design_promo_editing', 'Design Grafis & Editor Promotion', $designDone,
                 $designDone ? 'completed' : ($promoActive ? ($design && $design->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 !$promoActive ? 'Menunggu task promosi dimulai.' : ($design && $design->status === 'rejected' ? 'Ditolak: ' . $design->rejection_notes : 'Membuat design & promo tools.'),
-                null, null, $design?->updated_at, $design?->createdBy?->name,
+                null, $dlDesign, $design?->updated_at, $design?->createdBy?->name,
                 $design?->status === 'approved' ? $design?->approval_notes : null,
                 $design?->status === 'rejected' ? $design?->rejection_notes : null
             );
@@ -1524,7 +1539,7 @@ class ManagerProgramController extends Controller
                 'producer_final_review', 'Producer Final Review', $finalReviewDone,
                 $finalReviewDone ? 'completed' : ($editorDone ? 'pending' : 'blocked'),
                 !$editorDone ? 'Menunggu Editor selesai.' : 'Final review oleh Producer (Cek file/ulang).',
-                null, null, $editor?->updated_at, $editor?->reviewedBy?->name,
+                null, $dlProducer, $editor?->updated_at, $editor?->reviewedBy?->name,
                 $editor?->approval_notes
             );
 
@@ -1535,28 +1550,29 @@ class ManagerProgramController extends Controller
                 null, null, null, $episode->updated_at, 'System'
             );
 
-            // 19. Quality Control (Distribution Manager)
+            // 19. Quality Control (Role QC)
             $qc = $episode->qualityControls->sortByDesc('created_at')->first();
             $qcDone = $qc && $qc->status === 'approved';
             $workflowSteps[] = $buildStep(
-                'quality_control', 'Quality Control (Distribution Manager)', $qcDone,
+                'quality_control', 'Quality Control', $qcDone,
                 $qcDone ? 'completed' : ($finalReviewDone ? ($qc && $qc->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
-                !$finalReviewDone ? 'Menunggu review Producer & PM.' : ($qc && $qc->status === 'rejected' ? 'Ditolak: ' . $qc->qc_notes : 'Pengecekan kualitas teknis (Audio/Video).'),
-                ['qc_notes' => $qc?->qc_notes], null, $qc?->updated_at, $qc?->createdBy?->name,
+                !$finalReviewDone ? 'Menunggu review Producer & PM.' : ($qc && $qc->status === 'rejected' ? 'Ditolak: ' . $qc->qc_notes : 'Pengecekan kualitas teknis aset promo dan desain.'),
+                ['qc_notes' => $qc?->qc_notes], $dlQC, $qc?->updated_at, $qc?->createdBy?->name,
                 $qc?->status === 'approved' ? $qc?->qc_notes : null,
                 $qc?->status === 'rejected' ? $qc?->qc_notes : null
             );
 
             // --- PHASE 6: FINAL & BROADCASTING ---
 
-            // 20. Distribution Manager Accept (Schedule)
+            // 20. Distribution Manager Accept (QC & Schedule)
             $bc = $episode->broadcastingWorks->sortByDesc('created_at')->first();
             $dmDone = $bc && in_array($bc->status, ['approved', 'scheduled', 'published', 'completed']);
+            $dlDM = $deadlines->where('role', 'manager_distribusi')->first();
             $workflowSteps[] = $buildStep(
-                'dm_schedule', 'Distribution Manager Accept (Schedule)', $dmDone,
+                'dm_schedule', 'Distribution Manager QC & Schedule', $dmDone,
                 $dmDone ? 'completed' : ($qcDone ? 'pending' : 'blocked'),
                 !$qcDone ? 'Menunggu lolos QC.' : 'Plotting jadwal tayang konten.',
-                null, null, $bc?->accepted_at, $bc?->acceptedBy?->name,
+                null, $dlDM, $bc?->accepted_at, $bc?->acceptedBy?->name,
                 $bc?->notes
             );
 
@@ -1566,7 +1582,7 @@ class ManagerProgramController extends Controller
                 'broadcasting_publishing', 'Broadcasting (Published)', $bcDone,
                 $bcDone ? 'completed' : ($dmDone ? 'pending' : 'blocked'),
                 !$dmDone ? 'Menunggu jadwal dari DM.' : 'Konten online/tayang di YouTube/TV.',
-                ['youtube_url' => $bc?->youtube_url], null, $bc?->published_time, $bc?->createdBy?->name,
+                ['youtube_url' => $bc?->youtube_url], $dlBC, $bc?->published_time, $bc?->createdBy?->name,
                 $bc?->notes
             );
 
@@ -1576,7 +1592,7 @@ class ManagerProgramController extends Controller
                 'promotion_sharing', 'Promotion Sharing (Socmed Final)', $sharing !== null,
                 $sharing ? 'completed' : ($bcDone ? 'pending' : 'blocked'),
                 !$bcDone ? 'Menunggu konten tayang.' : 'Sharing link tayang ke media sosial.',
-                null, null, $sharing?->updated_at, $sharing?->createdBy?->name
+                null, $dlPromo, $sharing?->updated_at, $sharing?->createdBy?->name
             );
 
             // Check reached end

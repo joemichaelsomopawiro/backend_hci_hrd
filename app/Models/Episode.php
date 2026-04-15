@@ -201,8 +201,20 @@ class Episode extends Model
             'created_by' => auth()->id() ?? 1
         ]);
 
+        // Deadline Broadcasting: 4 hari sebelum tayang
+        $this->deadlines()->create([
+            'role' => 'broadcasting',
+            'deadline_date' => $airDate->copy()->subDays($deadlineDays['broadcasting']),
+            'description' => 'Deadline broadcasting episode',
+            'auto_generated' => true,
+            'created_by' => auth()->id() ?? 1
+        ]);
+
         // Notifikasi ke semua role yang terkait
         $this->notifyDeadlineCreation();
+
+        // Auto-assign team members if available
+        $this->syncTeamAssignments();
     }
 
     /**
@@ -399,7 +411,23 @@ class Episode extends Model
     }
 
     /**
-     * Relationship dengan Quality Controls
+     * Relationship dengan Editor Promosi Works
+     */
+    public function editorPromosiWorks(): HasMany
+    {
+        return $this->hasMany(EditorPromosiWork::class);
+    }
+
+    /**
+     * Relationship dengan Quality Control Works
+     */
+    public function qualityControlWorks(): HasMany
+    {
+        return $this->hasMany(QualityControlWork::class);
+    }
+
+    /**
+     * Relationship dengan Quality Controls (Old version)
      */
     public function qualityControls(): HasMany
     {
@@ -493,5 +521,191 @@ class Episode extends Model
     public function scopeByWorkflowState($query, $state)
     {
         return $query->where('current_workflow_state', $state);
+    }
+
+    /**
+     * Sync deadlines with program team assignments (Smart Sync)
+     */
+    public function syncTeamAssignments()
+    {
+        $program = $this->program;
+        if (!$program) return false;
+
+        $teamId = $this->production_team_id ?? $program->production_team_id;
+        if (!$teamId) return false;
+
+        $team = ProductionTeam::with('members')->find($teamId);
+        if (!$team) return false;
+
+        // Core mappings from Program and Team
+        $assignments = [
+            'program_manager' => $program->manager_program_id,
+            'producer' => $team->producer_id,
+        ];
+
+        // Member mappings from ProductionTeamMember
+        foreach ($team->members as $member) {
+            if (!$member->is_active) continue;
+
+            $role = $member->role;
+            $userId = $member->user_id;
+
+            // Map team role to workflow deadline roles
+            switch ($role) {
+                case 'creative':
+                case 'kreatif':
+                    $assignments['kreatif'] = $userId;
+                    break;
+                case 'musik_arr':
+                case 'music_arranger':
+                    $assignments['musik_arr'] = $userId;
+                    break;
+                case 'sound_eng':
+                case 'sound_engineer':
+                    $assignments['sound_eng'] = $userId;
+                    break;
+                case 'editor':
+                    $assignments['editor'] = $userId;
+                    if (!isset($assignments['promotion'])) {
+                        $assignments['promotion'] = $userId;
+                    }
+                    if (!isset($assignments['editor_promosi'])) {
+                        $assignments['editor_promosi'] = $userId;
+                    }
+                    break;
+                case 'production':
+                case 'produksi':
+                    $assignments['tim_setting_coord'] = $userId;
+                    $assignments['tim_syuting_coord'] = $userId;
+                    $assignments['tim_vocal_coord'] = $userId;
+                    $assignments['produksi'] = $userId;
+                    break;
+                case 'art_set_design':
+                    $assignments['art_set_design'] = $userId;
+                    break;
+                case 'design_grafis':
+                    $assignments['design_grafis'] = $userId;
+                    break;
+                case 'editor_promosi':
+                    $assignments['editor_promosi'] = $userId;
+                    $assignments['promotion'] = $userId;
+                    break;
+            }
+        }
+
+        // Apply assignments only if currently NULL (Smart Sync - Preserve work)
+        foreach ($assignments as $role => $userId) {
+            if (!$userId) continue;
+            
+            $this->deadlines()
+                ->where('role', $role)
+                ->whereNull('assigned_user_id') 
+                ->update(['assigned_user_id' => $userId]);
+        }
+        
+        // 5. PARALLEL TASK PROPAGATION: Ensure work records exist for the assigned users
+        // Use the actual assigned users from the deadlines table (respects manual overrides)
+        $actualAssignments = $this->deadlines()
+            ->whereNotNull('assigned_user_id')
+            ->pluck('assigned_user_id', 'role')
+            ->toArray();
+
+        $this->propagateAssignmentsToWorkRecords($actualAssignments);
+
+        return true;
+    }
+
+    /**
+     * Propagate assignments to respective work tables (CreativeWork, EditorWork, etc)
+     * So they appear in role-specific dashboards.
+     */
+    protected function propagateAssignmentsToWorkRecords(array $assignments): void
+    {
+        foreach ($assignments as $role => $userId) {
+            if (!$userId) continue;
+
+            try {
+                switch ($role) {
+                    case 'kreatif':
+                        \App\Models\CreativeWork::firstOrCreate(
+                            ['episode_id' => $this->id],
+                            ['created_by' => $userId, 'status' => 'draft']
+                        );
+                        break;
+
+                    case 'editor':
+                        \App\Models\EditorWork::firstOrCreate(
+                            ['episode_id' => $this->id],
+                            ['created_by' => $userId, 'status' => 'draft']
+                        );
+                        break;
+
+                    case 'musik_arr':
+                        \App\Models\MusicArrangement::firstOrCreate(
+                            ['episode_id' => $this->id],
+                            ['created_by' => $userId, 'status' => 'draft']
+                        );
+                        break;
+
+                    case 'promotion':
+                        \App\Models\PromotionWork::firstOrCreate(
+                            ['episode_id' => $this->id, 'work_type' => 'bts_photo'],
+                            ['created_by' => $userId, 'status' => 'planning', 'title' => 'BTS & Promo Material']
+                        );
+                        break;
+
+                    case 'editor_promosi':
+                        \App\Models\PromotionWork::firstOrCreate(
+                            ['episode_id' => $this->id, 'work_type' => 'highlight_ig'],
+                            ['created_by' => $userId, 'status' => 'planning', 'title' => 'Social Media Highlight']
+                        );
+                        break;
+
+                    case 'design_grafis':
+                        \App\Models\DesignGrafisWork::firstOrCreate(
+                            ['episode_id' => $this->id],
+                            ['created_by' => $userId, 'status' => 'planning']
+                        );
+                        break;
+
+                    case 'broadcasting':
+                        \App\Models\BroadcastingWork::firstOrCreate(
+                            ['episode_id' => $this->id],
+                            ['created_by' => $userId, 'status' => 'pending']
+                        );
+                        break;
+
+                    case 'quality_control':
+                        \App\Models\QualityControlWork::firstOrCreate(
+                            ['episode_id' => $this->id],
+                            ['created_by' => $userId, 'status' => 'pending']
+                        );
+                        break;
+
+                    case 'tim_vocal_coord':
+                        \App\Models\ProduksiWork::firstOrCreate(
+                            ['episode_id' => $this->id, 'role' => 'tim_vocal_coord'],
+                            ['created_by' => $userId, 'status' => 'pending']
+                        );
+                        break;
+
+                    case 'tim_setting_coord':
+                        \App\Models\ProduksiWork::firstOrCreate(
+                            ['episode_id' => $this->id, 'role' => 'tim_setting_coord'],
+                            ['created_by' => $userId, 'status' => 'pending']
+                        );
+                        break;
+
+                    case 'tim_syuting_coord':
+                        \App\Models\ProduksiWork::firstOrCreate(
+                            ['episode_id' => $this->id, 'role' => 'tim_syuting_coord'],
+                            ['created_by' => $userId, 'status' => 'pending']
+                        );
+                        break;
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error("Failed to propagate assignment for role {$role}: " . $e->getMessage());
+            }
+        }
     }
 }

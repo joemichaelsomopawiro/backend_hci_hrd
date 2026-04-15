@@ -923,6 +923,9 @@ Route::prefix('producer')->middleware(['auth:sanctum', 'throttle:api'])->group(f
     // Phase 3: Creative Work - Edit Directly & Special Budget
     Route::post('/creative-works/{id}/edit-directly', [ProducerController::class, 'editCreativeDirectly'])->middleware('throttle:sensitive');
     Route::post('/creative-works/{id}/request-special-budget', [ProducerController::class, 'requestSpecialBudget'])->middleware('throttle:sensitive');
+
+    // Backup Assignment System
+    Route::post('/deadlines/{id}/reassign', [\App\Http\Controllers\Api\DeadlineAssignmentController::class, 'reassign'])->middleware('throttle:sensitive');
 });
 
 // Manager Program Routes

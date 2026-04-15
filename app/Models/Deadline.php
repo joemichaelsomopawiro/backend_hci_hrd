@@ -27,7 +27,8 @@ class Deadline extends Model
         'changed_by',
         'changed_at',
         'auto_generated',
-        'created_by'
+        'created_by',
+        'assigned_user_id'
     ];
 
     protected $casts = [
@@ -35,7 +36,8 @@ class Deadline extends Model
         'completed_at' => 'datetime',
         'reminder_sent_at' => 'datetime',
         'is_completed' => 'boolean',
-        'reminder_sent' => 'boolean'
+        'reminder_sent' => 'boolean',
+        'assigned_user_id' => 'integer'
     ];
 
     /**
@@ -44,6 +46,41 @@ class Deadline extends Model
     public function episode(): BelongsTo
     {
         return $this->belongsTo(Episode::class);
+    }
+
+    /**
+     * Relationship dengan User yang ditunjuk secara khusus (Backup/Override)
+     */
+    public function assignee(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_user_id');
+    }
+
+    /**
+     * Accessor: Menghitung sisa hari sampai deadline (Countdown)
+     * Format: "H-5" atau "Terlewat 2 hari"
+     */
+    public function getDaysLeftLabelAttribute(): string
+    {
+        if ($this->is_completed) return 'Selesai';
+        
+        $now = now()->startOfDay();
+        $target = $this->deadline_date->copy()->startOfDay();
+        $diff = $now->diffInDays($target, false);
+        
+        if ($diff == 0) return 'Hari Ini';
+        if ($diff > 0) return 'H-' . $diff;
+        return 'Terlewat ' . abs($diff) . ' hari';
+    }
+
+    /**
+     * Accessor: Raw sisa hari (integer)
+     */
+    public function getDaysLeftAttribute(): int
+    {
+        $now = now()->startOfDay();
+        $target = $this->deadline_date->copy()->startOfDay();
+        return (int) $now->diffInDays($target, false);
     }
 
     /**
@@ -125,20 +162,33 @@ class Deadline extends Model
     public function getRoleLabelAttribute(): string
     {
         $labels = [
-            'kreatif' => 'Creative',
+            'program_manager' => 'Program Manager',
+            'manager_distribusi' => 'Distribution Manager',
+            'producer' => 'Producer',
             'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
-            'produksi' => 'Production',
-            'editor' => 'Editor',
-            'art_set_design' => 'Art & Set Properti',
-            'design_grafis' => 'Graphic Design',
+            'kreatif' => 'Creative',
             'promotion' => 'Promotion',
-            'broadcasting' => 'Broadcasting',
-            'quality_control' => 'Quality Control'
+            'tim_setting_coord' => 'Tim Setting (Coordinator)',
+            'tim_syuting_coord' => 'Tim Syuting (Coordinator)',
+            'tim_vocal_coord' => 'Tim Rekam Vocal (Coordinator)',
+            'general_affairs' => 'General Affairs',
+            'art_set_design' => 'Art & Set Properti',
+            'editor' => 'Editor',
+            'design_grafis' => 'Graphic Design',
+            'editor_promosi' => 'Editor Promosi',
+            'quality_control' => 'Quality Control',
+            'broadcasting' => 'Broadcasting'
         ];
 
-        return $labels[$this->role] ?? $this->role;
+        return $labels[$this->role] ?? ucwords(str_replace('_', ' ', $this->role));
     }
+
+    protected $appends = [
+        'role_label',
+        'days_left_label',
+        'days_left'
+    ];
 
     /**
      * Scope untuk deadline yang overdue

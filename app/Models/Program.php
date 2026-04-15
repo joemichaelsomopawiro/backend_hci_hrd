@@ -130,6 +130,14 @@ class Program extends Model
     }
 
     /**
+     * Relationship dengan User yang menerima (Producer)
+     */
+    public function producerAcceptedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'producer_accepted_by');
+    }
+
+    /**
      * Relationship dengan User yang reject
      */
     public function rejectedBy(): BelongsTo
@@ -184,88 +192,98 @@ class Program extends Model
     public function generateEpisodes(bool $regenerate = false): void
     {
         // Check if episodes already exist (exclude soft deleted)
-        $existingEpisodes = $this->episodes()->whereNull('deleted_at')->count();
+        $existingEpisodesCount = $this->episodes()->whereNull('deleted_at')->count();
 
-        if ($existingEpisodes > 0 && !$regenerate) {
-            // Episode sudah ada, tidak perlu generate lagi
+        if ($existingEpisodesCount > 0 && !$regenerate) {
             return;
         }
 
         // Jika regenerate, hapus episode yang lama dulu (soft delete)
-        if ($regenerate && $existingEpisodes > 0) {
+        if ($regenerate && $existingEpisodesCount > 0) {
             $this->episodes()->whereNull('deleted_at')->each(function ($episode) {
-                $episode->delete(); // Soft delete
+                $episode->delete();
             });
         }
 
         // Detect Sabtu pertama di tahun program (dari start_date)
-        // Parse start_date dan ambil tahunnya (pastikan tanpa timezone issue)
         $startDate = Carbon::parse($this->start_date);
         $year = $startDate->year;
+        $firstSaturday = Carbon::createFromDate($year, 1, 1, 'UTC')->setTime(0, 0, 0);
 
-        // Cari Sabtu pertama di bulan Januari tahun tersebut
-        // Gunakan createFromDate dengan timezone UTC dari awal untuk menghindari timezone shift
-        $firstSaturday = Carbon::createFromDate($year, 1, 1, 'UTC');
-        $firstSaturday->setTime(0, 0, 0);
-
-        // Jika tanggal 1 bukan Sabtu, hitung hari ke depan untuk sampai Sabtu pertama
         if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
-            // dayOfWeek: 0=Minggu, 1=Senin, ..., 6=Sabtu
-            // Hitung berapa hari ke depan untuk sampai Sabtu (hari ke-6)
             $dayOfWeek = $firstSaturday->dayOfWeek;
             $daysToAdd = (6 - $dayOfWeek + 7) % 7;
-            if ($daysToAdd === 0)
-                $daysToAdd = 7; // Jika hari ini sudah Sabtu (tidak akan terjadi karena sudah di-check)
+            if ($daysToAdd === 0) $daysToAdd = 7;
             $firstSaturday->addDays($daysToAdd);
         }
 
-        // Pastikan timezone UTC dan time 00:00:00
-        $firstSaturday->setTime(0, 0, 0)->utc();
+        $episodesToInsert = [];
+        $currentUserId = auth()->id() ?? 1;
 
-        // Generate 52 episode (1 tahun = 52 minggu)
+        // Generate 52 episode data
         for ($i = 1; $i <= 52; $i++) {
-            // Episode 1 = Sabtu pertama, Episode 2 = Sabtu berikutnya (7 hari kemudian), dst
-            // Copy dulu, baru add weeks untuk menghindari mutation
             $airDate = $firstSaturday->copy();
             if ($i > 1) {
                 $airDate->addWeeks($i - 1);
             }
-            // Pastikan timezone UTC dan time 00:00:00 untuk konsistensi
             $airDate->utc()->setTime(0, 0, 0);
-
-            // Production date = 7 hari sebelum tayang
             $productionDate = $airDate->copy()->subDays(7);
             $productionDate->utc()->setTime(0, 0, 0);
 
-            // Gunakan DB::table dengan DB::raw untuk insert langsung tanpa timezone conversion
-            // Format: INSERT dengan timezone UTC eksplisit menggunakan DB::raw
-            $airDateStr = $airDate->format('Y-m-d H:i:s');
-            $productionDateStr = $productionDate->format('Y-m-d H:i:s');
-
-            // Insert langsung dengan DB::table dan DB::raw untuk menghindari timezone conversion
-            $episodeId = \DB::table('episodes')->insertGetId([
+            $episodesToInsert[] = [
                 'program_id' => $this->id,
                 'episode_number' => $i,
                 'title' => "Episode {$i}",
                 'description' => "Episode {$i} dari program {$this->name}",
-                'air_date' => \DB::raw("'{$airDateStr}'"),  // Raw string tanpa timezone conversion
-                'production_date' => \DB::raw("'{$productionDateStr}'"),
-                'production_deadline' => \DB::raw("'{$productionDateStr}'"),
+                'air_date' => $airDate->format('Y-m-d H:i:s'),
+                'production_date' => $productionDate->format('Y-m-d H:i:s'),
+                'production_deadline' => $productionDate->format('Y-m-d H:i:s'),
                 'status' => 'draft',
                 'current_workflow_state' => 'program_created',
                 'format_type' => 'weekly',
                 'created_at' => now(),
                 'updated_at' => now()
-            ]);
-
-            // Load episode untuk generate deadlines
-            $episode = \App\Models\Episode::find($episodeId);
-
-            // Generate deadlines untuk episode
-            // Deadline Editor: 7 hari sebelum tayang
-            // Deadline Creative & Produksi: 9 hari sebelum tayang
-            $episode->generateDeadlines();
+            ];
         }
+
+        // Bulk insert episodes and get IDs
+        // Note: insertGetId doesn't support bulk. We use insert and then fetch IDs or insert one by one but in transaction.
+        // For performance, we'll do individual inserts for episodes to get IDs, but bulk for deadlines.
+        // Even individual inserts for episodes (52) is much faster than N+1 deadlines (400+).
+        
+            // Insert deadlines
+            $category = $this->category ?? 'regular';
+            $isMusik = strtolower($category) === 'musik';
+            $rolesList = $isMusik ? \App\Constants\WorkflowStep::MUSIC_ROLE_DEADLINE_DAYS : \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
+            
+            \DB::transaction(function() use ($episodesToInsert, &$deadlinesToInsert, $category, $currentUserId, $rolesList) {
+                foreach ($episodesToInsert as $episodeData) {
+                    $airDate = Carbon::parse($episodeData['air_date']);
+                    $episodeId = \DB::table('episodes')->insertGetId($episodeData);
+                    
+                    // Generate deadlines for ALL roles dynamically
+                    foreach (array_keys($rolesList) as $role) {
+                        $deadlinesToInsert[] = [
+                            'episode_id' => $episodeId,
+                            'role' => $role,
+                            'deadline_date' => $airDate->copy()->subDays(\App\Constants\WorkflowStep::getDeadlineDaysForRole($role, $category))->format('Y-m-d H:i:s'),
+                            'description' => 'Deadline for ' . $role,
+                            'auto_generated' => true,
+                            'created_by' => $currentUserId,
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ];
+                    }
+                }
+                
+                // Bulk insert all deadlines in chunks of 500 to avoid query size limits
+                if (!empty($deadlinesToInsert)) {
+                    $chunks = array_chunk($deadlinesToInsert, 500);
+                    foreach ($chunks as $chunk) {
+                        \DB::table('deadlines')->insert($chunk);
+                    }
+                }
+            });
     }
 
     /**
@@ -320,68 +338,31 @@ class Program extends Model
                 'updated_at' => now()
             ]);
 
-            // ✅ OPTIMIZED: Collect deadlines for bulk insert using WorkflowStep constants
-            $dl = \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
+            // OPTIMIZED: Collect deadlines for bulk insert using WorkflowStep constants
+            $category = $this->category ?? 'regular';
+            $isMusik = strtolower($category) === 'musik';
+            $rolesList = $isMusik ? \App\Constants\WorkflowStep::MUSIC_ROLE_DEADLINE_DAYS : \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
 
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'editor',
-                'deadline_date' => $airDate->copy()->subDays($dl['editor'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline editing episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
-
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'kreatif',
-                'deadline_date' => $airDate->copy()->subDays($dl['kreatif'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline creative work episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
-
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'produksi',
-                'deadline_date' => $airDate->copy()->subDays($dl['produksi'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline production episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
-
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'musik_arr',
-                'deadline_date' => $airDate->copy()->subDays($dl['musik_arr'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline music arrangement episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
-
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'sound_eng',
-                'deadline_date' => $airDate->copy()->subDays($dl['sound_eng'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline sound engineering episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
+            foreach (array_keys($rolesList) as $role) {
+                $deadlinesToInsert[] = [
+                    'episode_id' => $episodeId,
+                    'role' => $role,
+                    'deadline_date' => $airDate->copy()->subDays(\App\Constants\WorkflowStep::getDeadlineDaysForRole($role, $category))->format('Y-m-d H:i:s'),
+                    'description' => 'Deadline for ' . $role,
+                    'auto_generated' => true,
+                    'created_by' => $currentUserId,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ];
+            }
         }
 
-        // ✅ BULK INSERT: Insert all 156 deadlines (52 episodes × 3 deadlines each) in one query
+        // BULK INSERT
         if (!empty($deadlinesToInsert)) {
-            \DB::table('deadlines')->insert($deadlinesToInsert);
+            $chunks = array_chunk($deadlinesToInsert, 500);
+            foreach ($chunks as $chunk) {
+                \DB::table('deadlines')->insert($chunk);
+            }
         }
 
         // Note: Deadline notifications will be sent separately if needed
@@ -479,60 +460,22 @@ class Program extends Model
             ]);
 
             // BULK DEADLINES using WorkflowStep constants
-            $dl = \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
+            $category = $this->category ?? 'regular';
+            $isMusik = strtolower($category) === 'musik';
+            $rolesList = $isMusik ? \App\Constants\WorkflowStep::MUSIC_ROLE_DEADLINE_DAYS : \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
 
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'editor',
-                'deadline_date' => $airDate->copy()->subDays($dl['editor'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline editing episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'kreatif',
-                'deadline_date' => $airDate->copy()->subDays($dl['kreatif'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline creative work episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'produksi',
-                'deadline_date' => $airDate->copy()->subDays($dl['produksi'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline production episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
-
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'musik_arr',
-                'deadline_date' => $airDate->copy()->subDays($dl['musik_arr'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline music arrangement episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
-
-            $deadlinesToInsert[] = [
-                'episode_id' => $episodeId,
-                'role' => 'sound_eng',
-                'deadline_date' => $airDate->copy()->subDays($dl['sound_eng'])->format('Y-m-d H:i:s'),
-                'description' => 'Deadline sound engineering episode',
-                'auto_generated' => true,
-                'created_by' => $currentUserId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ];
+            foreach (array_keys($rolesList) as $role) {
+                $deadlinesToInsert[] = [
+                    'episode_id' => $episodeId,
+                    'role' => $role,
+                    'deadline_date' => $airDate->copy()->subDays(\App\Constants\WorkflowStep::getDeadlineDaysForRole($role, $category))->format('Y-m-d H:i:s'),
+                    'description' => 'Deadline for ' . $role,
+                    'auto_generated' => true,
+                    'created_by' => $currentUserId,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ];
+            }
 
             $generatedEpisodes[] = [
                 'episode_number' => $episodeNumber,
@@ -542,7 +485,10 @@ class Program extends Model
 
         // Insert All Deadlines
         if (!empty($deadlinesToInsert)) {
-            \DB::table('deadlines')->insert($deadlinesToInsert);
+            $chunks = array_chunk($deadlinesToInsert, 500);
+            foreach ($chunks as $chunk) {
+                \DB::table('deadlines')->insert($chunk);
+            }
         }
 
         return [

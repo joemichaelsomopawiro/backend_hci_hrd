@@ -45,6 +45,7 @@ class TaskReassignmentService
         'pr_quality_control_work' => PrQualityControlWork::class,
         'pr_produksi_work' => PrProduksiWork::class,
         'pr_broadcasting_work' => PrBroadcastingWork::class,
+        'deadline' => \App\Models\Deadline::class,
     ];
 
     /**
@@ -78,11 +79,19 @@ class TaskReassignmentService
             // Get original user ID
             $originalUserId = $task->$userField;
 
-            // Update task
-            if ($task->originally_assigned_to === null) {
-                $task->originally_assigned_to = $originalUserId;
+            // Update task (defensively check for audit columns)
+            $attributes = $task->getAttributes();
+            
+            if (array_key_exists('originally_assigned_to', $attributes) || $task->getConnection()->getSchemaBuilder()->hasColumn($task->getTable(), 'originally_assigned_to')) {
+                if ($task->originally_assigned_to === null) {
+                    $task->originally_assigned_to = $originalUserId;
+                }
             }
-            $task->was_reassigned = true;
+            
+            if (array_key_exists('was_reassigned', $attributes) || $task->getConnection()->getSchemaBuilder()->hasColumn($task->getTable(), 'was_reassigned')) {
+                $task->was_reassigned = true;
+            }
+
             $task->$userField = $newUserId;
             $task->save();
 
@@ -110,6 +119,11 @@ class TaskReassignmentService
                 $programId,
                 $reason
             );
+
+            // SPECIAL LOGIC: If a Deadline is reassigned, keep the Work record in sync
+            if ($taskType === 'deadline') {
+                self::syncWorkRecordWithDeadline($task, $newUserId);
+            }
 
             DB::commit();
 
@@ -166,7 +180,14 @@ class TaskReassignmentService
         }
 
         // Check task not completed
-        if (in_array($task->status, ['completed', 'approved'])) {
+        if ($taskType === 'deadline') {
+            if ($task->is_completed) {
+                return [
+                    'valid' => false,
+                    'error' => 'Cannot reassign completed deadline'
+                ];
+            }
+        } elseif (in_array($task->status, ['completed', 'approved'])) {
             return [
                 'valid' => false,
                 'error' => 'Cannot reassign completed task'
@@ -356,6 +377,7 @@ class TaskReassignmentService
             'creative_work' => 'created_by', // Verified
             'editor_work' => 'created_by',   // Verified
             'pr_editor_work' => 'created_by', // Verified
+            'deadline' => 'assigned_user_id',
             // Safe default for others based on pattern
             default => 'created_by'
         };
@@ -384,45 +406,73 @@ class TaskReassignmentService
     }
 
     /**
-     * Get available users for task type
+     * Get available users for task type (Global Selection enabled)
      */
-    public static function getAvailableUsers(string $taskType, bool $allUsers = false): array
+    public static function getAvailableUsers(string $taskType, ?int $taskId = null, bool $allUsers = false): array
     {
-        if ($allUsers) {
-            return User::where('is_active', true)
-                ->select('id', 'name', 'email', 'role')
-                ->get()
-                ->toArray();
-        }
-
-        // Map task types to required roles
-        $roleMapping = [
-            'music_arrangement' => 'Music Arranger',
-            'editor_work' => 'Editor',
-            'pr_editor_work' => 'Editor',
-            'creative_work' => 'Creative',
-            'pr_creative_work' => 'Creative',
-            'promotion_work' => 'Promotion',
-            'pr_promotion_work' => 'Promotion',
-            'quality_control_work' => 'Quality Control',
-            'pr_quality_control_work' => 'Quality Control',
-            'production_work' => 'Production',
-            'pr_produksi_work' => 'Production',
-            'broadcasting_work' => 'Broadcasting',
-            'pr_broadcasting_work' => 'Broadcasting',
-            'design_grafis_work' => 'Graphic Design',
-        ];
-
-        $role = $roleMapping[$taskType] ?? null;
-        
-        if (!$role) {
-            return [];
-        }
-
-        return User::where('role', $role)
-            ->where('is_active', true)
+        // Music Program request: Allow global selection for ALL active users
+        // regardless of their primary role.
+        return User::where('is_active', true)
             ->select('id', 'name', 'email', 'role')
+            ->orderBy('name')
             ->get()
+            ->map(function($user) {
+                return [
+                    'id' => $user->id,
+                    'name' => "{$user->name} ({$user->role})",
+                    'email' => $user->email,
+                    'role' => $user->role
+                ];
+            })
             ->toArray();
+    }
+
+    /**
+     * Sync Work record with Deadline assignment
+     */
+    protected static function syncWorkRecordWithDeadline($deadline, int $newUserId): void
+    {
+        $episodeId = $deadline->episode_id;
+        $role = $deadline->role;
+
+        try {
+            switch ($role) {
+                case 'kreatif':
+                    CreativeWork::where('episode_id', $episodeId)->update(['created_by' => $newUserId]);
+                    break;
+                case 'editor':
+                    EditorWork::where('episode_id', $episodeId)->update(['created_by' => $newUserId]);
+                    break;
+                case 'musik_arr':
+                    MusicArrangement::where('episode_id', $episodeId)->update(['created_by' => $newUserId]);
+                    break;
+                case 'promotion':
+                    PromotionWork::where(['episode_id' => $episodeId, 'work_type' => 'bts_photo'])->update(['created_by' => $newUserId]);
+                    break;
+                case 'editor_promosi':
+                    PromotionWork::where(['episode_id' => $episodeId, 'work_type' => 'highlight_ig'])->update(['created_by' => $newUserId]);
+                    break;
+                case 'design_grafis':
+                    DesignGrafisWork::where('episode_id', $episodeId)->update(['created_by' => $newUserId]);
+                    break;
+                case 'broadcasting':
+                    BroadcastingWork::where('episode_id', $episodeId)->update(['created_by' => $newUserId]);
+                    break;
+                case 'quality_control':
+                    QualityControlWork::where('episode_id', $episodeId)->update(['created_by' => $newUserId]);
+                    break;
+                case 'tim_vocal_coord':
+                case 'tim_setting_coord':
+                case 'tim_syuting_coord':
+                    ProduksiWork::where(['episode_id' => $episodeId, 'role' => $role])->update(['created_by' => $newUserId]);
+                    break;
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to sync work record with deadline', [
+                'deadline_id' => $deadline->id,
+                'role' => $role,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 }

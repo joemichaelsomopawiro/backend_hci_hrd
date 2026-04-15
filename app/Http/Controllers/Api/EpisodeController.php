@@ -405,114 +405,169 @@ class EpisodeController extends Controller
     public function reassignableTasks(int $id): JsonResponse
     {
         $episode = Episode::with([
+            'program',
             'musicArrangements.createdBy',
             'creativeWorks.createdBy',
             'produksiWorks.createdBy',
             'editorWorks.createdBy',
-            'designGrafisWorks.createdBy'
+            'designGrafisWorks.createdBy',
+            'editorPromosiWorks.createdBy',
+            'soundEngineerRecordings.createdBy',
+            'qualityControlWorks.createdBy',
+            'broadcastingWorks.createdBy',
+            'promotionWorks.createdBy',
+            'deadlines.assignee'
         ])->findOrFail($id);
 
         $tasks = [];
-        $completedStatuses = ['completed', 'approved', 'arrangement_approved'];
+        $completedStatuses = ['approved', 'completed', 'verified', 'arrangement_approved'];
+        $isMusicProgram = in_array(strtolower($episode->program->category ?? ''), ['musik', 'music']);
 
+        // 1. Collect Existing Work Records
+        
         // Music Arrangement
         foreach ($episode->musicArrangements as $work) {
             if (!in_array($work->status ?? '', $completedStatuses)) {
                 $tasks[] = [
                     'task_type' => 'music_arrangement',
                     'task_id' => $work->id,
-                    'label' => 'Music Arrangement',
+                    'label' => 'Music Arrangement (Active)',
+                    'role_key' => 'musik_arr',
                     'current_assignee_id' => $work->created_by,
-                    'current_assignee_name' => $work->createdBy->name ?? null,
+                    'current_assignee_name' => $work->createdBy->name ?? 'Unassigned',
                 ];
             }
         }
+        
         // Creative Work
         foreach ($episode->creativeWorks as $work) {
             if (!in_array($work->status ?? '', $completedStatuses)) {
                 $tasks[] = [
                     'task_type' => 'creative_work',
                     'task_id' => $work->id,
-                    'label' => 'Creative',
+                    'label' => 'Creative (Active)',
+                    'role_key' => 'kreatif',
                     'current_assignee_id' => $work->created_by,
-                    'current_assignee_name' => $work->createdBy->name ?? null,
+                    'current_assignee_name' => $work->createdBy->name ?? 'Unassigned',
                 ];
             }
         }
-        // Produksi Work
+        // Produksi (Setting & Syuting)
         foreach ($episode->produksiWorks as $work) {
-            if (!in_array($work->status ?? '', $completedStatuses)) {
+            if ($work->status !== 'completed' && $work->status !== 'approved') {
                 $tasks[] = [
-                    'task_type' => 'production_work',
+                    'task_type' => 'produksi_work',
                     'task_id' => $work->id,
-                    'label' => 'Shooting / Production',
+                    'label' => 'Tim Produksi (Active)',
+                    'role_key' => 'tim_syuting_coord',
                     'current_assignee_id' => $work->created_by,
-                    'current_assignee_name' => $work->createdBy->name ?? null,
+                    'current_assignee_name' => $work->createdBy->name ?? 'Unassigned',
                 ];
             }
         }
-        // Editor Work
+
+        // Editor
         foreach ($episode->editorWorks as $work) {
             if (!in_array($work->status ?? '', $completedStatuses)) {
                 $tasks[] = [
                     'task_type' => 'editor_work',
                     'task_id' => $work->id,
-                    'label' => 'Editing',
+                    'label' => 'Editor (Active)',
+                    'role_key' => 'editor',
                     'current_assignee_id' => $work->created_by,
-                    'current_assignee_name' => $work->createdBy->name ?? null,
+                    'current_assignee_name' => $work->createdBy->name ?? 'Unassigned',
                 ];
             }
         }
-        // Design Grafis Work
-        foreach ($episode->designGrafisWorks as $work) {
-            if (!in_array($work->status ?? '', $completedStatuses)) {
-                $tasks[] = [
-                    'task_type' => 'design_grafis_work',
-                    'task_id' => $work->id,
-                    'label' => 'Design Grafis',
-                    'current_assignee_id' => $work->created_by,
-                    'current_assignee_name' => $work->createdBy->name ?? null,
-                ];
+
+        // Add other active works if present
+        $activeWorkChecks = [
+            ['rel' => 'soundEngineerRecordings', 'type' => 'sound_engineer_recording', 'label' => 'Recording (Active)', 'key' => 'sound_eng'],
+            ['rel' => 'qualityControlWorks', 'type' => 'quality_control_work', 'label' => 'QC (Active)', 'key' => 'quality_control'],
+            ['rel' => 'designGrafisWorks', 'type' => 'design_grafis_work', 'label' => 'Graphic Design (Active)', 'key' => 'design_grafis'],
+            ['rel' => 'broadcastingWorks', 'type' => 'broadcasting_work', 'label' => 'Broadcasting (Active)', 'key' => 'broadcasting'],
+            ['rel' => 'promotionWorks', 'type' => 'promotion_work', 'label' => 'Promotion (Active)', 'key' => 'promotion'],
+            ['rel' => 'editorPromosiWorks', 'type' => 'editor_promosi_work', 'label' => 'Editor Promosi (Active)', 'key' => 'editor_promosi'],
+        ];
+
+        foreach ($activeWorkChecks as $check) {
+            if (isset($episode->{$check['rel']})) {
+                foreach ($episode->{$check['rel']} as $work) {
+                    if (!in_array($work->status ?? '', $completedStatuses)) {
+                        $tasks[] = [
+                            'task_type' => $check['type'],
+                            'task_id' => $work->id,
+                            'label' => $check['label'],
+                            'role_key' => $check['key'],
+                            'current_assignee_id' => $work->created_by ?? $work->assigned_user_id,
+                            'current_assignee_name' => ($work->createdBy->name ?? $work->assignee->name ?? 'Unassigned'),
+                        ];
+                    }
+                }
             }
         }
-        // Quality Control Work (by episode_id)
-        $qcWorks = QualityControlWork::where('episode_id', $episode->id)->whereNotIn('status', $completedStatuses)->with('createdBy')->get();
-        foreach ($qcWorks as $work) {
-            $tasks[] = [
-                'task_type' => 'quality_control_work',
-                'task_id' => $work->id,
-                'label' => 'QC',
-                'current_assignee_id' => $work->created_by,
-                'current_assignee_name' => $work->createdBy->name ?? null,
-            ];
+
+        // 3. Add Pending Tasks from Deadlines table
+        $existingRoleKeys = collect($tasks)->pluck('role_key')->toArray();
+        
+        $user = auth()->user();
+        $isProgramManager = $user && in_array($user->role, ['Program Manager', 'Manager Program']);
+
+        foreach ($episode->deadlines as $deadline) {
+            // Check authorization for Producer role (Only PM can reassign)
+            if ($deadline->role === 'producer' && !$isProgramManager) {
+                continue;
+            }
+
+            // For Music Programs, we are extremely permissive
+            // We only skip if an ACTIVE version of this role already exists
+            $isProduksiSpecial = in_array($deadline->role, ['tim_setting_coord', 'tim_syuting_coord', 'tim_vocal_coord']);
+            
+            if ($isMusicProgram || $isProduksiSpecial) {
+                // Avoid adding the exact same role twice if it's already active
+                if (!in_array($deadline->role, $existingRoleKeys) || $isProduksiSpecial) {
+                    $tasks[] = [
+                        'task_type' => 'deadline',
+                        'task_id' => $deadline->id,
+                        'role_key' => $deadline->role,
+                        'label' => $deadline->role_label . ' (Pending)',
+                        'current_assignee_id' => $deadline->assigned_user_id,
+                        'current_assignee_name' => $deadline->assignee->name ?? 'Unassigned',
+                    ];
+                }
+            }
         }
-        // Broadcasting Work
-        $bcWorks = BroadcastingWork::where('episode_id', $episode->id)->whereNotIn('status', $completedStatuses)->with('createdBy')->get();
-        foreach ($bcWorks as $work) {
-            $tasks[] = [
-                'task_type' => 'broadcasting_work',
-                'task_id' => $work->id,
-                'label' => 'Broadcasting',
-                'current_assignee_id' => $work->created_by,
-                'current_assignee_name' => $work->createdBy->name ?? null,
-            ];
-        }
-        // Promotion Work
-        $promoWorks = PromotionWork::where('episode_id', $episode->id)->whereNotIn('status', $completedStatuses)->with('createdBy')->get();
-        foreach ($promoWorks as $work) {
-            $tasks[] = [
-                'task_type' => 'promotion_work',
-                'task_id' => $work->id,
-                'label' => 'Promo',
-                'current_assignee_id' => $work->created_by,
-                'current_assignee_name' => $work->createdBy->name ?? null,
-            ];
-        }
+
+        // 4. Final Sorting by Priority
+        $priority = [
+            'program_manager' => 1,
+            'manager_distribusi' => 2,
+            'producer' => 3,
+            'musik_arr' => 4,
+            'kreatif' => 5,
+            'tim_setting_coord' => 6,
+            'tim_syuting_coord' => 7,
+            'tim_vocal_coord' => 8,
+            'art_set_design' => 9,
+            'general_affairs' => 10,
+            'editor' => 11,
+            'design_grafis' => 12,
+            'editor_promosi' => 13,
+            'quality_control' => 14,
+            'broadcasting' => 15,
+            'promotion' => 16,
+        ];
+
+        usort($tasks, function($a, $b) use ($priority) {
+            $pA = $priority[$a['role_key'] ?? ''] ?? 99;
+            $pB = $priority[$b['role_key'] ?? ''] ?? 99;
+            return $pA <=> $pB;
+        });
 
         return response()->json([
             'success' => true,
             'data' => $tasks,
-            'message' => 'Reassignable tasks retrieved',
+            'message' => 'Daftar tahap alih pekerjaan berhasil dimuat.',
         ]);
     }
 

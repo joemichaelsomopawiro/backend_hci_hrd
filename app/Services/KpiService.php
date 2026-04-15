@@ -89,7 +89,33 @@ class KpiService
         // Get all music program episodes this user worked on
         $this->collectMusicWorkPoints($userId, $month, $year, $settings, $workItems, $totalPoints, $maxPoints, $onTimeCount, $lateCount, $notDoneCount, $waitingCount, $user);
 
+        // We calculate maxPoints globally based on expected target per role (Total Aired Episodes * max_point per episode)
+        // For backup workloads, they add to totalPoints but DO NOT increase maxPoints, creating possibilities of >100%
+        
         $totalTasks = $onTimeCount + $lateCount + $notDoneCount + $waitingCount;
+        
+        // Define base role from user to identify their expected target count
+        $normalizedUserRole = strtolower(str_replace([' ', '&', '-'], ['_', '', '_'], $user->role ?? ''));
+        
+        // Count total music episodes in the queried period
+        $targetEpisodeCount = \App\Models\Episode::whereHas('program', function($q) {
+                $q->where('category', 'musik');
+            })
+            ->whereYear('air_date', $year)
+            ->when($month, function($q) use($month) {
+                $q->whereMonth('air_date', $month);
+            })->count();
+
+        // If they have a regular KPI target (5 points per episode)
+        // Base points = target_episode_count * 5. Only apply this base maxPoints to core workers. 
+        // We will assign a dynamic max based on the expected workflow steps
+        $baseSettingPoint = 5; 
+        $maxPoints = $targetEpisodeCount * $baseSettingPoint;
+
+        if ($maxPoints == 0 && $totalPoints > 0) {
+            // Backup edge case if no target episodes but somehow scored
+            $maxPoints = $totalTasks * $baseSettingPoint; 
+        }
         $percentage = $maxPoints > 0 ? round(($totalPoints / $maxPoints) * 100, 1) : 0;
 
         return [
@@ -301,7 +327,7 @@ class KpiService
                 }
 
                 $completedAt = $work->{$config['completed_field']} ?? null;
-                $deadline = $this->getDeadlineForWork($work, $episode, $roleKey);
+                $deadline = $this->getDeadlineForWork($work, $episode, $roleKey, 'regular');
                 $isCompleted = in_array($work->status, $config['status_completed']);
 
                 // SPECIAL CASES: Track completion via specific models instead of the shared workflow record
@@ -584,176 +610,307 @@ class KpiService
      */
     private function collectMusicWorkPoints(int $userId, ?int $month, int $year, $settings, array &$items, int &$totalPoints, int &$maxPoints, int &$onTimeCount, int &$lateCount, int &$notDoneCount, int &$waitingCount, User $user): void
     {
+        // 1. Get all deadlines assigned to this user for the period
+        $deadlineQuery = \App\Models\Deadline::with(['episode.program'])
+            ->where('assigned_user_id', $userId)
+            ->whereHas('episode', function ($q) use ($month, $year) {
+                $q->whereYear('air_date', $year);
+                if ($month) {
+                    $q->whereMonth('air_date', $month);
+                }
+            });
+
+        $assignedDeadlines = $deadlineQuery->get();
+
+        // 2. Map Work Models to Roles
         $workModels = [
+            'producer' => [
+                'model' => \App\Models\CreativeWork::class,
+                'completed_field' => 'reviewed_at',
+                'status_completed' => ['approved'],
+            ],
+            'kreatif' => [
+                'model' => \App\Models\CreativeWork::class,
+                'completed_field' => 'reviewed_at',
+                'status_completed' => ['approved', 'submitted'],
+            ],
             'musik_arr' => [
                 'model' => \App\Models\MusicArrangement::class,
-                'user_field' => 'created_by',
                 'completed_field' => 'submitted_at',
                 'status_completed' => ['submitted', 'approved', 'rejected'],
             ],
             'sound_eng' => [
                 'model' => \App\Models\MusicArrangement::class,
-                'user_field' => 'sound_engineer_helper_id',
                 'completed_field' => 'sound_engineer_help_at',
                 'status_completed' => ['submitted', 'approved', 'rejected'],
             ],
+            'tim_setting_coord' => [
+                'model' => \App\Models\ProduksiWork::class,
+                'completed_field' => 'setting_completed_at',
+                'status_completed' => ['in_progress', 'completed'],
+            ],
+            'tim_syuting_coord' => [
+                'model' => \App\Models\ProduksiWork::class,
+                'completed_field' => 'completed_at',
+                'status_completed' => ['completed'],
+            ],
+            'tim_vocal_coord' => [
+                'model' => \App\Models\ProduksiWork::class,
+                'completed_field' => 'completed_at',
+                'status_completed' => ['completed'],
+            ],
             'editor' => [
                 'model' => \App\Models\EditorWork::class,
-                'user_field' => 'created_by',
                 'completed_field' => 'reviewed_at',
                 'status_completed' => ['approved', 'completed', 'reviewed'],
             ],
             'design_grafis' => [
                 'model' => \App\Models\DesignGrafisWork::class,
-                'user_field' => 'assigned_to',
                 'completed_field' => 'submitted_at',
                 'status_completed' => ['approved', 'completed', 'submitted', 'reviewed'],
             ],
             'quality_control' => [
                 'model' => \App\Models\QualityControl::class,
-                'user_field' => 'qc_by',
                 'completed_field' => 'qc_completed_at',
                 'status_completed' => ['completed', 'approved'],
             ],
+            'manager_distribusi' => [
+                'model' => \App\Models\BroadcastingWork::class,
+                'completed_field' => 'accepted_at',
+                'status_completed' => ['approved', 'scheduled', 'published', 'completed'],
+            ],
             'broadcasting' => [
                 'model' => \App\Models\BroadcastingWork::class,
-                'user_field' => 'created_by',
                 'completed_field' => 'published_at',
                 'status_completed' => ['completed', 'published'],
             ],
-            'promotion' => [
+            'editor_promosi' => [
                 'model' => \App\Models\PromotionWork::class,
-                'user_field' => 'originally_assigned_to',
                 'completed_field' => 'reviewed_at',
                 'status_completed' => ['published', 'approved'],
+                'filters' => ['work_type' => 'highlight_ig']
+            ],
+            'promotion' => [
+                'model' => \App\Models\PromotionWork::class,
+                'completed_field' => 'reviewed_at',
+                'status_completed' => ['published', 'approved'],
+                'filters' => ['work_type' => 'bts_photo']
+            ],
+            'art_set_design' => [
+                'model' => \App\Models\EquipmentLoan::class,
+                'completed_field' => 'loan_date',
+                'status_completed' => ['active', 'returned'],
+            ],
+            'art_set_design_return' => [
+                'model' => \App\Models\EquipmentLoan::class,
+                'completed_field' => 'return_date',
+                'status_completed' => ['returned'],
             ],
         ];
 
-        foreach ($workModels as $roleKey => $config) {
-            $model = $config['model'];
-            $query = in_array('Illuminate\Database\Eloquent\SoftDeletes', class_uses_recursive($model))
-                ? $model::withTrashed()
-                : $model::query();
+        // 3. Process each deadline
+        foreach ($assignedDeadlines as $deadlineRecord) {
+            $roleKey = $deadlineRecord->role;
+            $episode = $deadlineRecord->episode;
+            if (!$episode) continue;
 
-            $query->with([
-                'episode' => fn($q) => $q->withTrashed(), 
-                'episode.program' => fn($q) => $q->withTrashed()
-            ])
-            ->where($config['user_field'], $userId);
-
-            // Filter by date using the calculated deadline (air_date - X days)
-            $deadlineDays = \App\Constants\WorkflowStep::getDeadlineDaysForRole($roleKey);
-            $query->whereHas('episode', function ($q) use ($month, $year, $deadlineDays) {
-                $q->withTrashed()
-                  ->whereRaw("YEAR(DATE_SUB(air_date, INTERVAL ? DAY)) = ?", [$deadlineDays, $year]);
-                
-                if ($month) {
-                    $q->whereRaw("MONTH(DATE_SUB(air_date, INTERVAL ? DAY)) = ?", [$deadlineDays, $month]);
-                }
-            });
-
-            $works = $query->get();
             $settingKey = $roleKey . '_musik';
             $setting = $settings->get($settingKey);
-
             if (!$setting) continue;
 
-            foreach ($works as $work) {
-                $episode = $work->episode;
-                if (!$episode) continue;
+            $config = $workModels[$roleKey] ?? null;
+            $work = null;
 
-                $completedAt = $work->{$config['completed_field']} ?? null;
-                $deadline = $this->getDeadlineForWork($work, $episode, $roleKey);
-                $isCompleted = in_array($work->status, $config['status_completed']);
-                
-                // Filter for deleted/inactive programs
-                $program = $episode->program;
-                if ($program) {
-                    // For music programs, any status other than approved/active might be considered "not yet ready"
-                    // but we focus on explicitly stopped ones.
-                    $isInactive = in_array($program->status, ['rejected', 'on_hold', 'draft', 'inactive']);
-                    $isDeleted = $program->trashed();
-
-                    if (($isInactive || $isDeleted) && !$isCompleted) {
-                        continue;
+            if ($config) {
+                $workQuery = $config['model']::where('episode_id', $episode->id);
+                if (isset($config['filters'])) {
+                    foreach ($config['filters'] as $fKey => $fVal) {
+                        $workQuery->where($fKey, $fVal);
                     }
                 }
-
-                // Sound engineer check specifically Needs SE Help
-                if ($roleKey === 'sound_eng' && !$work->needs_sound_engineer_help) continue;
-
-                $qualityScore = KpiQualityScore::where('employee_id', $userId)
-                    ->where('music_episode_id', $episode->id)
-                    ->where('workflow_step', $roleKey)
-                    ->first();
-
-                $isBackup = $this->isBackupWork($user, $roleKey);
-
-                $status = 'not_done';
-                $points = $setting->points_not_done;
-
-                if ($isCompleted && $completedAt) {
-                    $completedAtTime = Carbon::parse($completedAt);
-                    $deadlineTime = $deadline ? Carbon::parse($deadline) : null;
-
-                    if ($deadlineTime && $completedAtTime->lte($deadlineTime)) {
-                        $status = 'on_time';
-                        $points = $setting->points_on_time;
-                        $onTimeCount++;
-                    } else {
-                        $status = 'late';
-                        $points = $setting->points_late;
-                        $lateCount++;
-                    }
-                } else if (!$isCompleted) {
-                    $deadlineTime = $deadline ? Carbon::parse($deadline) : null;
-                    $isOverdue = $deadlineTime && now()->gt($deadlineTime);
-                    $daysOverdue = $isOverdue ? now()->diffInDays($deadlineTime) : 0;
-
-                    if ($isOverdue && $daysOverdue > 7) {
-                        $status = 'not_done';
-                        $points = $setting->points_not_done;
-                        $notDoneCount++;
-                    } else {
-                        // Still within grace period or not yet reached deadline
-                        $status = 'waiting';
-                        $points = 0;
-                        $waitingCount++;
-                    }
-                }
-
-                $qualityScore = KpiQualityScore::where('employee_id', $userId)
-                    ->where('music_episode_id', $episode->id)
-                    ->where('workflow_step', $roleKey)
-                    ->first();
-
-                $totalPoints += $qualityScore ? $qualityScore->quality_score : $points;
-                
-                // Backup work is a bonus and doesn't increase the target (max points)
-                if (!$isBackup) {
-                    $maxPoints += $setting->points_on_time;
-                }
-
-                $items[] = [
-                    'episode_id' => $episode->id,
-                    'program_name' => ($episode->program->name ?? 'Unknown') . ' (Music)',
-                    'episode_number' => $episode->episode_number,
-                    'role' => $roleKey,
-                    'role_label' => $this->getRoleLabel($roleKey),
-                    'is_backup' => $isBackup,
-                    'backup_note' => $isBackup ? "Backup pekerjaan " . $this->getRoleLabel($roleKey) : null,
-                    'deadline' => $deadline ? Carbon::parse($deadline)->toIso8601String() : null,
-                    'completed_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
-                    'status' => $status,
-                    'points' => $qualityScore ? $qualityScore->quality_score : $points,
-                    'original_points' => $points,
-                    'is_overridden' => $qualityScore !== null,
-                    'max_points' => $isBackup ? 0 : $setting->points_on_time,
-                    'quality_score' => $qualityScore ? $qualityScore->quality_score : null,
-                    'quality_max' => $setting->quality_max,
-                    'program_type' => 'musik',
-                ];
+                $work = $workQuery->first();
             }
+
+            $completedAt = $work ? ($work->{$config['completed_field']} ?? null) : null;
+            $isCompleted = $work ? in_array($work->status, $config['status_completed']) : false;
+            $deadlineDate = $deadlineRecord->deadline_date ?? null;
+
+            // Filter for deleted/inactive programs
+            $program = $episode->program;
+            if ($program) {
+                $isInactive = in_array($program->status, ['rejected', 'on_hold', 'draft', 'inactive']);
+                $isDeleted = $program->trashed();
+
+                if (($isInactive || $isDeleted) && !$isCompleted) {
+                    continue;
+                }
+            }
+
+            // Sound engineer check specifically Needs SE Help
+            if ($roleKey === 'sound_eng' && $work && !$work->needs_sound_engineer_help) continue;
+
+            $status = 'not_done';
+            $points = $setting->points_not_done;
+
+            if ($isCompleted && $completedAt) {
+                if ($deadlineDate && Carbon::parse($completedAt)->lte(Carbon::parse($deadlineDate))) {
+                    $status = 'on_time';
+                    $points = $setting->points_on_time;
+                    $onTimeCount++;
+                } else {
+                    $status = 'late';
+                    $points = $setting->points_late;
+                    $lateCount++;
+                }
+            } else if (!$isCompleted) {
+                // Strictly follow the deadline for point deductions
+                if ($deadlineDate && Carbon::parse($deadlineDate)->isPast()) {
+                    // Deadline has passed and task is NOT completed
+                    $points = $setting->points_not_done;
+                    $status = 'not_done';
+                    $notDoneCount++;
+                } else {
+                    // Task is not done but deadline hasn't passed yet, points are 0 (not penalized yet)
+                    $points = 0;
+                    $status = 'waiting';
+                    $waitingCount++;
+                }
+            }
+
+            $qualityScore = KpiQualityScore::where('employee_id', $userId)
+                ->where('music_episode_id', $episode->id)
+                ->where('workflow_step', $roleKey)
+                ->first();
+
+            $isBackup = $this->isBackupWork($user, $roleKey);
+            
+            // SPECIAL RULE: Producer Quality is the average of their team's quality points
+            $effectivePoints = $points;
+            $isQualityOverridden = $qualityScore !== null;
+            $displayQuality = $qualityScore ? $qualityScore->quality_score : null;
+
+            if ($roleKey === 'producer' || $roleKey === 'manager_distribusi') {
+                $teamAvgQuality = KpiQualityScore::where('music_episode_id', $episode->id)
+                    ->whereNotIn('workflow_step', ['producer', 'manager_distribusi', 'program_manager'])
+                    ->avg('quality_score');
+                
+                if ($teamAvgQuality) {
+                    $effectivePoints = round($teamAvgQuality, 1);
+                    $displayQuality = $effectivePoints;
+                    $isQualityOverridden = true;
+                }
+            } else if ($qualityScore) {
+                $effectivePoints = $qualityScore->quality_score;
+            }
+
+            $totalPoints += $effectivePoints;
+            // $maxPoints is no longer accumulated here per-assignment. We will calculate it globally based on Total Expected Episodes to support > 100% backup logic.
+
+            $items[] = [
+                'episode_id' => $episode->id,
+                'program_name' => ($episode->program->name ?? 'Unknown') . ' (Music)',
+                'episode_number' => $episode->episode_number,
+                'role' => $roleKey,
+                'role_label' => $this->getRoleLabel($roleKey),
+                'is_backup' => $isBackup,
+                'backup_note' => $isBackup ? "Backup pekerjaan " . $this->getRoleLabel($roleKey) : null,
+                'deadline' => $deadlineDate ? Carbon::parse($deadlineDate)->toIso8601String() : null,
+                'completed_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
+                'status' => $status,
+                'points' => $effectivePoints,
+                'original_points' => $points,
+                'is_overridden' => $isQualityOverridden,
+                'max_points' => $setting->points_on_time,
+                'quality_score' => $displayQuality,
+                'quality_max' => $setting->quality_max,
+                'program_type' => 'musik',
+            ];
+        }
+    }
+            }
+
+            $completedAt = $work ? ($work->{$config['completed_field']} ?? null) : null;
+            $isCompleted = $work ? in_array($work->status, $config['status_completed']) : false;
+            $deadlineDate = $deadlineRecord->deadline_date ?? null;
+
+            // Sound engineer check specifically Needs SE Help
+            if ($roleKey === 'sound_eng' && $work && !$work->needs_sound_engineer_help) continue;
+
+            $status = 'not_done';
+            $points = $setting->points_not_done;
+
+            if ($isCompleted && $completedAt) {
+                if ($deadlineDate && Carbon::parse($completedAt)->lte(Carbon::parse($deadlineDate))) {
+                    $status = 'on_time';
+                    $points = $setting->points_on_time;
+                    $onTimeCount++;
+                } else {
+                    $status = 'late';
+                    $points = $setting->points_late;
+                    $lateCount++;
+                }
+            } else if (!$isCompleted) {
+                // Strictly follow the deadline for point deductions
+                if ($deadlineDate && Carbon::parse($deadlineDate)->isPast()) {
+                    // Deadline has passed and task is NOT completed
+                    $points = $setting->points_not_done;
+                    $status = 'not_done';
+                    $notDoneCount++;
+                } else {
+                    // Task is not done but deadline hasn't passed yet, points are 0 (not penalized yet)
+                    $points = 0;
+                    $status = 'pending'; // Change label from not_done to pending for clarity
+                }
+            }
+
+            $qualityScore = KpiQualityScore::where('employee_id', $userId)
+                ->where('music_episode_id', $episode->id)
+                ->where('workflow_step', $roleKey)
+                ->first();
+
+            $isBackup = $this->isBackupWork($user, $roleKey);
+            
+            // SPECIAL RULE: Producer Quality is the average of their team's quality points
+            $effectivePoints = $points;
+            $isQualityOverridden = $qualityScore !== null;
+            $displayQuality = $qualityScore ? $qualityScore->quality_score : null;
+
+            if ($roleKey === 'producer' || $roleKey === 'manager_distribusi') {
+                $teamAvgQuality = KpiQualityScore::where('music_episode_id', $episode->id)
+                    ->whereNotIn('workflow_step', ['producer', 'manager_distribusi', 'program_manager'])
+                    ->avg('quality_score');
+                
+                if ($teamAvgQuality) {
+                    $effectivePoints = round($teamAvgQuality, 1);
+                    $displayQuality = $effectivePoints;
+                    $isQualityOverridden = true;
+                }
+            } else if ($qualityScore) {
+                $effectivePoints = $qualityScore->quality_score;
+            }
+
+            $totalPoints += $effectivePoints;
+            // $maxPoints is no longer accumulated here per-assignment. We will calculate it globally based on Total Expected Episodes to support > 100% backup logic.
+
+            $items[] = [
+                'episode_id' => $episode->id,
+                'program_name' => ($episode->program->name ?? 'Unknown') . ' (Music)',
+                'episode_number' => $episode->episode_number,
+                'role' => $roleKey,
+                'role_label' => $this->getRoleLabel($roleKey),
+                'is_backup' => $isBackup,
+                'backup_note' => $isBackup ? "Backup pekerjaan " . $this->getRoleLabel($roleKey) : null,
+                'deadline' => $deadlineDate ? Carbon::parse($deadlineDate)->toIso8601String() : null,
+                'completed_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
+                'status' => $status,
+                'points' => $effectivePoints,
+                'original_points' => $points,
+                'is_overridden' => $isQualityOverridden,
+                'max_points' => $setting->points_on_time,
+                'quality_score' => $displayQuality,
+                'quality_max' => $setting->quality_max,
+                'program_type' => 'musik',
+            ];
         }
     }
 
@@ -777,9 +934,14 @@ class KpiService
             'promotion' => ['promotion', 'promosi'],
             'musik_arr' => ['music_arranger', 'music', 'musik'],
             'sound_eng' => ['sound_engineer', 'sound'],
-            'art_set_alat_keluar' => ['art_set_properti', 'art_set', 'art'],
-            'art_set_alat_masuk' => ['art_set_properti', 'art_set', 'art'],
+            'art_set_alat_keluar' => ['art_set_properti', 'art_set', 'art', 'production_team', 'property'],
+            'art_set_alat_masuk' => ['art_set_properti', 'art_set', 'art', 'production_team', 'property'],
+            'art_set_design' => ['production_team', 'art_set', 'property'],
+            'art_set_design_return' => ['production_team', 'art_set', 'property'],
             'distribution_manager_qc' => ['distribution_manager', 'manager_distribusi'],
+            'producer' => ['producer', 'director', 'manager_program'],
+            'produksi_setting' => ['production_team', 'produksi'],
+            'produksi_syuting' => ['production_team', 'produksi'],
         ];
 
         $expectedRoles = $roleMapping[$workRole] ?? [$workRole];
@@ -789,7 +951,7 @@ class KpiService
     /**
      * Get deadline for a specific work record
      */
-    private function getDeadlineForWork($work, $episode, string $roleKey): ?string
+    private function getDeadlineForWork($work, $episode, string $roleKey, string $category = 'regular'): ?string
     {
         // First check if work has its own deadline field
         if (isset($work->deadline) && $work->deadline) {
@@ -818,7 +980,7 @@ class KpiService
 
         // Otherwise calculate from air_date using WorkflowStep constants
         if ($episode && $episode->air_date) {
-            $daysBefore = \App\Constants\WorkflowStep::getDeadlineDaysForRole($roleKey);
+            $daysBefore = \App\Constants\WorkflowStep::getDeadlineDaysForRole($roleKey, $category);
             return Carbon::parse($episode->air_date)->subDays($daysBefore)->toDateTimeString();
         }
 
@@ -853,8 +1015,11 @@ class KpiService
 
         foreach ($attendances as $att) {
             // Skip weekends as per user request
-            if ($att->date && ($att->date->isSaturday() || $att->date->isSunday())) {
-                continue;
+            if ($att->date) {
+                $date = \Carbon\Carbon::parse($att->date);
+                if ($date->isSaturday() || $date->isSunday()) {
+                    continue;
+                }
             }
 
             $status = $att->status ?? 'absent';
@@ -872,10 +1037,10 @@ class KpiService
             $totalLateMinutes += $att->late_minutes ?? 0;
 
             $dailyData[] = [
-                'date' => $att->date->format('Y-m-d'),
+                'date' => \Carbon\Carbon::parse($att->date)->format('Y-m-d'),
                 'status' => $status,
-                'check_in' => $att->check_in ? $att->check_in->format('H:i:s') : null,
-                'check_out' => $att->check_out ? $att->check_out->format('H:i:s') : null,
+                'check_in' => $att->check_in ? \Carbon\Carbon::parse($att->check_in)->format('H:i:s') : null,
+                'check_out' => $att->check_out ? \Carbon\Carbon::parse($att->check_out)->format('H:i:s') : null,
                 'work_hours' => $att->work_hours,
                 'late_minutes' => $att->late_minutes,
             ];
@@ -922,8 +1087,11 @@ class KpiService
 
         foreach ($attendances as $att) {
             // Skip weekends as per user request
-            if ($att->date && ($att->date->isSaturday() || $att->date->isSunday())) {
-                continue;
+            if ($att->date) {
+                $date = \Carbon\Carbon::parse($att->date);
+                if ($date->isSaturday() || $date->isSunday()) {
+                    continue;
+                }
             }
 
             $status = $att->status ?? 'Absen';
@@ -939,9 +1107,9 @@ class KpiService
             }
 
             $dailyData[] = [
-                'date' => $att->date->format('Y-m-d'),
+                'date' => \Carbon\Carbon::parse($att->date)->format('Y-m-d'),
                 'status' => $status,
-                'join_time' => $att->join_time ? $att->join_time->format('H:i:s') : null,
+                'join_time' => $att->join_time ? \Carbon\Carbon::parse($att->join_time)->format('H:i:s') : null,
                 'attendance_method' => $att->attendance_method,
             ];
         }
@@ -1026,20 +1194,26 @@ class KpiService
     private function getRoleLabel(string $role): string
     {
         $labels = [
-            'producer' => 'Producer',
-            'kreatif' => 'Creative',
+            'producer' => 'Producer (Approval)',
+            'kreatif' => 'Creative (Script)',
             'produksi' => 'Production / Setting',
-            'art_set_design' => 'Art & Set Properti',
+            'tim_setting_coord' => 'Koordinator Setting',
+            'tim_vocal_coord' => 'Koordinator Vocal',
+            'tim_syuting_coord' => 'Koordinator Syuting',
+            'art_set_design' => 'Art & Set (Alat Keluar)',
+            'art_set_design_return' => 'Art & Set (Alat Masuk)',
             'art_set_alat_keluar' => 'Art & Set Properti (Alat Keluar)',
             'art_set_alat_masuk' => 'Art & Set Properti (Alat Masuk)',
-            'editor' => 'Editor Video',
-            'editor_promosi' => 'Editor Promosi',
+            'editor' => 'Editor Video Program',
+            'editor_promosi' => 'Editor Promosi (Highlight IG)',
             'design_grafis' => 'Design Grafis',
-            'quality_control' => 'Quality Control',
+            'quality_control' => 'QC',
             'broadcasting' => 'Broadcasting',
-            'promotion' => 'Promotion',
+            'promotion' => 'Promosi (BTS Photo)',
             'musik_arr' => 'Music Arranger',
             'sound_eng' => 'Sound Engineer',
+            'promosi_syuting' => 'Promosi Syuting (Highlight IG dsb)',
+            'manager_distribusi' => 'Manager Distribusi (QC Editor)',
         ];
 
         return $labels[$role] ?? ucfirst(str_replace('_', ' ', $role));
