@@ -120,15 +120,25 @@ class PrPromosiController extends Controller
                     $q->where('workflow_step', 4)->where('status', 'completed');
                 });
 
-            // ROLE-BASED FILTERING: Matching PrProduksiController logic
-            // Only allow designated roles to see all, others only see assigned
-            $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER]);
-            $isPromosiFull = Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION]);
+            // STRICT AUTHORIZATION: Only allow assigned personnel to see tasks
+            $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER]);
+            
+            if (!$isManager) {
+                $query->where(function ($q) use ($user) {
+                    // 1. If Producer of the program
+                    $q->whereHas('episode.program', function ($pq) use ($user) {
+                        $pq->where('producer_id', $user->id);
+                    });
+                    
+                    // 2. If in program crew (Matches most Promotion staff)
+                    $q->orWhereHas('episode.program.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
 
-            if (!$isManager && !$isPromosiFull) {
-                // If they are specific promotion crew (e.g. from Episode Crew), filter by their assignment
-                $query->whereHas('episode.crews', function ($q) use ($user) {
-                    $q->where('user_id', $user->id);
+                    // 3. If in episode crew (Matches episode-specific helpers)
+                    $q->orWhereHas('episode.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
                 });
             }
 
@@ -160,11 +170,11 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
+            $work = PrPromotionWork::with('episode.program')->findOrFail($id);
 
-            $work = PrPromotionWork::findOrFail($id);
+            if (!$this->checkWorkAuthorization($work, $user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
+            }
 
             if ($work->status !== 'planning') {
                 return response()->json(['success' => false, 'message' => 'Work can only be accepted when planning'], 400);
@@ -174,6 +184,14 @@ class PrPromosiController extends Controller
                 'status' => 'shooting',
                 'created_by' => $user->id
             ]);
+
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'accept_promotion_work',
+                "Promotion work accepted by {$user->name}",
+                ['step' => 5, 'work_id' => $work->id]
+            );
 
             return response()->json(['success' => true, 'data' => $work->fresh(['episode', 'createdBy']), 'message' => 'Work accepted successfully']);
 
@@ -186,9 +204,10 @@ class PrPromosiController extends Controller
     {
         try {
             $user = Auth::user();
+            $work = PrPromotionWork::with(['episode.program', 'equipmentLoans'])->findOrFail($id);
 
-            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            if (!$this->checkWorkAuthorization($work, $user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
             }
 
             $validator = Validator::make($request->all(), [
@@ -197,12 +216,6 @@ class PrPromosiController extends Controller
 
             if ($validator->fails()) {
                 return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
-            }
-
-            $work = PrPromotionWork::with('equipmentLoans')->findOrFail($id);
-
-            if ($work->created_by !== $user->id && !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
             // Check if equipment is returned (mirror production logic)
@@ -224,6 +237,14 @@ class PrPromosiController extends Controller
 
             // Sync Step 5 progress (Shooting phase transition to Editing/Design)
             app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
+
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'upload_promotion_content',
+                "Promotion content/files uploaded by {$user->name}",
+                ['step' => 5, 'work_id' => $work->id]
+            );
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Content uploaded successfully']);
 
@@ -285,6 +306,14 @@ class PrPromosiController extends Controller
 
             // Sync Step 10 progress
             app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 10);
+
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'share_promotion_content',
+                "Promotion content shared on {$request->platform} by {$user->name}",
+                ['step' => 5, 'work_id' => $work->id]
+            );
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Content shared successfully']);
 
@@ -393,7 +422,7 @@ class PrPromosiController extends Controller
         }
     }
 
-    public function complete($id)
+    public function complete(Request $request, $id)
     {
         try {
             $user = Auth::user();
@@ -420,11 +449,20 @@ class PrPromosiController extends Controller
 
             $work->update([
                 'status' => 'completed',
-                'completion_notes' => request('completion_notes', request('notes', $work->completion_notes))
+                'completion_notes' => $request->input('completion_notes', $request->input('notes', $work->completion_notes)),
+                'file_paths' => $request->input('file_paths', $work->file_paths)
             ]);
 
             Log::info("Promotion Work [{$id}] completed. Syncing Step 5 for Episode [{$work->pr_episode_id}]");
             app(\App\Services\PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
+
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'complete_promotion_work',
+                "Promotion work fully completed by {$user->name}",
+                ['step' => 5, 'work_id' => $work->id]
+            );
 
             // AUTO-CREATE PrEditorPromosiWork when Promotion completes
             $exists = PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->exists();
@@ -454,6 +492,71 @@ class PrPromosiController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function cancelComplete(Request $request, $id)
+    {
+        try {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $work = PrPromotionWork::with('episode')->find($id);
+            if (!$work) {
+                return response()->json(['success' => false, 'message' => 'Work not found.'], 404);
+            }
+
+            if ($work->status !== 'completed') {
+                return response()->json(['success' => false, 'message' => 'Only completed works can be cancelled.'], 400);
+            }
+
+            // Check if the downstream Editor Promotion work has been started
+            $editorPromo = PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            if ($editorPromo && !in_array($editorPromo->status, ['pending', 'waiting_editor'])) {
+                return response()->json([
+                    'success' => false, 
+                    'message' => 'Cannot cancel submission because the Editor has already started working on the Promotion Promotion Editor task (Status: ' . $editorPromo->status . ').'
+                ], 400);
+            }
+
+            DB::beginTransaction();
+
+            // Revert status to shooting (editable state)
+            $work->update([
+                'status' => 'shooting',
+                'completed_at' => null
+            ]);
+
+            // Delete the downstream task if it exists and hasn't started
+            if ($editorPromo) {
+                $editorPromo->delete();
+                Log::info("Deleted PrEditorPromosiWork for Episode [{$work->pr_episode_id}] due to cancellation");
+            }
+
+            // Sync workflow back to "uncompleted" state for step 5
+            app(\App\Services\PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 5);
+
+            // Log activity
+            $this->activityLogService->logEpisodeActivity(
+                $work->episode,
+                'cancel_promotion_submission',
+                "Promotion submission cancelled by {$user->name}. Reverted to editable state.",
+                ['step' => 5, 'work_id' => $work->id]
+            );
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Submission cancelled successfully and work has been reverted to editable state.',
+                'data' => $work->fresh(),
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
@@ -668,7 +771,8 @@ class PrPromosiController extends Controller
             $episodes = PrEpisode::with(['program', 'promotionWork', 'broadcastingWork', 'editorPromosiWork'])
                 ->whereHas('promotionWork')
                 ->whereHas('workflowProgress', function ($query) {
-                    $query->where('workflow_step', 8)->where('status', 'completed');
+                    // Step 9 is Broadcasting. Share Content (Step 10) only starts after Broadcasting is done.
+                    $query->where('workflow_step', 9)->where('status', 'completed');
                 })
                 ->orderBy('created_at', 'desc')
                 ->get()
@@ -711,6 +815,16 @@ class PrPromosiController extends Controller
 
             if (!$promotionWork) {
                 return response()->json(['success' => false, 'message' => 'No promotion work found for this episode'], 404);
+            }
+
+            // Check if Step 9 is completed
+            $broadcastingReady = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+                ->where('workflow_step', 9)
+                ->where('status', 'completed')
+                ->exists();
+
+            if (!$broadcastingReady) {
+                return response()->json(['success' => false, 'message' => 'Broadcasting (Step 9) must be completed before sharing content.'], 403);
             }
 
             $sharingProof = $promotionWork->sharing_proof ?? [];
@@ -760,6 +874,16 @@ class PrPromosiController extends Controller
                 return response()->json(['success' => false, 'message' => 'No promotion work found for this episode'], 404);
             }
 
+            // Check if Step 9 is completed
+            $broadcastingReady = \App\Models\PrEpisodeWorkflowProgress::where('episode_id', $episodeId)
+                ->where('workflow_step', 9)
+                ->where('status', 'completed')
+                ->exists();
+
+            if (!$broadcastingReady) {
+                return response()->json(['success' => false, 'message' => 'Broadcasting (Step 9) must be completed before sharing content.'], 403);
+            }
+
             $tasks = $request->input('tasks');
             $finalize = $request->boolean('finalize', true); // Default to true if not provided (old behavior)
             // Merge into sharing_proof under dedicated key to avoid overwriting other data
@@ -793,17 +917,19 @@ class PrPromosiController extends Controller
                     $promotionWork->episode,
                     'share_konten_finish',
                     "Share Konten tasks completed.",
-                    ['step' => 10, 'status' => 'completed'],
-                    $promotionWork->id
+                    ['work_id' => $promotionWork->id],
+                    $user->id
                 );
             }
 
-            // Mark episode and program as promoted so Step 10 shows green checkmark
+            // Mark episode as promoted so Step 10 shows green checkmark
             if ($promotionWork->episode) {
+                // pr_episodes supports 'promoted' status
                 $promotionWork->episode->update(['status' => 'promoted']);
 
                 if ($promotionWork->episode->program) {
-                    $promotionWork->episode->program->update(['status' => 'promoted']);
+                    // pr_programs only supports limited enum, use 'active'
+                    $promotionWork->episode->program->update(['status' => 'active']);
                 }
             }
 
@@ -812,5 +938,36 @@ class PrPromosiController extends Controller
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
+    }
+    /**
+     * Helper to check if user is authorized to perform actions on a Promotion Work
+     */
+    private function checkWorkAuthorization($work, $user): bool
+    {
+        if (!$user) return false;
+
+        // 1. Administrative roles (All access)
+        if (Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER])) {
+            return true;
+        }
+
+        // 2. Producer (Only their own programs)
+        if (Role::inArray($user->role, [Role::PRODUCER])) {
+            return $work->episode && $work->episode->program && $work->episode->program->producer_id === $user->id;
+        }
+
+        // 3. Program Crew Assignment (Matches Promotion staff)
+        $isCrew = \App\Models\PrProgramCrew::where('user_id', $user->id)
+            ->where('program_id', $work->episode->program_id)
+            ->exists();
+        if ($isCrew) return true;
+
+        // 4. Episode Crew Assignment (Matches specifically assigned helpers)
+        $isEpisodeCrew = \App\Models\PrEpisodeCrew::where('user_id', $user->id)
+            ->where('episode_id', $work->pr_episode_id)
+            ->exists();
+        if ($isEpisodeCrew) return true;
+
+        return false;
     }
 }

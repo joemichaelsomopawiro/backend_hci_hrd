@@ -49,7 +49,7 @@ class PrConceptService
             ]);
 
             // Update program status
-            $concept->program->update(['status' => 'concept_approved']);
+            $concept->program->update(['status' => 'active']);
 
             return $concept->fresh();
         });
@@ -69,7 +69,7 @@ class PrConceptService
             ]);
 
             // Update program status
-            $concept->program->update(['status' => 'concept_rejected']);
+            $concept->program->update(['status' => 'inactive']);
 
             return $concept->fresh();
         });

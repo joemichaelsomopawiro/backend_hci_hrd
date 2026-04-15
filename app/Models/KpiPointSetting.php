@@ -44,6 +44,8 @@ class KpiPointSetting extends Model
             ['role' => 'kreatif', 'program_type' => 'regular', 'points_on_time' => 5, 'points_late' => 2, 'points_not_done' => -5, 'quality_min' => 1, 'quality_max' => 5],
             ['role' => 'produksi', 'program_type' => 'regular', 'points_on_time' => 5, 'points_late' => 2, 'points_not_done' => -5, 'quality_min' => 1, 'quality_max' => 5],
             ['role' => 'art_set_design', 'program_type' => 'regular', 'points_on_time' => 2, 'points_late' => 1, 'points_not_done' => 0, 'quality_min' => 0, 'quality_max' => 0],
+            ['role' => 'art_set_alat_keluar', 'program_type' => 'regular', 'points_on_time' => 2, 'points_late' => 1, 'points_not_done' => 0, 'quality_min' => 0, 'quality_max' => 0],
+            ['role' => 'art_set_alat_masuk', 'program_type' => 'regular', 'points_on_time' => 2, 'points_late' => 1, 'points_not_done' => 0, 'quality_min' => 0, 'quality_max' => 0],
             ['role' => 'editor', 'program_type' => 'regular', 'points_on_time' => 5, 'points_late' => 2, 'points_not_done' => -5, 'quality_min' => 1, 'quality_max' => 5],
             ['role' => 'quality_control', 'program_type' => 'regular', 'points_on_time' => 3, 'points_late' => 1, 'points_not_done' => -5, 'quality_min' => 1, 'quality_max' => 5],
             ['role' => 'editor_promosi', 'program_type' => 'regular', 'points_on_time' => 3, 'points_late' => 1, 'points_not_done' => -5, 'quality_min' => 1, 'quality_max' => 5],

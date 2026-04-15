@@ -89,9 +89,17 @@ class PrEditorPromosiController extends Controller
 
         $filteredWorks = $works;
 
+        // SELF-HEALING: Sync statuses if they are outdated
+        foreach ($filteredWorks as $work) {
+            if ($work->status === 'reviewing_qc' || $work->status === 'pending_qc') {
+                app(\App\Services\PrWorkflowService::class)->syncRoleWorkStatusFromQC($work->pr_episode_id);
+                $work->refresh(); // Refresh this specific instance to get updated status
+            }
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $filteredWorks->values()
+            'data' => $filteredWorks->load(['episode.program', 'editorWork', 'promotionWork', 'assignedUser'])->values()
         ]);
     }
 

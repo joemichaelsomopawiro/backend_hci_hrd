@@ -199,53 +199,50 @@ class PrManagerDistribusiQcController extends Controller
 
     private function handleRevisionRequest(PrManagerDistribusiQcWork $work, string $itemKey, ?string $note)
     {
-        if ($itemKey === 'episode_poster') {
-            $designGrafisWork = PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->first();
-            if ($designGrafisWork) {
-                $newNote = "[QC Revision: Episode Poster] " . $note;
-                $currentNotes = $designGrafisWork->notes ? $designGrafisWork->notes . "\n" : "";
+        $newNote = "[QC Distribusi Revision: " . $itemKey . "] " . $note;
 
-                $designGrafisWork->update([
-                    'status' => 'needs_revision',
-                    'notes' => $currentNotes . $newNote
-                ]);
-            }
-        } else {
-            // Update Editor Work (main episode)
-            $editorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
-                ->where('work_type', 'main_episode')
-                ->first();
-            if ($editorWork) {
-                $newNote = "[QC Revision: " . $itemKey . "] " . $note;
-                $currentNotes = $editorWork->review_notes ? $editorWork->review_notes . "\n" : "";
-
-                $editorWork->update([
-                    'status' => 'needs_revision',
-                    'review_notes' => $currentNotes . $newNote
-                ]);
-            }
+        // SEPARATION: Distribusi Manager ONLY checks video editing (Main Editor)
+        $editorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
+            ->where('work_type', 'main_episode')
+            ->first() ?? PrEditorWork::where('pr_episode_id', $work->pr_episode_id)->first();
+        
+        if ($editorWork) {
+            $currentNotes = $editorWork->review_notes ? $editorWork->review_notes . "\n" : "";
+            $editorWork->update([
+                'status' => 'needs_revision',
+                'review_notes' => $currentNotes . $newNote
+            ]);
         }
     }
 
     private function handleRevisionCancelCleanup(PrManagerDistribusiQcWork $work, string $itemKey)
     {
         $checklist = $work->qc_checklist ?? [];
-        $otherRevisions = false;
         
-        foreach ($checklist as $key => $item) {
-            if (($item['status'] ?? '') === 'revision') {
-                if ($itemKey === 'episode_poster' && $key === 'episode_poster') $otherRevisions = true;
-                if ($itemKey !== 'episode_poster' && $key !== 'episode_poster') $otherRevisions = true;
-            }
+        // Match item key to its respective role
+        if (in_array($itemKey, ['promotion_video', 'tv_ad', 'bts_video'])) {
+            $roleWork = PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            $keys = ['promotion_video', 'tv_ad', 'bts_video'];
+        } elseif (in_array($itemKey, ['episode_poster', 'youtube_thumbnail', 'bts_thumbnail'])) {
+            $roleWork = PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            $keys = ['episode_poster', 'youtube_thumbnail', 'bts_thumbnail'];
+        } else {
+            $roleWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
+                ->where('work_type', 'main_episode')
+                ->first() ?? PrEditorWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            $keys = ['video_episode', 'audio_quality', 'editing_flow'];
         }
 
-        if (!$otherRevisions) {
-            if ($itemKey === 'episode_poster') {
-                PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'submitted']);
-            } else {
-                PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
-                    ->where('work_type', 'main_episode')
-                    ->update(['status' => 'submitted']);
+        if ($roleWork && $roleWork->status === 'needs_revision') {
+            $hasOtherRevisions = false;
+            foreach ($checklist as $key => $item) {
+                if ($key !== $itemKey && in_array($key, $keys) && ($item['status'] ?? '') === 'revision') {
+                    $hasOtherRevisions = true;
+                }
+            }
+
+            if (!$hasOtherRevisions) {
+                $roleWork->update(['status' => 'pending_qc']);
             }
         }
     }
@@ -269,25 +266,31 @@ class PrManagerDistribusiQcController extends Controller
             $checklist = $work->qc_checklist ?? [];
 
             // Define required items for Manager Distribusi
-            $requiredItems = ['video_episode'];
+            $requiredItems = ['video_episode', 'episode_poster', 'promotion_video'];
 
-            // Identify present items - Manager Distribusi primarily checks the main episode video and added poster
+            // Identify present items
             $editorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
                 ->where('work_type', 'main_episode')
                 ->first();
+            $editorPromoWork = PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->first();
+            $designGrafisWork = PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->first();
 
             $presentKeys = [];
             if ($editorWork && $editorWork->file_path) {
                 $presentKeys[] = 'video_episode';
             }
-
-            $designGrafisWork = PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->first();
             if ($designGrafisWork && $designGrafisWork->episode_poster_link) {
                 $presentKeys[] = 'episode_poster';
             }
+            if ($editorPromoWork && ($editorPromoWork->bts_video_link || $editorPromoWork->tv_ad_link)) {
+                $presentKeys[] = 'promotion_video';
+            }
+
+            // SEPARATION: Distribusi Manager ONLY checks video editing
+            $requiredItems = ['video_episode'];
 
             $allApproved = true;
-            foreach ($presentKeys as $key) {
+            foreach ($requiredItems as $key) {
                 if (($checklist[$key]['status'] ?? '') !== 'approved') {
                     $allApproved = false;
                     break;
@@ -295,7 +298,10 @@ class PrManagerDistribusiQcController extends Controller
             }
 
             if (!$allApproved || empty($presentKeys)) {
-                return response()->json(['success' => false, 'message' => 'All available items (video episode, episode poster) must be approved before finishing.'], 400);
+                $message = empty($presentKeys) 
+                    ? 'No distribution assets found to approve.' 
+                    : 'The following items must be approved: ' . implode(', ', $missingApprovals);
+                return response()->json(['success' => false, 'message' => $message], 400);
             }
 
             DB::beginTransaction();
@@ -307,16 +313,18 @@ class PrManagerDistribusiQcController extends Controller
                 'created_by' => $work->created_by ?? $user->id
             ]);
 
-            // Update Editor Work Status to completed
-            $editorWork = PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
+            // SEPARATION: Distribusi Manager ONLY completes the Video Editor's work
+            PrEditorWork::where('pr_episode_id', $work->pr_episode_id)
                 ->where('work_type', 'main_episode')
-                ->first();
-            if ($editorWork) {
-                $editorWork->update(['status' => 'completed']);
+                ->update(['status' => 'completed']);
+            
+            // Note: We don't update EditorPromosi or DesignGrafis here anymore,
+            // as they are now handled by Step 8 Quality Control.
 
-                // Centralized logic for step 6 completion
-                app(PrWorkflowService::class)->syncStepProgress($editorWork->pr_episode_id, 6);
-            }
+            // Centralized logic for step 6 completion sync
+            app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 6);
+            
+            DB::commit();
 
             // Sync Step 7 progress
             app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 7);

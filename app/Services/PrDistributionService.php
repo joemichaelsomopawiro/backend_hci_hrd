@@ -15,7 +15,7 @@ class PrDistributionService
      */
     public function verifyProgram(PrProgram $program, bool $verified, ?string $notes = null): PrProgram
     {
-        $status = $verified ? 'distribusi_approved' : 'distribusi_rejected';
+        $status = $verified ? 'active' : 'inactive';
         
         $program->update([
             'status' => $status,
@@ -31,10 +31,12 @@ class PrDistributionService
     public function createDistributionSchedule(PrProgram $program, array $data, int $createdBy): PrDistributionSchedule
     {
         return DB::transaction(function () use ($program, $data, $createdBy) {
-            // Update program status
+            // Program remains 'active'
+            /*
             if ($program->status === 'distribusi_approved') {
-                $program->update(['status' => 'scheduled']);
+                $program->update(['status' => 'active']);
             }
+            */
 
             $schedule = PrDistributionSchedule::create([
                 'program_id' => $program->id,
@@ -58,15 +60,12 @@ class PrDistributionService
     {
         $episode->update(['status' => 'aired']);
 
-        // Update program status jika semua episode sudah tayang
-        $program = $episode->program;
-        $allAired = $program->episodes()
-            ->where('status', '!=', 'aired')
-            ->count() === 0;
-
+        // Program remains 'active' even after episodes are aired
+        /*
         if ($allAired) {
-            $program->update(['status' => 'completed']);
+            $program->update(['status' => 'active']);
         }
+        */
 
         return $episode->fresh();
     }

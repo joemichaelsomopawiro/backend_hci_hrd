@@ -20,6 +20,11 @@ class PrTalentController extends Controller
      */
     public function index(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PROMOTION, Role::EDITOR_PROMOTION, Role::PRODUCTION, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::DISTRIBUTION_MANAGER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $query = PrTalent::query();
 
         if ($request->has('search')) {
@@ -47,6 +52,11 @@ class PrTalentController extends Controller
      */
     public function store(Request $request)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::DISTRIBUTION_MANAGER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'type' => 'nullable|in:host,guest,other',
@@ -88,6 +98,11 @@ class PrTalentController extends Controller
      */
     public function update(Request $request, $id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::CREATIVE, Role::PROMOTION, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::DISTRIBUTION_MANAGER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',
             'title' => 'nullable|string|max:255',
@@ -131,6 +146,11 @@ class PrTalentController extends Controller
      */
     public function destroy($id)
     {
+        $user = Auth::user();
+        if (!$user || !Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::PRODUCER, Role::DISTRIBUTION_MANAGER])) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        }
+
         try {
             $talent = PrTalent::findOrFail($id);
             $talent->delete();
@@ -159,11 +179,27 @@ class PrTalentController extends Controller
             $talents = PrTalent::orderBy('name')->get();
 
             // 2. Get all programs (all statuses)
-            $programs = PrProgram::orderBy('name')
-                ->get(['id', 'name']);
+            $userProgramQuery = PrProgram::orderBy('name');
+            $user = Auth::user();
+            $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER]);
+            
+            if (!$isManager) {
+                $userProgramQuery->where(function ($q) use ($user) {
+                    $q->where('producer_id', $user->id)
+                        ->orWhereHas('crews', function ($pq) use ($user) {
+                            $pq->where('user_id', $user->id);
+                        });
+                });
+            }
+
+            $programs = $userProgramQuery->get(['id', 'name']);
+            $allowedProgramIds = $programs->pluck('id')->toArray();
 
             // 3. Get all creative works that have talent_data
             $creativeWorks = PrCreativeWork::whereNotNull('talent_data')
+                ->whereHas('episode', function ($q) use ($allowedProgramIds) {
+                    $q->whereIn('program_id', $allowedProgramIds);
+                })
                 ->with(['episode' => function ($q) {
                     $q->select('id', 'program_id');
                 }])

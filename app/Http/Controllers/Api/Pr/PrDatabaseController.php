@@ -453,6 +453,14 @@ class PrDatabaseController extends Controller
                             'total' => $budgetTotal,
                             'approved_by' => $approvedBy,
                             'approved_at' => $approvedAt,
+                            'producer_approval' => $creative ? [
+                                'name' => $creative->budgetApprovedBy?->name,
+                                'at' => $creative->budget_approved_at
+                            ] : null,
+                            'manager_approval' => $creative ? [
+                                'name' => $creative->specialBudgetApprover?->name,
+                                'at' => $creative->special_budget_approved_at
+                            ] : null,
                         ];
                     })(),
                     'hosts' => (function() use ($ep) {

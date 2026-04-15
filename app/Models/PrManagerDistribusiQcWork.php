@@ -32,7 +32,12 @@ class PrManagerDistribusiQcWork extends Model
 
     protected $appends = [
         'editor_file_path',
-        'episode_poster_link'
+        'episode_poster_link',
+        'promotion_video_link',
+        'bts_video_link',
+        'tv_ad_link',
+        'youtube_thumbnail_link',
+        'bts_thumbnail_link'
     ];
 
     public function episode()
@@ -92,5 +97,35 @@ class PrManagerDistribusiQcWork extends Model
     {
         $designGrafisWork = PrDesignGrafisWork::where('pr_episode_id', $this->pr_episode_id)->first();
         return $designGrafisWork ? $designGrafisWork->episode_poster_link : null;
+    }
+
+    public function getPromotionVideoLinkAttribute()
+    {
+        $promoWork = PrEditorPromosiWork::where('pr_episode_id', $this->pr_episode_id)->first();
+        return $promoWork ? ($promoWork->ig_highlight_link ?? $promoWork->tv_highlight_link) : null;
+    }
+
+    public function getBtsVideoLinkAttribute()
+    {
+        $promoWork = PrEditorPromosiWork::where('pr_episode_id', $this->pr_episode_id)->first();
+        return $promoWork ? $promoWork->bts_video_link : null;
+    }
+
+    public function getTvAdLinkAttribute()
+    {
+        $promoWork = PrEditorPromosiWork::where('pr_episode_id', $this->pr_episode_id)->first();
+        return $promoWork ? $promoWork->tv_ad_link : null;
+    }
+
+    public function getYoutubeThumbnailLinkAttribute()
+    {
+        $designWork = PrDesignGrafisWork::where('pr_episode_id', $this->pr_episode_id)->first();
+        return $designWork ? $designWork->youtube_thumbnail_link : null;
+    }
+
+    public function getBtsThumbnailLinkAttribute()
+    {
+        $designWork = PrDesignGrafisWork::where('pr_episode_id', $this->pr_episode_id)->first();
+        return $designWork ? $designWork->bts_thumbnail_link : null;
     }
 }

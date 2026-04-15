@@ -75,6 +75,28 @@ class PrDesignGrafisController extends Controller
             'assignedUser'
         ]);
 
+        // STRICT AUTHORIZATION: Only allow assigned personnel to see tasks
+        $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER]);
+        
+        if (!$isManager) {
+            $query->where(function ($q) use ($user) {
+                // 1. If Producer of the program
+                $q->whereHas('episode.program', function ($pq) use ($user) {
+                    $pq->where('producer_id', $user->id);
+                });
+                
+                // 2. If in program crew
+                $q->orWhereHas('episode.program.crews', function ($pq) use ($user) {
+                    $pq->where('user_id', $user->id);
+                });
+
+                // 3. If in episode crew
+                $q->orWhereHas('episode.crews', function ($pq) use ($user) {
+                    $pq->where('user_id', $user->id);
+                });
+            });
+        }
+
         // Filter by status
         if ($request->has('status')) {
             $query->where('status', $request->status);
@@ -119,9 +141,17 @@ class PrDesignGrafisController extends Controller
             }
         });
 
+        // SELF-HEALING: Sync statuses if they are outdated
+        foreach ($works as $work) {
+            if ($work->status === 'reviewing_qc' || $work->status === 'pending_qc') {
+                app(\App\Services\PrWorkflowService::class)->syncRoleWorkStatusFromQC($work->pr_episode_id);
+                $work->refresh(); // Refresh this specific instance to get updated status
+            }
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $works
+            'data' => $works->load(['episode.program', 'productionWork', 'promotionWork', 'assignedUser'])->values()
         ]);
     }
 
@@ -131,16 +161,16 @@ class PrDesignGrafisController extends Controller
     public function show($id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
-            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-        }
-
         $work = PrDesignGrafisWork::with([
             'episode.program',
             'productionWork',
             'promotionWork',
             'assignedUser'
         ])->findOrFail($id);
+
+        if (!$this->checkWorkAuthorization($work, $user)) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
+        }
 
         // Map Production Video
         if ($work->productionWork && $work->productionWork->shooting_file_links) {
@@ -183,13 +213,18 @@ class PrDesignGrafisController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !Role::inArray($user->role, [Role::DESIGN_GRAFIS, Role::PROGRAM_MANAGER, Role::PRODUCER, Role::MANAGER_DISTRIBUSI])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            $work = PrDesignGrafisWork::with('episode.program')->where('pr_episode_id', $episodeId)->first();
+
+            if (!$work) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Design grafis work not found for this episode'
+                ], 404);
             }
 
-            $episode = PrEpisode::findOrFail($episodeId);
-
-            $work = PrDesignGrafisWork::where('pr_episode_id', $episodeId)->first();
+            if (!$this->checkWorkAuthorization($work, $user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
+            }
 
             if (!$work) {
                 return response()->json([
@@ -440,5 +475,37 @@ class PrDesignGrafisController extends Controller
                 'message' => 'Failed to cancel submission: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Helper to check if user is authorized for a Design Grafis Work
+     */
+    private function checkWorkAuthorization($work, $user): bool
+    {
+        if (!$user) return false;
+
+        // 1. Administrative roles
+        if (Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER])) {
+            return true;
+        }
+
+        // 2. Producer (Only their own programs)
+        if (Role::inArray($user->role, [Role::PRODUCER])) {
+            return $work->episode && $work->episode->program && $work->episode->program->producer_id === $user->id;
+        }
+
+        // 3. Program Crew Assignment (Matches Designer staff)
+        $isCrew = \App\Models\PrProgramCrew::where('user_id', $user->id)
+            ->where('program_id', $work->episode->program_id)
+            ->exists();
+        if ($isCrew) return true;
+
+        // 4. Episode Crew Assignment
+        $isEpisodeCrew = \App\Models\PrEpisodeCrew::where('user_id', $user->id)
+            ->where('episode_id', $work->pr_episode_id)
+            ->exists();
+        if ($isEpisodeCrew) return true;
+
+        return false;
     }
 }

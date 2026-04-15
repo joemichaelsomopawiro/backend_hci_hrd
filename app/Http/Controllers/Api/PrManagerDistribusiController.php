@@ -63,7 +63,7 @@ class PrManagerDistribusiController extends Controller
             }
 
             $programs = PrProgram::with(['managerProgram', 'producer', 'episodes'])
-                ->whereIn('status', ['submitted_to_distribusi', 'distribusi_approved', 'scheduled'])
+                ->whereIn('status', ['active'])
                 ->orderBy('created_at', 'desc')
                 ->paginate($request->get('per_page', 15));
 
