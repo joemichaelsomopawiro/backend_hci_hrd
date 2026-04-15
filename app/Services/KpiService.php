@@ -827,7 +827,6 @@ class KpiService
             ];
         }
     }
-    }
 
     /**
      * Check if this is backup work (user role doesn't match work role)
