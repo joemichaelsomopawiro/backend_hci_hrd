@@ -332,4 +332,50 @@ class ProduksiController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Transfer equipment to next episode (Sequential Resource Logic / "Lanjut Pakai")
+     * POST /api/live-tv/roles/produksi/transfer-equipment
+     */
+    public function transferEquipment(Request $request)
+    {
+        $request->validate([
+            'items' => 'required|array',
+            'items.*.request_item_id' => 'required|exists:equipment_request_items,id',
+            'target_episode_id' => 'required|exists:episodes,id',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            foreach ($request->items as $item) {
+                $requestItem = EquipmentRequestItem::findOrFail($item['request_item_id']);
+                
+                // 1. Mark current item as "transferred" instead of "returned"
+                // Status 'in_use' stays but we add a transfer note
+                $requestItem->update([
+                    'status' => 'transferred',
+                    'transfer_to_episode_id' => $request->target_episode_id,
+                    'notes' => ($requestItem->notes ? $requestItem->notes . "\n" : "") . "Lanjut pakai ke Episode #" . $request->target_episode_id
+                ]);
+
+                // 2. Create new entry for target episode if logic requires it, 
+                // but usually we just keep the item 'in_use' with a tracker.
+                // For this implementation, we simply allow the frontend to bypass return.
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Equipment successfully transferred to next episode (Lanjut Pakai).'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Error transferring equipment: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

@@ -775,6 +775,7 @@ class ProducerController extends Controller
                         'status' => 'song_approved',
                         'reviewed_by' => auth()->id(),
                         'reviewed_at' => now(),
+                        'song_approved_at' => now(),
                         'review_notes' => $request->notes
                     ]);
                     

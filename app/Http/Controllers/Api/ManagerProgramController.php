@@ -1316,9 +1316,19 @@ class ManagerProgramController extends Controller
             // --- END HISTORY COLLECTION ---
             
             // --- ALL DEADLINES ---
+            $isMusik = $episode->program && $episode->program->category === 'musik';
+            
             $dlProducer = $deadlines->where('role', 'producer')->first();
             $dlKreatif = $deadlines->where('role', 'kreatif')->first();
             $dlMusik = $deadlines->where('role', 'musik_arr')->first();
+            
+            // Music Specific Deadlines (Prioritize these for Music Programs)
+            $dlMusicSong = $isMusik ? $deadlines->where('role', 'musik_arr_song')->first() : $dlMusik;
+            $dlProdSong = $isMusik ? $deadlines->where('role', 'producer_acc_song')->first() : $dlProducer;
+            $dlMusicArr = $isMusik ? $deadlines->where('role', 'musik_arr_lagu')->first() : $dlMusik;
+            $dlProdArr = $isMusik ? $deadlines->where('role', 'producer_acc_lagu')->first() : $dlProducer;
+            $dlProdCreative = $isMusik ? $deadlines->where('role', 'producer_creative')->first() : $dlProducer;
+
             $dlSound = $deadlines->where('role', 'sound_eng')->first();
             $dlTimVocal = $deadlines->where('role', 'tim_vocal_coord')->first();
             $dlSetting = $deadlines->where('role', 'tim_setting_coord')->first();
@@ -1352,7 +1362,7 @@ class ManagerProgramController extends Controller
                 $proposalSubmitted ? 'completed' : ($music ? $music->status : 'pending'),
                 $music && $music->status === 'song_rejected' ? 'Ditolak: ' . $music->rejection_reason : (!$music ? 'Belum diajukan.' : null),
                 $music ? ['song_title' => $music->song_title, 'singer_name' => $music->singer_name] : null,
-                $dlMusik, $music?->created_at, $music?->createdBy?->name,
+                $dlMusicSong, $music?->created_at, $music?->createdBy?->name,
                 $music?->review_notes,
                 $music?->status === 'song_rejected' ? $music?->rejection_reason : null
             );
@@ -1364,7 +1374,7 @@ class ManagerProgramController extends Controller
                 'song_proposal_approval', 'Producer (Approve Song Proposal)', $songAppr,
                 $songAppr ? 'completed' : ($music && $music->status === 'song_rejected' ? 'rejected' : 'pending'),
                 $music && $music->status === 'song_rejected' ? 'Ditolak: ' . $music->rejection_reason : (!$music ? 'Menunggu usulan.' : 'Menunggu review Producer.'),
-                null, $dlProducer, $music?->reviewed_at, $music?->reviewedBy?->name,
+                null, $dlProdSong, $music?->reviewed_at, $music?->reviewedBy?->name,
                 $music?->review_notes,
                 $music?->status === 'song_rejected' ? $music?->rejection_reason : null
             );
@@ -1377,7 +1387,7 @@ class ManagerProgramController extends Controller
                 $arrSubmitted ? 'completed' : ($music && $music->status === 'arrangement_rejected' ? 'rejected' : ($songAppr ? 'pending' : 'blocked')),
                 $music && $music->status === 'arrangement_rejected' ? 'Ditolak: ' . $music->rejection_reason : (!$songAppr ? 'Menunggu approval lagu.' : 'Belum disubmit.'),
                 $music ? ['file_link' => $music->file_link] : null,
-                $dlMusik, $music?->submitted_at, $music?->createdBy?->name,
+                $dlMusicArr, $music?->submitted_at, $music?->createdBy?->name,
                 $music?->status === 'arrangement_approved' ? $music?->review_notes : null,
                 $music?->status === 'arrangement_rejected' ? $music?->rejection_reason : null
             );
@@ -1388,7 +1398,7 @@ class ManagerProgramController extends Controller
                 'arrangement_approval', 'Producer (Approve Arrangement)', $arrAppr,
                 $arrAppr ? 'completed' : ($music && in_array($music->status, ['arrangement_rejected', 'rejected']) ? 'rejected' : 'pending'),
                 $music && in_array($music->status, ['arrangement_rejected', 'rejected']) ? 'Ditolak: ' . $music->rejection_reason : (!$arrSubmitted ? 'Menunggu link.' : 'Menunggu review Producer.'),
-                null, $dlProducer, $music?->reviewed_at, $music?->reviewedBy?->name,
+                null, $dlProdArr, $music?->reviewed_at, $music?->reviewedBy?->name,
                 $music?->review_notes,
                 $music?->status === 'arrangement_rejected' ? $music?->rejection_reason : null
             );
@@ -1413,7 +1423,7 @@ class ManagerProgramController extends Controller
                 'producer_creative_approval', 'Producer (Approve Creative)', $creativeDone,
                 $creativeDone ? 'completed' : ($creative ? ($creative->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 $creative && $creative->status === 'rejected' ? 'Ditolak: ' . $creative->rejection_reason : (!$creative ? 'Menunggu output kreatif.' : 'Menunggu review Producer.'),
-                null, $dlProducer, $creative?->reviewed_at, $creative?->reviewedBy?->name,
+                null, $dlProdCreative, $creative?->reviewed_at, $creative?->reviewedBy?->name,
                 $creative?->review_notes,
                 $creative?->status === 'rejected' ? $creative?->rejection_reason : null
             );

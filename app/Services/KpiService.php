@@ -79,46 +79,44 @@ class KpiService
         $lateCount = 0;
         $notDoneCount = 0;
 
+        // Total points will be calculated by summing points_on_time of all expected assignments
+        // to support accurate percentage even for granular roles with different point values
+        $maxPoints = 0; 
+
         // Get all program regular episodes this user worked on
         $this->collectPrWorkPoints($userId, $month, $year, $settings, $workItems, $totalPoints, $maxPoints, $onTimeCount, $lateCount, $notDoneCount, $user);
 
         // Get all music program episodes this user worked on
         $this->collectMusicWorkPoints($userId, $month, $year, $settings, $workItems, $totalPoints, $maxPoints, $onTimeCount, $lateCount, $notDoneCount, $user);
 
-        // We calculate maxPoints globally based on expected target per role (Total Aired Episodes * max_point per episode)
-        // For backup workloads, they add to totalPoints but DO NOT increase maxPoints, creating possibilities of >100%
-        
         $totalTasks = $onTimeCount + $lateCount + $notDoneCount;
         
-        // Define base role from user to identify their expected target count
-        $normalizedUserRole = strtolower(str_replace([' ', '&', '-'], ['_', '', '_'], $user->role ?? ''));
-        
-        // Count total music episodes in the queried period
-        $targetEpisodeCount = \App\Models\Episode::whereHas('program', function($q) {
-                $q->where('category', 'musik');
-            })
-            ->whereYear('air_date', $year)
-            ->when($month, function($q) use($month) {
-                $q->whereMonth('air_date', $month);
-            })->count();
-
-        // If they have a regular KPI target (5 points per episode)
-        // Base points = target_episode_count * 5. Only apply this base maxPoints to core workers. 
-        // We will assign a dynamic max based on the expected workflow steps
-        $baseSettingPoint = 5; 
-        $maxPoints = $targetEpisodeCount * $baseSettingPoint;
-
+        // Final safeguard if no tasks but somehow scored (should not normally happen with the above logic)
         if ($maxPoints == 0 && $totalPoints > 0) {
-            // Backup edge case if no target episodes but somehow scored
-            $maxPoints = $totalTasks * $baseSettingPoint; 
+            $maxPoints = $totalPoints; 
         }
 
         $percentage = $maxPoints > 0 ? round(($totalPoints / $maxPoints) * 100, 1) : 0;
+
+        // NEW: Calculate Yearly Target Points based on 52 episodes (as per User Excel)
+        // Strictly focus ONLY on Program Musik roles as requested
+        $yearlyTargetPoints = 0;
+        $uniqueRoles = collect($workItems)->where('program_type', 'musik')->pluck('role')->unique();
+
+        foreach ($uniqueRoles as $role) {
+            $setting = $settings->get($role . '_musik');
+            if ($setting) {
+                // For yearly view, the target for Music Program is (Points per Episode * 52)
+                $yearlyTargetPoints += ($setting->points_on_time * 52);
+            }
+        }
 
         return [
             'total_points' => $totalPoints,
             'max_points' => $maxPoints,
             'percentage' => $percentage,
+            'yearly_target_points' => $yearlyTargetPoints, 
+            'yearly_target_percentage' => $yearlyTargetPoints > 0 ? round(($totalPoints / $yearlyTargetPoints) * 100, 1) : 0,
             'breakdown' => [
                 'on_time' => $onTimeCount,
                 'late' => $lateCount,
@@ -278,23 +276,73 @@ class KpiService
     private function collectMusicWorkPoints(int $userId, ?int $month, int $year, $settings, array &$items, int &$totalPoints, int &$maxPoints, int &$onTimeCount, int &$lateCount, int &$notDoneCount, User $user): void
     {
         // 1. Get all deadlines assigned to this user for the period
-        $deadlineQuery = \App\Models\Deadline::with(['episode.program'])
+        $deadlineQuery = \App\Models\Deadline::with(['episode.program' => function($q) {
+                $q->withTrashed();
+            }])
             ->where('assigned_user_id', $userId)
-            ->whereHas('episode', function ($q) use ($month, $year) {
-                $q->whereYear('air_date', $year);
-                if ($month) {
-                    $q->whereMonth('air_date', $month);
-                }
+            ->where(function($q) use ($month, $year) {
+                // Include by Air Date
+                $q->whereHas('episode', function ($sq) use ($month, $year) {
+                    $sq->whereYear('air_date', $year);
+                    if ($month) {
+                        $sq->whereMonth('air_date', $month);
+                    }
+                })
+                // OR Include by Deadline Date (so items like Ep 18 show up in the month they are due)
+                ->orWhere(function($sq) use ($month, $year) {
+                    $sq->whereYear('deadline_date', $year);
+                    if ($month) {
+                        $sq->whereMonth('deadline_date', $month);
+                    }
+                });
             });
 
         $assignedDeadlines = $deadlineQuery->get();
+        
+        // 1.5 WORK-BASED DISCOVERY: Find episodes where the user actually did work (Approvals)
+        // even if no deadline was formally assigned to them.
+        $activityEpisodeIds = \App\Models\MusicArrangement::where(function($q) use ($userId) {
+                $q->where('reviewed_by', $userId)
+                  ->orWhere('created_by', $userId);
+            })
+            ->where(function($q) use ($month, $year) {
+                if ($month) {
+                    $q->whereMonth('song_approved_at', $month)->orWhereMonth('reviewed_at', $month);
+                }
+                $q->whereYear('song_approved_at', $year)->orWhereYear('reviewed_at', $year);
+            })
+            ->pluck('episode_id')
+            ->unique()
+            ->toArray();
+            
+        $existingEpIds = $assignedDeadlines->pluck('episode_id')->unique()->toArray();
+        $missingEpIds = array_diff($activityEpisodeIds, $existingEpIds);
+        
+        if (!empty($missingEpIds)) {
+            $missingEpisodes = \App\Models\Episode::with(['program' => function($q) { $q->withTrashed(); }])
+                ->whereIn('id', $missingEpIds)
+                ->get();
+            
+            foreach ($missingEpisodes as $ep) {
+                // Add a virtual base deadline so the expansion logic picks it up
+                $assignedDeadlines->push((object)[
+                    'role' => 'producer',
+                    'episode_id' => $ep->id,
+                    'episode' => $ep,
+                    'deadline_date' => $ep->air_date ? $ep->air_date->copy()->subDays(10) : now(),
+                    'assigned_user_id' => $userId,
+                    'is_virtual' => true
+                ]);
+            }
+        }
 
         // 2. Map Work Models to Roles
         $workModels = [
             'producer' => [
                 'model' => \App\Models\CreativeWork::class,
+                'fallback_model' => \App\Models\MusicArrangement::class, // Fallback for Music programs
                 'completed_field' => 'reviewed_at',
-                'status_completed' => ['approved'],
+                'status_completed' => ['approved', 'arrangement_approved'],
             ],
             'kreatif' => [
                 'model' => \App\Models\CreativeWork::class,
@@ -303,8 +351,28 @@ class KpiService
             ],
             'musik_arr' => [
                 'model' => \App\Models\MusicArrangement::class,
-                'completed_field' => 'submitted_at',
+                'completed_field' => 'arrangement_submitted_at',
                 'status_completed' => ['submitted', 'approved', 'rejected'],
+            ],
+            'musik_arr_song' => [
+                'model' => \App\Models\MusicArrangement::class,
+                'completed_field' => 'created_at',
+                'status_completed' => ['draft', 'song_proposal', 'song_rejected', 'song_approved', 'submitted', 'approved', 'rejected'],
+            ],
+            'musik_arr_lagu' => [
+                'model' => \App\Models\MusicArrangement::class,
+                'completed_field' => 'arrangement_submitted_at',
+                'status_completed' => ['submitted', 'approved', 'rejected'],
+            ],
+            'producer_acc_song' => [
+                'model' => \App\Models\MusicArrangement::class,
+                'completed_field' => 'song_approved_at',
+                'status_completed' => ['song_approved', 'approved'], // Removed 'submitted' and 'rejected'
+            ],
+            'producer_acc_lagu' => [
+                'model' => \App\Models\MusicArrangement::class,
+                'completed_field' => 'reviewed_at',
+                'status_completed' => ['arrangement_approved', 'approved'],
             ],
             'sound_eng' => [
                 'model' => \App\Models\MusicArrangement::class,
@@ -375,8 +443,44 @@ class KpiService
             ],
         ];
 
-        // 3. Process each deadline
+        // 3. Process each deadline (Expand for Music Producer roles if missing)
+        $processedItems = [];
+        $producerExpandedIds = []; // Track to avoid double expansion
+
         foreach ($assignedDeadlines as $deadlineRecord) {
+            $processedItems[] = $deadlineRecord;
+            
+            // If it's a Producer role for a Music episode, and other roles are missing in the list
+            // inject them so they appear in the KPI table automatically
+            if ($deadlineRecord->role === 'producer' && !in_array($deadlineRecord->episode_id, $producerExpandedIds)) {
+                $episode = $deadlineRecord->episode;
+                if ($episode) {
+                    $existingRoles = $assignedDeadlines->where('episode_id', $deadlineRecord->episode_id)->pluck('role')->toArray();
+                    
+                    if (!in_array('producer_acc_song', $existingRoles)) {
+                        $processedItems[] = (object)[
+                            'role' => 'producer_acc_song',
+                            'episode_id' => $deadlineRecord->episode_id,
+                            'episode' => $deadlineRecord->episode,
+                            'deadline_date' => $deadlineRecord->episode->air_date ? $deadlineRecord->episode->air_date->copy()->subDays(15) : $deadlineRecord->deadline_date,
+                            'assigned_user_id' => $deadlineRecord->assigned_user_id
+                        ];
+                    }
+                    if (!in_array('producer_acc_lagu', $existingRoles)) {
+                        $processedItems[] = (object)[
+                            'role' => 'producer_acc_lagu',
+                            'episode_id' => $deadlineRecord->episode_id,
+                            'episode' => $deadlineRecord->episode,
+                            'deadline_date' => $deadlineRecord->episode->air_date ? $deadlineRecord->episode->air_date->copy()->subDays(11) : $deadlineRecord->deadline_date,
+                            'assigned_user_id' => $deadlineRecord->assigned_user_id
+                        ];
+                    }
+                    $producerExpandedIds[] = $deadlineRecord->episode_id;
+                }
+            }
+        }
+
+        foreach ($processedItems as $deadlineRecord) {
             $roleKey = $deadlineRecord->role;
             $episode = $deadlineRecord->episode;
             if (!$episode) continue;
@@ -396,6 +500,11 @@ class KpiService
                     }
                 }
                 $work = $workQuery->first();
+
+                // Fallback logic for roles that might use different models (e.g. Producer in Music programs)
+                if (!$work && isset($config['fallback_model'])) {
+                    $work = $config['fallback_model']::where('episode_id', $episode->id)->first();
+                }
             }
 
             $completedAt = $work ? ($work->{$config['completed_field']} ?? null) : null;
@@ -409,10 +518,18 @@ class KpiService
             $points = $setting->points_not_done;
 
             if ($isCompleted && $completedAt) {
+                $delayDays = Carbon::parse($deadlineDate)->diffInDays(Carbon::parse($completedAt), false);
+                
                 if ($deadlineDate && Carbon::parse($completedAt)->lte(Carbon::parse($deadlineDate))) {
                     $status = 'on_time';
                     $points = $setting->points_on_time;
                     $onTimeCount++;
+                } else if ($delayDays > 7) {
+                    // Penalti 7 Hari: Gagal total jika terlambat lebih dari seminggu
+                    $status = 'late_failed';
+                    // KHUSUS MUSIK: Gunakan pinalti -5 (points_not_done). SELAIN ITU (Regular): Tetap 0 agar aman.
+                    $points = ($setting->program_type === 'musik') ? $setting->points_not_done : 0;
+                    $lateCount++;
                 } else {
                     $status = 'late';
                     $points = $setting->points_late;
@@ -421,14 +538,23 @@ class KpiService
             } else if (!$isCompleted) {
                 // Strictly follow the deadline for point deductions
                 if ($deadlineDate && Carbon::parse($deadlineDate)->isPast()) {
-                    // Deadline has passed and task is NOT completed
-                    $points = $setting->points_not_done;
-                    $status = 'not_done';
+                    $overdueDays = Carbon::parse($deadlineDate)->diffInDays(now(), false);
+                    
+                    if ($overdueDays > 7) {
+                        // Gagal total jika melewati deadline lebih dari seminggu tanpa pengerjaan
+                        // KHUSUS MUSIK: Gunakan pinalti -5 (points_not_done). SELAIN ITU: Tetap 0.
+                        $points = ($setting->program_type === 'musik') ? $setting->points_not_done : 0;
+                        $status = 'failed';
+                    } else {
+                        // Belum sampai 7 hari: Berikan 0 poin (belum pinalti penuh tapi tidak ada poin)
+                        $points = 0;
+                        $status = 'not_done';
+                    }
                     $notDoneCount++;
                 } else {
                     // Task is not done but deadline hasn't passed yet, points are 0 (not penalized yet)
                     $points = 0;
-                    $status = 'pending'; // Change label from not_done to pending for clarity
+                    $status = 'pending';
                 }
             }
 
@@ -444,13 +570,21 @@ class KpiService
             $isQualityOverridden = $qualityScore !== null;
             $displayQuality = $qualityScore ? $qualityScore->quality_score : null;
 
-            if ($roleKey === 'producer' || $roleKey === 'manager_distribusi') {
-                $teamAvgQuality = KpiQualityScore::where('music_episode_id', $episode->id)
-                    ->whereNotIn('workflow_step', ['producer', 'manager_distribusi', 'program_manager'])
+            if (in_array($roleKey, ['producer', 'manager_distribusi', 'program_manager'])) {
+                // Sesuai Excel: KPI Manager adalah rata-rata gabungan dari semua tim-nya dia
+                // Kita ambil semua perolehan poin dari anggota tim musik lainnya di episode ini (kecuali manager itu sendiri)
+                $teamPerformanceIds = \App\Models\User::whereIn('role', [
+                        'Musik Arr', 'Sound Engineer', 'Kreatif', 'Editor', 'Quality Control',
+                        'Artistika', 'Broadcasting', 'Promotion', 'Tim Setting', 'Tim Syuting'
+                    ])->pluck('id');
+
+                // Kita cari rata-rata kualitas tim sebagai dasar poin manager
+                $teamAvgPoints = \App\Models\KpiQualityScore::where('music_episode_id', $episode->id)
+                    ->whereIn('employee_id', $teamPerformanceIds)
                     ->avg('quality_score');
                 
-                if ($teamAvgQuality) {
-                    $effectivePoints = round($teamAvgQuality, 1);
+                if ($teamAvgPoints) {
+                    $effectivePoints = round($teamAvgPoints, 1);
                     $displayQuality = $effectivePoints;
                     $isQualityOverridden = true;
                 }
@@ -459,11 +593,13 @@ class KpiService
             }
 
             $totalPoints += $effectivePoints;
-            // $maxPoints is no longer accumulated here per-assignment. We will calculate it globally based on Total Expected Episodes to support > 100% backup logic.
+            if (!$isBackup) {
+                $maxPoints += $setting->points_on_time;
+            }
 
             $items[] = [
                 'episode_id' => $episode->id,
-                'program_name' => ($episode->program->name ?? 'Unknown') . ' (Music)',
+                'program_name' => ($episode->program?->name ?? ($episode->program_id ? (\App\Models\Program::withTrashed()->find($episode->program_id)?->name ?? 'Music Program') : 'Music Program')) . ' (Music)',
                 'episode_number' => $episode->episode_number,
                 'role' => $roleKey,
                 'role_label' => $this->getRoleLabel($roleKey),
@@ -500,6 +636,8 @@ class KpiService
             'broadcasting' => ['broadcasting'],
             'promotion' => ['promotion', 'promosi'],
             'producer' => ['producer', 'director', 'manager_program'],
+            'producer_acc_song' => ['producer', 'director', 'manager_program'],
+            'producer_acc_lagu' => ['producer', 'director', 'manager_program'],
             'art_set_design' => ['production_team', 'art_set', 'property'],
             'art_set_design_return' => ['production_team', 'art_set', 'property'],
             'produksi_setting' => ['production_team', 'produksi'],
@@ -507,6 +645,20 @@ class KpiService
         ];
 
         $expectedRoles = $roleMapping[$workRole] ?? [$workRole];
+        
+        // Final definitive fix for Producer roles
+        if (in_array($workRole, ['producer', 'producer_acc_song', 'producer_acc_lagu']) && 
+            str_contains($normalizedUserRole, 'producer')) {
+            return false;
+        }
+
+        // Match if user's normalized role contains any of the expected roles (e.g. 'producer_program' contains 'producer')
+        foreach ($expectedRoles as $expected) {
+            if (str_contains($normalizedUserRole, $expected)) {
+                return false;
+            }
+        }
+
         return !in_array($normalizedUserRole, $expectedRoles);
     }
 
@@ -702,20 +854,25 @@ class KpiService
     private function getRoleLabel(string $role): string
     {
         $labels = [
-            'producer' => 'Producer (Approval)',
-            'kreatif' => 'Creative (Script)',
+            'producer' => 'Producer (Approve Script/Creative)',
+            'producer_acc_song' => 'Producer (ACC Lagu Proposal)',
+            'producer_acc_lagu' => 'Producer (ACC Hasil Arrangement)',
+            'sound_eng' => 'Edit Audio / Mixing',
             'tim_setting_coord' => 'Koordinator Setting',
-            'tim_vocal_coord' => 'Koordinator Vocal',
-            'tim_syuting_coord' => 'Koordinator Syuting',
-            'art_set_design' => 'Art & Set (Alat Keluar)',
-            'art_set_design_return' => 'Art & Set (Alat Masuk)',
+            'tim_syuting_coord' => 'Koordinator Produksi/Syuting',
+            'tim_vocal_coord' => 'Take Rekam Audio - Vocal',
+            'art_set_design' => 'Art & Set Properti (Alat Keluar)',
+            'art_set_design_return' => 'Art & Set Properti (Alat Masuk)',
             'editor' => 'Editor Video Program',
             'editor_promosi' => 'Editor Promosi (Highlight IG)',
             'design_grafis' => 'Design Grafis',
             'quality_control' => 'QC',
-            'broadcasting' => 'Broadcasting',
-            'promotion' => 'Promosi (BTS Photo)',
+            'broadcasting' => 'Broadcasting (Upload)',
+            'promotion' => 'Promosi (Share Konten)',
+            'promosi_syuting' => 'Promosi (Highlight IG)',
             'musik_arr' => 'Music Arranger',
+            'musik_arr_song' => 'Ajukan Lagu',
+            'musik_arr_lagu' => 'Aransemen Lagu',
             'sound_eng' => 'Sound Engineer',
             'promosi_syuting' => 'Promosi Syuting (Highlight IG dsb)',
             'manager_distribusi' => 'Manager Distribusi (QC Editor)',

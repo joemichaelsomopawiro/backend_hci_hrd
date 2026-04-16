@@ -192,6 +192,13 @@ class CreativeController extends Controller
                 'was_reassigned' => false                   // Reset
             ]);
             
+            // Budget check logic: flag for special approval if total budget > program's max_budget_per_episode
+            $totalBudget = $work->total_budget;
+            $maxBudget = $episode->program->max_budget_per_episode;
+            if ($maxBudget > 0 && $totalBudget > $maxBudget) {
+                $work->update(['requires_special_budget_approval' => true]);
+            }
+            
             // Audit logging
             ControllerSecurityHelper::logCreate($work, [
                 'episode_id' => $work->episode_id,
@@ -656,6 +663,13 @@ class CreativeController extends Controller
             
             $work->update($updateData);
 
+            // Budget check logic: flag for special approval if total budget > program's max_budget_per_episode
+            $totalBudget = $work->fresh()->total_budget;
+            $maxBudget = $work->episode->program->max_budget_per_episode;
+            if ($maxBudget > 0 && $totalBudget > $maxBudget) {
+                $work->update(['requires_special_budget_approval' => true]);
+            }
+
             // Log Workflow State for Complete Work
             $workflowService = app(\App\Services\WorkflowStateService::class);
             $workflowService->updateWorkflowState(
@@ -802,6 +816,13 @@ class CreativeController extends Controller
             }
 
             $work->update($updateData);
+
+            // Budget check logic: flag for special approval if total budget > program's max_budget_per_episode
+            $totalBudget = $work->fresh()->total_budget;
+            $maxBudget = $work->episode->program->max_budget_per_episode;
+            if ($maxBudget > 0 && $totalBudget > $maxBudget) {
+                $work->update(['requires_special_budget_approval' => true]);
+            }
 
             if ($isProgramManager && $work->created_by !== $user->id) {
                 $work->update(['created_by' => $user->id]);

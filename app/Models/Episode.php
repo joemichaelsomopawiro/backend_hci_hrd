@@ -127,88 +127,72 @@ class Episode extends Model
     public function generateDeadlines()
     {
         $airDate = Carbon::parse($this->air_date);
-        $deadlineDays = \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
+        $programCategory = strtolower($this->program->category ?? 'regular');
         
-        // Deadline Editor: 7 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'editor',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['editor']),
-            'description' => 'Deadline editing episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
+        // Smart Detection: Check if it's explicitly marked OR has music arrangement data
+        $hasMusicArrangements = $this->musicArrangements()->exists();
+        $isMusic = $programCategory === 'musik' || $programCategory === 'music' || $hasMusicArrangements;
         
-        // Deadline Creative: 10 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'kreatif',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['kreatif']),
-            'description' => 'Deadline creative work episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
-        
-        // Deadline Produksi: 8 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'produksi',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['produksi']),
-            'description' => 'Deadline production episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
+        $deadlineDays = $isMusic 
+            ? \App\Constants\WorkflowStep::MUSIC_ROLE_DEADLINE_DAYS 
+            : \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
 
-        // Deadline Musik Arr: 8 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'musik_arr',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['musik_arr']),
-            'description' => 'Deadline music arrangement episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
+        // Roles to generate
+            $rolesToGenerate = $isMusic 
+                ? [
+                    'musik_arr_song' => 'Pengajuan Lagu',
+                    'producer_acc_song' => 'ACC Lagu (Proposal)',
+                    'musik_arr_lagu' => 'Aransemen Lagu',
+                    'producer_acc_lagu' => 'ACC Aransemen',
+                    'tim_vocal_coord' => 'Take Rekam Audio (Vocal)',
+                    'sound_eng' => 'Edit Audio (Mixing)',
+                    'kreatif' => 'Creative & Script',
+                    'producer_creative' => 'Producer Approve Creative',
+                    'tim_setting_coord' => 'Setting & Property',
+                    'tim_syuting_coord' => 'Shooting & Produksi',
+                    'editor' => 'Editing Video',
+                    'quality_control' => 'QC Final',
+                    'manager_distribusi' => 'Distribution Manager QC',
+                    'broadcasting' => 'Broadcasting',
+                    'promotion' => 'Promotion Material',
+                    'design_grafis' => 'Design Grafis',
+                    'editor_promosi' => 'Social Media Highlight'
+                  ]
+            : [
+                'editor' => 'Editing',
+                'kreatif' => 'Creative',
+                'produksi' => 'Production',
+                'musik_arr' => 'Music Arrangement',
+                'sound_eng' => 'Sound Engineering',
+                'quality_control' => 'QC',
+                'promotion' => 'Promotion',
+                'broadcasting' => 'Broadcasting'
+              ];
 
-        // Deadline Sound Engineer: 8 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'sound_eng',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['sound_eng']),
-            'description' => 'Deadline sound engineering episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
+        // Clean up legacy deadlines specifically for Music Programs to avoid "ghost steps"
+        if ($isMusic) {
+            $legacyRoles = [
+                'musik_arr', 'produksi', 'sound_recording', 'shooting_recording', 
+                'equipment_request', 'production_planning', 'producer_final_review',
+                'program_manager_review', 'distribution_manager_qc'
+            ];
+            $this->deadlines()->whereIn('role', $legacyRoles)->delete();
+        }
 
-        // Deadline Quality Control: 6 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'quality_control',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['quality_control']),
-            'description' => 'Deadline quality control episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
 
-        // Deadline Promotion (Editor Promosi): 6 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'promotion',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['editor_promosi']),
-            'description' => 'Deadline promotion episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
-
-        // Deadline Broadcasting: 4 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'broadcasting',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['broadcasting']),
-            'description' => 'Deadline broadcasting episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
-
-        // Deadline Broadcasting: 4 hari sebelum tayang
-        $this->deadlines()->create([
-            'role' => 'broadcasting',
-            'deadline_date' => $airDate->copy()->subDays($deadlineDays['broadcasting']),
-            'description' => 'Deadline broadcasting episode',
-            'auto_generated' => true,
-            'created_by' => auth()->id() ?? 1
-        ]);
+        foreach ($rolesToGenerate as $role => $label) {
+            $days = $deadlineDays[$role] ?? 7;
+            
+            $this->deadlines()->updateOrCreate(
+                ['role' => $role],
+                [
+                    'deadline_date' => $airDate->copy()->subDays($days),
+                    'description' => "Deadline {$label}",
+                    'auto_generated' => true,
+                    'created_by' => auth()->id() ?? 1
+                ]
+            );
+        }
 
         // Notifikasi ke semua role yang terkait
         $this->notifyDeadlineCreation();
@@ -559,6 +543,8 @@ class Episode extends Model
                 case 'musik_arr':
                 case 'music_arranger':
                     $assignments['musik_arr'] = $userId;
+                    $assignments['musik_arr_song'] = $userId;
+                    $assignments['musik_arr_lagu'] = $userId;
                     break;
                 case 'sound_eng':
                 case 'sound_engineer':
@@ -579,6 +565,12 @@ class Episode extends Model
                     $assignments['tim_syuting_coord'] = $userId;
                     $assignments['tim_vocal_coord'] = $userId;
                     $assignments['produksi'] = $userId;
+                    break;
+                case 'producer':
+                    $assignments['producer'] = $userId;
+                    $assignments['producer_acc_song'] = $userId;
+                    $assignments['producer_acc_lagu'] = $userId;
+                    $assignments['producer_creative'] = $userId;
                     break;
                 case 'art_set_design':
                     $assignments['art_set_design'] = $userId;
@@ -641,6 +633,8 @@ class Episode extends Model
                         break;
 
                     case 'musik_arr':
+                    case 'musik_arr_song':
+                    case 'musik_arr_lagu':
                         \App\Models\MusicArrangement::firstOrCreate(
                             ['episode_id' => $this->id],
                             ['created_by' => $userId, 'status' => 'draft']

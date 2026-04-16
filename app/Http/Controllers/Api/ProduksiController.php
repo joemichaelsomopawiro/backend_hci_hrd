@@ -2121,13 +2121,146 @@ class ProduksiController extends Controller
                 'message' => 'Equipment returned successfully. Art & Set Properti has been notified.'
             ]);
 
+    }
+
+    /**
+     * Transfer Equipment to Next Episode (Lanjut Pakai).
+     * Memungkinkan Tim Setting/Syuting untuk memindahkan alat ke episode selanjutnya tanpa balikin fisik ke GA.
+     * POST /api/live-tv/roles/produksi/works/{id}/transfer-equipment
+     */
+    public function transferEquipment(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $work = ProduksiWork::with(['episode.program'])->findOrFail($id);
+            
+            // Authorization: Coordinator or Production role
+            $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
+            $isProductionRole = $user->role === 'Production' || $isProgramManager;
+            $isCoordinator = \App\Models\ProductionTeamMember::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->where('is_coordinator', true)
+                ->whereHas('assignment', function ($q) use ($work) {
+                    $q->where('episode_id', $work->episode_id)
+                        ->where('status', '!=', 'cancelled');
+                })->exists();
+
+            if (!$isProductionRole && !$isCoordinator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Hanya Coordinator atau role Production yang boleh melakukan transfer alat.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'target_episode_id' => 'required|integer|exists:episodes,id',
+                'equipment_request_ids' => 'required|array|min:1',
+                'equipment_request_ids.*' => 'required|integer|exists:production_equipment,id',
+                'transfer_notes' => 'nullable|string|max:1000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $targetEpisode = \App\Models\Episode::findOrFail($request->target_episode_id);
+            
+            // Validate target episode belongs to the same program
+            if ($targetEpisode->program_id !== $work->episode->program_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Target episode harus berada dalam program yang sama.'
+                ], 400);
+            }
+
+            $equipmentRequestIds = $request->equipment_request_ids;
+            $transferredCount = 0;
+            $newRequests = [];
+
+            \DB::beginTransaction();
+
+            foreach ($equipmentRequestIds as $eqId) {
+                $equipment = ProductionEquipment::find($eqId);
+                
+                // Safety checks
+                if (!$equipment || $equipment->episode_id !== $work->episode_id) continue;
+                if (!in_array($equipment->status, ['approved', 'in_use', 'returned'])) continue;
+
+                // 1. Mark current equipment as transferred
+                $oldStatus = $equipment->status;
+                $equipment->update([
+                    'status' => 'transferred',
+                    'return_notes' => ($equipment->return_notes ? $equipment->return_notes . "\n" : "") . 
+                                     "[Transferred to Ep {$targetEpisode->episode_number}] " . ($request->transfer_notes ?? ""),
+                    'returned_at' => now(),
+                    'returned_by' => $user->id
+                ]);
+
+                // 2. Create new equipment request for target episode
+                $newEquipment = ProductionEquipment::create([
+                    'episode_id' => $targetEpisode->id,
+                    'requested_by' => $user->id,
+                    'requested_at' => now(),
+                    'equipment_list' => $equipment->equipment_list,
+                    'status' => 'approved', // Auto-approved because it's already in hand
+                    'pickup_schedule' => now(),
+                    'return_schedule' => $targetEpisode->air_date ?? now()->addDay(),
+                    'request_notes' => "[Transfer from Ep {$work->episode->episode_number}] " . ($request->transfer_notes ?? ""),
+                    'is_urgent' => $equipment->is_urgent,
+                    'metadata' => [
+                        'transferred_from_id' => $eqId,
+                        'transferred_from_episode' => $work->episode->episode_number
+                    ]
+                ]);
+
+                $newRequests[] = $newEquipment;
+                $transferredCount++;
+            }
+
+            \DB::commit();
+
+            // Notify Art & Set Properti (GA)
+            $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
+            foreach ($artSetUsers as $gaUser) {
+                Notification::create([
+                    'user_id' => $gaUser->id,
+                    'type' => 'equipment_transferred',
+                    'title' => 'Alat Di-transfer (Lanjut Pakai)',
+                    'message' => "Tim Produksi telah memindahkan alat dari Episode {$work->episode->episode_number} ke Episode {$targetEpisode->episode_number}.",
+                    'data' => [
+                        'from_episode_id' => $work->episode_id,
+                        'to_episode_id' => $targetEpisode->id,
+                        'transferred_by' => $user->id,
+                        'equipment_count' => $transferredCount
+                    ]
+                ]);
+            }
+
+            // Clear cache
+            QueryOptimizer::clearAllIndexCaches();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'transferred_count' => $transferredCount,
+                    'new_requests' => $newRequests
+                ],
+                'message' => "Berhasil men-transfer {$transferredCount} alat ke Episode {$targetEpisode->episode_number}."
+            ]);
+
         } catch (\Exception $e) {
+            \DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'Error returning equipment: ' . $e->getMessage()
+                'message' => 'Error transferring equipment: ' . $e->getMessage()
             ], 500);
         }
     }
+
 
     /**
      * Get available equipment from inventory

@@ -43,12 +43,16 @@ class MusicArrangement extends Model
         'needs_sound_engineer_help',
         'is_group',
         'group_name',
-        'group_members'
+        'group_members',
+        'song_approved_at',
+        'arrangement_submitted_at'
     ];
 
     protected $casts = [
         'reviewed_at' => 'datetime',
         'submitted_at' => 'datetime',
+        'song_approved_at' => 'datetime',
+        'arrangement_submitted_at' => 'datetime',
         'producer_modified_at' => 'datetime',
         'sound_engineer_help_at' => 'datetime',
         'file_size' => 'integer',

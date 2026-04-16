@@ -791,7 +791,7 @@ class EpisodeController extends Controller
                     'song_title' => $musicArrangement->song_title,
                     'created_at' => $musicArrangement->created_at,
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'musik_arr')->first()
+                'deadline' => $episode->deadlines()->where('role', 'musik_arr_song')->first()
             ];
 
             // 2. Song Proposal Approval
@@ -815,6 +815,7 @@ class EpisodeController extends Controller
                     'status' => $musicArrangement->status,
                     'updated_at' => $musicArrangement->updated_at,
                 ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'producer_acc_song')->first()
             ];
 
             // 3. Music Arrangement Link
@@ -838,7 +839,7 @@ class EpisodeController extends Controller
                     'file_link' => $musicArrangement->file_link,
                     'submitted_at' => $musicArrangement->submitted_at,
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'musik_arr')->first()
+                'deadline' => $episode->deadlines()->where('role', 'musik_arr_lagu')->first()
             ];
 
             // 4. Arrangement Approval
@@ -862,6 +863,7 @@ class EpisodeController extends Controller
                     'status' => $musicArrangement->status,
                     'approved_at' => $musicArrangement->approved_at,
                 ] : null,
+                'deadline' => $episode->deadlines()->where('role', 'producer_acc_lagu')->first()
             ];
             
             // 5. Creative Concept
@@ -921,7 +923,7 @@ class EpisodeController extends Controller
                     'updated_at' => $soundRecording->updated_at,
                     'completed_at' => $soundRecording->completed_at
                 ] : null,
-                'deadline' => $episode->deadlines()->where('role', 'sound_eng')->first()
+                'deadline' => $episode->deadlines()->where('role', 'tim_vocal_coord')->first()
             ];
             
             // 8. Vocal Editing
@@ -1063,22 +1065,49 @@ class EpisodeController extends Controller
                 'deadline' => $episode->deadlines()->where('role', 'broadcasting')->first()
             ];
 
-            // 13. Define Workflow Order for Music Programs
-            $workflowOrder = [
-                'program_active',
-                'song_proposal',
-                'song_proposal_approval',
-                'music_arrangement_link',
-                'arrangement_approval',
-                'creative_content',
-                'producer_creative_approval',
-                'vocal_recording',
-                'vocal_editing',
-                'video_editing',
-                'quality_control',
-                'distribution_manager_accept',
-                'broadcasting_schedule'
-            ];
+            // 13. Smart Detection for Program Type
+            $hasMusicData = $episode->musicArrangements()->exists();
+            $programCategory = strtolower($episode->program->category ?? '');
+            $isMusic = $programCategory === 'musik' || $programCategory === 'music' || $hasMusicData;
+
+            if ($isMusic) {
+                $workflowOrder = [
+                    'program_active',
+                    'song_proposal',
+                    'song_proposal_approval',
+                    'music_arrangement_link',
+                    'arrangement_approval',
+                    'vocal_recording',
+                    'vocal_editing',
+                    'creative_concept',
+                    'producer_creative_approval',
+                    'art_set_property',
+                    'shooting_production',
+                    'design_promo_editing',
+                    'quality_control',
+                    'dm_schedule',
+                    'broadcasting_publishing',
+                    'promotion_content_start',
+                    'promotion_sharing'
+                ];
+                
+                // Ensure category is updated in memory for the rest of the function
+                $episode->program->category = 'musik';
+            } else {
+                $workflowOrder = [
+                    'program_active',
+                    'music_arrangement',
+                    'creative_work',
+                    'production_planning',
+                    'equipment_request',
+                    'shooting_recording',
+                    'editing',
+                    'quality_control',
+                    'broadcasting',
+                    'promotion',
+                    'completed'
+                ];
+            }
             
             // Workflow Timeline (History)
             $workflowStates = $episode->workflowStates()
@@ -1142,11 +1171,94 @@ class EpisodeController extends Controller
                 }
             }
 
-            // Attach history to steps
+            // Attach deadlines to steps based on role mapping (Eager attachment)
+            $musicDeadlineMap = [
+                'program_active' => 'program_manager',
+                'song_proposal' => 'musik_arr_song',
+                'song_proposal_approval' => 'producer_acc_song',
+                'music_arrangement_link' => 'musik_arr_lagu',
+                'arrangement_approval' => 'producer_acc_lagu',
+                'vocal_recording' => 'tim_vocal_coord',
+                'vocal_editing' => 'sound_eng',
+                'creative_concept' => 'kreatif',
+                'producer_creative_approval' => 'producer_creative',
+                'video_editing' => 'editor',
+                'art_set_property' => 'tim_setting_coord',
+                'shooting_production' => 'tim_syuting_coord',
+                'quality_control' => 'quality_control',
+                'dm_schedule' => 'manager_distribusi',
+                'broadcasting_publishing' => 'broadcasting',
+                'design_promo_editing' => 'design_grafis',
+                'promotion_content_start' => 'promotion',
+                'promotion_sharing' => 'promotion'
+            ];
+
+            // Attach history and deadlines to steps
             foreach ($workflowSteps as $key => &$step) {
+                $step['step_key'] = $key;
                 $step['history'] = $stepHistory[$key] ?? [];
-                // Backward compatibility for UI if needed
-                $step['rejection_history'] = collect($step['history'])->where('type', 'rejection')->values()->all();
+                
+                // 1. If deadline already attached as object/array, format it correctly
+                if (isset($step['deadline']) && $step['deadline'] instanceof \App\Models\Deadline) {
+                    $dl = $step['deadline'];
+                    $step['deadline'] = [
+                        'id' => $dl->id,
+                        'deadline_date' => $dl->deadline_date,
+                        'days_left' => $dl->getDaysLeftAttribute(),
+                        'days_left_label' => $dl->getDaysLeftLabelAttribute(),
+                        'is_completed' => $dl->is_completed,
+                        'is_overdue' => $dl->isOverdue()
+                    ];
+                    continue;
+                }
+
+                // 2. Otherwise identify Target Role for Deadline from Map
+                $deadlineRole = $musicDeadlineMap[$key] ?? $key;
+                
+                // 3. Try Specific Role First (from pre-loaded collection)
+                $deadline = $episode->deadlines->where('role', $deadlineRole)->first();
+                
+                // 4. Ultra-Resilient Search Fallback (With Language Bridge)
+                if (!$deadline) {
+                    $synonyms = [
+                        'song' => ['lagu', 'pengajuan', 'usulan'],
+                        'arrangement' => ['aransemen', 'lagu', 'link'],
+                        'approval' => ['acc', 'setuju', 'approval', 'review'],
+                        'creative' => ['kreatif', 'concept', 'script'],
+                        'shooting' => ['syuting', 'produksi', 'shooting'],
+                        'vocal' => ['vokal', 'vocal', 'rekam', 'recording']
+                    ];
+                    
+                    $searchWords = explode('_', $key);
+                    $relatedTerms = [];
+                    foreach ($searchWords as $word) {
+                        $relatedTerms[] = $word;
+                        if (isset($synonyms[$word])) {
+                            $relatedTerms = array_merge($relatedTerms, $synonyms[$word]);
+                        }
+                    }
+                    
+                    $deadline = $episode->deadlines->filter(function($d) use ($key, $relatedTerms) {
+                        $role = strtolower($d->role . ' ' . $d->role_label);
+                        foreach ($relatedTerms as $term) {
+                            if (str_contains($role, $term)) return true;
+                        }
+                        return false;
+                    })->first();
+                }
+
+                if ($deadline) {
+                    $step['deadline'] = [
+                        'id' => $deadline->id,
+                        'deadline_date' => $deadline->deadline_date,
+                        'days_left' => $deadline->getDaysLeftAttribute(),
+                        'days_left_label' => $deadline->getDaysLeftLabelAttribute(),
+                        'is_completed' => $deadline->is_completed,
+                        'is_overdue' => $deadline->isOverdue()
+                    ];
+                } elseif (!isset($step['deadline'])) {
+                    $step['deadline'] = null;
+                }
             }
             unset($step);
 

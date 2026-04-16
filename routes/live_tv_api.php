@@ -723,6 +723,7 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::post('/works/{id}/complete-work', [ProduksiController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
         Route::post('/works/{id}/reopen', [ProduksiController::class, 'reopenWork'])->middleware('throttle:sensitive'); // Buka kembali work (untuk input run sheet & link file)
         Route::post('/works/{id}/return-equipment', [ProduksiController::class, 'returnEquipment'])->middleware('throttle:sensitive'); // Kembalikan alat ke Art & Set Properti
+        Route::post('/works/{id}/transfer-equipment', [ProduksiController::class, 'transferEquipment'])->middleware('throttle:sensitive'); // Transfer alat (Lanjut Pakai)
         Route::get('/equipment/available', [ProduksiController::class, 'getAvailableEquipment'])->middleware('throttle:60,1'); // Cek stok alat
         // Equipment Return Notification
         Route::post('/equipment/{id}/notify-return', [ProductionEquipmentController::class, 'notifyReturn'])->middleware('throttle:sensitive');

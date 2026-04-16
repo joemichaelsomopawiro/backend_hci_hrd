@@ -212,7 +212,9 @@ class MusicArrangerController extends Controller
                 'group_members' => $request->group_members,
                 'arrangement_notes' => $request->arrangement_notes,
                 'file_link' => $request->arrangement_file_link,
-                'status' => $request->arrangement_file_link ? 'arrangement_submitted' : 'song_proposal'
+                'status' => $request->arrangement_file_link ? 'arrangement_submitted' : 'song_proposal',
+                'arrangement_submitted_at' => $request->arrangement_file_link ? now() : null,
+                'submitted_at' => $request->arrangement_file_link ? now() : null
             ]);
 
             // Notify Producer for review
@@ -438,6 +440,7 @@ class MusicArrangerController extends Controller
             $arrangement->update([
                 'file_link' => $request->arrangement_file_link,
                 'status' => 'arrangement_submitted',
+                'arrangement_submitted_at' => now(),
                 'submitted_at' => now()
             ]);
 
@@ -651,6 +654,7 @@ class MusicArrangerController extends Controller
             // Update status to arrangement_submitted
             $arrangement->update([
                 'status' => 'arrangement_submitted',
+                'arrangement_submitted_at' => now(),
                 'submitted_at' => now()
             ]);
 
@@ -839,7 +843,11 @@ class MusicArrangerController extends Controller
                 ], 400);
             }
 
-            $arrangement->update(['status' => 'arrangement_submitted', 'submitted_at' => now()]);
+            $arrangement->update([
+                'status' => 'arrangement_submitted', 
+                'arrangement_submitted_at' => now(),
+                'submitted_at' => now()
+            ]);
 
             return response()->json([
                 'success' => true,
