@@ -417,7 +417,7 @@ class PrManagerProgramController extends Controller
                 ], 422);
             }
 
-            $this->programService->updateStatus($program, 'manager_approved', $user->id);
+            $this->programService->updateStatus($program, 'active', $user->id);
 
             // Send notification
             $this->notificationService->notifyProgramReviewed($program, 'disetujui');
@@ -471,7 +471,7 @@ class PrManagerProgramController extends Controller
                 ], 422);
             }
 
-            $this->programService->updateStatus($program, 'manager_rejected', $user->id);
+            $this->programService->updateStatus($program, 'inactive', $user->id);
 
             // Send notification
             $this->notificationService->notifyProgramReviewed($program, 'ditolak');
@@ -513,14 +513,8 @@ class PrManagerProgramController extends Controller
                 ], 403);
             }
 
-            if ($program->status !== 'manager_approved') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Program harus dalam status manager_approved'
-                ], 400);
-            }
-
-            $this->programService->updateStatus($program, 'submitted_to_distribusi', $user->id);
+            // No status change needed, just remain active
+            //$this->programService->updateStatus($program, 'submitted_to_distribusi', $user->id);
 
             // Send notification
             $this->notificationService->notifyProgramSubmittedToDistribusi($program);
@@ -756,7 +750,9 @@ class PrManagerProgramController extends Controller
                 'program.producer',
                 'program.managerProgram',
                 'program.managerDistribusi',
-                'creativeWork',
+                'creativeWork.scriptApprovedBy',
+                'creativeWork.budgetApprovedBy',
+                'creativeWork.specialBudgetApprover',
                 'crews.user',
                 'productionWork.equipmentLoans.loanItems.inventoryItem',
                 'qualityControlWork',
@@ -1566,10 +1562,11 @@ class PrManagerProgramController extends Controller
                     'cw.budget_data',
                     'cw.status',
                     'cw.requires_special_budget_approval as needs_pm_approval',
+                    'cw.budget_approved_at as producer_approved_at',
                     'cw.special_budget_approved_at as pm_approved_at',
                     'cw.created_at as requested_at',
                     'creator.name as requested_by_name',
-                    DB::raw('0 as max_budget')
+                    'p.max_budget_per_episode as max_budget'
                 )
                 ->whereNotNull('cw.id')
                 ->whereNull('p.deleted_at');

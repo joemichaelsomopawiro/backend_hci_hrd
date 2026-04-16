@@ -24,38 +24,61 @@ class PrBroadcastingController extends Controller
     }
 
     /**
-     * Check if user is authorized for broadcasting actions
+     * Helper to check if user is authorized for a Broadcasting Work
      */
-    private function authorizeBroadcasting()
+    private function checkWorkAuthorization($work, $user): bool
+    {
+        if (!$user) return false;
+
+        // 1. Administrative roles
+        if (Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER])) {
+            return true;
+        }
+
+        // 2. Producer (Only their own programs)
+        if (Role::inArray($user->role, [Role::PRODUCER])) {
+            return $work->episode && $work->episode->program && $work->episode->program->producer_id === $user->id;
+        }
+
+        // 3. Program Crew Assignment (Matches Broadcasting staff)
+        $isCrew = \App\Models\PrProgramCrew::where('user_id', $user->id)
+            ->where('program_id', $work->episode->program_id)
+            ->exists();
+        if ($isCrew) return true;
+
+        // 4. Episode Crew Assignment
+        $isEpisodeCrew = \App\Models\PrEpisodeCrew::where('user_id', $user->id)
+            ->where('episode_id', $work->pr_episode_id)
+            ->exists();
+        if ($isEpisodeCrew) return true;
+
+        return false;
+    }
+
+    /**
+     * Helper to check if user has access to broadcasting module
+     */
+    private function authorizeBroadcasting(): bool
     {
         $user = Auth::user();
         if (!$user) return false;
-
-        return Role::inArray($user->role, [
-            Role::BROADCASTING,
-            Role::PROGRAM_MANAGER,
-            Role::DISTRIBUTION_MANAGER,
-            Role::PRODUCER
-        ]);
+        return Role::inArray($user->role, [Role::BROADCASTING, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER]);
     }
 
     public function index(Request $request): JsonResponse
     {
         try {
-            if (!$this->authorizeBroadcasting()) {
+            $user = Auth::user();
+            if (!$user || !Role::inArray($user->role, [Role::BROADCASTING, Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER, Role::PRODUCER])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
-            // Auto-sync: Find episodes that have finished Manager Distribusi QC (completed)
-            // but don't have a broadcasting work yet.
-            $completedQcEpisodeIds = \App\Models\PrManagerDistribusiQcWork::where('status', 'completed')
+            // AUTO-SYNC: Find episodes that have finished Standard QC (Step 8)
+            // Broadcasting ONLY starts after Step 8 is completed.
+            $completedQcEpisodeIds = \App\Models\PrQualityControlWork::where('status', 'completed')
                 ->pluck('pr_episode_id');
 
-            // Also check episodes with status 'step_6_completed' (set by checkStep6Completion)
-            $step6Episodes = \App\Models\PrEpisode::whereIn('status', ['step_6_completed', 'broadcasting', 'completed'])
-                ->pluck('id');
-
-            $allEligibleEpisodeIds = $completedQcEpisodeIds->merge($step6Episodes)->unique();
+            $allEligibleEpisodeIds = $completedQcEpisodeIds->unique();
 
             foreach ($allEligibleEpisodeIds as $episodeId) {
                 // Create broadcasting work if not exists
@@ -65,7 +88,32 @@ class PrBroadcastingController extends Controller
                 );
             }
 
-            $query = PrBroadcastingWork::with(['episode.program', 'createdBy']);
+            $query = PrBroadcastingWork::with(['episode.program', 'createdBy'])
+                ->whereHas('episode.workflowProgress', function ($q) {
+                    $q->where('workflow_step', 8)->where('status', 'completed');
+                });
+
+            // STRICT AUTHORIZATION: Only allow assigned personnel to see tasks
+            $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER]);
+            
+            if (!$isManager) {
+                $query->where(function ($q) use ($user) {
+                    // 1. If Producer of the program
+                    $q->whereHas('episode.program', function ($pq) use ($user) {
+                        $pq->where('producer_id', $user->id);
+                    });
+                    
+                    // 2. If in program crew
+                    $q->orWhereHas('episode.program.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
+
+                    // 3. If in episode crew
+                    $q->orWhereHas('episode.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
+                });
+            }
 
             if ($request->has('status')) {
                 $query->where('status', $request->status);
@@ -83,11 +131,12 @@ class PrBroadcastingController extends Controller
     public function acceptWork(int $id): JsonResponse
     {
         try {
-            if (!$this->authorizeBroadcasting()) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
+            $user = Auth::user();
+            $work = PrBroadcastingWork::with('episode.program')->findOrFail($id);
 
-            $work = PrBroadcastingWork::findOrFail($id);
+            if (!$this->checkWorkAuthorization($work, $user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
+            }
 
             if ($work->status !== 'preparing') {
                 return response()->json(['success' => false, 'message' => 'Work can only be accepted when preparing'], 400);
@@ -108,6 +157,7 @@ class PrBroadcastingController extends Controller
     public function show(int $id): JsonResponse
     {
         try {
+            $user = Auth::user();
             if (!$this->authorizeBroadcasting()) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
@@ -168,6 +218,7 @@ class PrBroadcastingController extends Controller
     public function publish(int $id): JsonResponse
     {
         try {
+            $user = Auth::user();
             if (!$this->authorizeBroadcasting()) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
@@ -208,6 +259,7 @@ class PrBroadcastingController extends Controller
     public function finish(Request $request, int $id): JsonResponse
     {
         try {
+            $user = Auth::user();
             if (!$this->authorizeBroadcasting()) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
@@ -258,7 +310,9 @@ class PrBroadcastingController extends Controller
 
             // Also update the program status so ProgramProgressBanner shows Step 9 as green
             if ($work->episode->program) {
-                $work->episode->program->update(['status' => 'broadcasting_complete']);
+                // The pr_programs table in the DB currently only supports a limited enum.
+                // 'active' is the most appropriate valid status here.
+                $work->episode->program->update(['status' => 'active']);
             }
 
             return response()->json(['success' => true, 'data' => $work->fresh(), 'message' => 'Pekerjaan selesai, video tersimpan']);

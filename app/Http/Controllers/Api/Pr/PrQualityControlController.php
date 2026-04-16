@@ -67,6 +67,28 @@ class PrQualityControlController extends Controller
             $query = PrQualityControlWork::with(['episode.program', 'createdBy', 'reviewedBy'])
                 ->whereIn('pr_episode_id', $validEpisodeIds);
 
+            // STRICT AUTHORIZATION: Only allow assigned personnel to see tasks
+            $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER]);
+            
+            if (!$isManager) {
+                $query->where(function ($q) use ($user) {
+                    // 1. If Producer of the program
+                    $q->whereHas('episode.program', function ($pq) use ($user) {
+                        $pq->where('producer_id', $user->id);
+                    });
+                    
+                    // 2. If in program crew
+                    $q->orWhereHas('episode.program.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
+
+                    // 3. If in episode crew
+                    $q->orWhereHas('episode.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
+                });
+            }
+
             if ($request->has('status')) {
                 $query->where('status', $request->status);
             }
@@ -88,12 +110,11 @@ class PrQualityControlController extends Controller
     {
         try {
             $user = Auth::user();
+            $work = PrQualityControlWork::with('episode.program')->findOrFail($id);
 
-            if (!$user || !\App\Constants\Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            if (!$this->checkWorkAuthorization($work, $user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
             }
-
-            $work = PrQualityControlWork::findOrFail($id);
 
             if ($work->status !== 'pending') {
                 return response()->json(['success' => false, 'message' => 'Work can only be accepted when pending'], 400);
@@ -116,12 +137,11 @@ class PrQualityControlController extends Controller
     {
         try {
             $user = Auth::user();
-
-            if (!$user || !Role::inArray($user->role, [\App\Constants\Role::QUALITY_CONTROL, \App\Constants\Role::PROGRAM_MANAGER, \App\Constants\Role::PRODUCER, \App\Constants\Role::DISTRIBUTION_MANAGER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-            }
-
             $work = PrQualityControlWork::with(['episode.program', 'createdBy', 'reviewedBy'])->findOrFail($id);
+
+            if (!$this->checkWorkAuthorization($work, $user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
+            }
 
             // Fetch related works to populate file locations
             $editorWork = PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->first();
@@ -341,7 +361,7 @@ class PrQualityControlController extends Controller
             $work = PrQualityControlWork::findOrFail($id);
             $checklist = $work->qc_checklist ?? [];
 
-            // Define required items (based on user request)
+            // SEPARATION: Standard QC ONLY checks Promo and Design assets
             $requiredItems = ['bts_video', 'tv_ad', 'ig_highlight', 'fb_highlight', 'tv_highlight', 'youtube_thumbnail', 'bts_thumbnail', 'episode_poster'];
 
             // Identify currently present file keys to avoid failing on stale checklist items
@@ -363,6 +383,8 @@ class PrQualityControlController extends Controller
                 return response()->json(['success' => false, 'message' => 'All present items must be approved before finishing.'], 400);
             }
 
+            DB::beginTransaction();
+
             $work->update([
                 'status' => 'completed',
                 'qc_completed_at' => now(),
@@ -370,10 +392,16 @@ class PrQualityControlController extends Controller
                 'created_by' => $work->created_by ?? $user->id
             ]);
 
+            // SEPARATION: Standard QC completes Editor Promosi and Design Grafis work
+            \App\Models\PrEditorPromosiWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'completed']);
+            \App\Models\PrDesignGrafisWork::where('pr_episode_id', $work->pr_episode_id)->update(['status' => 'completed']);
+
             PrBroadcastingWork::firstOrCreate(
                 ['pr_episode_id' => $work->pr_episode_id, 'work_type' => 'main_episode'],
                 ['status' => 'preparing', 'created_by' => $user->id]
             );
+
+            DB::commit();
 
             // Sync Step 8 progress
             app(PrWorkflowService::class)->syncStepProgress($work->pr_episode_id, 8);
@@ -393,9 +421,35 @@ class PrQualityControlController extends Controller
         }
     }
 
-    // Keep the rest (index, acceptWork) as is, or update if needed.
-    // I will replace index as well to be safe with the replace block.
+    /**
+     * Helper to check if user is authorized for a QC Work
+     */
+    private function checkWorkAuthorization($work, $user): bool
+    {
+        if (!$user) return false;
 
-    // ... [index and acceptWork similar to before] ...
+        // 1. Administrative roles
+        if (Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER])) {
+            return true;
+        }
 
+        // 2. Producer (Only their own programs)
+        if (Role::inArray($user->role, [Role::PRODUCER])) {
+            return $work->episode && $work->episode->program && $work->episode->program->producer_id === $user->id;
+        }
+
+        // 3. Program Crew Assignment (Matches QC staff)
+        $isCrew = \App\Models\PrProgramCrew::where('user_id', $user->id)
+            ->where('program_id', $work->episode->program_id)
+            ->exists();
+        if ($isCrew) return true;
+
+        // 4. Episode Crew Assignment
+        $isEpisodeCrew = \App\Models\PrEpisodeCrew::where('user_id', $user->id)
+            ->where('episode_id', $work->pr_episode_id)
+            ->exists();
+        if ($isEpisodeCrew) return true;
+
+        return false;
+    }
 }

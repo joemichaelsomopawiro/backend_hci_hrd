@@ -239,9 +239,21 @@ class PrProgram extends Model
      */
     public function markAsReadByProducer(): void
     {
+        $now = now();
         $this->update([
             'read_by_producer' => true,
-            'read_at' => now()
+            'read_at' => $now,
+            'status' => 'active'
         ]);
+
+        // Sync Step 2 (Menerima Program) for all episodes of this program
+        PrEpisodeWorkflowProgress::whereIn('episode_id', $this->episodes()->pluck('id'))
+            ->where('workflow_step', 2)
+            ->where('status', '!=', 'completed')
+            ->update([
+                'status' => 'completed',
+                'completed_at' => $now,
+                'assigned_user_id' => $this->producer_id
+            ]);
     }
 }

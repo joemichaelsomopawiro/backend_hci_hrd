@@ -208,6 +208,35 @@ class PrArtController extends Controller
             'produksiWorks.episode'
         ]);
 
+        // STRICT AUTHORIZATION: Only allow assigned personnel to see tasks
+        $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER]);
+        $isArtSet = Role::inArray($user->role, [Role::ART_SET_PROPERTI]);
+        
+        if (!$isManager && !$isArtSet) {
+            $query->where(function ($q) use ($user) {
+                // 1. Borrower of the loan
+                $q->where('borrower_id', $user->id);
+
+                // 2. Assigned to any of the related episodes/programs
+                $q->orWhereHas('produksiWorks.episode', function ($eq) use ($user) {
+                    $eq->where(function ($sq) use ($user) {
+                        // In program crew
+                        $sq->whereHas('program.crews', function ($pq) use ($user) {
+                            $pq->where('user_id', $user->id);
+                        })
+                        // Or in episode crew
+                        ->orWhereHas('crews', function ($ecq) use ($user) {
+                            $ecq->where('user_id', $user->id);
+                        })
+                        // Or producer of program
+                        ->orWhereHas('program', function ($pq) use ($user) {
+                            $pq->where('producer_id', $user->id);
+                        });
+                    });
+                });
+            });
+        }
+
         // Filter by status if provided
         if ($request->has('status')) {
             $query->where('status', $request->status);
@@ -291,7 +320,7 @@ class PrArtController extends Controller
                         $work->episode,
                         'approve_loan',
                         "Equipment loan approved: " . ($request->input('approval_notes') ?? 'No notes provided'),
-                        ['step' => 4, 'loan_id' => $loan->id]
+                        ['step' => 5, 'loan_id' => $loan->id]
                     );
                 }
             }
@@ -342,7 +371,7 @@ class PrArtController extends Controller
                     $work->episode,
                     'reject_loan',
                     "Equipment loan rejected: " . ($request->input('approval_notes') ?? 'No reason provided'),
-                    ['step' => 4, 'loan_id' => $loan->id]
+                    ['step' => 5, 'loan_id' => $loan->id]
                 );
             }
         }
@@ -502,9 +531,9 @@ class PrArtController extends Controller
             return response()->json(['success' => false, 'message' => 'Loan is not in return_requested status.'], 422);
         }
 
-        // Update loan status to completed (unlocks Syuting coordinator's Notes/Files)
+        // Update loan status to returned (unlocks Syuting coordinator's Notes/Files)
         $loan->update([
-            'status' => 'completed',
+            'status' => 'returned',
             'return_date' => now(),
         ]);
 
@@ -536,7 +565,7 @@ class PrArtController extends Controller
                     $work->episode,
                     'approve_return',
                     "Equipment return approved: Items are back in inventory.",
-                    ['step' => 4, 'loan_id' => $loan->id]
+                    ['step' => 5, 'loan_id' => $loan->id]
                 );
             }
         }

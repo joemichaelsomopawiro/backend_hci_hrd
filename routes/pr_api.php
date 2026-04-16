@@ -135,6 +135,7 @@ Route::prefix('pr')->middleware(['auth:sanctum'])->group(function () {
         Route::post('/works/{id}/update', [PrPromosiController::class, 'update']); // Alias for frontend
         Route::post('/works/{id}/accept', [PrPromosiController::class, 'acceptWork']); // Accept work
         Route::post('/works/{id}/complete', [PrPromosiController::class, 'complete']); // Mark as complete
+        Route::post('/works/{id}/cancel-complete', [PrPromosiController::class, 'cancelComplete']); // Cancel completion
         Route::post('/works/{id}/upload-content', [PrPromosiController::class, 'uploadContent']);
         Route::post('/works/{id}/share-content', [PrPromosiController::class, 'shareContent']);
         Route::post('/works/{id}/request-equipment', [PrPromosiController::class, 'requestEquipment']);

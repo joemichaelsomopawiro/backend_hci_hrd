@@ -61,15 +61,8 @@ class PrProgramService
         $oldStatus = $program->status;
         $updateData = ['status' => $status];
 
-        // Set producer_id jika status production_scheduled
-        if ($status === 'production_scheduled' && $userId) {
-            $updateData['producer_id'] = $userId;
-        }
-
-        // Set manager_distribusi_id jika status submitted_to_distribusi
-        if ($status === 'submitted_to_distribusi' && $userId) {
-            $updateData['manager_distribusi_id'] = $userId;
-        }
+        // Granular side-effects are removed to favor a simpler status system.
+        // If specific IDs need to be updated, they should be passed in updateData directly or handled separately.
 
         $program->update($updateData);
         $program = $program->fresh();

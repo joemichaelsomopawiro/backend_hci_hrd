@@ -716,7 +716,7 @@ class PrProducerController extends Controller
                 }
             }
 
-            $program->update(['status' => 'submitted_to_manager']);
+            $program->update(['status' => 'active']);
 
             // Send notification
             $this->notificationService->notifyProgramSubmitted($program);
@@ -931,6 +931,9 @@ class PrProducerController extends Controller
             $creativeWork->special_budget_approval_id = null;
 
             $creativeWork->save();
+
+            // Notify Program Manager
+            $this->notificationService->notifyBudgetApprovalRequested($creativeWork);
 
             return response()->json([
                 'success' => true,
@@ -1377,7 +1380,7 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER, Role::ART_SET_PROPERTI])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
@@ -1444,7 +1447,7 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER, Role::ART_SET_PROPERTI])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
@@ -1499,7 +1502,7 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER, Role::ART_SET_PROPERTI])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
@@ -1530,7 +1533,7 @@ class PrProducerController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER])) {
+            if (!Role::inArray($user->role, [Role::PRODUCER, Role::PROGRAM_MANAGER, Role::ART_SET_PROPERTI])) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 

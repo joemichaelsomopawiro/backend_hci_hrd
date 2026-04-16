@@ -53,15 +53,17 @@ class PrCreativeController extends Controller
                 })
                 ->with('program');
 
-            if (!$isSuperAdmin) {
-                // Get programs where current user is assigned as Kreatif crew
-                // Checking for both 'kreatif' and 'Creative' roles in crew assignment
-                $assignedProgramIds = PrProgramCrew::where('user_id', $user->id)
-                    ->whereIn('role', ['kreatif', 'Creative', 'creative'])
-                    ->pluck('program_id')
-                    ->toArray();
-
-                $query->whereIn('program_id', $assignedProgramIds);
+            if (!$isSuperAdmin && !Role::inArray($user->role, [Role::DISTRIBUTION_MANAGER])) {
+                $query->where(function ($q) use ($user) {
+                    // Producer of the program
+                    $q->whereHas('program', function ($pq) use ($user) {
+                        $pq->where('producer_id', $user->id);
+                    })
+                    // Assigned to program crew
+                    ->orWhereHas('program.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
+                });
             }
 
             $episodes = $query->orderBy('created_at', 'desc')->get();
@@ -100,15 +102,22 @@ class PrCreativeController extends Controller
             // Start query with episode relationship for program filtering
             $query = PrCreativeWork::with(['episode.program', 'createdBy']);
 
-            if (!$isSuperAdmin) {
-                // Get programs where current user is assigned as Kreatif crew
-                $assignedProgramIds = \App\Models\PrProgramCrew::where('user_id', $user->id)
-                    ->whereIn('role', ['kreatif', 'Creative', 'creative'])
-                    ->pluck('program_id')
-                    ->toArray();
+            if (!$isSuperAdmin && !Role::inArray($user->role, [Role::DISTRIBUTION_MANAGER])) {
+                $query->where(function ($q) use ($user) {
+                    // 1. Producer of the program
+                    $q->whereHas('episode.program', function ($pq) use ($user) {
+                        $pq->where('producer_id', $user->id);
+                    });
+                    
+                    // 2. Assigned to program crew
+                    $q->orWhereHas('episode.program.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
 
-                $query->whereHas('episode', function ($q) use ($assignedProgramIds) {
-                    $q->whereIn('program_id', $assignedProgramIds);
+                    // 3. Assigned to episode crew
+                    $q->orWhereHas('episode.crews', function ($pq) use ($user) {
+                        $pq->where('user_id', $user->id);
+                    });
                 });
             }
 
@@ -151,14 +160,18 @@ class PrCreativeController extends Controller
     public function show(int $id): JsonResponse
     {
         try {
-            $work = PrCreativeWork::with([
-                'episode.program',
-                'createdBy',
+            $user = Auth::user();
+            $work = PrCreativeWork::with(['episode.program', 'createdBy'])->findOrFail($id);
+
+            if (!$this->checkWorkAuthorization($work, $user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
+            }
+            $work->load([
                 'reviewedBy',
                 'scriptApprovedBy',
                 'budgetApprovedBy',
                 'specialBudgetApprover'
-            ])->findOrFail($id);
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -485,7 +498,7 @@ class PrCreativeController extends Controller
                 $workflowProgress->update([
                     'status' => 'completed',
                     'completed_at' => now(),
-                    // 'completed_by' => $user->id // Optional, if column exists
+                    'assigned_user_id' => $user->id
                 ]);
             }
 
@@ -725,5 +738,37 @@ class PrCreativeController extends Controller
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Helper to check if user is authorized for a Creative Work
+     */
+    private function checkWorkAuthorization($work, $user): bool
+    {
+        if (!$user) return false;
+
+        // 1. Administrative roles
+        if (Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER])) {
+            return true;
+        }
+
+        // 2. Producer (Only their own programs)
+        if (Role::inArray($user->role, [Role::PRODUCER])) {
+            return $work->episode && $work->episode->program && $work->episode->program->producer_id === $user->id;
+        }
+
+        // 3. Program Crew Assignment (Matches Creative staff)
+        $isCrew = \App\Models\PrProgramCrew::where('user_id', $user->id)
+            ->where('program_id', $work->episode->program_id)
+            ->exists();
+        if ($isCrew) return true;
+
+        // 4. Episode Crew Assignment
+        $isEpisodeCrew = \App\Models\PrEpisodeCrew::where('user_id', $user->id)
+            ->where('episode_id', $work->pr_episode_id)
+            ->exists();
+        if ($isEpisodeCrew) return true;
+
+        return false;
     }
 }

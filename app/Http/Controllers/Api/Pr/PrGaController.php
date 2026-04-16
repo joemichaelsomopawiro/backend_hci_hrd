@@ -116,7 +116,9 @@ class PrGaController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'transfer_type' => 'required|string',
-                'amount_transferred' => 'required|numeric'
+                'amount_transferred' => 'required|numeric',
+                'transferred_to' => 'nullable|string',
+                'transfer_date' => 'nullable|date'
             ]);
 
             if ($validator->fails()) {
@@ -142,6 +144,9 @@ class PrGaController extends Controller
             if ($request->filled('account_name')) {
                 $notesArr[] = 'Account Name: ' . $request->account_name;
             }
+            if ($request->filled('transferred_to')) {
+                $notesArr[] = 'Transferred To: ' . $request->transferred_to;
+            }
             if ($request->filled('notes')) {
                 $notesArr[] = 'Notes: ' . $request->notes;
             }
@@ -150,7 +155,7 @@ class PrGaController extends Controller
 
             $work->update([
                 'budget_processed_by_ga' => true,
-                'budget_processed_at' => now(),
+                'budget_processed_at' => $request->filled('transfer_date') ? $request->transfer_date : now(),
                 'budget_processed_by' => $user->id,
                 'budget_processing_notes' => $processingNotes
             ]);

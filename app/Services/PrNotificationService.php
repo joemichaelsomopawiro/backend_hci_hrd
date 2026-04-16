@@ -459,4 +459,35 @@ class PrNotificationService
             ]);
         }
     }
+
+    /**
+     * Notify Program Manager when a Producer requests special budget approval
+     */
+    public function notifyBudgetApprovalRequested(\App\Models\PrCreativeWork $work): void
+    {
+        $episode = $work->episode;
+        $program = $episode->program;
+        $manager = $program->managerProgram;
+
+        if (!$manager) return;
+
+        Notification::create([
+            'user_id' => $manager->id,
+            'type' => 'pr_budget_approval_requested',
+            'title' => 'Budget Approval Requested',
+            'message' => "Producer has requested special budget approval for Episode {$episode->episode_number} - '{$program->name}'. Reason: {$work->special_budget_reason}",
+            'data' => [
+                'creative_work_id' => $work->id,
+                'episode_id' => $episode->id,
+                'program_id' => $program->id,
+                'program_name' => $program->name,
+                'episode_number' => $episode->episode_number,
+                'reason' => $work->special_budget_reason
+            ],
+            'related_type' => 'PrCreativeWork',
+            'related_id' => $work->id,
+            'priority' => 'high',
+            'status' => 'unread'
+        ]);
+    }
 }

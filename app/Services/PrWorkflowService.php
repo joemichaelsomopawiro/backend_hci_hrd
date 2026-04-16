@@ -32,13 +32,18 @@ class PrWorkflowService
     {
         DB::transaction(function () use ($episode) {
             $steps = WorkflowStep::getAllSteps();
-            $airDate = \Carbon\Carbon::parse($episode->air_date);
+            $episodeAirDate = \Carbon\Carbon::parse($episode->air_date);
+            
+            // Get program start date for steps 1 & 2
+            $programStartDate = $episode->program ? \Carbon\Carbon::parse($episode->program->start_date) : $episodeAirDate;
 
             foreach ($steps as $stepNumber => $stepInfo) {
                 // Use deadline_days_before from WorkflowStep constants (based on KPI spreadsheet)
                 $daysBefore = $stepInfo['deadline_days_before'] ?? 7;
 
-                $deadlineAt = $airDate->copy()->subDays($daysBefore)->startOfDay();
+                // Steps 1 and 2 are program-level, so deadline is relative to Episode 1 (program start date)
+                $referenceDate = in_array($stepNumber, [1, 2]) ? $programStartDate : $episodeAirDate;
+                $deadlineAt = $referenceDate->copy()->subDays($daysBefore)->startOfDay();
 
                 PrEpisodeWorkflowProgress::create([
                     'episode_id' => $episode->id,
@@ -77,11 +82,20 @@ class PrWorkflowService
             $completions['Producer'] = $creativeWork && $creativeWork->script_approved;
             $completions['Manager Program'] = $creativeWork && $creativeWork->budget_approved;
         } elseif ($stepNumber == 5) {
-            $produksiWork = PrProduksiWork::where('pr_episode_id', $episode->id)->first();
-            $promosiWork = PrPromotionWork::where('pr_episode_id', $episode->id)->first();
+            $produksiWork = \App\Models\PrProduksiWork::where('pr_episode_id', $episode->id)->first();
+            $promosiWork = \App\Models\PrPromotionWork::where('pr_episode_id', $episode->id)->first();
+            $equipmentLoans = \App\Models\EquipmentLoan::whereHas('produksiWorks', function($q) use ($episode) {
+                $q->where('pr_episode_id', $episode->id);
+            })->get();
 
             $completions['Produksi'] = $produksiWork && $produksiWork->status === 'completed';
             $completions['Promosi'] = $promosiWork && ($promosiWork->status === 'completed' || !empty($promosiWork->file_paths));
+            
+            // Art & Set completion: If loans exist, they must be at least 'active' (picked up) or further
+            // If no loans, we count as complete (some episodes might not need extra equipment)
+            $completions['Art & Set Properti'] = $equipmentLoans->isEmpty() || $equipmentLoans->every(function($loan) {
+                return in_array($loan->status, ['active', 'return_requested', 'completed', 'returned']);
+            });
         } elseif ($stepNumber == 6) {
             $editorWork = PrEditorWork::where('pr_episode_id', $episode->id)->first();
             $editorPromoWork = PrEditorPromosiWork::where('pr_episode_id', $episode->id)->first();
@@ -116,6 +130,10 @@ class PrWorkflowService
     public function syncStepProgress(int $episodeId, int $stepNumber): void
     {
         $episode = \App\Models\PrEpisode::findOrFail($episodeId);
+        
+        // SELF-HEALING: Ensure role work statuses are synced with QC results before checking progress
+        $this->syncRoleWorkStatusFromQC($episodeId);
+
         $roleCompletions = $this->getRoleCompletions($episode, $stepNumber);
 
         if (empty($roleCompletions)) {
@@ -153,6 +171,27 @@ class PrWorkflowService
                     $episode->update(['workflow_step' => $stepNumber + 1]);
                 }
 
+                // NEW SEPARATE TRIGGERS FOR STEP 7 AND STEP 8
+                // Step 7 (Distribusi QC): Triggers when Main Video Editor is done
+                if ($roleCompletions['Editor'] ?? false) {
+                    $this->createStep7WorkRecord($episode);
+                }
+
+                // Step 8 (Standard QC): Triggers when BOTH Promo and Graphic Design are done
+                if (($roleCompletions['Editor Promosi'] ?? false) && ($roleCompletions['Design Grafis'] ?? false)) {
+                    $this->createStep8WorkRecord($episode);
+                }
+
+                // Log overall completion if all are done
+                if ($allDone) {
+                    app(\App\Services\PrActivityLogService::class)->logEpisodeActivity(
+                        $episode,
+                        'complete_step',
+                        "Completed workflow step {$stepNumber}: {$progress->step_name} (All roles finished)",
+                        ['step' => $stepNumber, 'status' => 'completed']
+                    );
+                }
+
                 // Log activity
                 app(\App\Services\PrActivityLogService::class)->logEpisodeActivity(
                     $episode,
@@ -170,11 +209,8 @@ class PrWorkflowService
         } else {
             // SPECIAL LOGIC: Partial completion triggers for Step 6
             if ($stepNumber === 6) {
-                // If Editor is done, trigger Step 7 QC (Manager Distribusi)
+                // Also wake up any Editor Promosi work that was waiting for the Editor to finish
                 if ($roleCompletions['Editor'] ?? false) {
-                    $this->createStep7WorkRecord($episode);
-
-                    // Also wake up any Editor Promosi work that was waiting for the Editor to finish
                     $promoEditorWork = PrEditorPromosiWork::where('pr_episode_id', $episodeId)
                         ->where('status', 'waiting_editor')
                         ->first();
@@ -192,11 +228,6 @@ class PrWorkflowService
                         $promoEditorWork->update(['status' => 'pending']);
                         Log::info("Transitioned PrEditorPromosiWork for Episode [{$episodeId}] from waiting_editor to pending");
                     }
-                }
-
-                // If Editor Promosi AND Design Grafis are both done, trigger Step 8 QC (QC Final)
-                if (($roleCompletions['Editor Promosi'] ?? false) && ($roleCompletions['Design Grafis'] ?? false)) {
-                    $this->createStep8WorkRecord($episode);
                 }
             }
         }
@@ -1206,5 +1237,40 @@ class PrWorkflowService
         ]);
 
         return $progress->fresh(['assignedUser', 'episode']);
+    }
+
+    /**
+     * SELF-HEALING: Sync role work status from QC results
+     * Ensures that if QC is finished, the underlying work records are also marked as completed
+     */
+    public function syncRoleWorkStatusFromQC(int $episodeId): void
+    {
+        try {
+            // 1. Sync from Step 7 (Distribution Manager QC) -> Main Video Editor
+            $distribusiQc = \App\Models\PrManagerDistribusiQcWork::where('pr_episode_id', $episodeId)->first();
+            if ($distribusiQc && $distribusiQc->status === 'completed') {
+                \App\Models\PrEditorWork::where('pr_episode_id', $episodeId)
+                    ->where('work_type', 'main_episode')
+                    ->where('status', '!=', 'completed')
+                    ->update(['status' => 'completed']);
+            }
+
+            // 2. Sync from Step 8 (Standard QC) -> Promo & Graphic Design
+            $standardQc = \App\Models\PrQualityControlWork::where('pr_episode_id', $episodeId)->first();
+            if ($standardQc && $standardQc->status === 'completed') {
+                \App\Models\PrEditorPromosiWork::where('pr_episode_id', $episodeId)
+                    ->where('status', '!=', 'completed')
+                    ->update(['status' => 'completed']);
+                
+                \App\Models\PrDesignGrafisWork::where('pr_episode_id', $episodeId)
+                    ->where('status', '!=', 'completed')
+                    ->update(['status' => 'completed']);
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to sync role work status from QC', [
+                'episode_id' => $episodeId,
+                'message' => $e->getMessage()
+            ]);
+        }
     }
 }

@@ -227,7 +227,7 @@ class EquipmentLoanController extends Controller
 
             \Illuminate\Support\Facades\Log::info("Trying to return loan ID: {$id}. Status: {$loan->status}");
 
-            if (!in_array($loan->status, ['active', 'approved'])) {
+            if (!in_array($loan->status, ['active', 'approved', 'return_requested'])) {
                 \Illuminate\Support\Facades\Log::warning("Return failed: Loan status is {$loan->status}");
                 return response()->json(['success' => false, 'message' => 'Loan is not active'], 400);
             }

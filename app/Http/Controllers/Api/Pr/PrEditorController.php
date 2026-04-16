@@ -29,33 +29,47 @@ class PrEditorController extends Controller
     public function index(Request $request)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
-            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
         }
 
-        $query = PrEditorWork::with([
-            'episode.program',
-            'episode.productionWork',
-            'episode.creativeWork',
-            'assignedUser',
-            'revisionNotes'
-        ]);
+        $query = PrEditorWork::with(['episode.program', 'assignedUser']);
 
-        // Filter by status
-        if ($request->has('status') && !empty($request->status)) {
-            $query->where('status', $request->status);
-        }
+        // STRICT AUTHORIZATION: Only allow assigned personnel to see tasks
+        $isManager = Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER]);
+        
+        if (!$isManager) {
+            $query->where(function ($q) use ($user) {
+                // 1. If Producer of the program
+                $q->whereHas('episode.program', function ($pq) use ($user) {
+                    $pq->where('producer_id', $user->id);
+                });
+                
+                // 2. If in program crew
+                $q->orWhereHas('episode.program.crews', function ($pq) use ($user) {
+                    $pq->where('user_id', $user->id);
+                });
 
-        // Filter by assigned user
-        if ($request->has('assigned_to')) {
-            $query->where('originally_assigned_to', $request->assigned_to);
+                // 3. If in episode crew
+                $q->orWhereHas('episode.crews', function ($pq) use ($user) {
+                    $pq->where('user_id', $user->id);
+                });
+            });
         }
 
         $works = $query->orderBy('created_at', 'desc')->get();
 
+        // SELF-HEALING: Sync statuses if they are outdated
+        foreach ($works as $work) {
+            if ($work->status === 'reviewing_qc' || $work->status === 'pending_qc') {
+                app(\App\Services\PrWorkflowService::class)->syncRoleWorkStatusFromQC($work->pr_episode_id);
+                $work->refresh(); // Refresh this specific instance to get updated status
+            }
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $works
+            'data' => $works->load(['episode.program', 'assignedUser'])->values()
         ]);
     }
 
@@ -65,10 +79,6 @@ class PrEditorController extends Controller
     public function show($id)
     {
         $user = Auth::user();
-        if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
-            return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
-        }
-
         $work = PrEditorWork::with([
             'episode.program',
             'episode.creativeWork',
@@ -77,6 +87,10 @@ class PrEditorController extends Controller
             'revisionNotes.creator',
             'revisionNotes.approver'
         ])->findOrFail($id);
+
+        if (!$this->checkWorkAuthorization($work, $user)) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
+        }
 
         return response()->json([
             'success' => true,
@@ -91,13 +105,15 @@ class PrEditorController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user || !Role::inArray($user->role, [Role::EDITOR, Role::PROGRAM_MANAGER, Role::PRODUCER])) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            $work = PrEditorWork::with('episode.program')->where('pr_episode_id', $episodeId)->first();
+
+            if (!$work) {
+                return response()->json(['success' => false, 'message' => 'Editor work not found for this episode'], 404);
             }
 
-            $episode = PrEpisode::findOrFail($episodeId);
-
-            $work = PrEditorWork::where('pr_episode_id', $episodeId)->first();
+            if (!$this->checkWorkAuthorization($work, $user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access. You are not assigned to this program.'], 403);
+            }
 
             if (!$work) {
                 return response()->json([
@@ -342,4 +358,35 @@ class PrEditorController extends Controller
         }
     }
 
+    /**
+     * Helper to check if user is authorized to perform actions on an Editor Work
+     */
+    private function checkWorkAuthorization($work, $user): bool
+    {
+        if (!$user) return false;
+
+        // 1. Administrative roles (All access)
+        if (Role::inArray($user->role, [Role::PROGRAM_MANAGER, Role::DISTRIBUTION_MANAGER])) {
+            return true;
+        }
+
+        // 2. Producer (Only their own programs)
+        if (Role::inArray($user->role, [Role::PRODUCER])) {
+            return $work->episode && $work->episode->program && $work->episode->program->producer_id === $user->id;
+        }
+
+        // 3. Program Crew Assignment (Matches Editor staff)
+        $isCrew = \App\Models\PrProgramCrew::where('user_id', $user->id)
+            ->where('program_id', $work->episode->program_id)
+            ->exists();
+        if ($isCrew) return true;
+
+        // 4. Episode Crew Assignment
+        $isEpisodeCrew = \App\Models\PrEpisodeCrew::where('user_id', $user->id)
+            ->where('episode_id', $work->pr_episode_id)
+            ->exists();
+        if ($isEpisodeCrew) return true;
+
+        return false;
+    }
 }

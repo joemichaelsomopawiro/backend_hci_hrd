@@ -41,8 +41,8 @@ class WorkflowStep
         ],
         5 => [
             'name' => 'Pinjam Alat dan Syuting',
-            'role' => 'Produksi,Promosi',
-            'description' => 'Tim Produksi dan Promosi meminjam alat dan melakukan syuting',
+            'role' => 'Production,Promotion,Art Set',
+            'description' => 'Pinjam alat, syuting Produksi & Promosi, serta manajemen Art Set Properti',
             'deadline_days_before' => 8,
         ],
         6 => [
@@ -86,13 +86,16 @@ class WorkflowStep
         'producer' => 10,
         'kreatif' => 10,
         'produksi' => 8,
-        'art_set_design' => 8, // Sesuai jadwal syuting (same as produksi)
+        'art_set_design' => 8,
+        'art_set_alat_keluar' => 8,
+        'art_set_alat_masuk' => 8,
         'editor' => 7,
         'editor_promosi' => 6,
         'design_grafis' => 5,
         'manager_distribusi' => 6,
         'quality_control' => 6,
         'broadcasting' => 4,
+        'promotion_shooting' => 8,
         'promotion' => 0,
         // Default music values (will be handled by MUSIC_ROLE_DEADLINE_DAYS where possible)
         'musik_arr' => 8,
