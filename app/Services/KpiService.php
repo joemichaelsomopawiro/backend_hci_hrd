@@ -1121,7 +1121,8 @@ class KpiService
                      
                      $episodeScan[$epId]['discovered_roles'][] = (object)[
                         'role' => $role, 
-                        'deadline' => $deadline
+                        'deadline' => $deadline,
+                        'is_backup' => true // Receiver of reassigned task treats it as backup/bonus
                      ];
                  }
              }
@@ -1342,28 +1343,34 @@ class KpiService
 
             // If user is Sound Engineer and has an editing record or help record, ensure roles exist
             if (($isSoundEng || isset($data['vocal_edit'])) && !collect($rolesToProcess)->contains('role', 'musik_vocal_edit')) {
-                $rolesToProcess[] = (object)['role' => 'musik_vocal_edit', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(8) : now()->clone()->subMonth()];
+                if (!isset($reassignedAwayMap[$episodeId]['musik_vocal_edit'])) {
+                    $rolesToProcess[] = (object)['role' => 'musik_vocal_edit', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(8) : now()->clone()->subMonth()];
+                }
             }
 
             if (($isSoundEng || isset($data['arranger_help'])) && !collect($rolesToProcess)->contains('role', 'musik_arr_help')) {
-                $rolesToProcess[] = (object)['role' => 'musik_arr_help', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(11) : now()->clone()->subMonth()];
+                if (!isset($reassignedAwayMap[$episodeId]['musik_arr_help'])) {
+                    $rolesToProcess[] = (object)['role' => 'musik_arr_help', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(11) : now()->clone()->subMonth()];
+                }
             }
             // If user is Arranger and has an arrangement record (or discovered via team), ensure Music roles exist
             if ($isArranger) {
                 $hasSong = collect($rolesToProcess)->contains('role', 'musik_arr_song');
                 $hasLagu = collect($rolesToProcess)->contains('role', 'musik_arr_lagu');
                 
-                if (!$hasSong) {
+                if (!$hasSong && !isset($reassignedAwayMap[$episodeId]['musik_arr_song'])) {
                     $rolesToProcess[] = (object)['role' => 'musik_arr_song', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(15) : now()->clone()->subMonth()];
                 }
-                if (!$hasLagu) {
+                if (!$hasLagu && !isset($reassignedAwayMap[$episodeId]['musik_arr_lagu'])) {
                     $rolesToProcess[] = (object)['role' => 'musik_arr_lagu', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(11) : now()->clone()->subMonth()];
                 }
             }
 
             // If user is Creative, ensure 'kreatif' role exists
             if ($isCreative && !collect($rolesToProcess)->contains('role', 'kreatif')) {
-                $rolesToProcess[] = (object)['role' => 'kreatif', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(10) : now()->clone()->subMonth()];
+                if (!isset($reassignedAwayMap[$episodeId]['kreatif'])) {
+                    $rolesToProcess[] = (object)['role' => 'kreatif', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(10) : now()->clone()->subMonth()];
+                }
             }
 
             // MUSIC ROLE FALLBACKS: If user has these roles, ensure they are processed for this episode
@@ -1439,19 +1446,27 @@ class KpiService
             if (str_contains($normUserRole, 'producer')) {
                  if (isset($data['arrangement'])) {
                      // 1. Acc Song Proposal
-                     $rolesToProcess[] = (object)['role' => 'musik_arr_approval', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(11) : now()];
+                     if (!isset($reassignedAwayMap[$episodeId]['musik_arr_approval'])) {
+                         $rolesToProcess[] = (object)['role' => 'musik_arr_approval', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(11) : now()];
+                     }
                      
                      // 2. Acc Arrangement Music
-                     $rolesToProcess[] = (object)['role' => 'musik_producer_acc_arr', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(11) : now()];
+                     if (!isset($reassignedAwayMap[$episodeId]['musik_producer_acc_arr'])) {
+                         $rolesToProcess[] = (object)['role' => 'musik_producer_acc_arr', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(11) : now()];
+                     }
                  }
                  
                  // 3. Creative Approval & Script Check (Mapping to musik_rec_approval logic)
                  if (isset($data['vocal_recording']) || isset($data['creative_work'])) {
-                     $rolesToProcess[] = (object)['role' => 'musik_rec_approval', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(10) : now()];
+                     if (!isset($reassignedAwayMap[$episodeId]['musik_rec_approval'])) {
+                         $rolesToProcess[] = (object)['role' => 'musik_rec_approval', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(10) : now()];
+                     }
                  }
                  
                  if (isset($data['vocal_edit'])) {
-                     $rolesToProcess[] = (object)['role' => 'musik_edit_approval', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(6) : now()];
+                     if (!isset($reassignedAwayMap[$episodeId]['musik_edit_approval'])) {
+                         $rolesToProcess[] = (object)['role' => 'musik_edit_approval', 'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays(6) : now()];
+                     }
                  }
             }
 
@@ -1952,15 +1967,21 @@ class KpiService
                         $waitingCount++;
                     }
                 }
-                // Music Modernization: Add Quality Points if available (from QC score)
+                // Music Modernization: Add Quality Points (1-5 point)
                 $qualityPoints = 0;
-                if ($isMusicRole && !empty($data['qc_work'])) {
+                
+                // Priority 1: Manual Quality Rating from Program Manager (via KpiQualityScore)
+                $manualQuality = \App\Models\KpiQualityScore::where('employee_id', $userId)
+                    ->where('music_episode_id', $episodeId)
+                    ->where('workflow_step', $roleKey)
+                    ->first();
+                
+                if ($manualQuality) {
+                    $qualityPoints = $manualQuality->quality_score;
+                } else if ($isMusicRole && !empty($data['qc_work'])) {
+                    // Priority 2: Fallback to auto-calculated QC score from QualityControlWork
                     $qc = $data['qc_work'];
-                    // Search for quality score - Usually stored in QualityControlWork
                     if (isset($qc->quality_score) && $qc->quality_score > 0) {
-                        // Map 0-100 score to points (e.g. 80-100 = 2 pts, 60-79 = 1 pt)
-                        // OR if it's already a 1-5 scale, use it direct.
-                        // Based on business logic for Music, quality points are extra points.
                         $qualityPoints = ($qc->quality_score > 5) ? round($qc->quality_score / 20) : $qc->quality_score;
                     }
                 }
@@ -1982,7 +2003,11 @@ class KpiService
                     'program_type' => 'musik',
                 ];
                 $totalPoints += ($points + $qualityPoints);
-                $maxPoints += ($setting->points_on_time + 5);
+                
+                // Backup work (e.g. from reassignment) adds to points but DOES NOT increase maxPoints target
+                if (!($r->is_backup ?? false)) {
+                    $maxPoints += ($setting->points_on_time + 5);
+                }
             }
         }
     }
