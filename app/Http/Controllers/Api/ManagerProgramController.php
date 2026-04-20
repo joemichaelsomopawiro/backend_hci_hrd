@@ -1438,9 +1438,9 @@ class ManagerProgramController extends Controller
             $prodActive = $creativeDone;
 
             // 8. Tim Setting (Set & Property)
-            $settingDone = $produksi && $produksi->setting_completed_at !== null;
+            $settingDone = $produksi && ($produksi->setting_completed_at !== null || in_array($produksi->status, ['completed', 'approved']));
             $workflowSteps[] = $buildStep(
-                'set_property', 'Tim Setting (Set & Property)', $settingDone,
+                'set_property', 'Art Set & Property (Setting)', $settingDone,
                 $settingDone ? 'completed' : ($prodActive ? 'pending' : 'blocked'),
                 !$prodActive ? 'Menunggu script kreatif.' : 'Menyiapkan set lokasi.',
                 null, $dlSetting, $produksi?->setting_completed_at, $produksi?->settingCompletedBy?->name,
@@ -1449,9 +1449,9 @@ class ManagerProgramController extends Controller
 
             // 9. Tim Rekam Vokal (Proses Recording)
             $soundRec = $episode->soundEngineerRecordings->sortByDesc('created_at')->first();
-            $soundRecDone = $soundRec && $soundRec->status === 'completed';
+            $soundRecDone = $soundRec && in_array($soundRec->status, ['completed', 'approved', 'reviewed']);
             $workflowSteps[] = $buildStep(
-                'vocal_recording', 'Tim Rekam Vokal (Proses Recording)', $soundRecDone,
+                'vocal_recording', 'Sound Recording (Vocal & Instrument)', $soundRecDone,
                 $soundRecDone ? 'completed' : ($prodActive ? ($soundRec && $soundRec->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 !$prodActive ? 'Menunggu script kreatif.' : ($soundRec && $soundRec->status === 'rejected' ? 'Ditolak: ' . $soundRec->review_notes : 'Proses recording vokal.'),
                 null, $dlTimVocal, $soundRec?->recording_completed_at, $soundRec?->createdBy?->name,
@@ -1462,16 +1462,16 @@ class ManagerProgramController extends Controller
             // 10. Promotion (BTS & Initial Tasks)
             $promoStarted = $btsPromo !== null;
             $workflowSteps[] = $buildStep(
-                'promotion_content_start', 'Promotion (BTS & Initial Tasks)', $promoStarted,
+                'promotion_content_start', 'Promotion Content (BTS & Materials)', $promoStarted,
                 $promoStarted ? 'completed' : ($prodActive ? 'pending' : 'blocked'),
                 !$prodActive ? 'Menunggu script kreatif.' : 'Memulai konten promosi.',
                 null, $dlPromo, $btsPromo?->created_at, $btsPromo?->createdBy?->name
             );
 
-            // 11. Tim Shooting (Production)
-            $shootingDone = $produksi && $produksi->status === 'completed';
+            // 11. Production (Syuting Episode)
+            $shootingDone = $produksi && in_array($produksi->status, ['completed', 'approved']);
             $workflowSteps[] = $buildStep(
-                'shooting_production', 'Tim Shooting (Production)', $shootingDone,
+                'shooting_production', 'Production (Syuting Episode)', $shootingDone,
                 $shootingDone ? 'completed' : ($settingDone ? ($produksi && $produksi->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 !$settingDone ? 'Menunggu set lokasi siap.' : ($produksi && $produksi->status === 'rejected' ? 'Ditolak: ' . $produksi->rejection_notes : 'Proses pengambilan gambar.'),
                 null, $dlShooting, $produksi?->completed_at, $produksi?->completedBy?->name,
@@ -1501,7 +1501,7 @@ class ManagerProgramController extends Controller
             $soundEdit = $episode->soundEngineerEditings->sortByDesc('created_at')->first();
             $soundEditDone = $soundEdit && in_array($soundEdit->status, ['completed', 'approved']);
             $workflowSteps[] = $buildStep(
-                'vocal_editing', 'Sound Engineer (Vocal Editing)', $soundEditDone,
+                'vocal_editing', 'Vocal Editing (Mixing & Mastering)', $soundEditDone,
                 $soundEditDone ? 'completed' : ($soundRecDone ? ($soundEdit && $soundEdit->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 !$soundRecDone ? 'Menunggu recording selesai.' : ($soundEdit && $soundEdit->status === 'rejected' ? 'Ditolak: ' . $soundEdit->rejection_reason : 'Proses editing vokal.'),
                 [
@@ -1515,7 +1515,7 @@ class ManagerProgramController extends Controller
 
             // --- PHASE 4: POST-PRODUCTION ---
             $editor = $episode->editorWorks->sortByDesc('created_at')->first();
-            $editorDone = $editor && $editor->status === 'completed';
+            $editorDone = $editor && in_array($editor->status, ['completed', 'approved']);
 
             // 15. Editor (Main Episode)
             $editorActive = $shootingDone && $soundEditDone;
@@ -1556,17 +1556,18 @@ class ManagerProgramController extends Controller
             // 18. Program Manager Review
             $workflowSteps[] = $buildStep(
                 'pm_review', 'Program Manager Review', $finalReviewDone,
-                $finalReviewDone ? 'completed' : 'pending',
-                null, null, null, $episode->updated_at, 'System'
+                $finalReviewDone ? 'completed' : ($editorDone ? 'pending' : 'blocked'),
+                !$editorDone ? 'Menunggu review Producer.' : 'Final review oleh Program Manager.', 
+                null, null, $episode->updated_at, 'System'
             );
 
-            // 19. Quality Control (Role QC)
+            // 19. Editor QC Approval (Producer)
             $qc = $episode->qualityControls->sortByDesc('created_at')->first();
-            $qcDone = $qc && $qc->status === 'approved';
+            $qcDone = $qc && in_array($qc->status, ['approved', 'completed']);
             $workflowSteps[] = $buildStep(
-                'quality_control', 'Quality Control', $qcDone,
-                $qcDone ? 'completed' : ($finalReviewDone ? ($qc && $qc->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
-                !$finalReviewDone ? 'Menunggu review Producer & PM.' : ($qc && $qc->status === 'rejected' ? 'Ditolak: ' . $qc->qc_notes : 'Pengecekan kualitas teknis aset promo dan desain.'),
+                'quality_control', 'Editor QC Approval (Producer)', $qcDone,
+                $qcDone ? 'completed' : ($editorDone ? ($qc && $qc->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
+                !$editorDone ? 'Menunggu review Producer & PM.' : ($qc && $qc->status === 'rejected' ? 'Ditolak: ' . $qc->qc_notes : 'Pengecekan kualitas teknis aset promo dan desain.'),
                 ['qc_notes' => $qc?->qc_notes], $dlQC, $qc?->updated_at, $qc?->createdBy?->name,
                 $qc?->status === 'approved' ? $qc?->qc_notes : null,
                 $qc?->status === 'rejected' ? $qc?->qc_notes : null
@@ -1576,21 +1577,21 @@ class ManagerProgramController extends Controller
 
             // 20. Distribution Manager Accept (QC & Schedule)
             $bc = $episode->broadcastingWorks->sortByDesc('created_at')->first();
-            $dmDone = $bc && in_array($bc->status, ['approved', 'scheduled', 'published', 'completed']);
+            $dmDone = $bc && in_array($bc->status, ['pending', 'approved', 'scheduled', 'published', 'completed']);
             $dlDM = $deadlines->where('role', 'manager_distribusi')->first();
             $workflowSteps[] = $buildStep(
                 'dm_schedule', 'Distribution Manager QC & Schedule', $dmDone,
-                $dmDone ? 'completed' : ($qcDone ? 'pending' : 'blocked'),
-                !$qcDone ? 'Menunggu lolos QC.' : 'Plotting jadwal tayang konten.',
+                $dmDone ? 'completed' : ($editorDone ? 'pending' : 'blocked'),
+                !$editorDone ? 'Menunggu progress Editor.' : 'Plotting jadwal tayang konten.',
                 null, $dlDM, $bc?->accepted_at, $bc?->acceptedBy?->name,
                 $bc?->notes
             );
 
             // 21. Broadcasting (Published)
-            $bcDone = $bc && in_array($bc->status, ['published', 'completed']);
+            $publishDone = $bc && in_array($bc->status, ['published', 'completed']);
             $workflowSteps[] = $buildStep(
-                'broadcasting_publishing', 'Broadcasting (Published)', $bcDone,
-                $bcDone ? 'completed' : ($dmDone ? 'pending' : 'blocked'),
+                'broadcasting_publishing', 'Broadcasting (Published)', $publishDone,
+                $publishDone ? 'completed' : ($dmDone ? 'pending' : 'blocked'),
                 !$dmDone ? 'Menunggu jadwal dari DM.' : 'Konten online/tayang di YouTube/TV.',
                 ['youtube_url' => $bc?->youtube_url], $dlBC, $bc?->published_time, $bc?->createdBy?->name,
                 $bc?->notes
@@ -1600,13 +1601,13 @@ class ManagerProgramController extends Controller
             $sharing = $promo->whereIn('work_type', ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'])->where('status', 'published')->first();
             $workflowSteps[] = $buildStep(
                 'promotion_sharing', 'Promotion Sharing (Socmed Final)', $sharing !== null,
-                $sharing ? 'completed' : ($bcDone ? 'pending' : 'blocked'),
-                !$bcDone ? 'Menunggu konten tayang.' : 'Sharing link tayang ke media sosial.',
+                $sharing ? 'completed' : ($publishDone ? 'pending' : 'blocked'),
+                !$publishDone ? 'Menunggu konten tayang.' : 'Sharing link tayang ke media sosial.',
                 null, $dlPromo, $sharing?->updated_at, $sharing?->createdBy?->name
             );
 
             // Check reached end
-            $reachedEnd = $episode->status === 'aired' || $bcDone;
+            $reachedEnd = $episode->status === 'aired' || $publishDone;
             foreach ($workflowSteps as $key => &$st) {
                 $st['history'] = $stepHistory[$st['step_key']] ?? [];
                 

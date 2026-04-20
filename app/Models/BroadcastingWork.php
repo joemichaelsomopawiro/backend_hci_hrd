@@ -39,7 +39,10 @@ class BroadcastingWork extends Model
         'rejection_notes',
         'metadata',
         'accepted_by',
-        'accepted_at'
+        'accepted_at',
+        'quality_score',
+        'rated_by',
+        'rated_at'
     ];
 
     protected $casts = [
@@ -91,6 +94,14 @@ class BroadcastingWork extends Model
     public function acceptedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'accepted_by');
+    }
+
+    /**
+     * Relationship dengan User yang memberikan rating (Program Manager)
+     */
+    public function ratedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rated_by');
     }
 
     /**

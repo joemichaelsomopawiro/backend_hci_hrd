@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Schema;
+use App\Models\ProductionEquipmentTransfer;
 
 class ProduksiController extends Controller
 {
@@ -91,17 +92,26 @@ class ProduksiController extends Controller
 
                 // Filter by status
                 if ($request->has('status')) {
-                    $query->where('status', $request->status);
-                } else {
-                    // Default view: show active tasks including needs_revision
+                    if ($request->status === 'active') {
+                        $query->whereIn('status', ['pending', 'in_progress', 'needs_revision']);
+                    } else {
+                        $query->where('status', $request->status);
+                    }
+                } elseif ($request->boolean('active_only') || $request->boolean('exclude_completed')) {
                     $query->whereIn('status', ['pending', 'in_progress', 'needs_revision']);
+                } else {
+                    // Default view: show active tasks AND completed (for history tab to work)
+                    $query->whereIn('status', ['pending', 'in_progress', 'needs_revision', 'completed']);
                 }
 
                 $paginated = $query->orderBy('created_at', 'desc')->paginate(15);
                 
-                // Add is_coordinator to each item
+                // Add is_coordinator to each item and UI flags
                 $paginated->through(function($work) use ($user) {
                     $work->is_coordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, ['setting', 'shooting']);
+                    $work->can_complete = $work->status !== 'completed' && $work->is_coordinator;
+                    $work->has_unreturned_equipment = $work->hasActiveLoans(['shooting', 'setting']);
+                    $work->missing_requirements = $work->getMissingRequirements();
                     return $work;
                 });
                 
@@ -179,8 +189,11 @@ class ProduksiController extends Controller
                 ? $latestEditorWork->formatted_missing_report 
                 : null;
             
-            // Add is_coordinator flag
+            // Add is_coordinator flag and other UI status flags
             $data['is_coordinator'] = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id, ['setting', 'shooting']);
+            $data['can_complete'] = $work->status !== 'completed' && $data['is_coordinator'];
+            $data['has_unreturned_equipment'] = $work->hasActiveLoans(['shooting', 'setting']);
+            $data['missing_requirements'] = $work->getMissingRequirements();
 
             return response()->json([
                 'success' => true,
@@ -554,6 +567,7 @@ class ProduksiController extends Controller
             'equipment_list' => 'required|array|min:1',
             'equipment_list.*.equipment_name' => 'required|string|max:255',
             'equipment_list.*.quantity' => 'required|integer|min:1',
+            'equipment_list.*.return_date' => 'nullable|date|after_or_equal:today',
             'equipment_list.*.notes' => 'nullable|string|max:1000',
             'request_notes' => 'nullable|string|max:1000',
             'crew_leader_id' => 'nullable|exists:users,id',
@@ -617,8 +631,10 @@ class ProduksiController extends Controller
 
         foreach ($episodeIds as $episodeId) {
             $work = ProduksiWork::where('episode_id', $episodeId)->first();
-            if (!$work || $work->status !== 'in_progress') {
-                $skipped[] = ['episode_id' => $episodeId, 'reason' => $work ? 'Work not in progress' : 'No produksi work'];
+            
+            // Allow if work status is not completed, or if it doesn't exist yet but user is coordinator
+            if ($work && $work->status === 'completed') {
+                $skipped[] = ['episode_id' => $episodeId, 'reason' => 'Work already completed'];
                 continue;
             }
             
@@ -630,9 +646,15 @@ class ProduksiController extends Controller
                 continue;
             }
             
-            $programId = $work->episode->program_id ?? null;
+            $episode = $work ? $work->episode : \App\Models\Episode::find($episodeId);
+            if (!$episode) {
+                $skipped[] = ['episode_id' => $episodeId, 'reason' => 'Episode not found'];
+                continue;
+            }
+
+            $programId = $episode->program_id ?? null;
             $equipmentRequest = ProductionEquipment::create([
-                'episode_id' => $work->episode_id,
+                'episode_id' => $episodeId,
                 'program_id' => $programId,
                 'equipment_list' => $flatList,
                 'equipment_quantities' => collect($request->equipment_list)->mapWithKeys(function ($it) {
@@ -650,10 +672,13 @@ class ProduksiController extends Controller
                 'requested_at' => now(),
                 'team_type' => $request->team_type ?? 'setting',
             ]);
-            $work->update([
-                'equipment_list' => $request->equipment_list,
-                'equipment_requests' => array_merge($work->equipment_requests ?? [], [$equipmentRequest->id]),
-            ]);
+            if ($work) {
+                $work->update([
+                    'equipment_list' => $request->equipment_list,
+                    'equipment_requests' => array_merge($work->equipment_requests ?? [], [$equipmentRequest->id]),
+                ]);
+            }
+            
             $created[] = ['episode_id' => $episodeId, 'equipment_request_id' => $equipmentRequest->id];
             $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
             $now = now();
@@ -663,17 +688,20 @@ class ProduksiController extends Controller
                     'user_id' => $artSetUser->id,
                     'type' => 'equipment_request_created',
                     'title' => 'Permintaan Alat Baru',
-                    'message' => "Produksi meminta {$equipmentCount} item equipment untuk Episode {$work->episode->episode_number}.",
+                    'message' => "Produksi meminta {$equipmentCount} item equipment untuk Episode {$episode->episode_number}.",
                     'data' => json_encode([
                         'equipment_request_ids' => [$equipmentRequest->id],
-                        'episode_id' => $work->episode_id,
-                        'produksi_work_id' => $work->id
+                        'episode_id' => $episodeId,
+                        'produksi_work_id' => $work ? $work->id : null
                     ]),
                     'created_at' => $now,
                     'updated_at' => $now
                 ]);
             }
         }
+
+        // Clear index caches so the dashboard (which uses 5-min cache) shows history immediately
+        QueryOptimizer::clearAllIndexCaches();
 
         return response()->json([
             'success' => true,
@@ -682,7 +710,7 @@ class ProduksiController extends Controller
                 'skipped' => $skipped,
                 'total_created' => count($created),
             ],
-            'message' => count($created) . ' permintaan alat dibuat.' . (count($skipped) ? ' ' . count($skipped) . ' episode dilewati.' : ''),
+            'message' => count($created) . ' permintaan alat berhasil dibuat.' . (count($skipped) ? ' ' . count($skipped) . ' episode dilewati.' : ''),
         ]);
     }
 
@@ -1704,11 +1732,21 @@ class ProduksiController extends Controller
             }
 
             // Get standard QC results (e.g. from QC Role)
-            $qcWorks = QualityControlWork::where('episode_id', $episodeId)
-                ->whereIn('status', ['approved', 'revision_needed', 'failed'])
-                ->with(['episode', 'createdBy'])
-                ->orderBy('created_at', 'desc')
-                ->get();
+            $query = QualityControlWork::where('episode_id', $episodeId)
+                ->whereIn('status', ['approved', 'revision_needed', 'failed']);
+            $query->with(['episode.program', 'creativeWork', 'runSheet']);
+            $qcWorks = $query->orderBy('created_at', 'desc')->get();
+
+            // Build activity log and flags for each work
+            $qcWorks->map(function ($w) use ($user) {
+                $w->activity = $this->buildWorkActivityTimeline($w);
+                $w->is_coordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $w->episode_id, ['setting', 'shooting']);
+                // UI Context Flags
+                $w->can_complete = $w->status !== 'completed' && $w->is_coordinator;
+                $w->has_unreturned_equipment = $w->hasActiveLoans(['shooting', 'setting']);
+                $w->missing_requirements = $w->getMissingRequirements();
+                return $w;
+            });
 
             // Get Distribution Manager QC results (from BroadcastingWork)
             $broadcastingQC = BroadcastingWork::where('episode_id', $episodeId)
@@ -2121,6 +2159,12 @@ class ProduksiController extends Controller
                 'message' => 'Equipment returned successfully. Art & Set Properti has been notified.'
             ]);
 
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error returning equipment: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -2291,6 +2335,161 @@ class ProduksiController extends Controller
             'data' => $availableEquipment,
             'message' => 'Available equipment retrieved successfully'
         ]);
+    }
+
+    /**
+     * POST /api/live-tv/roles/produksi/equipment/{id}/handover
+     * Serah terima alat ke user lain (koordinator tim lain).
+     */
+    public function handoverEquipment(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $loan = ProductionEquipment::with('episode.program')->findOrFail($id);
+
+            // Authorization: User must be the borrower or coordinator
+            $isBorrower = $loan->requested_by === $user->id;
+            $isCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $loan->episode_id, ['setting', 'shooting']);
+            
+            if (!$isBorrower && !$isCoordinator && !MusicProgramAuthorization::hasProducerAccess($user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            if (!in_array($loan->status, ['approved', 'in_use'])) {
+                return response()->json(['success' => false, 'message' => 'Alat tidak dalam status dapat diserah-terimakan.'], 400);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'to_user_id' => 'required|exists:users,id',
+                'to_episode_id' => 'required|exists:episodes,id',
+                'notes' => 'nullable|string|max:500'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            $toUserId = (int) $request->to_user_id;
+            if ($toUserId === $user->id) {
+                return response()->json(['success' => false, 'message' => 'Tidak bisa serah terima ke diri sendiri.'], 400);
+            }
+
+            \DB::beginTransaction();
+            try {
+                $transfer = \App\Models\ProductionEquipmentTransfer::create([
+                    'production_equipment_id' => $loan->id,
+                    'from_episode_id' => $loan->episode_id,
+                    'to_episode_id' => $request->to_episode_id ?? $loan->episode_id,
+                    'to_user_id' => $toUserId,
+                    'transferred_by' => $user->id,
+                    'transferred_at' => now(),
+                    'notes' => $request->notes,
+                    'status' => 'pending_accept'
+                ]);
+
+                // Notify target user
+                Notification::create([
+                    'user_id' => $toUserId,
+                    'type' => 'equipment_handover_requested',
+                    'title' => 'Serah Terima Alat Produksi',
+                    'message' => "Ada serah terima alat produksi dari {$user->name} untuk Anda. Silakan konfirmasi di dashboard.",
+                    'data' => [
+                        'transfer_id' => $transfer->id,
+                        'equipment_request_id' => $loan->id,
+                        'from_user' => $user->name,
+                    ]
+                ]);
+
+                \DB::commit();
+            } catch (\Exception $e) {
+                \DB::rollBack();
+                throw $e;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Permintaan serah terima telah dikirim ke Koordinator tujuan.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/live-tv/roles/produksi/handovers/{transferId}/accept
+     * Konfirmasi terima alat dari koordinator lain.
+     */
+    public function acceptHandover(int $transferId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $transfer = \App\Models\ProductionEquipmentTransfer::with('productionEquipment')->findOrFail($transferId);
+
+            if ((int) $transfer->to_user_id !== (int) $user->id) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized (Bukan tujuan serah terima)'], 403);
+            }
+
+            if ($transfer->status !== 'pending_accept') {
+                return response()->json(['success' => false, 'message' => 'Serah terima ini sudah diproses.'], 400);
+            }
+
+            // Authorization: Only Coordinator, Producer, or GA can accept
+            $isCoordinatorForEpisode = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $transfer->to_episode_id, ['setting', 'shooting', 'vocal_recording']);
+            $isOversight = MusicProgramAuthorization::hasProducerAccess($user) || $user->role === 'Art & Set Properti';
+
+            if (!$isCoordinatorForEpisode && !$isOversight) {
+                return response()->json([
+                    'success' => false, 
+                    'message' => 'Hanya Koordinator Tim atau Produser yang berhak mengonfirmasi serah terima alat ini.'
+                ], 403);
+            }
+
+            $loan = $transfer->productionEquipment;
+            if (!$loan || !in_array($loan->status, ['approved', 'in_use'])) {
+                return response()->json(['success' => false, 'message' => 'Peminjaman alat asli sudah tidak valid.'], 400);
+            }
+
+            \DB::beginTransaction();
+            try {
+                $transfer->update([
+                    'status' => 'accepted',
+                    'accepted_by' => $user->id,
+                    'accepted_at' => now()
+                ]);
+
+                $loan->update([
+                    'episode_id' => $transfer->to_episode_id,
+                    'requested_by' => $user->id, // Switch responsibility
+                    'status' => 'in_use'
+                ]);
+
+                // Notify original sender
+                if ($transfer->transferred_by) {
+                    Notification::create([
+                        'user_id' => $transfer->transferred_by,
+                        'type' => 'equipment_handover_accepted',
+                        'title' => 'Serah Terima Diterima',
+                        'message' => "Serah terima alat kepada {$user->name} telah dikonfirmasi.",
+                        'data' => [
+                            'transfer_id' => $transfer->id,
+                            'accepted_by' => $user->name
+                        ]
+                    ]);
+                }
+
+                \DB::commit();
+            } catch (\Exception $e) {
+                \DB::rollBack();
+                throw $e;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Alat berhasil diterima. Sekarang alat tercatat dalam tanggung jawab Anda.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
 
     /**

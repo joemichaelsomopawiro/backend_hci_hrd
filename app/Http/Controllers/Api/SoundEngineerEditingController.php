@@ -25,17 +25,19 @@ class SoundEngineerEditingController extends Controller
             return false;
         }
 
-        // Program Manager should be able to access all music workflow steps.
-        if (ProgramManagerAuthorization::isProgramManager($user) || MusicProgramAuthorization::hasProducerAccess($user)) {
+        // Program Manager or Producer oversight
+        if (MusicProgramAuthorization::hasProducerAccess($user)) {
             return true;
         }
         
         $role = strtolower($user->role ?? '');
-        // Sound Engineer OR Production role
+        // Sound Engineer OR Production roles
         if (in_array($role, [
             'sound engineer',
             'sound_engineer',
-            'production'
+            'sound-engineer',
+            'production',
+            'recording'
         ])) {
             return true;
         }
@@ -49,7 +51,7 @@ class SoundEngineerEditingController extends Controller
             })->exists();
 
         // Also allow if has any music team assignment (for visibility across dashboards)
-        $hasAnyAssignment = $user->hasAnyMusicTeamAssignment();
+        $hasAnyAssignment = method_exists($user, 'hasAnyMusicTeamAssignment') && $user->hasAnyMusicTeamAssignment();
         
         return $hasRecordingAssignment || $hasAnyAssignment;
     }
@@ -73,36 +75,43 @@ class SoundEngineerEditingController extends Controller
 
         $query = SoundEngineerEditing::with(['episode.program', 'soundEngineer', 'recording']);
 
-        // Restrict dashboard to episodes whose Creative Work has been approved
-        // by Producer (script/storyboard/budget approved -> final approve).
-        $query->whereHas('episode', function ($eq) {
-            $eq->whereHas('creativeWorks', function ($cq) {
-                    $cq->where('status', 'approved');
-                }
-                );
-            });
+        // Check if user is Producer/Manager for oversight
+        $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
+        $hasProducerAccess = MusicProgramAuthorization::hasProducerAccess($user);
+        $isGlobalSoundEngineer = in_array(strtolower($user->role ?? ''), ['sound_engineer', 'sound engineer', 'sound-engineer']);
 
-        // Restrict to this sound engineer's scope:
-        // - editing work assigned to this user, OR
-        // - user is in the episode's program production team as sound engineer.
-        $query->where(function ($q) use ($user) {
-            $q->where('sound_engineer_id', $user->id)
-                ->orWhereHas('episode.program.productionTeam.members', function ($mq) use ($user) {
-                    $mq->where('user_id', $user->id)
-                        ->whereIn('role', ['sound_eng', 'sound_engineer', 'sound engineer', 'recording', 'vocal_recording', 'recording_team'])
-                        ->where('is_active', true);
+        // Restrict dashboard to episodes whose Creative Work has been approved
+        // EXCEPT for Producers/Managers who might need to see pending work.
+        if (!$hasProducerAccess && !$isProgramManager) {
+            $query->whereHas('episode', function ($eq) {
+                $eq->whereHas('creativeWorks', function ($cq) {
+                    $cq->where('status', 'approved');
                 });
-        });
-        
-        // Also include recording team assignments
-        $query->orWhereHas('episode.teamAssignments', function($aq) use ($user) {
-             $aq->where('team_type', 'recording')
-                ->where('status', '!=', 'cancelled')
-                ->whereHas('members', function($mq) use ($user) {
-                    $mq->where('user_id', $user->id)
-                       ->where('is_active', true);
-                });
-        });
+            });
+        }
+
+        // Restrict scope for non-managers
+        if (!$isProgramManager && !$hasProducerAccess && !$isGlobalSoundEngineer) {
+            $query->where(function ($q) use ($user) {
+                // assigned to this user, OR
+                $q->where('sound_engineer_id', $user->id)
+                    // user is in the episode's program production team as sound engineer
+                    ->orWhereHas('episode.program.productionTeam.members', function ($mq) use ($user) {
+                        $mq->where('user_id', $user->id)
+                            ->whereIn('role', ['sound_eng', 'sound_engineer', 'sound engineer', 'sound-engineer', 'recording', 'vocal_recording', 'recording_team'])
+                            ->where('is_active', true);
+                    })
+                    // OR user is in specific episode team assignment
+                    ->orWhereHas('episode.teamAssignments', function($aq) use ($user) {
+                        $aq->where('team_type', 'recording')
+                            ->where('status', '!=', 'cancelled')
+                            ->whereHas('members', function($mq) use ($user) {
+                                $mq->where('user_id', $user->id)
+                                ->where('is_active', true);
+                            });
+                    });
+            });
+        }
 
         // Filter by status
         if ($request->has('status')) {
@@ -224,28 +233,27 @@ class SoundEngineerEditingController extends Controller
 
             $work = SoundEngineerEditing::with(['episode.program', 'soundEngineer', 'recording'])->findOrFail($id);
 
-            // Check if work is assigned to this user or user is in the production team
-            if ($work->sound_engineer_id !== $user->id) {
-                // Check if user is in the production team for this episode
+            // Check authorization: Assigned SE, Producer, or Coordinator
+            $isAssignedSE = (int) $work->sound_engineer_id === (int) $user->id;
+            $isProducer = MusicProgramAuthorization::hasProducerAccess($user);
+            $isCoordinator = \App\Models\ProductionTeamMember::isCoordinatorForEpisode($user->id, $work->episode_id);
+
+            if (!$isAssignedSE && !$isProducer && !$isCoordinator) {
+                // Check if user is in the production team for this episode with sound engineer role
                 $episode = $work->episode;
+                $hasTeamRole = false;
                 if ($episode && $episode->program && $episode->program->productionTeam) {
-                    $hasAccess = $episode->program->productionTeam->members()
+                    $hasTeamRole = $episode->program->productionTeam->members()
                         ->where('user_id', $user->id)
-                        ->where('role', 'sound_eng')
+                        ->whereIn('role', ['sound_eng', 'sound_engineer', 'sound engineer', 'sound-engineer'])
                         ->where('is_active', true)
                         ->exists();
-
-                    if (!$hasAccess) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Unauthorized: This editing work is not assigned to you.'
-                        ], 403);
-                    }
                 }
-                else {
+                
+                if (!$hasTeamRole) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Unauthorized: This editing work is not assigned to you.'
+                        'message' => 'Unauthorized: This editing work is not assigned to you, and you are not a Producer or Coordinator for this episode.'
                     ], 403);
                 }
             }
@@ -428,6 +436,7 @@ class SoundEngineerEditingController extends Controller
 
         // Reset rejection fields if resubmitting after rejection
         $updateData = [
+            'sound_engineer_id' => $user->id, // Ensure user gets credit even if task was unassigned or assigned to someone else
             'final_file_path' => $request->final_file_path, // Backward compatibility
             'final_file_link' => $request->final_file_link, // New: External storage link
             'submission_notes' => $request->submission_notes,

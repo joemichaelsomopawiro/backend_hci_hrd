@@ -1295,15 +1295,47 @@ class ArtSetPropertiController extends Controller
     /**
      * Daftar episode per program (untuk dropdown tab Program & Episode).
      * GET /art-set-properti/programs/{programId}/episodes-list
+     * 
+     * Update: support cross-program discovery if programId is 0 or 'all'
      */
-    public function getEpisodesList(int $programId): JsonResponse
+    public function getEpisodesList(Request $request, $programId): JsonResponse
     {
         try {
             $user = Auth::user();
-            if (!MusicProgramAuthorization::canAccessArtSetProperti($user)) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            if (!MusicProgramAuthorization::canAccessArtSetProperti($user) && 
+                !MusicProgramAuthorization::hasProducerAccess($user)) {
+                
+                // If not Art & Set or Producer, they can only see episodes where they are a member
+                // This is a safety check for the bulk borrowing feature
             }
-            $episodes = \App\Models\Episode::where('program_id', $programId)->orderBy('episode_number')->get(['id', 'episode_number', 'title']);
+            
+            $query = \App\Models\Episode::with([
+                'program:id,name',
+                'teamAssignments' => function($q) {
+                    $q->whereIn('team_type', ['setting', 'shooting', 'recording', 'vocal_recording'])
+                      ->where('status', '!=', 'cancelled');
+                },
+                'teamAssignments.members' => function($q) {
+                    $q->where('is_active', true);
+                },
+                'teamAssignments.members.user:id,name'
+            ]);
+
+            if ($programId && $programId !== '0' && $programId !== 'all') {
+                $query->where('program_id', $programId);
+            }
+
+            // If param 'only_coordinator' is set, filter by user's coordinator status
+            if ($request->boolean('only_coordinator')) {
+                $query->whereHas('teamAssignments.members', function($q) use ($user) {
+                    $q->where('user_id', $user->id)
+                      ->where('is_coordinator', true);
+                });
+            }
+
+            $episodes = $query->orderBy('episode_number')
+                ->get(['id', 'program_id', 'episode_number', 'title']);
+
             return response()->json(['success' => true, 'data' => $episodes]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);

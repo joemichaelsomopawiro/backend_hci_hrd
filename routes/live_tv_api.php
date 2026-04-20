@@ -359,6 +359,7 @@ Route::prefix('roles/broadcasting')->middleware(['auth:sanctum', 'throttle:api']
     Route::post('/works/{id}/complete-work', [BroadcastingController::class, 'completeWork'])->middleware('throttle:sensitive');
     Route::post('/works/{id}/schedule-work-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive');
     Route::post('/works/{id}/publish', [BroadcastingController::class, 'publish'])->middleware('throttle:sensitive');
+    Route::post('/works/{id}/quality-score', [BroadcastingController::class, 'updateQualityScore'])->middleware('throttle:sensitive');
 
     // Schedules
     Route::get('/schedules', [BroadcastingController::class, 'getAllSchedules'])->middleware('throttle:60,1');
@@ -520,6 +521,7 @@ Route::prefix('music-arranger')->middleware(['auth:sanctum', 'throttle:api'])->g
         // Equipment Management
         Route::get('/equipment/available', [VocalRecordingController::class, 'getAvailableEquipment'])->middleware('throttle:60,1'); // Cek stok alat
         Route::post('/works/{id}/request-equipment', [VocalRecordingController::class, 'requestEquipment'])->middleware('throttle:sensitive'); // Pinjam alat
+        Route::post('/request-equipment-multiple', [VocalRecordingController::class, 'requestEquipmentMultiple'])->middleware('throttle:sensitive'); // Pinjam alat bulk
         Route::delete('/equipment-requests/{id}', [VocalRecordingController::class, 'cancelEquipmentRequest'])->middleware('throttle:sensitive'); // Batalkan permintaan
         Route::post('/equipment/{id}/notify-return', [VocalRecordingController::class, 'notifyReturn'])->middleware('throttle:sensitive'); // Notify return
         Route::post('/works/{id}/transfer-equipment', [VocalRecordingController::class, 'transferEquipment'])->middleware('throttle:sensitive'); // Transfer alat (Lanjut Pakai)
@@ -628,8 +630,9 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
     Route::post('/schedules/{id}/input-youtube-link', [BroadcastingController::class, 'inputYouTubeLink'])->middleware('throttle:sensitive');
     Route::post('/schedules/{id}/schedule-work-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive');
     Route::post('/schedules/{id}/complete', [BroadcastingController::class, 'completeWork'])->middleware('throttle:sensitive');
-    Route::post('/works/{id}/schedule-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive'); // Schedule playlist untuk work
+        Route::post('/works/{id}/schedule-playlist', [BroadcastingController::class, 'scheduleWorkPlaylist'])->middleware('throttle:sensitive'); // Schedule playlist untuk work
         Route::post('/works/{id}/complete-work', [BroadcastingController::class, 'completeWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan
+        Route::post('/works/{id}/quality-score', [BroadcastingController::class, 'updateQualityScore'])->middleware('throttle:sensitive'); // Input nilai kualitas
     });
 
     // Distribution Manager Routes (Program Musik Schedule Approval)
@@ -679,6 +682,9 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::post('/works/{id}/request-equipment', [PromosiController::class, 'requestEquipment']);
         Route::delete('/equipment-requests/{id}', [PromosiController::class, 'cancelEquipmentRequest']);
         Route::post('/equipment/{id}/notify-return', [PromosiController::class, 'notifyReturn']);
+        Route::post('/works/{id}/transfer-equipment', [PromosiController::class, 'transferEquipment']); // Lanjut pakai
+        Route::post('/handovers/{transferId}/accept', [PromosiController::class, 'acceptHandover']); // Terima handover
+        Route::post('/handover-equipment/{equipment_request_id}', [PromosiController::class, 'handoverEquipment']); // Ajukan handover
         Route::post('/works/{id}/return-equipment', [PromosiController::class, 'returnEquipment']);
         Route::post('/works/{id}/upload-bts', [PromosiController::class, 'uploadBTSContent'])->middleware('throttle:uploads');
         Route::post('/works/{id}/accept-schedule', [PromosiController::class, 'acceptSchedule'])->middleware('throttle:sensitive'); // Terima jadwal syuting
@@ -705,7 +711,7 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::post('/episodes/{id}/create-ig-story-highlight', [PromosiController::class, 'createIGStoryHighlight'])->middleware('throttle:sensitive');
         Route::post('/episodes/{id}/create-fb-reels-highlight', [PromosiController::class, 'createFBReelsHighlight'])->middleware('throttle:sensitive');
         Route::post('/episodes/{id}/share-wa-group', [PromosiController::class, 'shareWAGroup'])->middleware('throttle:sensitive');
-        Route::post('/works/{id}/complete-promotion-work', [PromosiController::class, 'completePromotionWork'])->middleware('throttle:sensitive'); // Selesaikan pekerjaan promosi
+        Route::post('/episodes/{id}/bulk-confirm-promotion', [PromosiController::class, 'bulkConfirmEpisodeTasks'])->middleware('throttle:sensitive');
     });
 
     // Produksi Routes
@@ -724,6 +730,8 @@ Route::prefix('broadcasting')->middleware(['auth:sanctum', 'throttle:api'])->gro
         Route::post('/works/{id}/reopen', [ProduksiController::class, 'reopenWork'])->middleware('throttle:sensitive'); // Buka kembali work (untuk input run sheet & link file)
         Route::post('/works/{id}/return-equipment', [ProduksiController::class, 'returnEquipment'])->middleware('throttle:sensitive'); // Kembalikan alat ke Art & Set Properti
         Route::post('/works/{id}/transfer-equipment', [ProduksiController::class, 'transferEquipment'])->middleware('throttle:sensitive'); // Transfer alat (Lanjut Pakai)
+        Route::post('/works/{id}/handover-equipment', [ProduksiController::class, 'handoverEquipment'])->middleware('throttle:sensitive'); // Ajukan handover
+        Route::post('/handovers/{transferId}/accept', [ProduksiController::class, 'acceptHandover'])->middleware('throttle:sensitive'); // Terima handover
         Route::get('/equipment/available', [ProduksiController::class, 'getAvailableEquipment'])->middleware('throttle:60,1'); // Cek stok alat
         // Equipment Return Notification
         Route::post('/equipment/{id}/notify-return', [ProductionEquipmentController::class, 'notifyReturn'])->middleware('throttle:sensitive');

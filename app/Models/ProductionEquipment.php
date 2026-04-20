@@ -173,7 +173,7 @@ class ProductionEquipment extends Model
     /**
      * Return equipment
      */
-    public function return(): void
+    public function returnEquipment(): void
     {
         $this->update([
             'status' => 'returned',

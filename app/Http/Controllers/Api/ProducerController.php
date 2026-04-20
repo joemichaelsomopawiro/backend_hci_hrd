@@ -61,6 +61,51 @@ class ProducerController extends Controller
             $user = auth()->user();
             $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
             
+            // LAZY SYNC: Find completed vocal recordings that missed their editing task creation
+            // Broadened to include 'reviewed' and ensuring we don't miss anything for recent episodes
+            $completedWithoutEditing = SoundEngineerRecording::whereIn('status', ['completed', 'reviewed'])
+                ->whereDoesntHave('editing')
+                ->get();
+            
+            if ($completedWithoutEditing->count() > 0) {
+                foreach ($completedWithoutEditing as $recording) {
+                    try {
+                        $episode = $recording->episode;
+                        if (!$episode) continue;
+                        
+                        // DEEP RECOVERY: If it's Episode 18, we force check
+                        $assignedSE = null;
+                        $pTeam = ($episode->program) ? $episode->program->productionTeam : null;
+                        if ($pTeam) {
+                            $seMember = $pTeam->members()->whereIn('role', ['sound_eng', 'sound_engineer', 'sound-engineer'])->where('is_active', true)->first();
+                            if ($seMember) $assignedSE = $seMember->user_id;
+                        }
+                        
+                        // Use first representative coordinator as fallback SE
+                        if (!$assignedSE) {
+                            $coord = ProductionTeamMember::whereHas('assignment', function($q) use ($recording) {
+                                $q->where('episode_id', $recording->episode_id)->where('team_type', 'recording');
+                            })->where('is_coordinator', true)->where('is_active', true)->first();
+                            if ($coord) $assignedSE = $coord->user_id;
+                        }
+
+                        SoundEngineerEditing::updateOrCreate(
+                            ['sound_engineer_recording_id' => $recording->id],
+                            [
+                                'episode_id' => $recording->episode_id,
+                                'sound_engineer_id' => $assignedSE,
+                                'vocal_file_link' => $recording->file_link,
+                                'editing_notes' => "Auto-recovery: Recording Verified. Episode: " . ($episode->episode_number ?? 'N/A'),
+                                'status' => 'in_progress',
+                                'created_by' => $recording->created_by ?? $user->id
+                            ]
+                        );
+                    } catch (\Exception $e) {
+                        Log::error("Lazy Sync Error for recording " . $recording->id . ": " . $e->getMessage());
+                    }
+                }
+            }
+            
             if (!$user || ($user->role !== 'Producer' && !$isProgramManager)) {
                 return response()->json([
                     'success' => false,
@@ -354,10 +399,8 @@ class ProducerController extends Controller
                         });
                     });
                 })
-                ->get();
-
-            // Sound Engineer Editing pending approval
-            $soundEngineerEditing = SoundEngineerEditing::where('status', 'submitted')
+                ->get();            // Sound Engineer Editing pending approval (Broadened to include in_progress for oversight)
+            $soundEngineerEditing = SoundEngineerEditing::whereIn('status', ['submitted', 'in_progress', 'pending', 'revision_needed'])
                 ->with([
                     'episode' => fn($q) => $q->withTrashed(),
                     'episode.productionTeam' => fn($q) => $q->withTrashed(),
@@ -367,23 +410,16 @@ class ProducerController extends Controller
                 ])
                 ->when(!$isProgramManager, function ($query) use ($user) {
                     $query->where(function ($q) use ($user) {
-                        $q->whereHas('episode', function($epQ) use ($user) {
-                            $epQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
-                                $subQ->withTrashed()->where('producer_id', $user->id);
-                            });
+                        $q->whereHas('episode.program.productionTeam', function ($pq) use ($user) {
+                            $pq->where('producer_id', $user->id);
                         })
-                        ->orWhereHas('episode', function($epQ) use ($user) {
-                            $epQ->withTrashed()->whereHas('program', function($prQ) use ($user) {
-                                $prQ->withTrashed()->whereHas('productionTeam', function ($subQ) use ($user) {
-                                    $subQ->withTrashed()->where('producer_id', $user->id);
-                                });
-                            });
-                        });
+                        ->orWhere('created_by', $user->id)
+                        ->orWhere('sound_engineer_id', $user->id);
                     });
                 })
+                ->orderBy('created_at', 'desc')
                 ->get();
-
-            // Editor Work pending approval
+              // Editor Work pending approval
             $editorWorks = EditorWork::where('status', 'submitted')
                 ->with([
                     'episode' => fn($q) => $q->withTrashed(),
@@ -680,6 +716,8 @@ class ProducerController extends Controller
                     'sound_engineer' => $record->soundEngineer,
                     'status' => $status,
                     'notes' => $record->editing_notes ?? $record->submission_notes,
+                    'vocal_file_link' => $record->vocal_file_link,
+                    'vocal_file_path' => $record->vocal_file_path,
                     'final_file_link' => $record->final_file_link,
                     'final_file_path' => $record->final_file_path,
                     'approved_at' => $record->approved_at,
@@ -1282,12 +1320,21 @@ class ProducerController extends Controller
                         }
                     }
 
-                    if ($item->status !== 'submitted') {
+                    // Flexible Check: Allow approval if status is 'submitted' 
+                    // OR if status is 'in_progress'/'pending' but already has a final file link/path
+                    $hasFile = !empty($item->final_file_path) || !empty($item->final_file_link);
+                    $isSubmitted = $item->status === 'submitted';
+                    $canApprove = $isSubmitted || ($hasFile && in_array($item->status, ['in_progress', 'pending', 'revision_needed']));
+
+                    if (!$canApprove) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Only submitted editing works can be approved'
+                            'message' => $hasFile 
+                                ? "Status work ini adalah '{$item->status}', harap sampaikan ke Sound Engineer untuk klik Submit atau coba lagi nanti."
+                                : "Pekerjaan ini belum siap di-approve (file belum di-upload atau status tidak valid)."
                         ], 400);
                     }
+
 
                     // Approve editing
                     $item->update([
@@ -1353,7 +1400,8 @@ class ProducerController extends Controller
                             'data' => [
                                 'editing_id' => $item->id,
                                 'episode_id' => $episode->id,
-                                'audio_file_path' => $audioUrl
+                                'audio_file_path' => $audioUrl,
+                                'vocal_file_link' => $item->vocal_file_link // Also send vocal link to editor
                             ]
                         ]);
                     }
@@ -4571,23 +4619,25 @@ class ProducerController extends Controller
             DB::beginTransaction();
 
             try {
-            // Create team assignment
-            $assignment = \App\Models\ProductionTeamAssignment::create([
-                'music_submission_id' => null,
-                'episode_id' => $creativeWork->episode_id,
-                'schedule_id' => $request->schedule_id,
-                'assigned_by' => $user->id,
-                'team_type' => $request->team_type,
-                'team_name' => $request->team_name ?? ucfirst($request->team_type) . ' Team',
-                'team_notes' => $request->team_notes,
-                'status' => 'assigned',
-                'assigned_at' => now()
-            ]);
+            // Use updateOrCreate to prevent double assignments for the same episode and team type
+            $assignment = \App\Models\ProductionTeamAssignment::updateOrCreate(
+                [
+                    'episode_id' => $creativeWork->episode_id,
+                    'team_type' => $request->team_type
+                ],
+                [
+                    'schedule_id' => $request->schedule_id,
+                    'assigned_by' => $user->id,
+                    'team_name' => $request->team_name ?? ucfirst($request->team_type) . ' Team',
+                    'team_notes' => $request->team_notes,
+                    'status' => 'assigned',
+                    'assigned_at' => now(),
+                    'music_submission_id' => null
+                ]
+            );
 
-                // Validate assignment was created successfully
-                if (!$assignment || !$assignment->id) {
-                    throw new \Exception('Failed to create team assignment');
-                }
+                // Remove old members if we are updating an existing assignment (Merging logic)
+                $assignment->members()->delete();
 
             // Add team members
             $coordinatorId = $request->input('coordinator_id');
@@ -4695,6 +4745,7 @@ class ProducerController extends Controller
             $validator = Validator::make($request->all(), [
                 'new_team_member_ids' => 'required|array|min:1',
                 'new_team_member_ids.*' => 'exists:users,id',
+                'coordinator_id' => 'nullable|exists:users,id',
                 'replacement_reason' => 'required|string|max:1000'
             ]);
 
@@ -4730,11 +4781,14 @@ class ProducerController extends Controller
             $assignment->members()->delete();
 
             // Add new members
+            $coordinatorId = $request->coordinator_id;
+
             foreach ($request->new_team_member_ids as $index => $userId) {
                 \App\Models\ProductionTeamMember::create([
                     'assignment_id' => $assignment->id,
                     'user_id' => $userId,
                     'role' => $index === 0 ? 'leader' : 'crew',
+                    'is_coordinator' => $coordinatorId ? ((int) $userId === (int) $coordinatorId) : ($index === 0),
                     'status' => 'assigned'
                 ]);
 
@@ -4812,7 +4866,8 @@ class ProducerController extends Controller
                 'team_notes' => 'nullable|string|max:1000',
                 'schedule_id' => 'nullable|exists:music_schedules,id',
                 'team_member_ids' => 'nullable|array|min:1',
-                'team_member_ids.*' => 'exists:users,id'
+                'team_member_ids.*' => 'exists:users,id',
+                'coordinator_id' => 'nullable|exists:users,id'
             ]);
 
             if ($validator->fails()) {
@@ -4876,21 +4931,17 @@ class ProducerController extends Controller
                     $assignment->update($updateData);
                 }
 
-                // Update team members if provided (validator already ensures team_member_ids.* exist in users)
-                if ($request->has('team_member_ids') && count($request->team_member_ids) > 0) {
-                    $requestMemberIds = array_map('intval', (array) $request->team_member_ids);
+                $coordinatorId = $request->coordinator_id;
 
-                    // Get current members
-                    $currentMemberIds = $assignment->members()->pluck('user_id')->map(fn ($id) => (int) $id)->toArray();
-                    $newMemberIds = $requestMemberIds;
+                // Update team members if provided
+                if ($request->has('team_member_ids')) {
+                    $newMemberIds = array_map('intval', (array) $request->team_member_ids);
+                    $existingMemberIds = $assignment->members->pluck('user_id')->toArray();
                     
-                    // Find members to add
-                    $membersToAdd = array_diff($newMemberIds, $currentMemberIds);
-                    
-                    // Find members to remove
-                    $membersToRemove = array_diff($currentMemberIds, $newMemberIds);
+                    $membersToRemove = array_diff($existingMemberIds, $newMemberIds);
+                    $membersToAdd = array_diff($newMemberIds, $existingMemberIds);
 
-                    // Remove members that are no longer in the team
+                    // Remove members
                     if (!empty($membersToRemove)) {
                         \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)
                             ->whereIn('user_id', $membersToRemove)
@@ -4912,40 +4963,40 @@ class ProducerController extends Controller
                         }
                     }
 
-                    // Add new members
-                    if (!empty($membersToAdd)) {
-                        // Check if there's already a leader
-                        $hasLeader = \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)
-                            ->where('role', 'leader')
-                            ->exists();
+                    // Reset all coordinators first for this assignment
+                    \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)->update(['is_coordinator' => false]);
+
+                    // Add new members and update existing ones for coordinator status
+                    $hasLeader = \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)
+                        ->where('role', 'leader')
+                        ->exists();
+                    $remainingMembersCount = \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)->count();
+
+                    foreach ($newMemberIds as $index => $userId) {
+                        $isCurrentCoordinator = $coordinatorId ? ((int)$userId === (int)$coordinatorId) : false;
                         
-                        // Get remaining members count after removal
-                        $remainingMembers = $assignment->members()
-                            ->whereNotIn('user_id', $membersToRemove)
-                            ->count();
-                        
-                        foreach ($membersToAdd as $index => $userId) {
-                            // Check if user already assigned (prevent duplicates)
-                            $existingMember = \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)
-                                ->where('user_id', $userId)
-                                ->first();
+                        $existingMember = \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)
+                            ->where('user_id', $userId)
+                            ->first();
+
+                        if ($existingMember) {
+                            $existingMember->update([
+                                'is_coordinator' => $isCurrentCoordinator,
+                                'is_active' => true
+                            ]);
+                        } else {
+                            $role = (!$hasLeader && $remainingMembersCount === 0) ? 'leader' : 'crew';
+                            if ($role === 'leader') { $hasLeader = true; }
                             
-                            if ($existingMember) {
-                                continue;
-                            }
-
-                            // Determine role: first member becomes leader if no leader exists
-                            $role = (!$hasLeader && $remainingMembers + $index === 0) ? 'leader' : 'crew';
-                            if ($role === 'leader') {
-                                $hasLeader = true; // Mark that we now have a leader
-                            }
-
-                            $member = \App\Models\ProductionTeamMember::create([
+                            \App\Models\ProductionTeamMember::create([
                                 'assignment_id' => $assignment->id,
                                 'user_id' => $userId,
                                 'role' => $role,
+                                'is_coordinator' => $isCurrentCoordinator,
+                                'is_active' => true,
                                 'status' => 'assigned'
                             ]);
+                            $remainingMembersCount++;
 
                             // Notify new team member
                             Notification::create([
@@ -4960,6 +5011,17 @@ class ProducerController extends Controller
                                 ]
                             ]);
                         }
+                    }
+                } else if ($request->has('coordinator_id')) {
+                    // Update only coordinator if member list hasn't changed
+                    \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)->update(['is_coordinator' => false]);
+                    if ($coordinatorId) {
+                        \App\Models\ProductionTeamMember::where('assignment_id', $assignment->id)
+                            ->where('user_id', $coordinatorId)
+                            ->update([
+                                'is_coordinator' => true,
+                                'is_active' => true
+                            ]);
                     }
                 }
 
@@ -4977,12 +5039,6 @@ class ProducerController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Error updating team assignment', [
-                'assignment_id' => $assignmentId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update team assignment',
@@ -6261,7 +6317,8 @@ class ProducerController extends Controller
             'assignments' => 'required|array',
             'assignments.*.type' => 'required|in:shooting,setting,recording',
             'assignments.*.user_ids' => 'required|array',
-            'assignments.*.user_ids.*' => 'exists:users,id'
+            'assignments.*.user_ids.*' => 'exists:users,id',
+            'assignments.*.coordinator_id' => 'nullable|exists:users,id'
         ]);
 
         if ($validator->fails()) {
@@ -6324,13 +6381,16 @@ class ProducerController extends Controller
                 ProductionTeamMember::where('assignment_id', $assignment->id)->delete();
 
                 // Add new members and notify them
-                foreach ($assignmentData['user_ids'] as $userId) {
+                $coordinatorId = $assignmentData['coordinator_id'] ?? null;
+                
+                foreach ($assignmentData['user_ids'] as $index => $userId) {
                     ProductionTeamMember::create([
                         'production_team_id' => $productionTeam->id, // Associate with main team for reference
                         'assignment_id' => $assignment->id,
                         'user_id' => $userId,
                         'role' => $this->mapTeamTypeToRole($assignmentData['type']),
                         'is_active' => true,
+                        'is_coordinator' => $coordinatorId ? ((int) $userId === (int) $coordinatorId) : ($index === 0),
                         'joined_at' => now(),
                         'status' => 'assigned'
                     ]);

@@ -41,7 +41,13 @@ class SoundEngineerController extends Controller
             return true;
         }
 
+        // If user is primarily a Music Arranger, don't let team assignments trick us into seeing them as SE
+        if (MusicProgramAuthorization::isArranger($user)) {
+            return false;
+        }
+
         // Broaden to include users assigned to the 'recording' team type (Vocal Recording Team)
+
         // Check if user has ANY active recording team assignment globally
         return \App\Models\ProductionTeamMember::where('user_id', $user->id)
             ->where('is_active', true)
@@ -644,19 +650,35 @@ class SoundEngineerController extends Controller
                 $productionTeam = ($program && $program->productionTeam) ? $program->productionTeam : null;
                 
                 // Find the actual Sound Engineer for this episode to assign editing
-                $soundEngineer = null;
+                $assignedSoundEngId = null;
                 if ($productionTeam) {
-                    $soundEngineerMember = $productionTeam->members()
-                        ->whereIn('role', ['sound_eng', 'sound_engineer'])
+                    // 1. Try to find a user with a specific Sound Engineer role
+                    $seMember = $productionTeam->members()
+                        ->whereIn('role', ['sound_eng', 'sound_engineer', 'sound engineer', 'sound-engineer'])
                         ->where('is_active', true)
                         ->first();
-                    if ($soundEngineerMember) {
-                        $soundEngineer = $soundEngineerMember->user;
+                    
+                    if ($seMember) {
+                        $assignedSoundEngId = $seMember->user_id;
+                    } else {
+                        // 2. Fallback to current user if they are a sound engineer
+                        if (in_array(strtolower($user->role), ['sound_eng', 'sound_engineer', 'sound engineer', 'sound-engineer'])) {
+                            $assignedSoundEngId = $user->id;
+                        } else {
+                            // 3. Fallback to the Recording Team Coordinator (if any)
+                            $coordinator = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($recording) {
+                                $q->where('episode_id', $recording->episode_id)
+                                  ->where('team_type', 'recording');
+                            })->where('is_coordinator', true)
+                              ->where('is_active', true)
+                              ->first();
+                              
+                            if ($coordinator) {
+                                $assignedSoundEngId = $coordinator->user_id;
+                            }
+                        }
                     }
                 }
-                
-                // Fallback to current user if they are a sound engineer, otherwise null (assign manually later)
-                $assignedSoundEngId = $soundEngineer ? $soundEngineer->id : (in_array(strtolower($user->role), ['sound_eng', 'sound_engineer']) ? $user->id : null);
 
                 $editing = \App\Models\SoundEngineerEditing::create([
                     'episode_id' => $recording->episode_id,

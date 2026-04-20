@@ -5,8 +5,10 @@ namespace App\Providers;
 use Illuminate\Support\ServiceProvider;
 use App\Models\MusicArrangement;
 use App\Models\Episode;
+use App\Models\CreativeWork;
 use App\Observers\MusicArrangementObserver;
 use App\Observers\EpisodeObserver;
+use App\Observers\CreativeWorkObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -33,5 +35,9 @@ class AppServiceProvider extends ServiceProvider
         // Observer untuk Episode
         // Observer ini akan auto-adjust deadline jika air_date berubah
         Episode::observe(EpisodeObserver::class);
+
+        // Observer untuk CreativeWork
+        // Observer ini akan auto-sync deadline jika shooting_schedule berubah
+        CreativeWork::observe(CreativeWorkObserver::class);
     }
 }

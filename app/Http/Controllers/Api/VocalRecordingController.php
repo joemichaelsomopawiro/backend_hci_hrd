@@ -55,10 +55,23 @@ class VocalRecordingController extends Controller
         if (ProgramManagerAuthorization::isProgramManager($user)) return true;
 
         // Active member of a recording team assignment
-        return ProductionTeamMember::where('user_id', $user->id)
+        $asMember = ProductionTeamMember::where('user_id', $user->id)
             ->where('is_active', true)
-            ->whereHas('assignment', fn($q) => $q->where('team_type', 'recording')->where('status', '!=', 'cancelled'))
+            ->whereHas('assignment', fn($q) => $q->whereIn('team_type', ['recording', 'vocal_recording'])->where('status', '!=', 'cancelled'))
             ->exists();
+
+        // Sound Engineer Restriction: Even if they are in the team, hide recording tasks 
+        // unless they are specifically tasked as a recorder or have oversight.
+        // We allow SEs ONLY if they are explicitly assigned to a recording team as a coordinator.
+        if (MusicProgramAuthorization::isSoundEngineer($user)) {
+            return ProductionTeamMember::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->where('is_coordinator', true)
+                ->whereHas('assignment', fn($q) => $q->whereIn('team_type', ['recording', 'vocal_recording'])->where('status', '!=', 'cancelled'))
+                ->exists();
+        }
+
+        return $asMember;
     }
 
     /**
@@ -75,7 +88,7 @@ class VocalRecordingController extends Controller
         if ($recording->created_by === $user->id) return true;
 
         // Member of recording team for this episode
-        return ProductionTeamMember::isMemberForEpisode($user->id, $recording->episode_id, 'recording');
+        return ProductionTeamMember::isMemberForEpisode($user->id, $recording->episode_id, ['recording', 'vocal_recording']);
     }
 
     // ─── Dashboard ───────────────────────────────────────────────
@@ -111,10 +124,12 @@ class VocalRecordingController extends Controller
                         'episode' => fn($eq) => $eq->withTrashed(),
                         'episode.program' => fn($pq) => $pq->withTrashed(),
                     ]),
+                'episode.teamAssignments' => fn($aq) => $aq->whereIn('team_type', ['recording', 'vocal_recording'])->where('status', '!=', 'cancelled'),
+                'episode.teamAssignments.members',
             ]);
 
-            // Only show recordings for episodes with approved Creative Work
-            $query->whereHas('episode', fn($eq) => $eq->whereHas('creativeWorks', fn($cq) => $cq->where('status', 'approved')));
+            // Include recordings even if Creative Work is not yet fully approved (Statistic/Draft alignment)
+            // Previously: $query->whereHas('episode', fn($eq) => $eq->whereHas('creativeWorks', fn($cq) => $cq->where('status', 'approved')));
 
             // Filter by episode
             if ($request->has('episode_id')) {
@@ -123,21 +138,30 @@ class VocalRecordingController extends Controller
 
             // Filter by status
             if ($request->has('status')) {
-                $query->where('status', $request->status);
+                if ($request->status === 'active') {
+                    $query->whereNotIn('status', ['completed', 'cancelled']);
+                } else {
+                    $query->where('status', $request->status);
+                }
+            } elseif ($request->boolean('active_only') || $request->boolean('exclude_completed')) {
+                $query->whereNotIn('status', ['completed', 'cancelled']);
             }
 
             // Restrict to episodes where user is the coordinator for Recording team (unless Producer/PM)
             $isOversight = MusicProgramAuthorization::hasProducerAccess($user) || ProgramManagerAuthorization::isProgramManager($user);
+            $isSoundEng = MusicProgramAuthorization::isSoundEngineer($user);
+
             if (!$isOversight) {
-                $query->where(function ($q) use ($user) {
+                $query->where(function ($q) use ($user, $isSoundEng) {
                     $q->where('created_by', $user->id)
-                      ->orWhereHas('episode.teamAssignments', function ($aq) use ($user) {
-                          $aq->where('team_type', 'recording')
+                      ->orWhereHas('episode.teamAssignments', function ($aq) use ($user, $isSoundEng) {
+                          $aq->whereIn('team_type', ['recording', 'vocal_recording'])
                              ->where('status', '!=', 'cancelled')
-                             ->whereHas('members', fn($mq) => $mq->where('user_id', $user->id)
-                                ->where('is_active', true)
-                                ->where('is_coordinator', true)
-                             );
+                             ->whereHas('members', function($mq) use ($user) {
+                                 $mq->where('user_id', $user->id)
+                                    ->where('is_active', true)
+                                    ->where('is_coordinator', true);
+                             });
                       });
                 });
             }
@@ -171,9 +195,10 @@ class VocalRecordingController extends Controller
                 }
 
                 // Is coordinator?
-                $recording->is_coordinator = ProductionTeamMember::isCoordinatorForEpisode(
-                    Auth::id(), $recording->episode_id, 'recording'
+                $isCoordinator = ProductionTeamMember::isCoordinatorForEpisode(
+                    Auth::id(), $recording->episode_id, ['recording', 'vocal_recording']
                 );
+                $recording->setAttribute('is_coordinator', $isCoordinator);
             });
 
             return response()->json([
@@ -207,7 +232,7 @@ class VocalRecordingController extends Controller
                 'episode.program' => fn($q) => $q->withTrashed(),
                 'episode.program.productionTeam.members.user',
                 'episode.creativeWorks',
-                'episode.teamAssignments' => fn($q) => $q->where('team_type', 'recording')->where('status', '!=', 'cancelled'),
+                'episode.teamAssignments' => fn($q) => $q->whereIn('team_type', ['recording', 'vocal_recording'])->where('status', '!=', 'cancelled'),
                 'episode.teamAssignments.members.user:id,name,email',
                 'musicArrangement.song',
                 'musicArrangement.singer',
@@ -227,7 +252,7 @@ class VocalRecordingController extends Controller
             $recording->program_name = $program->name ?? null;
             $recording->program_id = $program->id ?? null;
             $recording->recording_link = $recording->file_link;
-            $recording->is_coordinator = ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, 'recording');
+            $recording->is_coordinator = ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, ['recording', 'vocal_recording']);
 
             return response()->json([
                 'success' => true,
@@ -367,8 +392,7 @@ class VocalRecordingController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
-            // Only coordinator or Producer/PM can request equipment
-            $isCoordinator = ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, 'recording');
+            $isCoordinator = ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, ['recording', 'vocal_recording']);
             $isOversight = MusicProgramAuthorization::hasProducerAccess($user) || ProgramManagerAuthorization::isProgramManager($user);
 
             if (!$isCoordinator && !$isOversight) {
@@ -378,7 +402,6 @@ class VocalRecordingController extends Controller
                 ], 403);
             }
 
-            // Must accept work first
             if (!in_array($recording->status, ['in_progress', 'recording', 'ready', 'completed'])) {
                 return response()->json([
                     'success' => false,
@@ -389,9 +412,9 @@ class VocalRecordingController extends Controller
             $validator = Validator::make($request->all(), [
                 'equipment_list' => 'required|array|min:1',
                 'equipment_list.*.equipment_name' => 'required|string|max:255',
-                'equipment_list.*.equipment_id' => 'nullable|integer|exists:equipment_inventory,id',
+                'equipment_list.*.equipment_id' => 'nullable|integer|exists:inventory_items,id',
                 'equipment_list.*.quantity' => 'required|integer|min:1',
-                'equipment_list.*.return_date' => 'required|date|after_or_equal:today',
+                'equipment_list.*.return_date' => 'nullable|date',
                 'equipment_list.*.notes' => 'nullable|string|max:1000',
                 'request_notes' => 'nullable|string|max:1000',
                 'request_group_id' => 'nullable|string|max:64',
@@ -401,7 +424,6 @@ class VocalRecordingController extends Controller
                 return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
-            // Normalize equipment quantities
             $normalizedItems = [];
             foreach ($request->equipment_list as $equipment) {
                 $equipmentName = $equipment['equipment_name'];
@@ -419,7 +441,6 @@ class VocalRecordingController extends Controller
                 $qtyByName[$it['name']] = ($qtyByName[$it['name']] ?? 0) + $it['quantity'];
             }
 
-            // Check availability
             $inventoryCounts = InventoryItem::whereIn('name', array_keys($qtyByName))
                 ->get()->pluck('available_quantity', 'name');
 
@@ -439,7 +460,6 @@ class VocalRecordingController extends Controller
                 ], 400);
             }
 
-            // Build flat list
             $equipmentList = [];
             foreach ($qtyByName as $name => $qty) {
                 for ($i = 0; $i < $qty; $i++) $equipmentList[] = $name;
@@ -453,21 +473,19 @@ class VocalRecordingController extends Controller
 
             $scheduleDt = $recording->recording_schedule ? \Carbon\Carbon::parse($recording->recording_schedule) : null;
 
-            // Merge into existing pending request if one exists
             $existingPending = ProductionEquipment::where('episode_id', $recording->episode_id)
                 ->where('requested_by', $user->id)
                 ->where('status', 'pending')
+                ->where('team_type', 'vocal_recording')
                 ->orderBy('created_at', 'desc')
                 ->first();
 
             if ($existingPending) {
                 $existingVal = $existingPending->equipment_list;
-                $existingList = is_array($existingVal)
-                    ? $existingVal
-                    : (is_string($existingVal) ? json_decode($existingVal, true) : []);
+                $existingList = is_array($existingVal) ? $existingVal : (is_string($existingVal) ? json_decode($existingVal, true) : []);
                 $existingList = $existingList ?? [];
-
                 $mergedList = array_values(array_merge($existingList, $equipmentList));
+                
                 $appendNotes = !empty($notesLines) ? implode("\n", $notesLines) : null;
                 $mergedNotes = $existingPending->request_notes;
                 if (!empty($appendNotes)) {
@@ -476,9 +494,7 @@ class VocalRecordingController extends Controller
                 }
 
                 $existingQtyVal = $existingPending->equipment_quantities;
-                $existingQtyMap = is_array($existingQtyVal)
-                    ? $existingQtyVal
-                    : (is_string($existingQtyVal) ? json_decode($existingQtyVal, true) : []);
+                $existingQtyMap = is_array($existingQtyVal) ? $existingQtyVal : (is_string($existingQtyVal) ? json_decode($existingQtyVal, true) : []);
                 foreach ($qtyByName as $k => $v) {
                     $existingQtyMap[$k] = (int)($existingQtyMap[$k] ?? 0) + (int)$v;
                 }
@@ -506,13 +522,12 @@ class VocalRecordingController extends Controller
                     'status' => 'pending',
                     'requested_by' => $user->id,
                     'requested_at' => now(),
+                    'team_type' => 'vocal_recording'
                 ]);
             }
 
-            // Update recording with equipment list
             $recording->update(['equipment_used' => $request->equipment_list]);
 
-            // Notify Art & Set Properti
             $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
             foreach ($artSetUsers as $artSetUser) {
                 Notification::create([
@@ -531,12 +546,140 @@ class VocalRecordingController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'recording' => $recording->fresh(['episode', 'musicArrangement']),
-                    'equipment_requests' => ProductionEquipment::whereIn('id', [$equipmentRequest->id])->get(),
+                    'recording' => $recording->fresh(['episode', 'musicArrangement', 'createdBy']),
+                    'equipment_request' => $equipmentRequest
                 ],
-                'message' => 'Permintaan alat berhasil. Art & Set Properti telah diberitahu.'
+                'message' => 'Permintaan alat berhasil dikirim.'
             ], 201);
+
         } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/live-tv/vocal-recording/request-equipment-multiple
+     * Bulk equipment request for multiple episodes.
+     */
+    public function requestEquipmentMultiple(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$this->hasRecordingTeamAccess($user)) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'episode_ids' => 'required|array|min:1|max:52',
+                'episode_ids.*' => 'required|integer|exists:episodes,id',
+                'equipment_list' => 'required|array|min:1',
+                'equipment_list.*.equipment_name' => 'required|string|max:255',
+                'equipment_list.*.quantity' => 'required|integer|min:1',
+                'equipment_list.*.notes' => 'nullable|string|max:1000',
+                'request_notes' => 'nullable|string|max:1000',
+                'scheduled_date' => 'nullable|date',
+                'scheduled_time' => 'nullable|date_format:H:i',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            $episodeIds = array_unique($request->episode_ids);
+            $equipmentList = $request->equipment_list;
+            
+            // Build flat list and quantities
+            $flatNames = [];
+            $qtyByName = [];
+            $notesLines = [];
+            foreach ($equipmentList as $item) {
+                $name = $item['equipment_name'];
+                $qty = (int) ($item['quantity'] ?? 1);
+                for ($i = 0; $i < $qty; $i++) { $flatNames[] = $name; }
+                $qtyByName[$name] = $qty;
+                if (!empty($item['notes'])) { $notesLines[] = "{$name}: {$item['notes']}"; }
+            }
+            if ($request->request_notes) { $notesLines[] = "Global: {$request->request_notes}"; }
+
+            // Check availability
+            $requestedUniqueNames = array_keys($qtyByName);
+            $inventory = InventoryItem::whereIn('name', $requestedUniqueNames)->get()->keyBy('name');
+            $unavailable = [];
+            foreach ($qtyByName as $name => $needed) {
+                $available = $inventory->get($name)?->available_quantity ?? 0;
+                if ($available < $needed) {
+                    $unavailable[] = ['name' => $name, 'needed' => $needed, 'available' => $available];
+                }
+            }
+
+            if (!empty($unavailable)) {
+                return response()->json(['success' => false, 'message' => 'Sebagian alat tidak tersedia.', 'unavailable' => $unavailable], 400);
+            }
+
+            $scheduleDt = null;
+            if ($request->scheduled_date) {
+                $scheduleDt = \Carbon\Carbon::parse($request->scheduled_date);
+                if ($request->scheduled_time) {
+                    $time = \Carbon\Carbon::parse($request->scheduled_time);
+                    $scheduleDt->setTime($time->hour, $time->minute);
+                }
+            }
+
+            $createdRequests = [];
+            $skipped = [];
+
+            DB::beginTransaction();
+            foreach ($episodeIds as $epId) {
+                $recording = SoundEngineerRecording::where('episode_id', $epId)->first();
+                if (!$recording) {
+                    $skipped[] = ['episode_id' => $epId, 'reason' => 'No recording work found'];
+                    continue;
+                }
+
+                if (!ProductionTeamMember::isCoordinatorForEpisode($user->id, $epId, ['recording', 'vocal_recording']) && !MusicProgramAuthorization::hasProducerAccess($user)) {
+                    $skipped[] = ['episode_id' => $epId, 'reason' => 'Not coordinator'];
+                    continue;
+                }
+
+                $eqReq = ProductionEquipment::create([
+                    'episode_id' => $epId,
+                    'program_id' => $recording->episode ? $recording->episode->program_id : null,
+                    'equipment_list' => $flatNames,
+                    'equipment_quantities' => $qtyByName,
+                    'request_notes' => !empty($notesLines) ? implode("\n", $notesLines) : null,
+                    'scheduled_date' => $scheduleDt ? $scheduleDt->toDateString() : null,
+                    'scheduled_time' => $scheduleDt ? $scheduleDt->format('H:i:s') : null,
+                    'status' => 'pending',
+                    'requested_by' => $user->id,
+                    'requested_at' => now(),
+                    'team_type' => 'vocal_recording'
+                ]);
+
+                $recording->update(['equipment_used' => $equipmentList]);
+                $createdRequests[] = $eqReq->id;
+            }
+            DB::commit();
+
+            if (!empty($createdRequests)) {
+                $artSetUsers = \App\Models\User::where('role', 'Art & Set Properti')->get();
+                foreach ($artSetUsers as $artUser) {
+                    Notification::create([
+                        'user_id' => $artUser->id,
+                        'type' => 'equipment_request_created',
+                        'title' => 'Permintaan Alat Massal (Vocal)',
+                        'message' => "Tim Rekam Vokal meminta alat untuk " . count($createdRequests) . " episode sekaligus.",
+                        'data' => ['equipment_request_ids' => $createdRequests],
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => ['created_count' => count($createdRequests), 'skipped' => $skipped],
+                'message' => count($createdRequests) . " permintaan alat berhasil dibuat."
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
@@ -661,7 +804,7 @@ class VocalRecordingController extends Controller
             $returnConditions = collect($request->return_condition)->keyBy('equipment_request_id');
 
             // Authorization: borrower for all OR coordinator
-            $isCoordinator = ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, 'recording');
+            $isCoordinator = ProductionTeamMember::isCoordinatorForEpisode($user->id, $recording->episode_id, ['recording', 'vocal_recording']);
             $borrowerCount = ProductionEquipment::whereIn('id', $equipmentRequestIds)->where('requested_by', $user->id)->count();
             $isBorrowerForAll = $borrowerCount === count($equipmentRequestIds);
 
@@ -775,7 +918,7 @@ class VocalRecordingController extends Controller
             $loan = ProductionEquipment::findOrFail($request->equipment_request_id);
 
             // Authorization: User must be the borrower or coordinator of both source and target
-            $isCoordinatorTarget = ProductionTeamMember::isCoordinatorForEpisode($user->id, $targetRecording->episode_id, 'recording');
+            $isCoordinatorTarget = ProductionTeamMember::isCoordinatorForEpisode($user->id, $targetRecording->episode_id, ['recording', 'vocal_recording']);
             $isBorrower = $loan->requested_by === $user->id;
             $isOversight = MusicProgramAuthorization::hasProducerAccess($user) || ProgramManagerAuthorization::isProgramManager($user);
 
@@ -1190,11 +1333,11 @@ class VocalRecordingController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
             }
 
-            // Allow completing from recording or in_progress status
-            if (!in_array($recording->status, ['recording', 'in_progress', 'ready'])) {
+            // Allow completing from recording, in_progress, ready, or even already completed (for sync/recovery)
+            if (!in_array($recording->status, ['recording', 'in_progress', 'ready', 'completed'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Pekerjaan hanya bisa diselesaikan saat status recording/in_progress/ready. Status saat ini: ' . $recording->status
+                    'message' => 'Pekerjaan hanya bisa diselesaikan saat status recording/in_progress/ready/completed. Status saat ini: ' . $recording->status
                 ], 400);
             }
 
@@ -1249,12 +1392,34 @@ class VocalRecordingController extends Controller
                 // Find Sound Engineer for this episode
                 $assignedSoundEngId = null;
                 if ($productionTeam) {
+                    // 1. Try to find a user with a specific Sound Engineer role
                     $seMember = $productionTeam->members()
-                        ->whereIn('role', ['sound_eng', 'sound_engineer'])
+                        ->whereIn('role', ['sound_eng', 'sound_engineer', 'sound engineer', 'sound-engineer'])
                         ->where('is_active', true)
                         ->first();
-                    if ($seMember) $assignedSoundEngId = $seMember->user_id;
+                    
+                    if ($seMember) {
+                        $assignedSoundEngId = $seMember->user_id;
+                    } else {
+                        // 2. Fallback to the Recording Team Coordinator (if any)
+                        $coordinator = \App\Models\ProductionTeamMember::whereHas('assignment', function($q) use ($recording) {
+                            $q->where('episode_id', $recording->episode_id)
+                              ->where('team_type', 'recording');
+                        })->where('is_coordinator', true)
+                          ->where('is_active', true)
+                          ->first();
+                          
+                        if ($coordinator) {
+                            $assignedSoundEngId = $coordinator->user_id;
+                        }
+                    }
                 }
+
+                $editingNotes = "Recording oleh Tim Rekam Vokal: {$user->name}.";
+                if (!$assignedSoundEngId) {
+                    $editingNotes .= " [!] Sound Engineer belum ditugaskan di tim, harap segera ditunjuk oleh Program Manager.";
+                }
+                $editingNotes .= " Notes: " . ($request->recording_notes ?? 'N/A');
 
                 $editing = SoundEngineerEditing::create([
                     'episode_id' => $recording->episode_id,
@@ -1262,7 +1427,7 @@ class VocalRecordingController extends Controller
                     'sound_engineer_id' => $assignedSoundEngId,
                     'vocal_file_path' => $recording->file_path ?? null,
                     'vocal_file_link' => $recordingLink,
-                    'editing_notes' => "Recording oleh Tim Rekam Vokal: {$user->name}. Notes: " . ($request->recording_notes ?? 'N/A'),
+                    'editing_notes' => $editingNotes,
                     'status' => 'in_progress',
                     'created_by' => $user->id,
                 ]);
@@ -1342,7 +1507,7 @@ class VocalRecordingController extends Controller
             $query = SoundEngineerRecording::query();
 
             if (!$isOversight) {
-                $episodeIds = ProductionTeamAssignment::where('team_type', 'recording')
+                $episodeIds = ProductionTeamAssignment::whereIn('team_type', ['recording', 'vocal_recording'])
                     ->where('status', '!=', 'cancelled')
                     ->whereHas('members', fn($q) => $q->where('user_id', $user->id)->where('is_active', true))
                     ->pluck('episode_id');

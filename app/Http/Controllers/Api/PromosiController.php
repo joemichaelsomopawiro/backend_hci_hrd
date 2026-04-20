@@ -14,6 +14,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use App\Models\PromotionActivityLog;
+use App\Models\ProductionEquipmentTransfer;
 use App\Helpers\ControllerSecurityHelper;
 use App\Helpers\QueryOptimizer;
 use App\Helpers\FileUploadHelper;
@@ -61,20 +62,23 @@ class PromosiController extends Controller
                 'page' => $request->get('page', 1)
             ]));
 
-            // Use cache with 5 minutes TTL
-            $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 300, function () use ($request, $user) {
+            // Use cache with very short TTL for testing/sync accuracy
+            $works = QueryOptimizer::rememberForUser($cacheKey, $user->id, 5, function () use ($request, $user) {
                 $query = PromotionWork::with(['episode.program.productionTeam', 'episode.creativeWork', 'createdBy', 'reviewedBy']);
 
-                // Filter by user (only works assigned to this user)
-                // PromotionWork bisa di-assign ke user tertentu melalui created_by
-                // Atau bisa juga semua Promotion users bisa lihat semua works
-                // Untuk sekarang, kita filter berdasarkan notification atau all works
-                // Karena auto-create tidak set created_by, kita ambil semua works dengan status planning
-                
-                // Filter by status
+                // Filter by status (Handle comma-separated multiple statuses)
                 if ($request->has('status')) {
-                    $query->where('status', $request->status);
+                    $statuses = explode(',', $request->status);
+                    if (count($statuses) > 1) {
+                        $query->whereIn('status', $statuses);
+                    } else {
+                        $query->where('status', $request->status);
+                    }
                 }
+                
+                // Prioritize works with episodes. Filter by program category can be added here if needed
+                // but we keep it broad for now to ensure visibility.
+                $query->whereHas('episode');
 
                 // Filter by episode
                 if ($request->has('episode_id')) {
@@ -439,8 +443,9 @@ class PromosiController extends Controller
 
             $work = PromotionWork::findOrFail($id);
 
-            // Access check (boleh edit walau status sudah published/approved)
-            if ($work->created_by !== $user->id) {
+            // RELAXED AUTHORIZATION: Allow any user with 'Promotion' role OR the creator to upload links
+            $isPromotionStaff = MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion');
+            if (!$isPromotionStaff && $work->created_by !== $user->id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -503,8 +508,9 @@ class PromosiController extends Controller
 
             $work = PromotionWork::findOrFail($id);
 
-            // Boleh edit walau status sudah published/approved
-            if ($work->created_by !== $user->id) {
+            // Relaxed authorization: Allow users with 'Promotion' role OR the creator to upload
+            $isPromotionStaff = MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion');
+            if (!$isPromotionStaff && $work->created_by !== $user->id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
             }
 
@@ -1327,7 +1333,26 @@ class PromosiController extends Controller
             'editing_works' => $statusStats->get('editing', 0),
             'completed_works' => $statusStats->get('published', 0),
             'my_works' => $myStats->sum(),
-            'my_completed' => $myStats->get('published', 0)
+            'my_completed' => $myStats->get('published', 0),
+            'active_loans' => ProductionEquipment::where('requested_by', $user->id)
+                ->whereIn('status', ['approved', 'in_use'])
+                ->with(['episode.program'])
+                ->get(),
+            'incoming_handovers' => ProductionEquipmentTransfer::where('to_user_id', $user->id)
+                ->where('status', 'pending_accept')
+                ->with(['productionEquipment.episode.program', 'fromUser'])
+                ->get()
+                ->map(function($t) {
+                    return [
+                        'id' => $t->id,
+                        'equipment_request_id' => $t->production_equipment_id,
+                        'from_user_id' => $t->transferred_by,
+                        'from_user_name' => $t->fromUser ? $t->fromUser->name : 'Unknown',
+                        'equipment_list' => $t->productionEquipment ? $t->productionEquipment->equipment_list : [],
+                        'notes' => $t->notes,
+                        'transferred_at' => $t->transferred_at
+                    ];
+                })
         ];
 
             return response()->json([
@@ -1630,7 +1655,7 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'proof_link' => 'required|url',
+                'proof_link' => 'required_without:groups|nullable|url',
                 'group_name' => 'nullable|string',
                 'notes' => 'nullable|string',
                 'groups' => 'sometimes|array',
@@ -2298,6 +2323,342 @@ class PromosiController extends Controller
                 'success' => false,
                 'message' => 'Error returning equipment: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * POST /api/live-tv/promosi/works/{id}/transfer-equipment
+     * Lanjut Pakai alat dari episode/pekerjaan lain ke pekerjaan ini.
+     */
+    public function transferEquipment(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $targetWork = PromotionWork::with(['episode'])->findOrFail($id);
+
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Social Media']);
+            if (!$isPromotionRole && !$user->hasAnyMusicTeamAssignment()) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'equipment_request_id' => 'required|integer|exists:production_equipment,id',
+                'notes' => 'nullable|string|max:1000',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            $loan = ProductionEquipment::findOrFail($request->equipment_request_id);
+
+            // Authorization
+            $isBorrower = $loan->requested_by === $user->id;
+            $isOversight = MusicProgramAuthorization::hasProducerAccess($user) || ProgramManagerAuthorization::isProgramManager($user);
+
+            if (!$isBorrower && !$isOversight) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: Anda hanya dapat memindahkan alat yang Anda pinjam sendiri.'
+                ], 403);
+            }
+
+            if ($loan->status !== 'approved' && $loan->status !== 'in_use') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Hanya peminjaman dengan status "approved" atau "in_use" yang dapat dipindahkan.'
+                ], 400);
+            }
+
+            if ($loan->episode_id === $targetWork->episode_id) {
+                return response()->json(['success' => false, 'message' => 'Alat sudah berada di episode ini.'], 400);
+            }
+
+            $fromEpisodeId = $loan->episode_id;
+            $toEpisodeId = $targetWork->episode_id;
+            $toProgramId = $targetWork->episode ? $targetWork->episode->program_id : null;
+
+            \DB::beginTransaction();
+            try {
+                ProductionEquipmentTransfer::create([
+                    'production_equipment_id' => $loan->id,
+                    'from_episode_id' => $fromEpisodeId,
+                    'to_episode_id' => $toEpisodeId,
+                    'transferred_by' => $user->id,
+                    'transferred_at' => now(),
+                    'notes' => $request->notes ?? 'Lanjut pakai dari Tim Promosi'
+                ]);
+
+                $loan->update([
+                    'episode_id' => $toEpisodeId,
+                    'program_id' => $toProgramId,
+                    'status' => 'in_use',
+                ]);
+
+                \DB::commit();
+            } catch (\Exception $e) {
+                \DB::rollBack();
+                throw $e;
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'work' => $targetWork->fresh(['episode']),
+                    'equipment_request' => $loan->fresh(),
+                ],
+                'message' => 'Alat berhasil dipindahkan (Lanjut Pakai) ke episode ini.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/live-tv/promosi/handover-equipment/{equipment_request_id}
+     * Serah terima alat ke user lain.
+     */
+    public function handoverEquipment(Request $request, int $equipment_request_id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $loan = ProductionEquipment::with('episode.program')->findOrFail($equipment_request_id);
+
+            $isBorrower = $loan->requested_by === $user->id;
+            $isOversight = MusicProgramAuthorization::hasProducerAccess($user) || ProgramManagerAuthorization::isProgramManager($user);
+            
+            if (!$isBorrower && !$isOversight) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            if (!in_array($loan->status, ['approved', 'in_use'])) {
+                return response()->json(['success' => false, 'message' => 'Alat tidak dalam status dapat diserah-terimakan.'], 400);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'to_user_id' => 'required|exists:users,id',
+                'to_episode_id' => 'required|exists:episodes,id',
+                'notes' => 'nullable|string|max:500'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            $toUserId = (int) $request->to_user_id;
+            if ($toUserId === $user->id) {
+                return response()->json(['success' => false, 'message' => 'Tidak bisa serah terima ke diri sendiri. Gunakan "Lanjut Pakai" untuk pindah episode.'], 400);
+            }
+
+            \DB::beginTransaction();
+            try {
+                $transfer = ProductionEquipmentTransfer::create([
+                    'production_equipment_id' => $loan->id,
+                    'from_episode_id' => $loan->episode_id,
+                    'to_episode_id' => $request->to_episode_id ?? $loan->episode_id,
+                    'to_user_id' => $toUserId,
+                    'transferred_by' => $user->id,
+                    'transferred_at' => now(),
+                    'notes' => $request->notes,
+                    'status' => 'pending_accept'
+                ]);
+
+                Notification::create([
+                    'user_id' => $toUserId,
+                    'type' => 'equipment_handover_requested',
+                    'title' => 'Serah Terima Alat (Equipment Handover)',
+                    'message' => "Ada serah terima alat dari {$user->name} untuk Anda. Silakan konfirmasi terima di dashboard.",
+                    'data' => [
+                        'transfer_id' => $transfer->id,
+                        'equipment_request_id' => $loan->id,
+                        'from_user' => $user->name,
+                    ]
+                ]);
+
+                \DB::commit();
+            } catch (\Exception $e) {
+                \DB::rollBack();
+                throw $e;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Permintaan serah terima telah dikirim (Promosi). Menunggu user tujuan menerima.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/live-tv/promosi/accept-handover/{transferId}
+     */
+    public function acceptHandover(int $transferId): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $transfer = ProductionEquipmentTransfer::with('productionEquipment')->findOrFail($transferId);
+
+            if ((int) $transfer->to_user_id !== (int) $user->id) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            if ($transfer->status !== 'pending_accept') {
+                return response()->json(['success' => false, 'message' => 'Serah terima ini sudah diproses.'], 400);
+            }
+
+            $isProducerRole = in_array($user->role, ['Producer', 'Program Manager', 'Production']);
+            $isPromotionRole = in_array($user->role, ['Promotion', 'Editor Promotion']);
+            
+            if (!$isProducerRole && !$isPromotionRole) {
+                return response()->json(['success' => false, 'message' => 'Hanya Produser, tim Produksi, atau tim Promosi yang berhak menerima alat ini.'], 403);
+            }
+
+            $loan = $transfer->productionEquipment;
+            if (!$loan || !in_array($loan->status, ['approved', 'in_use', 'transferred'])) {
+                return response()->json(['success' => false, 'message' => 'Peminjaman alat asli sudah tidak valid.'], 400);
+            }
+
+            \DB::beginTransaction();
+            try {
+                $transfer->update(['status' => 'accepted', 'accepted_at' => now()]);
+                $loan->update([
+                    'requested_by' => $user->id,
+                    'episode_id' => $transfer->to_episode_id,
+                    'status' => 'in_use',
+                    'metadata' => array_merge($loan->metadata ?? [], [
+                        'handover_from_user' => $transfer->transferred_by,
+                        'handover_at' => now()->toDateTimeString()
+                    ])
+                ]);
+                \DB::commit();
+            } catch (\Exception $e) {
+                \DB::rollBack();
+                throw $e;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Serah terima alat berhasil diterima.',
+                'data' => $loan->fresh()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Confirm all promotion tasks for an episode (Bulk Submission)
+     * POST /api/live-tv/promosi/episodes/{id}/bulk-confirm-promotion
+     */
+    public function bulkConfirmEpisodeTasks(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'User not authenticated.'], 401);
+            }
+
+            // Authorization: Ensure user belongs to Promotion or has assignment
+            if (!MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion')) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access.'], 403);
+            }
+
+            $episode = Episode::findOrFail($id);
+            $works = PromotionWork::where('episode_id', $id)->get();
+
+            if ($works->isEmpty()) {
+                return response()->json(['success' => false, 'message' => 'No promotion tasks found for this episode.'], 404);
+            }
+
+            \DB::beginTransaction();
+            try {
+                // Determine if we have tasks data (mapping task ID to link/file)
+                // tasks is an array of objects: { id: 123, proof_link: '...', proof_file: FILE }
+                $tasksInputList = $request->input('tasks', []); 
+                
+                foreach ($works as $work) {
+                    $taskInput = null;
+                    if (is_array($tasksInputList)) {
+                        $taskInput = collect($tasksInputList)->firstWhere('id', (string)$work->id) 
+                                   ?? collect($tasksInputList)->firstWhere('id', (int)$work->id);
+                    }
+
+                    $socialProof = $work->social_media_proof ?? [];
+                    // Use work_type explicitly as key
+                    $typeKey = $work->work_type; 
+                    
+                    if ($taskInput || $request->hasFile("tasks.{$work->id}.proof_file")) {
+                        $proofData = isset($socialProof[$typeKey]) && is_array($socialProof[$typeKey]) ? $socialProof[$typeKey] : [];
+                        
+                        // Handle File Upload if exists (Files are sent as tasks[id][proof_file])
+                        $fileKey = "tasks.{$work->id}.proof_file";
+                        if ($request->hasFile($fileKey)) {
+                            $uploadedFile = $request->file($fileKey);
+                            $stored = FileUploadHelper::uploadFile(
+                                $uploadedFile, 
+                                'promosi/bulk-proof',
+                                ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'],
+                                ['jpg', 'jpeg', 'png', 'webp'],
+                                10 * 1024 * 1024
+                            );
+                            
+                            $proofData['proof_link'] = Storage::url($stored['file_path']);
+                            $proofData['file_path'] = $stored['file_path'];
+                        } elseif ($taskInput && isset($taskInput['proof_link'])) {
+                            // Link only
+                            $proofData['proof_link'] = $taskInput['proof_link'];
+                        }
+
+                        // Add metadata
+                        $proofData['uploaded_at'] = now()->toDateTimeString();
+                        $proofData['uploaded_by'] = $user->id;
+                        
+                        $socialProof[$typeKey] = $proofData;
+                    }
+
+                    // Force status to published (Staff clicked "Confirm All", so we mark everything they submitted as published)
+                    $work->update([
+                        'social_media_proof' => $socialProof,
+                        'status' => 'published'
+                    ]);
+
+                    $this->logActivity($work, $user, 'bulk_confirmed', "Pekerjaan dikonfirmasi dalam bulk submit oleh {$user->name}", [
+                        'status' => 'published'
+                    ]);
+                }
+
+                // Log Workflow State for Episode (Progress monitoring)
+                $workflowService = app(\App\Services\WorkflowStateService::class);
+                $workflowService->updateWorkflowState(
+                    $episode,
+                    'promotion',
+                    'promotion',
+                    $user->id,
+                    "All promotion tasks for Episode {$episode->episode_number} confirmed in bulk by {$user->name}",
+                    $user->id,
+                    [
+                        'action' => 'promosi_bulk_confirmed',
+                        'episode_id' => $id
+                    ]
+                );
+
+                \DB::commit();
+                QueryOptimizer::clearAllIndexCaches();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Semua pekerjaan promosi episode ini berhasil dikonfirmasi dan diajukan ke KPI.',
+                    'episode_id' => $id
+                ]);
+
+            } catch (\Exception $e) {
+                \DB::rollBack();
+                throw $e;
+            }
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 }

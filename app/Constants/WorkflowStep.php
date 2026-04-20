@@ -111,10 +111,13 @@ class WorkflowStep
         'producer_creative' => 10,
         'musik_arr' => 11,
         'musik_arr_song' => 15,
-        'producer_acc_song' => 15,
+        'musik_arr_approval' => 11, // Producer Acc Song Proposal
+        'musik_producer_acc_arr' => 11, // Producer Acc Arr Music
         'musik_arr_lagu' => 11,
         'producer_acc_lagu' => 11,
         'sound_eng' => 8,
+        'musik_vocal_edit' => 8, // Sound Engineer Edit
+        'musik_creative_acc' => 10, // Producer Creative/Script Acc
         'tim_setting_coord' => 8,
         'tim_syuting_coord' => 8,
         'tim_vocal_coord' => 10,
@@ -126,9 +129,9 @@ class WorkflowStep
         'design_grafis' => 5,
         'broadcasting' => 4,
         'promotion' => 0,
-        'manager_distribusi' => 6,
+        'distribution_manager_qc' => 6,
         'general_affairs' => 8,
-        'promosi_syuting' => 8,
+        'promotion_shooting' => 8,
         'program_manager' => 10,
     ];
 

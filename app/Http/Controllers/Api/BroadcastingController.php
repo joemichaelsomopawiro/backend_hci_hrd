@@ -1323,6 +1323,73 @@ class BroadcastingController extends Controller
     }
 
     /**
+     * Berikan skor kualitas (1-5) oleh Program Manager
+     * POST /api/live-tv/broadcasting/works/{id}/quality-score
+     */
+    public function updateQualityScore(Request $request, int $id): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user || !ProgramManagerAuthorization::isProgramManager($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access. Only Program Managers can rate broadcasting works.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'quality_score' => 'required|integer|min:1|max:5'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $work = BroadcastingWork::with(['episode'])->findOrFail($id);
+
+            $work->update([
+                'quality_score' => $request->quality_score,
+                'rated_by' => $user->id,
+                'rated_at' => now()
+            ]);
+
+            // Notify Broadcasting user that they have received a quality score
+            if ($work->created_by && $work->created_by !== $user->id) {
+                 Notification::create([
+                     'user_id' => $work->created_by,
+                     'type' => 'broadcasting_quality_rated',
+                     'title' => 'Review Kualitas dari Program Manager',
+                     'message' => "Program Manager telah memberikan nilai kualitas {$request->quality_score}/5 untuk Episode {$work->episode->episode_number}.",
+                     'data' => [
+                         'broadcasting_work_id' => $work->id,
+                         'episode_id' => $work->episode_id,
+                         'quality_score' => $request->quality_score
+                     ]
+                 ]);
+            }
+
+            QueryOptimizer::clearAllIndexCaches();
+
+            return response()->json([
+                'success' => true,
+                'data' => $work->fresh(['episode', 'ratedBy', 'createdBy']),
+                'message' => 'Quality score saved successfully.'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error saving quality score: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Sinkronkan link YouTube & Website dari BroadcastingWork ke semua PromotionWork sharing (share_facebook, share_wa_group, story_ig, reels_facebook)
      * agar Promotion selalu dapat link terbaru saat Broadcasting edit link.
      */

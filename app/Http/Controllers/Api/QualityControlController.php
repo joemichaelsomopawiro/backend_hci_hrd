@@ -203,7 +203,7 @@ class QualityControlController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'quality_score' => 'required|integer|min:1|max:100',
+                'quality_score' => 'required|integer|min:1|max:5',
                 'improvements_needed' => 'nullable|array', // QualityControlWork uses improvements_needed
                 'qc_notes' => 'nullable|string' // QualityControlWork uses qc_notes
             ]);
@@ -526,7 +526,7 @@ class QualityControlController extends Controller
                 'thumbnail_bts_notes' => 'nullable|string|max:1000',
                 'thumbnail_bts_screenshot' => 'nullable|file|mimes:jpg,jpeg,png|max:5120',
                 'overall_notes' => 'nullable|string|max:1000',
-                'quality_score' => 'required|integer|min:1|max:100'
+                'quality_score' => 'required|integer|min:1|max:5'
             ]);
 
             if ($validator->fails()) {
@@ -914,7 +914,7 @@ class QualityControlController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'qc_notes' => 'nullable|string|max:5000',
-                'quality_score' => 'nullable|integer|min:0|max:100',
+                'quality_score' => 'nullable|integer|min:0|max:5',
                 'issues_found' => 'nullable|array',
                 'improvements_needed' => 'nullable|array',
                 'no_revision_needed' => 'nullable|boolean', // Tidak ada revisi - Yes
@@ -1012,6 +1012,22 @@ class QualityControlController extends Controller
                             'reviewed_by' => $user->id,
                             'reviewed_at' => now()
                         ]);
+
+                        // Sync with KPI Quality Score
+                        if ($work->quality_score > 0 && $designGrafisWork->assigned_to) {
+                            \App\Models\KpiQualityScore::updateOrCreate(
+                                [
+                                    'employee_id' => $designGrafisWork->assigned_to,
+                                    'pr_episode_id' => $work->episode_id,
+                                    'workflow_step' => 'design_grafis'
+                                ],
+                                [
+                                    'quality_score' => $work->quality_score,
+                                    'notes' => $work->qc_notes,
+                                    'reviewer_user_id' => $user->id
+                                ]
+                            );
+                        }
                     }
                 }
             }
@@ -1029,6 +1045,24 @@ class QualityControlController extends Controller
                             'reviewed_by' => $user->id,
                             'reviewed_at' => now()
                         ]);
+
+                        // Sync with KPI Quality Score for Editor Promotion
+                        $promoUserId = $promotionWork->created_by;
+                        if ($work->quality_score > 0 && $promoUserId) {
+                            \App\Models\KpiQualityScore::updateOrCreate(
+                                [
+                                    'employee_id' => $promoUserId,
+                                    'pr_episode_id' => $work->episode_id,
+                                    'workflow_step' => 'editor_promosi'
+                                ],
+                                [
+                                    'quality_score' => $work->quality_score,
+                                    'notes' => $work->qc_notes,
+                                    'reviewer_user_id' => $user->id
+                                ]
+                            );
+                        }
+
                         // Program Musik: dapatkan source BTS work (work asli BTS Video & Talent Photos) dari file_paths/file_links
                         $fp = $promotionWork->file_paths;
                         $fl = $promotionWork->file_links;
@@ -1066,6 +1100,23 @@ class QualityControlController extends Controller
                             'reviewed_by' => $user->id,
                             'reviewed_at' => now()
                         ]);
+
+                        // Sync with KPI Quality Score for Main Editor
+                        $editorUserId = $editorWork->created_by;
+                        if ($work->quality_score > 0 && $editorUserId) {
+                             \App\Models\KpiQualityScore::updateOrCreate(
+                                [
+                                    'employee_id' => $editorUserId,
+                                    'pr_episode_id' => $work->episode_id,
+                                    'workflow_step' => 'editor'
+                                ],
+                                [
+                                    'quality_score' => $work->quality_score,
+                                    'notes' => $work->qc_notes,
+                                    'reviewer_user_id' => $user->id
+                                ]
+                            );
+                        }
                     }
                 }
             }

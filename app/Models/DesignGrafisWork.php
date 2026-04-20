@@ -23,6 +23,7 @@ class DesignGrafisWork extends Model
         'file_format',
         'deadline',
         'design_notes',
+        'file_link',
         'file_path',
         'file_name',
         'file_size',
@@ -146,6 +147,29 @@ class DesignGrafisWork extends Model
 
         return $labels[$this->work_type] ?? $this->work_type;
     }
+
+    /**
+     * Get the effective deadline (either from work record itself or from the episode's system deadlines)
+     */
+    public function getEffectiveDeadlineAttribute(): ?string
+    {
+        // 1. Check if deadline is set directly on the work record
+        if ($this->deadline) {
+            return $this->deadline->format('Y-m-d');
+        }
+
+        // 2. Fallback to system deadline for design_grafis
+        $deadline = \App\Models\Deadline::where('episode_id', $this->episode_id)
+            ->where('role', 'design_grafis')
+            ->first();
+
+        return $deadline ? $deadline->deadline_date->format('Y-m-d') : null;
+    }
+
+    /**
+     * Append effective_deadline and others to JSON representation
+     */
+    protected $appends = ['file_url', 'formatted_file_size', 'work_type_label', 'effective_deadline'];
 
     /**
      * Scope berdasarkan work type

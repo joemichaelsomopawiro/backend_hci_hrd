@@ -308,10 +308,10 @@ class ManagerBroadcastingController extends Controller
 
             $work = BroadcastingWork::findOrFail($id);
 
-            if ($work->status !== 'pending_approval') {
+            if (!in_array($work->status, ['pending_approval', 'pending'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Broadcasting work is not in pending approval status.'
+                    'message' => 'Broadcasting work is not in a status that can be accepted.'
                 ], 400);
             }
 
@@ -413,29 +413,29 @@ class ManagerBroadcastingController extends Controller
             ]);
 
             // ✨ Sync with EditorWork: Set terminal status to 'approved' ✨
-            $editorWork = null;
-            if ($work->editor_work_id) {
-                $editorWork = EditorWork::find($work->editor_work_id);
-            }
-            if (!$editorWork) {
-                $editorWork = EditorWork::where('episode_id', $work->episode_id)
-                    ->where('work_type', $work->work_type)
-                    ->where('status', 'submitted')
-                    ->latest()
-                    ->first();
-            }
+            try {
+                $editorWork = null;
+                if ($work->editor_work_id) {
+                    $editorWork = EditorWork::find($work->editor_work_id);
+                }
+                if (!$editorWork) {
+                    $editorWork = EditorWork::where('episode_id', $work->episode_id)
+                        ->where('work_type', $work->work_type)
+                        ->where('status', 'submitted')
+                        ->latest()
+                        ->first();
+                }
 
-            if ($editorWork) {
-                try {
+                if ($editorWork) {
                     $editorWork->update([
                         'status' => 'approved',
                         'reviewed_by' => $user->id,
                         'reviewed_at' => now(),
                         'review_notes' => $request->approval_notes
                     ]);
-                } catch (\Throwable $e) {
-                    Log::warning('ApproveWork: EditorWork update failed', ['editor_work_id' => $editorWork->id, 'error' => $e->getMessage()]);
                 }
+            } catch (\Exception $e) {
+                Log::warning('ApproveWork: EditorWork update failed', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
 
             $episode = null;
@@ -446,15 +446,10 @@ class ManagerBroadcastingController extends Controller
             }
             $catatanQc = $request->approval_notes ?: null;
 
-            // Notify Producer (QC approved) – only if user exists to avoid FK constraint
-            $producerId = null;
+            // Notify Producer (QC approved)
             try {
                 $producerId = $episode?->program?->productionTeam?->producer_id;
-            } catch (\Throwable $e) {
-                Log::warning('ApproveWork: failed to get producer_id', ['work_id' => $work->id, 'error' => $e->getMessage()]);
-            }
-            if ($producerId && User::where('id', $producerId)->exists()) {
-                try {
+                if ($producerId && User::where('id', $producerId)->exists()) {
                     Notification::create([
                         'user_id' => $producerId,
                         'type' => 'qc_editor_work_approved',
@@ -463,24 +458,24 @@ class ManagerBroadcastingController extends Controller
                         'episode_id' => $work->episode_id,
                         'data' => [
                             'broadcasting_work_id' => $work->id,
-                            'editor_work_id' => $editorWork?->id,
+                            'editor_work_id' => $work->editor_work_id,
                             'catatan_qc' => $catatanQc,
                             'approved_by' => $user->name ?? 'QC',
                         ],
                     ]);
-                } catch (\Exception $e) {
-                    Log::warning('ApproveWork: failed to notify producer', ['producer_id' => $producerId, 'error' => $e->getMessage()]);
                 }
+            } catch (\Exception $e) {
+                Log::warning('ApproveWork: failed to notify producer', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
 
             // Notify Produksi (role Produksi / Production)
-            $produksiUsers = User::whereIn('role', ['Produksi', 'Production'])->pluck('id');
-            $alreadyNotified = array_unique(array_filter([$producerId]));
-            foreach ($produksiUsers as $produksiUserId) {
-                if (in_array($produksiUserId, $alreadyNotified)) continue;
-                if (!User::where('id', $produksiUserId)->exists()) continue;
-                $alreadyNotified[] = $produksiUserId;
-                try {
+            try {
+                $alreadyNotified = array_unique(array_filter([$producerId ?? null]));
+                $produksiUsers = User::whereIn('role', ['Produksi', 'Production'])->pluck('id');
+                foreach ($produksiUsers as $produksiUserId) {
+                    if (in_array($produksiUserId, $alreadyNotified)) continue;
+                    if (!User::where('id', $produksiUserId)->exists()) continue;
+                    $alreadyNotified[] = $produksiUserId;
                     Notification::create([
                         'user_id' => $produksiUserId,
                         'type' => 'qc_result_ready',
@@ -492,23 +487,18 @@ class ManagerBroadcastingController extends Controller
                             'catatan_qc' => $catatanQc,
                         ],
                     ]);
-                } catch (\Exception $e) {
-                    Log::warning('ApproveWork: failed to notify Produksi user', ['user_id' => $produksiUserId, 'error' => $e->getMessage()]);
                 }
+            } catch (\Exception $e) {
+                Log::warning('ApproveWork: failed to notify Produksi users', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
 
-            // Notify Tim Syuting & Tim Setting (wrap in try to avoid 500 if relation/table issue)
-            $timSyutingSettingUserIds = [];
+            // Notify Tim Syuting & Tim Setting
             try {
                 $timSyutingSettingUserIds = $this->getTimSyutingSettingMemberIdsForEpisode($work->episode_id);
-            } catch (\Throwable $e) {
-                Log::warning('ApproveWork: getTimSyutingSettingMemberIdsForEpisode failed', ['episode_id' => $work->episode_id, 'error' => $e->getMessage()]);
-            }
-            foreach ($timSyutingSettingUserIds as $memberUserId) {
-                if (in_array($memberUserId, $alreadyNotified)) continue;
-                if (!User::where('id', $memberUserId)->exists()) continue;
-                $alreadyNotified[] = $memberUserId;
-                try {
+                foreach ($timSyutingSettingUserIds as $memberUserId) {
+                    if (in_array($memberUserId, $alreadyNotified ?? [])) continue;
+                    if (!User::where('id', $memberUserId)->exists()) continue;
+                    $alreadyNotified[] = $memberUserId;
                     Notification::create([
                         'user_id' => $memberUserId,
                         'type' => 'qc_result_ready',
@@ -521,9 +511,9 @@ class ManagerBroadcastingController extends Controller
                             'for_tim_syuting_setting' => true,
                         ],
                     ]);
-                } catch (\Exception $e) {
-                    Log::warning('ApproveWork: failed to notify Tim Syuting/Setting member', ['user_id' => $memberUserId, 'error' => $e->getMessage()]);
                 }
+            } catch (\Throwable $e) {
+                Log::warning('ApproveWork: failed to notify Tim Syuting/Setting', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
 
             // Notify Broadcasting team
@@ -534,11 +524,17 @@ class ManagerBroadcastingController extends Controller
             }
 
             try {
-                $work->load(['episode', 'createdBy', 'submittedBy', 'approvedBy', 'editorWork.createdBy']);
+                // Defensive load relations
+                $relations = ['episode', 'createdBy', 'approvedBy'];
+                try {
+                    $work->load(array_merge($relations, ['submittedBy', 'editorWork.createdBy']));
+                } catch (\Exception $e) {
+                    $work->load($relations);
+                }
             } catch (\Exception $e) {
-                Log::warning('ApproveWork: load relations failed (e.g. submitted_by column missing)', ['work_id' => $work->id, 'error' => $e->getMessage()]);
-                $work->load(['episode', 'createdBy', 'approvedBy', 'editorWork.createdBy']);
+                Log::warning('ApproveWork: load relations fallback failed', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
+
 
             return response()->json([
                 'success' => true,
@@ -618,39 +614,39 @@ class ManagerBroadcastingController extends Controller
             ]);
 
             // ✨ Reset EditorWork status and notify Editor/Producer ✨
-            $editorWork = null;
-            
-            // 1. Precise find by editor_work_id
-            if ($work->editor_work_id) {
-                $editorWork = EditorWork::find($work->editor_work_id);
-            }
-            
-            // 2. Fallback to existing logic if link is missing
-            if (!$editorWork) {
-                $editorWork = EditorWork::where('episode_id', $work->episode_id)
-                    ->where('work_type', $work->work_type)
-                    ->whereIn('status', ['completed', 'submitted']) // Must be one that was submitted
-                    ->latest()
-                    ->first();
-            }
+            try {
+                $editorWork = null;
+                
+                // 1. Precise find by editor_work_id
+                if ($work->editor_work_id) {
+                    $editorWork = EditorWork::find($work->editor_work_id);
+                }
+                
+                // 2. Fallback to existing logic if link is missing
+                if (!$editorWork) {
+                    $editorWork = EditorWork::where('episode_id', $work->episode_id)
+                        ->where('work_type', $work->work_type)
+                        ->whereIn('status', ['completed', 'submitted']) // Must be one that was submitted
+                        ->latest()
+                        ->first();
+                }
 
-            // 3. Final fallback: search only by episode and status if work_type also mismatch
-            if (!$editorWork) {
-                $editorWork = EditorWork::where('episode_id', $work->episode_id)
-                    ->whereIn('status', ['completed', 'submitted'])
-                    ->latest()
-                    ->first();
-            }
+                // 3. Final fallback: search only by episode and status if work_type also mismatch
+                if (!$editorWork) {
+                    $editorWork = EditorWork::where('episode_id', $work->episode_id)
+                        ->whereIn('status', ['completed', 'submitted'])
+                        ->latest()
+                        ->first();
+                }
 
-            if ($editorWork) {
-                $editorWork->update([
-                    'status' => 'rejected',
-                    'qc_feedback' => "[QC REJECTED - " . now()->format('Y-m-d H:i:s') . "]\n" . $request->rejection_notes
-                ]);
+                if ($editorWork) {
+                    $editorWork->update([
+                        'status' => 'rejected',
+                        'qc_feedback' => "[QC REJECTED - " . now()->format('Y-m-d H:i:s') . "]\n" . $request->rejection_notes
+                    ]);
 
-                // Notify Editor – only if user exists
-                if ($editorWork->created_by && User::where('id', $editorWork->created_by)->exists()) {
-                    try {
+                    // Notify Editor – only if user exists
+                    if ($editorWork->created_by && User::where('id', $editorWork->created_by)->exists()) {
                         Notification::create([
                             'user_id' => $editorWork->created_by,
                             'type' => 'work_rejected',
@@ -664,21 +660,22 @@ class ManagerBroadcastingController extends Controller
                                 'kembali_ke_editor' => true,
                             ]
                         ]);
-                    } catch (\Exception $e) {
-                        Log::warning('RejectWork: failed to notify Editor', ['user_id' => $editorWork->created_by, 'error' => $e->getMessage()]);
                     }
                 }
+            } catch (\Exception $e) {
+                Log::warning('RejectWork: EditorWork update/notify failed', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
 
             // Notify Producer (Manager Program) AND Team Producer
-            $episode = $work->episode()->with('program.productionTeam')->first();
-            $managerProgramId = $episode?->program?->manager_program_id;
-            $teamProducerId = $episode?->program?->productionTeam?->producer_id;
-            $recipientIds = array_unique(array_filter([$managerProgramId, $teamProducerId]));
+            $recipientIds = [];
+            try {
+                $episode = $work->episode()->with('program.productionTeam')->first();
+                $managerProgramId = $episode?->program?->manager_program_id;
+                $teamProducerId = $episode?->program?->productionTeam?->producer_id;
+                $recipientIds = array_unique(array_filter([$managerProgramId, $teamProducerId]));
 
-            foreach ($recipientIds as $recipientId) {
-                if (!User::where('id', $recipientId)->exists()) continue;
-                try {
+                foreach ($recipientIds as $recipientId) {
+                    if (!User::where('id', $recipientId)->exists()) continue;
                     Notification::create([
                         'user_id' => $recipientId,
                         'type' => 'qc_alert',
@@ -687,25 +684,25 @@ class ManagerBroadcastingController extends Controller
                         'episode_id' => $work->episode_id,
                         'data' => [
                             'episode_id' => $work->episode_id,
-                            'editor_name' => $editorWork?->createdBy?->name,
+                            'editor_name' => $editorWork?->createdBy?->name ?? 'Editor',
                             'rejection_notes' => $request->rejection_notes,
                             'kembali_ke_editor' => true,
                         ]
                     ]);
-                } catch (\Exception $e) {
-                    Log::warning('RejectWork: failed to notify recipient', ['user_id' => $recipientId, 'error' => $e->getMessage()]);
                 }
+            } catch (\Exception $e) {
+                Log::warning('RejectWork: producer notification failed', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
 
             // Notify Produksi (role Produksi / Production)
-            $rejectionNotes = $request->rejection_notes;
-            $produksiUsers = User::whereIn('role', ['Produksi', 'Production'])->pluck('id');
-            $alreadyNotifiedReject = $recipientIds;
-            foreach ($produksiUsers as $produksiUserId) {
-                if (in_array($produksiUserId, $alreadyNotifiedReject)) continue;
-                if (!User::where('id', $produksiUserId)->exists()) continue;
-                $alreadyNotifiedReject[] = $produksiUserId;
-                try {
+            try {
+                $rejectionNotes = $request->rejection_notes;
+                $produksiUsers = User::whereIn('role', ['Produksi', 'Production'])->pluck('id');
+                $alreadyNotifiedReject = $recipientIds;
+                foreach ($produksiUsers as $produksiUserId) {
+                    if (in_array($produksiUserId, $alreadyNotifiedReject)) continue;
+                    if (!User::where('id', $produksiUserId)->exists()) continue;
+                    $alreadyNotifiedReject[] = $produksiUserId;
                     Notification::create([
                         'user_id' => $produksiUserId,
                         'type' => 'qc_result_rejected',
@@ -718,18 +715,18 @@ class ManagerBroadcastingController extends Controller
                             'status' => 'rejected'
                         ],
                     ]);
-                } catch (\Exception $e) {
-                    Log::warning('RejectWork: failed to notify Produksi user', ['user_id' => $produksiUserId, 'error' => $e->getMessage()]);
                 }
+            } catch (\Exception $e) {
+                Log::warning('RejectWork: produksi notification failed', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
 
             // Notify Tim Syuting & Tim Setting
-            $timSyutingSettingUserIds = $this->getTimSyutingSettingMemberIdsForEpisode($work->episode_id);
-            foreach ($timSyutingSettingUserIds as $memberUserId) {
-                if (in_array($memberUserId, $alreadyNotifiedReject)) continue;
-                if (!User::where('id', $memberUserId)->exists()) continue;
-                $alreadyNotifiedReject[] = $memberUserId;
-                try {
+            try {
+                $timSyutingSettingUserIds = $this->getTimSyutingSettingMemberIdsForEpisode($work->episode_id);
+                foreach ($timSyutingSettingUserIds as $memberUserId) {
+                    if (in_array($memberUserId, $alreadyNotifiedReject)) continue;
+                    if (!User::where('id', $memberUserId)->exists()) continue;
+                    $alreadyNotifiedReject[] = $memberUserId;
                     Notification::create([
                         'user_id' => $memberUserId,
                         'type' => 'qc_result_rejected',
@@ -743,9 +740,9 @@ class ManagerBroadcastingController extends Controller
                             'for_tim_syuting_setting' => true,
                         ],
                     ]);
-                } catch (\Exception $e) {
-                    Log::warning('RejectWork: failed to notify Tim Syuting/Setting member', ['user_id' => $memberUserId, 'error' => $e->getMessage()]);
                 }
+            } catch (\Exception $e) {
+                Log::warning('RejectWork: tim syuting/setting notification failed', ['work_id' => $work->id, 'error' => $e->getMessage()]);
             }
 
             // Notify Broadcasting team

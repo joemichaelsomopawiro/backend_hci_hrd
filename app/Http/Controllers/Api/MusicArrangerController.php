@@ -200,13 +200,26 @@ class MusicArrangerController extends Controller
             }
 
             // Create record
+            // Auto-populate titles from DB if IDs are provided but titles are missing
+            $songTitle = $request->song_title;
+            if (!$songTitle && $request->song_id) {
+                $song = \App\Models\Song::find($request->song_id);
+                $songTitle = $song ? $song->title : null;
+            }
+
+            $singerName = $request->singer_name;
+            if (!$singerName && $request->singer_id) {
+                $singer = \App\Models\Singer::where('id', $request->singer_id)->first();
+                $singerName = $singer ? $singer->name : null;
+            }
+
             $arrangement = MusicArrangement::create([
                 'episode_id' => $request->episode_id,
                 'created_by' => $user->id,
                 'song_id' => $request->song_id,
                 'singer_id' => $request->singer_id,
-                'song_title' => $request->song_title,
-                'singer_name' => $request->singer_name,
+                'song_title' => $songTitle,
+                'singer_name' => $singerName,
                 'is_group' => $request->is_group ?? false,
                 'group_name' => $request->group_name,
                 'group_members' => $request->group_members,

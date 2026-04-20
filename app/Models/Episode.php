@@ -138,26 +138,27 @@ class Episode extends Model
             : \App\Constants\WorkflowStep::ROLE_DEADLINE_DAYS;
 
         // Roles to generate
-            $rolesToGenerate = $isMusic 
-                ? [
-                    'musik_arr_song' => 'Pengajuan Lagu',
-                    'producer_acc_song' => 'ACC Lagu (Proposal)',
-                    'musik_arr_lagu' => 'Aransemen Lagu',
-                    'producer_acc_lagu' => 'ACC Aransemen',
-                    'tim_vocal_coord' => 'Take Rekam Audio (Vocal)',
-                    'sound_eng' => 'Edit Audio (Mixing)',
-                    'kreatif' => 'Creative & Script',
-                    'producer_creative' => 'Producer Approve Creative',
-                    'tim_setting_coord' => 'Setting & Property',
-                    'tim_syuting_coord' => 'Shooting & Produksi',
-                    'editor' => 'Editing Video',
-                    'quality_control' => 'QC Final',
-                    'manager_distribusi' => 'Distribution Manager QC',
-                    'broadcasting' => 'Broadcasting',
-                    'promotion' => 'Promotion Material',
-                    'design_grafis' => 'Design Grafis',
-                    'editor_promosi' => 'Social Media Highlight'
-                  ]
+        $rolesToGenerate = $isMusic 
+            ? [
+                'musik_arr_song' => 'Pengajuan Lagu',
+                'producer_acc_song' => 'ACC Lagu (Proposal)',
+                'musik_arr_lagu' => 'Aransemen Lagu',
+                'producer_acc_lagu' => 'ACC Aransemen',
+                'tim_vocal_coord' => 'Take Rekam Audio (Vocal)',
+                'sound_eng' => 'Edit Audio (Mixing)',
+                'kreatif' => 'Creative & Script',
+                'producer_creative' => 'Producer Approve Creative',
+                'tim_setting_coord' => 'Setting & Property',
+                'tim_syuting_coord' => 'Shooting & Produksi',
+                'editor' => 'Editing Video',
+                'quality_control' => 'QC Final',
+                'manager_distribusi' => 'Distribution Manager QC',
+                'broadcasting' => 'Broadcasting',
+                'promotion' => 'Promotion Material',
+                'promotion_shooting' => 'Promosi Syuting (BTS/Photos)',
+                'design_grafis' => 'Design Grafis',
+                'editor_promosi' => 'Social Media Highlight'
+              ]
             : [
                 'editor' => 'Editing',
                 'kreatif' => 'Creative',
@@ -179,14 +180,22 @@ class Episode extends Model
             $this->deadlines()->whereIn('role', $legacyRoles)->delete();
         }
 
+        // Ambil shooting schedule jika ada untuk sinkronisasi deadline syuting
+        $shootingSchedule = $this->creativeWork ? $this->creativeWork->shooting_schedule : null;
 
         foreach ($rolesToGenerate as $role => $label) {
             $days = $deadlineDays[$role] ?? 7;
             
+            // Logika khusus: Deadline Syuting (Produksi & Promosi) mengikuti Jadwal Syuting
+            $finalDeadline = $airDate->copy()->subDays($days);
+            if ($shootingSchedule && in_array($role, ['tim_syuting_coord', 'promotion_shooting', 'tim_setting_coord'])) {
+                $finalDeadline = Carbon::parse($shootingSchedule);
+            }
+            
             $this->deadlines()->updateOrCreate(
                 ['role' => $role],
                 [
-                    'deadline_date' => $airDate->copy()->subDays($days),
+                    'deadline_date' => $finalDeadline,
                     'description' => "Deadline {$label}",
                     'auto_generated' => true,
                     'created_by' => auth()->id() ?? 1

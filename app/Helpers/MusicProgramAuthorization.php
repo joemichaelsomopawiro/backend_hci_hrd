@@ -20,6 +20,30 @@ class MusicProgramAuthorization
     }
 
     /**
+     * Check if user is Sound Engineer
+     */
+    public static function isSoundEngineer(?\Illuminate\Contracts\Auth\Authenticatable $user): bool
+    {
+        if (!$user) return false;
+
+        $role = Role::normalize((string) data_get($user, 'role'));
+        
+        return $role === Role::SOUND_ENGINEER;
+    }
+
+    /**
+     * Check if user is Music Arranger
+     */
+    public static function isArranger(?\Illuminate\Contracts\Auth\Authenticatable $user): bool
+    {
+        if (!$user) return false;
+
+        $role = Role::normalize((string) data_get($user, 'role'));
+        
+        return $role === Role::MUSIC_ARRANGER;
+    }
+
+    /**
      * Check if user is Distribution Manager or has higher privileges (Program Manager)
      */
     public static function hasDistributionManagerAccess(?\Illuminate\Contracts\Auth\Authenticatable $user): bool
@@ -63,6 +87,7 @@ class MusicProgramAuthorization
             Role::GRAPHIC_DESIGN,
             Role::EDITOR_PROMOTION,
             Role::QUALITY_CONTROL,
+            Role::EDITOR,
             Role::BROADCASTING,
             Role::SOCIAL_MEDIA,
         ];
@@ -126,6 +151,19 @@ class MusicProgramAuthorization
                 })->exists();
                 
             if ($isAssigned) return true;
+        }
+
+        // 7. Check for Task Reassignments (Backup/Substitution System)
+        if ($work && isset($work->episode_id)) {
+            $epId = (int) $work->episode_id;
+            $hasReassignment = \App\Models\TaskReassignment::where('episode_id', $epId)
+                ->where('new_user_id', $user->id)
+                ->where(function($q) use ($primaryRole) {
+                    $q->where('role_key', $primaryRole)
+                      ->orWhere('task_type', $primaryRole);
+                })->exists();
+            
+            if ($hasReassignment) return true;
         }
 
         return false;

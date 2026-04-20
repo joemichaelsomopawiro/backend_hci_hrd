@@ -13,6 +13,8 @@ class TaskReassignment extends Model
     protected $fillable = [
         'task_type',
         'task_id',
+        'episode_id',
+        'role_key',
         'program_id',
         'original_user_id',
         'new_user_id',

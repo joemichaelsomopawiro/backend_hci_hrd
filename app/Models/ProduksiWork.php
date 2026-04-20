@@ -156,6 +156,42 @@ class ProduksiWork extends Model
     }
 
     /**
+     * Check for missing requirements to complete work
+     */
+    public function getMissingRequirements(): array
+    {
+        $missing = [];
+        $attendances = $this->crew_attendances ?? [];
+        
+        if (!isset($attendances['shooting']) || empty($attendances['shooting'])) {
+            $missing[] = 'Absensi Tim Syuting';
+        }
+        
+        if (!$this->run_sheet_id) {
+            $missing[] = 'Run Sheet (Catatan Syuting)';
+        }
+        
+        $links = $this->shooting_file_links ?? [];
+        $files = $this->shooting_files ?? [];
+        if (empty($links) && empty($files)) {
+            $missing[] = 'Link/File Hasil Syuting';
+        }
+        
+        return $missing;
+    }
+
+    /**
+     * Check if there are active loans that need to be returned
+     */
+    public function hasActiveLoans(array $teamTypes = ['shooting', 'setting']): bool
+    {
+        return $this->equipmentRequests()
+            ->whereIn('team_type', $teamTypes)
+            ->whereIn('status', ['approved', 'in_use'])
+            ->exists();
+    }
+
+    /**
      * Display text for episode (e.g. "Ep. 3") so frontend does not show work id or episode id.
      */
     public function getEpisodeDisplayAttribute(): ?string

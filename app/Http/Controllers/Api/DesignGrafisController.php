@@ -168,8 +168,8 @@ class DesignGrafisController extends Controller
             $workflowService = app(\App\Services\WorkflowStateService::class);
             $workflowService->updateWorkflowState(
                 $episode,
-                'distribution',
-                'distribution',
+                'promotion',
+                'graphic_design',
                 $user->id,
                 "Design work created by {$user->name}: {$work->title} ({$work->work_type})",
                 $user->id,
@@ -260,11 +260,11 @@ class DesignGrafisController extends Controller
 
             $work = DesignGrafisWork::with(['episode'])->findOrFail($id);
 
-            // Izinkan accept dari status draft / designing / pending
-            if (!in_array($work->status, ['draft', 'designing', 'pending'])) {
+            // Izinkan accept dari status draft / in_progress / designing / pending
+            if (!in_array($work->status, ['draft', 'in_progress', 'designing', 'pending'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Work cannot be accepted. Current status: {$work->status}"
+                    'message' => "Work cannot be accepted. Current status: {$work->status}. Allowed statuses for acceptance are: draft, pending, or in_progress."
                 ], 400);
             }
 
@@ -280,8 +280,8 @@ class DesignGrafisController extends Controller
             $workflowService = app(\App\Services\WorkflowStateService::class);
             $workflowService->updateWorkflowState(
                 $work->episode,
-                'distribution',
-                'distribution',
+                'promotion',
+                'graphic_design',
                 $user->id,
                 "Design work accepted by {$user->name} ({$work->work_type})",
                 $user->id,
@@ -327,7 +327,8 @@ class DesignGrafisController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error accepting work: ' . $e->getMessage()
+                'message' => 'Error accepting work: ' . $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTrace() : null
             ], 500);
         }
     }
@@ -395,6 +396,7 @@ class DesignGrafisController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'file_link' => 'required|url',
+                'poster_link' => 'nullable|url',
                 'design_notes' => 'nullable|string|max:5000'
             ]);
 
@@ -476,6 +478,11 @@ class DesignGrafisController extends Controller
                 $request
             );
 
+            // Handle optional poster link
+            if ($request->poster_link) {
+                $this->syncPosterWork($work->episode_id, $user, $request->poster_link, $request->design_notes ?? '');
+            }
+
             // Automate task completion and QC setup
             $this->finalizeCompletion($work, $user, $request->design_notes ?? '');
 
@@ -491,7 +498,8 @@ class DesignGrafisController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error uploading YouTube thumbnail: ' . $e->getMessage()
+                'message' => 'Error uploading YouTube thumbnail: ' . $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTrace() : null
             ], 500);
         }
     }
@@ -514,6 +522,7 @@ class DesignGrafisController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'file_link' => 'required|url',
+                'poster_link' => 'nullable|url',
                 'design_notes' => 'nullable|string|max:5000'
             ]);
 
@@ -575,6 +584,7 @@ class DesignGrafisController extends Controller
                 ]);
 
                 $work->update([
+                    'file_link' => $request->file_link,
                     'file_path' => $uploadedFile['file_path'], // Main file path
                     'file_name' => $uploadedFile['file_name'],
                     'file_size' => $uploadedFile['file_size'],
@@ -584,6 +594,11 @@ class DesignGrafisController extends Controller
                         "[BTS Thumbnail Uploaded/Linked - " . now()->format('Y-m-d H:i:s') . "]\n" .
                         ($request->design_notes ?? '')
                 ]);
+            }
+
+            // Handle optional poster link
+            if ($request->poster_link) {
+                $this->syncPosterWork($work->episode_id, $user, $request->poster_link, $request->design_notes ?? '');
             }
 
             // Audit logging
@@ -611,7 +626,8 @@ class DesignGrafisController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error uploading BTS thumbnail: ' . $e->getMessage()
+                'message' => 'Error uploading BTS thumbnail: ' . $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null
             ], 500);
         }
     }
@@ -729,7 +745,8 @@ class DesignGrafisController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error uploading poster: ' . $e->getMessage()
+                'message' => 'Error uploading poster: ' . $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTrace() : null
             ], 500);
         }
     }
@@ -882,7 +899,8 @@ class DesignGrafisController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error completing work: ' . $e->getMessage()
+                'message' => 'Error completing work: ' . $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTrace() : null
             ], 500);
         }
     }
@@ -1271,7 +1289,7 @@ class DesignGrafisController extends Controller
                 $links = explode(',', $links);
             }
 
-            // Ensure we return an array of objects for the frontend if it was just primitive strings
+            // Ensure we return an array of objects for the frontend
             $formattedLinks = [];
             if (is_array($links)) {
                 foreach ($links as $link) {
@@ -1301,59 +1319,45 @@ class DesignGrafisController extends Controller
             ];
         }
 
-        // Get files from Promosi (talent photos & BTS reference)
+        // Get unique files from Promosi across all associated promotion works
         $promotionWorks = PromotionWork::where('episode_id', $episodeId)
             ->whereIn('status', ['editing', 'review', 'approved', 'published', 'completed'])
             ->get();
 
         $talentPhotos = [];
         $btsVideos = [];
+        $uniqueUrls = []; // Track unique URLs to prevent spamming
 
         foreach ($promotionWorks as $work) {
-            // Check file_links
-            $links = $work->file_links ?? [];
-            if (is_array($links)) {
-                foreach ($links as $link) {
-                    if (is_array($link)) {
-                        $type = $link['type'] ?? 'other';
-                        if ($type === 'talent_photo') {
-                            $talentPhotos[] = $link;
-                        } elseif ($type === 'bts_video') {
-                            $btsVideos[] = $link;
-                        } else {
-                            // Fallback for other linked files from promotion
-                            $talentPhotos[] = array_merge(['type' => 'other_promotion_file'], $link);
-                        }
-                    } elseif (is_string($link)) {
-                        $talentPhotos[] = [
-                            'file_link' => $link,
-                            'type' => 'promotion_link',
-                            'label' => 'Promotion Link'
-                        ];
-                    }
-                }
-            }
-
-            // Check file_paths
-            $paths = $work->file_paths ?? [];
-            if (is_array($paths)) {
-                foreach ($paths as $path) {
-                    if (is_array($path)) {
-                        $type = $path['type'] ?? 'other';
-                        if ($type === 'talent_photo') {
-                            $talentPhotos[] = $path;
-                        } elseif ($type === 'bts_video') {
-                            $btsVideos[] = $path;
-                        } else {
-                            $talentPhotos[] = array_merge(['type' => 'other_promotion_file'], $path);
-                        }
-                    }
-                }
-            }
+            // Merge all potential links (file_links, file_paths, legacy links)
+            $allLinks = array_merge(
+                $work->file_links ?? [],
+                $work->file_paths ?? []
+            );
             
-            // Legacy fallbacks
-            if ($work->bts_video_link) $btsVideos[] = ['file_link' => $work->bts_video_link, 'url' => $work->bts_video_link, 'type' => 'bts_video', 'source' => 'legacy'];
-            if ($work->bts_video_path) $btsVideos[] = ['file_path' => $work->bts_video_path, 'type' => 'bts_video', 'source' => 'legacy'];
+            // Add legacy fallbacks if present
+            if ($work->bts_video_link) $allLinks[] = ['file_link' => $work->bts_video_link, 'type' => 'bts_video', 'source' => 'legacy'];
+            if ($work->bts_video_path) $allLinks[] = ['file_path' => $work->bts_video_path, 'type' => 'bts_video', 'source' => 'legacy'];
+
+            foreach ($allLinks as $item) {
+                if (!is_array($item)) {
+                    $item = ['file_link' => $item, 'type' => 'promotion_link'];
+                }
+
+                $url = $item['file_link'] ?? $item['file_path'] ?? $item['url'] ?? null;
+                if (!$url || isset($uniqueUrls[$url])) continue;
+                
+                $uniqueUrls[$url] = true;
+                $type = $item['type'] ?? 'other';
+                
+                if ($type === 'talent_photo') {
+                    $talentPhotos[] = $item;
+                } elseif ($type === 'bts_video') {
+                    $btsVideos[] = $item;
+                } else {
+                    $talentPhotos[] = array_merge(['type' => 'other_promotion_file'], $item);
+                }
+            }
         }
 
         if (!empty($talentPhotos) || !empty($btsVideos)) {
@@ -1431,8 +1435,8 @@ class DesignGrafisController extends Controller
         $workflowService = app(\App\Services\WorkflowStateService::class);
         $workflowService->updateWorkflowState(
             $work->episode,
-            'distribution',
-            'distribution',
+            'quality_control',
+            'quality_control',
             $user->id,
             "Design work completed by {$user->name} ({$work->work_type})",
             $user->id,
@@ -1455,7 +1459,7 @@ class DesignGrafisController extends Controller
                     'user_id' => $producer->id,
                     'type' => 'design_grafis_work_completed',
                     'title' => 'Design Grafis Work Completed',
-                    'message' => "Design Grafis {$user->name} telah menyelesaikan pekerjaan {$work->work_type} untuk Episode {$episode->episode_number}.",
+                    'message' => "Graphic Designer {$user->name} has completed the {$work->work_type} for Episode {$episode->episode_number}.",
                     'data' => [
                         'design_grafis_work_id' => $work->id,
                         'episode_id' => $work->episode_id,
@@ -1476,7 +1480,7 @@ class DesignGrafisController extends Controller
             'thumbnail_bts' => 'thumbnail_bts',
             'graphics_ig' => 'highlight_ig',
             'graphics_facebook' => 'highlight_facebook',
-            'poster' => 'poster'
+            'poster' => 'thumbnail_bts' // Fallback for poster as thumbnail_bts since poster is not in QC enum yet
         ];
 
         if (isset($qcTypeMap[$work->work_type])) {
@@ -1496,7 +1500,7 @@ class DesignGrafisController extends Controller
                     'title' => "QC {$work->title}",
                     'description' => "Quality Control untuk {$work->work_type} dari Design Grafis",
                     'files_to_check' => $this->prepareFilesToCheck($work),
-                    'design_grafis_file_locations' => $this->prepareFilesToCheck($work),
+                    'design_grafis_file_locations' => $this->prepareFilesToCheck($work) ?: [],
                     'status' => 'pending',
                     'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
                 ]);
@@ -1507,7 +1511,7 @@ class DesignGrafisController extends Controller
                         'user_id' => $qcUser->id,
                         'type' => 'design_grafis_submitted_to_qc',
                         'title' => 'Design Grafis Work Submitted to QC',
-                        'message' => "Design Grafis telah mengajukan {$work->work_type} untuk QC Episode {$episode->episode_number}.",
+                        'message' => "Graphic Design has submitted {$work->work_type} for QC on Episode {$episode->episode_number}.",
                         'data' => [
                             'design_grafis_work_id' => $work->id,
                             'qc_work_id' => $qcWork->id,
@@ -1519,8 +1523,12 @@ class DesignGrafisController extends Controller
                 }
             } else {
                 // Update existing QC work
-                $existingLocations = $existingQCWork->design_grafis_file_locations ?? [];
-                $newLocations = $this->prepareFilesToCheck($work);
+                $existingLocations = $existingQCWork->design_grafis_file_locations;
+                if (!is_array($existingLocations)) {
+                    $existingLocations = json_decode($existingLocations, true) ?: [];
+                }
+                
+                $newLocations = $this->prepareFilesToCheck($work) ?: [];
 
                 // Merge and unique based on file_path
                 $existingLocations = array_merge($existingLocations, $newLocations);
@@ -1534,6 +1542,68 @@ class DesignGrafisController extends Controller
                     'status' => 'pending'
                 ]);
             }
+        }
+    }
+
+    /**
+     * Helper to sync poster work when submitted alongside other tasks
+     */
+    private function syncPosterWork(int $episodeId, $user, string $posterLink, string $notes = ''): void
+    {
+        try {
+            // Find existing poster work for this episode
+            $posterWork = DesignGrafisWork::where('episode_id', $episodeId)
+                ->where('work_type', 'poster')
+                ->first();
+
+            if (!$posterWork) {
+                // Create a new poster task if it doesn't exist
+                $posterWork = DesignGrafisWork::create([
+                    'episode_id' => $episodeId,
+                    'work_type' => 'poster',
+                    'title' => 'Poster Asset (Auto-created)',
+                    'description' => 'Automatically created via bulk asset submission.',
+                    'status' => 'in_progress',
+                    'assigned_to' => $user->id,
+                    'created_by' => $user->id,
+                    'file_link' => $posterLink,
+                    'file_path' => $posterLink,
+                    'file_name' => 'External Link (Poster)',
+                    'file_size' => 0,
+                    'mime_type' => 'url',
+                    'file_paths' => [[
+                        'type' => 'poster',
+                        'file_path' => $posterLink,
+                        'file_name' => 'External Link (Poster)',
+                        'uploaded_at' => now()->toDateTimeString(),
+                        'uploaded_by' => $user->id
+                    ]]
+                ]);
+            } else {
+                // Update existing poster task
+                $filePaths = $posterWork->file_paths ?? [];
+                $filePaths[] = [
+                    'type' => 'poster',
+                    'file_path' => $posterLink,
+                    'file_name' => 'External Link (Poster)',
+                    'uploaded_at' => now()->toDateTimeString(),
+                    'uploaded_by' => $user->id
+                ];
+
+                $posterWork->update([
+                    'file_link' => $posterLink,
+                    'file_path' => $posterLink,
+                    'file_paths' => $filePaths,
+                    'assigned_to' => $posterWork->assigned_to ?? $user->id,
+                    'status' => 'in_progress' // Ensure it's active so finalizeCompletion works
+                ]);
+            }
+
+            // Mark as completed and trigger QC
+            $this->finalizeCompletion($posterWork, $user, $notes);
+
+        } catch (\Exception $e) {
+            \Log::error("Failed to sync poster work: " . $e->getMessage());
         }
     }
 }
