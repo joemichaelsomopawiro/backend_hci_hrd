@@ -31,9 +31,10 @@ class EditorPromosiController extends Controller
         try {
             $user = Auth::user();
             $role = strtolower($user->role ?? '');
-            $allowedRoles = ['editor promotion', 'editor promosi', 'promotion editor'];
+            $allowedRoles = ['editor promotion', 'editor promosi', 'promotion editor', 'promotion', 'promosi'];
 
-            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
+            $isAuthorized = MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion') || MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion');
+            if (!$user || !$isAuthorized) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -47,10 +48,16 @@ class EditorPromosiController extends Controller
                 ->where(function ($q) use ($user) {
                     $q->where('created_by', $user->id)
                         ->orWhere(function ($sub) {
-                            $sub->whereIn('status', ['draft', 'planning', 'shooting', 'editing', 'review', 'rejected', 'completed', 'approved', 'published'])
+                            // Show unclaimed auto-created works
+                            $sub->whereIn('status', ['draft', 'shooting', 'editing', 'review', 'rejected', 'completed', 'approved', 'published'])
                                 ->whereHas('createdBy', function ($roleQuery) {
-                                    $roleQuery->whereNotIn('role', ['Editor Promotion', 'Editor Promosi', 'Promotion Editor']);
+                                    $roleQuery->whereNotIn('role', ['Editor Promotion', 'Editor Promosi', 'Promotion Editor', 'Promotion', 'Promosi']);
                                 });
+                        })
+                        ->orWhere(function ($sub) {
+                            // NEW: Allow all Promotion/Editor Promotion users to see works in 'planning' status
+                            // This ensures auto-created sharing tasks (assigned to first user) are visible to the whole team until accepted.
+                            $sub->where('status', 'planning');
                         });
                 });
 
@@ -98,7 +105,8 @@ class EditorPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
+            $isAuthorized = MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion') || MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion');
+            if (!$user || !$isAuthorized) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -409,7 +417,8 @@ class EditorPromosiController extends Controller
                 ], 401);
             }
 
-            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
+            $isAuthorized = MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion') || MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion');
+            if (!$user || !$isAuthorized) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -494,9 +503,10 @@ class EditorPromosiController extends Controller
         try {
             $user = Auth::user();
             $role = strtolower($user->role ?? '');
-            $allowedRoles = ['editor promotion', 'editor promosi', 'promotion editor'];
+            $allowedRoles = ['editor promotion', 'editor promosi', 'promotion editor', 'promotion', 'promosi'];
 
-            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
+            $isAuthorized = MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion') || MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion');
+            if (!$user || !$isAuthorized) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -690,7 +700,8 @@ class EditorPromosiController extends Controller
         try {
             $user = Auth::user();
 
-            if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion')) {
+            $isAuthorized = MusicProgramAuthorization::canUserPerformTask($user, null, 'Editor Promotion') || MusicProgramAuthorization::canUserPerformTask($user, null, 'Promotion');
+            if (!$user || !$isAuthorized) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access.'
@@ -828,19 +839,19 @@ class EditorPromosiController extends Controller
 
             // Professional labels for QC items
             $materialLabels = [
-                'bts_video' => 'QC Video BTS',
-                'bts_photo' => 'QC Foto BTS',
-                'iklan_episode_tv' => 'QC Iklan Episode TV',
-                'advertisement_tv' => 'QC Iklan Episode TV',
-                'highlight_ig' => 'QC Highlight Episode IG',
-                'highlight_tv' => 'QC Highlight Episode TV',
-                'highlight_facebook' => 'QC Highlight Episode Face',
-                'highlight_face' => 'QC Highlight Episode Face',
-                'highlight_fb' => 'QC Highlight Episode Face',
-                'story_ig' => 'QC Highlight Story IG',
-                'reels_facebook' => 'QC Highlight Reels FB',
-                'tiktok' => 'QC TikTok Content',
-                'website_content' => 'QC Website Content'
+                'bts_video' => 'Video BTS',
+                'bts_photo' => 'Foto BTS',
+                'iklan_episode_tv' => 'Iklan Episode TV',
+                'advertisement_tv' => 'Iklan Episode TV',
+                'highlight_ig' => 'Highlight Episode IG',
+                'highlight_tv' => 'Highlight Episode TV',
+                'highlight_facebook' => 'Highlight Episode Face',
+                'highlight_face' => 'Highlight Episode Face',
+                'highlight_fb' => 'Highlight Episode Face',
+                'story_ig' => 'Highlight Story IG',
+                'reels_facebook' => 'Highlight Reels FB',
+                'tiktok' => 'TikTok Content',
+                'website_content' => 'Website Content'
             ];
 
             // Get all works for this episode to ensure we don't miss anything that was already submitted or is ready
@@ -848,11 +859,15 @@ class EditorPromosiController extends Controller
                 ->whereIn('status', ['editing', 'review', 'completed', 'approved', 'published'])
                 ->get();
 
-            // Prepare file locations from ALL works
-            $fileLocations = [];
+            // Prepare file locations from ALL works with prioritization
+            $groupedLocations = [];
             $seenUrls = [];
 
             foreach ($allWorks as $w) {
+                // Identity the role of the creator
+                $userRole = $w->createdBy->role ?? '';
+                $isFromEditor = in_array($userRole, ['Editor Promotion', 'Editor Promosi', 'Promotion Editor']);
+
                 // 1. Process file_paths (Physical files)
                 if (is_array($w->file_paths)) {
                     foreach ($w->file_paths as $key => $value) {
@@ -860,58 +875,77 @@ class EditorPromosiController extends Controller
                             continue;
                         }
 
-                        if (in_array($value, $seenUrls)) continue;
-                        $seenUrls[] = $value;
+                        $uniqueUrlKey = $value . '_' . $key;
+                        if (in_array($uniqueUrlKey, $seenUrls)) continue;
+                        $seenUrls[] = $uniqueUrlKey;
 
-                        $fileLocations[] = [
+                        $label = $materialLabels[$key] ?? str_replace(['_', '-'], ' ', ucwords($key));
+                        $label = str_replace('QC ', '', $label); // Strip any existing redundant QC prefix
+                        $sourcePrefix = $isFromEditor ? 'Final: ' : 'Source: ';
+
+                        $location = [
                             'promotion_work_id' => $w->id,
                             'file_path' => $value,
-                            'file_name' => $materialLabels[$key] ?? str_replace(['_', '-'], ' ', ucwords($key)),
+                            'file_name' => $sourcePrefix . $label,
                             'work_type' => $key,
-                            'source' => 'editor_promosi',
+                            'source' => $isFromEditor ? 'editor_promosi' : 'shooting_team',
                             'is_link' => false,
                             'submitted_at' => now()->toDateTimeString()
                         ];
+
+                        // Prioritization: Editor version replaces Shooting version for the same type in the checklist
+                        if ($isFromEditor || !isset($groupedLocations[$key])) {
+                            $groupedLocations[$key] = $location;
+                        }
                     }
                 }
 
                 // 2. Process file_links (External links)
                 if (is_array($w->file_links) && !empty($w->file_links)) {
-                    // Determine if we have a list of objects or a single associative object
                     $isList = array_key_exists(0, $w->file_links);
                     $links = $isList ? $w->file_links : [$w->file_links];
 
                     foreach ($links as $link) {
-                        // Skip if not a valid link object
                         if (!is_array($link)) continue;
                         
                         $linkVal = $link['file_link'] ?? $link['url'] ?? null;
                         if (!$linkVal) continue;
 
-                        if (in_array($linkVal, $seenUrls)) continue;
-                        $seenUrls[] = $linkVal;
-
                         $typeKey = $link['type'] ?? $w->work_type;
-                        // Fallback to work_type if link type is 'other' or unknown
                         if ($typeKey === 'other' || !in_array($typeKey, $allowedKeys)) {
                             $typeKey = $w->work_type;
                         }
+
+                        $uniqueUrlKey = $linkVal . '_' . $typeKey;
+                        if (in_array($uniqueUrlKey, $seenUrls)) continue;
+                        $seenUrls[] = $uniqueUrlKey;
                         
                         if (in_array($typeKey, $allowedKeys)) {
-                            $fileLocations[] = [
+                            $label = $materialLabels[$typeKey] ?? ($materialLabels[$w->work_type] ?? 'External File');
+                            $label = str_replace('QC ', '', $label);
+                            $sourcePrefix = $isFromEditor ? 'Final: ' : 'Source: ';
+
+                            $location = [
                                 'promotion_work_id' => $w->id,
                                 'file_link' => $linkVal,
                                 'file_path' => $linkVal,
-                                'file_name' => $materialLabels[$typeKey] ?? ($materialLabels[$w->work_type] ?? 'QC External File'),
+                                'file_name' => $sourcePrefix . $label,
                                 'work_type' => $typeKey,
-                                'source' => 'editor_promosi',
+                                'source' => $isFromEditor ? 'editor_promosi' : 'shooting_team',
                                 'is_link' => true,
                                 'submitted_at' => now()->toDateTimeString()
                             ];
+
+                            // Prioritization
+                            if ($isFromEditor || !isset($groupedLocations[$typeKey])) {
+                                $groupedLocations[$typeKey] = $location;
+                            }
                         }
                     }
                 }
             }
+
+            $fileLocations = array_values($groupedLocations);
 
             if (empty($fileLocations)) {
                 return response()->json([
@@ -957,9 +991,12 @@ class EditorPromosiController extends Controller
                 }
             } else {
                 // Update existing QC work with latest editor promosi files (All materials for the episode)
+                // Update existing QC work with latest editor promosi files (All materials for the episode)
                 $existingQCWork->update([
                     'editor_promosi_file_locations' => $fileLocations,
                     'files_to_check' => $fileLocations,
+                    'qc_checklist' => null, // Clear old checklist to force a fresh review
+                    'quality_score' => 0, // Reset score
                     'status' => 'pending' // Reset to pending for re-review
                 ]);
 

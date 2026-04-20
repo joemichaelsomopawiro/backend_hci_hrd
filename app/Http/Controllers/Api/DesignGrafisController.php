@@ -1089,7 +1089,7 @@ class DesignGrafisController extends Controller
                         'files_to_check' => $designFiles,
                         'design_grafis_file_locations' => $designFiles,
                         'status' => 'pending',
-                        'created_by' => $qcUsers->first()->id
+                        'created_by' => $user->id
                     ]);
 
                     // Notify QC users and related managers
@@ -1272,108 +1272,155 @@ class DesignGrafisController extends Controller
      */
     private function getSourceFiles(int $episodeId): array
     {
-        $sourceFiles = [
-            'produksi_files' => [],
-            'promosi_files' => [],
-            'fetched_at' => now()->toDateTimeString()
-        ];
+        $cacheKey = 'design_grafis_source_files_' . $episodeId;
+        return QueryOptimizer::rememberBasic($cacheKey, 5, function () use ($episodeId) { // Short TTL for testing sync
+            $sourceFiles = [
+                'produksi_files' => [],
+                'promosi_files' => [],
+                'fetched_at' => now()->toDateTimeString()
+            ];
 
-        // Get files from Produksi
-        $produksiWork = ProduksiWork::where('episode_id', $episodeId)
-            ->whereIn('status', ['in_progress', 'completed'])
-            ->first();
+            // Get files from Produksi - load runSheet relation
+            $produksiWork = ProduksiWork::with('runSheet')->where('episode_id', $episodeId)
+                // Relax status check: materials might be available even if still in progress
+                ->whereIn('status', ['pending', 'pending_production', 'in_progress', 'completed', 'waiting'])
+                ->first();
 
-        if ($produksiWork && (!empty($produksiWork->shooting_files) || !empty($produksiWork->shooting_file_links))) {
-            $links = $produksiWork->shooting_file_links;
-            if (is_string($links)) {
-                $links = explode(',', $links);
+            if ($produksiWork) {
+                $links = $produksiWork->shooting_file_links;
+                if (is_string($links)) {
+                    $links = explode(',', $links);
+                }
+
+                // Ensure we return an array of objects for the frontend
+                $formattedLinks = [];
+                if (is_array($links)) {
+                    foreach ($links as $link) {
+                        if (is_string($link)) {
+                            $formattedLinks[] = [
+                                'url' => $link,
+                                'label' => 'Shooting Result',
+                                'type' => 'video'
+                            ];
+                        } else {
+                            $formattedLinks[] = $link;
+                        }
+                    }
+                }
+
+                $sourceFiles['produksi_files'] = [
+                    'produksi_work_id' => $produksiWork->id,
+                    'files' => $produksiWork->shooting_files,
+                    'file_links' => $formattedLinks,
+                    'run_sheet_link' => $produksiWork->runSheet?->run_sheet_link, // New: Include run sheet link
+                    'run_sheet_id' => $produksiWork->run_sheet_id,
+                    'status' => $produksiWork->status,
+                    'available' => true
+                ];
+            } else {
+                $sourceFiles['produksi_files'] = [
+                    'available' => false,
+                    'message' => 'Production files not available yet'
+                ];
             }
 
-            // Ensure we return an array of objects for the frontend
-            $formattedLinks = [];
-            if (is_array($links)) {
-                foreach ($links as $link) {
-                    if (is_string($link)) {
-                        $formattedLinks[] = [
-                            'url' => $link,
-                            'label' => 'Shooting Result',
-                            'type' => 'video'
-                        ];
+            // Get unique files from Promosi across all associated promotion works
+            $promotionWorks = PromotionWork::where('episode_id', $episodeId)
+                ->whereIn('status', ['editing', 'review', 'approved', 'published', 'completed'])
+                ->get();
+
+            $talentPhotos = [];
+            $btsVideos = [];
+            $uniqueUrls = []; // Track unique URLs to prevent spamming
+
+            foreach ($promotionWorks as $work) {
+                // Normalize allLinks to handle associative or sequential arrays
+                $fileLinks = $work->file_links ?? [];
+                if (!is_array($fileLinks)) {
+                    $fileLinks = [];
+                }
+                // Flatten nested structure if it exists (some versions of the app use this)
+                if (isset($fileLinks['talent_photo_links']) || isset($fileLinks['bts_file_links'])) {
+                    $fileLinks = array_merge(
+                        is_array($fileLinks['talent_photo_links'] ?? null) ? $fileLinks['talent_photo_links'] : [],
+                        is_array($fileLinks['bts_file_links'] ?? null) ? $fileLinks['bts_file_links'] : []
+                    );
+                }
+                
+                $filePaths = $work->file_paths ?? [];
+                if (!is_array($filePaths)) {
+                    $filePaths = [];
+                }
+
+                $allLinks = array_merge($fileLinks, $filePaths);
+                
+                // Add legacy fallbacks if present
+                if ($work->bts_video_link) $allLinks[] = ['file_link' => $work->bts_video_link, 'type' => 'bts_video', 'source' => 'legacy'];
+                if ($work->bts_video_path) $allLinks[] = ['file_path' => $work->bts_video_path, 'type' => 'bts_video', 'source' => 'legacy'];
+
+                foreach ($allLinks as $item) {
+                    if (!is_array($item)) {
+                        // Filter out timestamps or non-URL strings
+                        if (is_string($item) && (str_starts_with($item, 'http') || str_contains($item, '/'))) {
+                            $item = ['file_link' => $item, 'type' => 'promotion_link'];
+                        } else {
+                            continue; // Skip invalid links (timestamps, etc.)
+                        }
+                    }
+
+                    // Standardize the URL - prioritize absolute URLs, then storage paths
+                    $url = $item['file_link'] ?? $item['url'] ?? null;
+                    if (!$url && isset($item['file_path'])) {
+                        $url = asset('storage/' . $item['file_path']);
+                    }
+
+                    if (!$url || isset($uniqueUrls[$url])) continue;
+                    
+                    // CRITICAL FILTER: Skip if it looks like a timestamp (e.g. 2026-04-20...)
+                    if (is_string($url) && preg_match('/^\d{4}-\d{2}-\d{2}/', $url)) {
+                        continue;
+                    }
+
+                    // Final safety check: if it doesn't look like a valid link/path, skip
+                    if (!str_starts_with($url, 'http') && !str_starts_with($url, '/') && !str_starts_with($url, 'storage/')) {
+                        continue;
+                    }
+
+                    $uniqueUrls[$url] = true;
+                    $type = $item['type'] ?? 'other';
+
+                    // Create a clean item for frontend
+                    $normalizedItem = [
+                        'url' => $url,
+                        'label' => $item['label'] ?? $item['original_name'] ?? ($type === 'talent_photo' ? 'Talent Photo' : 'Material'),
+                        'type' => $type
+                    ];
+
+                    if ($type === 'talent_photo') {
+                        $talentPhotos[] = $normalizedItem;
+                    } elseif ($type === 'bts_video') {
+                        $btsVideos[] = $normalizedItem;
                     } else {
-                        $formattedLinks[] = $link;
+                        $talentPhotos[] = $normalizedItem;
                     }
                 }
             }
 
-            $sourceFiles['produksi_files'] = [
-                'produksi_work_id' => $produksiWork->id,
-                'files' => $produksiWork->shooting_files,
-                'file_links' => $formattedLinks,
-                'status' => $produksiWork->status,
-                'available' => true
-            ];
-        } else {
-            $sourceFiles['produksi_files'] = [
-                'available' => false,
-                'message' => 'Production files not available yet'
-            ];
-        }
-
-        // Get unique files from Promosi across all associated promotion works
-        $promotionWorks = PromotionWork::where('episode_id', $episodeId)
-            ->whereIn('status', ['editing', 'review', 'approved', 'published', 'completed'])
-            ->get();
-
-        $talentPhotos = [];
-        $btsVideos = [];
-        $uniqueUrls = []; // Track unique URLs to prevent spamming
-
-        foreach ($promotionWorks as $work) {
-            // Merge all potential links (file_links, file_paths, legacy links)
-            $allLinks = array_merge(
-                $work->file_links ?? [],
-                $work->file_paths ?? []
-            );
-            
-            // Add legacy fallbacks if present
-            if ($work->bts_video_link) $allLinks[] = ['file_link' => $work->bts_video_link, 'type' => 'bts_video', 'source' => 'legacy'];
-            if ($work->bts_video_path) $allLinks[] = ['file_path' => $work->bts_video_path, 'type' => 'bts_video', 'source' => 'legacy'];
-
-            foreach ($allLinks as $item) {
-                if (!is_array($item)) {
-                    $item = ['file_link' => $item, 'type' => 'promotion_link'];
-                }
-
-                $url = $item['file_link'] ?? $item['file_path'] ?? $item['url'] ?? null;
-                if (!$url || isset($uniqueUrls[$url])) continue;
-                
-                $uniqueUrls[$url] = true;
-                $type = $item['type'] ?? 'other';
-                
-                if ($type === 'talent_photo') {
-                    $talentPhotos[] = $item;
-                } elseif ($type === 'bts_video') {
-                    $btsVideos[] = $item;
-                } else {
-                    $talentPhotos[] = array_merge(['type' => 'other_promotion_file'], $item);
-                }
+            if (!empty($talentPhotos) || !empty($btsVideos)) {
+                $sourceFiles['promosi_files'] = [
+                    'talent_photos' => $talentPhotos,
+                    'bts_videos' => $btsVideos,
+                    'available' => true
+                ];
+            } else {
+                $sourceFiles['promosi_files'] = [
+                    'available' => false,
+                    'message' => 'Promotion materials (photos/BTS) not available yet'
+                ];
             }
-        }
 
-        if (!empty($talentPhotos) || !empty($btsVideos)) {
-            $sourceFiles['promosi_files'] = [
-                'talent_photos' => $talentPhotos,
-                'bts_videos' => $btsVideos,
-                'available' => true
-            ];
-        } else {
-            $sourceFiles['promosi_files'] = [
-                'available' => false,
-                'message' => 'Promotion materials (photos/BTS) not available yet'
-            ];
-        }
-
-        return $sourceFiles;
+            return $sourceFiles;
+        });
     }
 
     /**
@@ -1480,7 +1527,7 @@ class DesignGrafisController extends Controller
             'thumbnail_bts' => 'thumbnail_bts',
             'graphics_ig' => 'highlight_ig',
             'graphics_facebook' => 'highlight_facebook',
-            'poster' => 'thumbnail_bts' // Fallback for poster as thumbnail_bts since poster is not in QC enum yet
+            'poster' => 'poster'
         ];
 
         if (isset($qcTypeMap[$work->work_type])) {
@@ -1502,7 +1549,7 @@ class DesignGrafisController extends Controller
                     'files_to_check' => $this->prepareFilesToCheck($work),
                     'design_grafis_file_locations' => $this->prepareFilesToCheck($work) ?: [],
                     'status' => 'pending',
-                    'created_by' => $qcUsers->isNotEmpty() ? $qcUsers->first()->id : $user->id
+                    'created_by' => $user->id
                 ]);
 
                 // Notify QC

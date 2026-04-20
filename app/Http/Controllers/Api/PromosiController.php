@@ -76,9 +76,16 @@ class PromosiController extends Controller
                     }
                 }
                 
-                // Prioritize works with episodes. Filter by program category can be added here if needed
-                // but we keep it broad for now to ensure visibility.
+                // Prioritize works with episodes. 
                 $query->whereHas('episode');
+
+                // Filter work_type: allow all promotion-related tasks
+                // This includes shooting (BTS), sharing (Social Media), and editing (Highlights)
+                $allSharingTypes = ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook', 'whatsapp_story'];
+                $allEditorTypes = ['highlight_ig', 'highlight_facebook', 'highlight_tv', 'iklan_episode_tv'];
+                $allTypes = array_merge(['bts_video', 'bts_photo'], $allSharingTypes, $allEditorTypes);
+                
+                $query->whereIn('work_type', $allTypes);
 
                 // Filter by episode
                 if ($request->has('episode_id')) {
@@ -450,13 +457,22 @@ class PromosiController extends Controller
             }
 
             $fileLinks = $work->file_links ?? [];
-            if (is_array($fileLinks) && isset($fileLinks['bts_file_links'])) {
+            if (!is_array($fileLinks)) {
+                $fileLinks = json_decode(is_string($fileLinks) ? $fileLinks : '[]', true) ?: [];
+            }
+            
+            // Migrate nested structure to flat array if needed
+            if (isset($fileLinks['bts_file_links']) || isset($fileLinks['talent_photo_links'])) {
                 $fileLinks = array_merge(
-                    array_filter($fileLinks['bts_file_links'] ?? [], fn($item) => is_array($item)),
-                    array_filter($fileLinks['talent_photo_links'] ?? [], fn($item) => is_array($item))
+                    is_array($fileLinks['bts_file_links'] ?? null) ? $fileLinks['bts_file_links'] : [],
+                    is_array($fileLinks['talent_photo_links'] ?? null) ? $fileLinks['talent_photo_links'] : []
                 );
             }
-            $fileLinks = is_array($fileLinks) ? array_values(array_filter($fileLinks, fn($item) => is_array($item) && (($item['type'] ?? '') !== 'bts_video'))) : [];
+            
+            // Keep existing bts_video links (unless we want to replace, but usually additive is safer or just replace for main BTS)
+            // For BTS video, usually there's only one. But we ensure it's an array for consistency.
+            $fileLinks = array_values(array_filter($fileLinks, fn($item) => is_array($item)));
+            
             $fileLinks[] = [
                 'type' => 'bts_video',
                 'file_link' => $request->file_link,
@@ -518,30 +534,45 @@ class PromosiController extends Controller
             if (!is_array($fileLinks)) {
                 $fileLinks = json_decode(is_string($fileLinks) ? $fileLinks : '[]', true) ?: [];
             }
-            if (is_array($fileLinks) && isset($fileLinks['bts_file_links'])) {
+            
+            // Migrate nested structure if needed
+            if (isset($fileLinks['bts_file_links']) || isset($fileLinks['talent_photo_links'])) {
                 $fileLinks = array_merge(
-                    array_filter($fileLinks['bts_file_links'] ?? [], fn($item) => is_array($item)),
-                    array_filter($fileLinks['talent_photo_links'] ?? [], fn($item) => is_array($item))
+                    is_array($fileLinks['bts_file_links'] ?? null) ? $fileLinks['bts_file_links'] : [],
+                    is_array($fileLinks['talent_photo_links'] ?? null) ? $fileLinks['talent_photo_links'] : []
                 );
             }
-            $fileLinks = is_array($fileLinks) ? array_values(array_filter($fileLinks, fn($item) => is_array($item) && (($item['type'] ?? '') !== 'talent_photo'))) : [];
+            
+            // Standardize as sequential array of objects
+            $fileLinks = array_values(array_filter($fileLinks, fn($item) => is_array($item)));
 
             if ($request->has('file_links')) {
                 foreach ($request->file_links as $link) {
-                    $fileLinks[] = [
-                        'type' => 'talent_photo',
-                        'file_link' => $link,
-                        'uploaded_at' => now()->toDateTimeString(),
-                        'uploaded_by' => $user->id
-                    ];
+                    // Check if link already exists to avoid duplicates
+                    $exists = false;
+                    foreach ($fileLinks as $existing) {
+                        if (isset($existing['file_link']) && $existing['file_link'] === $link) {
+                            $exists = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!$exists) {
+                        $fileLinks[] = [
+                            'type' => 'talent_photo',
+                            'file_link' => $link,
+                            'uploaded_at' => now()->toDateTimeString(),
+                            'uploaded_by' => $user->id
+                        ];
+                    }
                 }
             }
 
             $filePaths = $work->file_paths ?? [];
             if (!is_array($filePaths)) {
-                $filePaths = json_decode($filePaths, true) ?: [];
+                $filePaths = json_decode(is_string($filePaths) ? $filePaths : '[]', true) ?: [];
             }
-            $filePaths = array_filter($filePaths, fn($item) => ($item['type'] ?? '') !== 'talent_photo');
+            $filePaths = array_values(array_filter($filePaths, fn($item) => is_array($item)));
 
             if ($request->hasFile('file_paths')) {
                 foreach ($request->file('file_paths') as $uploaded) {
@@ -704,13 +735,14 @@ class PromosiController extends Controller
             }
 
             if ($work->status === 'shooting') {
-                if ($isBTSWork && (!$hasBTSVideo || !$hasTalentPhotos)) {
+                // BTS video is required; talent photos are optional (can be uploaded later)
+                if ($isBTSWork && !$hasBTSVideo && !$hasAnyFile) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Please upload both BTS video and talent photos before completing work.',
+                        'message' => 'Please upload at least the BTS video link before completing work.',
                         'missing' => [
                             'bts_video' => !$hasBTSVideo,
-                            'talent_photos' => !$hasTalentPhotos
+                            'talent_photos' => !$hasTalentPhotos // informational
                         ]
                     ], 400);
                 }
@@ -1730,7 +1762,7 @@ class PromosiController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'proof_link' => 'required|string', // URL printscreen
+                'proof_link' => 'nullable|string', // URL printscreen (optional)
                 'notes' => 'nullable|string'
             ]);
 

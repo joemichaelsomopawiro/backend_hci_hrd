@@ -1178,7 +1178,7 @@ class BroadcastingController extends Controller
                     [
                         'title' => "Share Link Website ke Facebook - Episode {$episode->episode_number}",
                         'description' => "Share link website Episode {$episode->episode_number} ke Facebook. YouTube URL dan Website URL sudah tersedia.",
-                        'status' => 'planning',
+                        'status' => 'shooting',
                         'created_by' => $promosiUsers->first()->id,
                         'social_media_links' => [
                             'youtube_url' => $work->youtube_url,
@@ -1197,7 +1197,7 @@ class BroadcastingController extends Controller
                     [
                         'title' => "Share ke Grup Promosi WA - Episode {$episode->episode_number}",
                         'description' => "Share link Episode {$episode->episode_number} ke grup Promosi WA. YouTube URL dan Website URL sudah tersedia.",
-                        'status' => 'planning',
+                        'status' => 'shooting',
                         'created_by' => $promosiUsers->first()->id,
                         'social_media_links' => [
                             'youtube_url' => $work->youtube_url,
@@ -1216,7 +1216,7 @@ class BroadcastingController extends Controller
                     [
                         'title' => "Story IG - Episode {$episode->episode_number}",
                         'description' => "Buat Story IG untuk Episode {$episode->episode_number}. YouTube URL sudah tersedia.",
-                        'status' => 'planning',
+                        'status' => 'shooting',
                         'created_by' => $promosiUsers->first()->id,
                         'social_media_links' => []
                     ]
@@ -1231,30 +1231,15 @@ class BroadcastingController extends Controller
                     [
                         'title' => "Reels Facebook - Episode {$episode->episode_number}",
                         'description' => "Buat Reels Facebook untuk Episode {$episode->episode_number}. YouTube URL sudah tersedia.",
-                        'status' => 'planning',
+                        'status' => 'shooting',
                         'created_by' => $promosiUsers->first()->id,
                         'social_media_links' => []
                     ]
                 );
 
-                // Ensure WhatsApp Story exists
-                \App\Models\PromotionWork::firstOrCreate(
-                    [
-                        'episode_id' => $episode->id,
-                        'work_type' => 'whatsapp_story'
-                    ],
-                    [
-                        'title' => "WhatsApp Story - Episode {$episode->episode_number}",
-                        'description' => "Buat WhatsApp Story untuk Episode {$episode->episode_number}. YouTube URL sudah tersedia.",
-                        'status' => 'planning',
-                        'created_by' => $promosiUsers->first()->id,
-                        'social_media_links' => []
-                    ]
-                );
-
-                // Update ALL Promosi works (Story IG, Reels FB, Share FB, Share WA, WA Story) with latest links
+                // Update ALL Promosi works (Story IG, Reels FB, Share FB, Share WA) with latest links
                 \App\Models\PromotionWork::where('episode_id', $episode->id)
-                    ->whereIn('work_type', ['story_ig', 'reels_facebook', 'share_facebook', 'share_wa_group', 'whatsapp_story'])
+                    ->whereIn('work_type', ['story_ig', 'reels_facebook', 'share_facebook', 'share_wa_group'])
                     ->get()
                     ->each(function($promoWork) use ($work) {
                         $socialLinks = $promoWork->social_media_links ?? [];

@@ -998,10 +998,16 @@ class KpiService
         $isEditorPromotion = str_contains($normUserRole, 'editor');
         
         if (!$isPromotionRole) {
-            $promotionWorksQuery->where('created_by', $userId);
+            $promotionWorksQuery->where(function($q) use ($userId) {
+                $q->where('created_by', $userId)
+                  ->orWhereHas('episode.program.productionTeam.members', fn($sq) => $sq->where('user_id', $userId));
+            });
         } else {
-            // Even if promotion role, only discover if they are the creator or assigned
-            $promotionWorksQuery->where('created_by', $userId);
+            // Broad Discovery: Promotion staff can see all relevant promotion tasks 
+            // for programs they are authorized to manage (in this category)
+            $promotionWorksQuery->whereHas('episode.program', function($pq) {
+                $pq->where('category', 'musik');
+            });
         }
 
         $promotionWorks = $promotionWorksQuery->where(function($q) use ($year, $month) {
@@ -1010,34 +1016,72 @@ class KpiService
                       ->when($month, fn($mq) => $mq->whereMonth('air_date', $month))
                       ->orWhereYear('production_date', $year)
                       ->when($month, fn($mq) => $mq->whereMonth('production_date', $month));
-                })->orWhere(function($aq) use ($year, $month) {
+                })->orWhereYear('shooting_date', $year)
+                  ->orWhere(function($aq) use ($year, $month) {
                     $aq->whereYear('updated_at', $year)
                        ->when($month, fn($mq) => $mq->whereMonth('updated_at', $month));
                 });
             })->get();
 
+        $userRoleLower = strtolower($user->role ?? '');
+        $isUserEditor = strpos($userRoleLower, 'editor') !== false;
+        $isUserPromotion = strpos($userRoleLower, 'promotion') !== false || strpos($userRoleLower, 'promosi') !== false;
+
         foreach ($promotionWorks as $pw) {
             $episodeScan[$pw->episode_id]['promotion_work_list'][] = $pw;
             
-            // Discovery based on work_type
-            $isEditorType = in_array($pw->work_type, ['bts_video', 'highlight_ig', 'highlight_facebook', 'highlight_tv', 'iklan_episode_tv']);
-            $roleKey = $isEditorType ? 'editor_promosi' : 'promotion';
+            // Discovery based on work_type & user role:
+            // - bts_video/bts_photo → promotion_shooting (for Promotion user doing BTS shooting)
+            // - highlight/editor works → editor_promosi (for Editor Promotion user)
+            // - share_*/whatsapp_story → promotion (social media sharing)
+            $isSharingWork = str_starts_with($pw->work_type ?? '', 'share_');
+            $isBtsWork = in_array($pw->work_type, ['bts_video', 'bts_photo']);
+            $isEditorOnlyWork = in_array($pw->work_type, ['highlight_ig', 'highlight_facebook', 'highlight_tv', 'iklan_episode_tv']);
+
+            // STRICT ROLE SEPARATION:
+            // Pure Promotion user (not Editor) → BTS = promotion_shooting, Sharing = promotion
+            // Editor Promotion user → bts/highlight = editor_promosi
+            if ($isUserPromotion && !$isUserEditor) {
+                if ($isBtsWork) {
+                    $roleKey = 'promotion_shooting';
+                } elseif ($isSharingWork) {
+                    $roleKey = 'promotion';
+                } else {
+                    continue; // Editor-only work types skipped for pure Promotion user
+                }
+            } elseif ($isUserEditor) {
+                if ($isSharingWork) {
+                    $roleKey = 'promotion';
+                } else {
+                    $roleKey = 'editor_promosi'; // bts_video, highlight, etc.
+                }
+            } elseif ($pw->created_by == $userId) {
+                // Fallback: creator
+                $roleKey = $isSharingWork ? 'promotion' : ($isBtsWork ? 'promotion_shooting' : 'editor_promosi');
+            } else {
+                continue;
+            }
             
             // Only add discovered role once per episode
             $alreadyAdded = collect($episodeScan[$pw->episode_id]['discovered_roles'] ?? [])->contains('role', $roleKey);
             if (!$alreadyAdded) {
-                if ($isEditorType) {
-                    $deadline = $pw->episode?->air_date ? $pw->episode->air_date->copy()->subDays(6) : now();
-                    $episodeScan[$pw->episode_id]['discovered_roles'][] = (object)[
-                        'role' => 'editor_promosi',
-                        'deadline' => $deadline
-                    ];
+                // DEADLINE logic per role requirement:
+                // promotion_shooting → shooting_date (from PromotionWork record)
+                // promotion (sharing) → air_date
+                // editor_promosi → shooting_date
+                if ($roleKey === 'promotion') {
+                    $dl = $pw->episode?->air_date ?? now();
+                } elseif ($roleKey === 'promotion_shooting') {
+                    $dl = $pw->shooting_date ?? $pw->episode?->production_date ?? ($pw->episode?->air_date ? $pw->episode->air_date->copy()->subDays(8) : now());
                 } else {
-                    $episodeScan[$pw->episode_id]['discovered_roles'][] = (object)[
-                        'role' => 'promotion',
-                        'deadline' => $pw->episode?->air_date ?? now()
-                    ];
+                    // editor_promosi: shooting_date
+                    $dl = $pw->shooting_date ?? $pw->episode?->production_date ?? ($pw->episode?->air_date ? $pw->episode->air_date->copy()->subDays(6) : now());
                 }
+                
+                $episodeScan[$pw->episode_id]['discovered_roles'][] = (object)[
+                    'role' => $roleKey,
+                    'deadline' => $dl
+                ];
             }
         }
 
@@ -1330,12 +1374,19 @@ class KpiService
                 'editor_promosi' => 6,
                 'design_grafis' => 5,
                 'promotion' => 0,
-                'quality_control' => 6,
-                'promotion_shooting' => 8
+                'promotion_shooting' => 8,
+                'promosi' => 0,
+                'promosi_syuting' => 8
             ];
             
             foreach ($musicRoleMap as $mRole => $daysBefore) {
-                if ($normUserRole === $mRole && !collect($rolesToProcess)->contains('role', $mRole)) {
+                // Check for role match (case-insensitive and alias friendly)
+                $matchRole = ($normUserRole === $mRole) || 
+                             ($normUserRole === 'promotion' && $mRole === 'promotion_shooting') ||
+                             ($normUserRole === 'promotion_shooting' && $mRole === 'promotion') ||
+                             ($normUserRole === 'promosi' && ($mRole === 'promotion' || $mRole === 'promotion_shooting'));
+
+                if ($matchRole && !collect($rolesToProcess)->contains('role', $mRole)) {
                     // Check if this role was reassigned away for THIS episode
                     if (isset($reassignedAwayMap[$episodeId][$mRole])) {
                         continue; // Skip penalization, someone else is doing it
@@ -1354,9 +1405,22 @@ class KpiService
                     if ($mRole === 'quality_control') $roleHasWorkRecord = isset($data['qc_work']);
 
                     if ($hasActivity || $roleHasWorkRecord) {
+                        // FOR DEADLINE: 
+                        // If role is editor_promosi, try to find shooting_date from the works list
+                        $finalDeadline = $episode->air_date ? $episode->air_date->copy()->subDays($daysBefore) : now();
+                        
+                        if ($mRole === 'editor_promosi' || $mRole === 'promotion_shooting') {
+                            foreach ($data['promotion_work_list'] as $work) {
+                                if (in_array($work->work_type, ['bts_video', 'bts_photo']) && !empty($work->shooting_date)) {
+                                    $finalDeadline = Carbon::parse($work->shooting_date);
+                                    break;
+                                }
+                            }
+                        }
+
                         $rolesToProcess[] = (object)[
                             'role' => $mRole, 
-                            'deadline' => $episode->air_date ? $episode->air_date->copy()->subDays($daysBefore) : now()
+                            'deadline' => $finalDeadline
                         ];
                     }
                 }
@@ -1606,10 +1670,10 @@ class KpiService
                         $completedAt = $work->status === 'approved' ? $work->reviewed_at : $work->updated_at;
                     }
                 } elseif ($roleKey === 'editor_promosi') {
-                    // Combine EditorPromosiWork AND PromotionWorks of editor types
+                    // MATERI PROMOSI logic: BTS & Photos
                     $works = array_merge(
                         $data['editor_promosi_list'] ?? [], 
-                        collect($data['promotion_work_list'] ?? [])->filter(fn($p) => in_array($p->work_type, ['bts_video', 'highlight_ig', 'highlight_facebook', 'highlight_tv', 'iklan_episode_tv']))->all()
+                        collect($data['promotion_work_list'] ?? [])->filter(fn($p) => !$p->work_type || in_array($p->work_type, ['bts_video', 'highlight_ig', 'highlight_facebook', 'highlight_tv', 'iklan_episode_tv']))->all()
                     );
                     
                     if (empty($works)) {
@@ -1621,23 +1685,43 @@ class KpiService
                     }
 
                     foreach ($works as $work) {
-                        $completed = in_array($work->status, ['submitted', 'approved', 'completed', 'pending_qc', 'published', 'review']) || !empty($work->file_link) || !empty($work->file_path) || (!empty($work->file_paths) && count($work->file_paths) > 0) || (!empty($work->file_links) && count($work->file_links) > 0);
+                        $lowStatus = strtolower($work->status ?? '');
+                        
+                        // Handle both English and Indonesian status strings from database
+                        $doneStatuses = [
+                            'submitted', 'approved', 'completed', 'pending_qc', 'published', 'review',
+                            'disetujui', 'disetuju', 'selesai', 'tayang', 'sudah qc', 'siap'
+                        ];
+
+                        // Check for ANY evidence of work: status, singular links, or PLURAL links (the real column)
+                        $hasFiles = !empty($work->file_link) || !empty($work->file_path) || 
+                                    !empty($work->file_links) || !empty($work->file_paths) || 
+                                    !empty($work->content_plan);
+                                    
+                        $completed = in_array($lowStatus, $doneStatuses) || $hasFiles;
+                        
                         if ($completed) {
                             $isCompleted = true;
                             // Take the earliest completion time for the episode record
-                            $cTime = $work->status === 'approved' ? $work->reviewed_at : $work->updated_at;
+                            $cTime = (in_array($lowStatus, ['approved', 'disetujui']) && $work->reviewed_at) ? $work->reviewed_at : $work->updated_at;
                             if (!$completedAt || (Carbon::parse($cTime)->lt(Carbon::parse($completedAt)))) {
                                 $completedAt = $cTime;
                             }
                         }
                     }
                 } elseif ($roleKey === 'promotion') {
-                    $works = $data['promotion_work_list'] ?? [];
+                    // SHARE KONTEN logic: Social Media sharing
+                    $sharingTypes = ['share_facebook', 'share_wa_group', 'story_ig', 'reels_facebook'];
+                    $works = collect($data['promotion_work_list'] ?? [])->filter(fn($p) => in_array($p->work_type, $sharingTypes))->all();
+                    
                     if (!empty($works)) {
                         $allTasksDone = true;
                         $latestTime = null;
+                        $doneStatuses = ['published', 'completed', 'approved', 'disetujui', 'selesai', 'tayang', 'done'];
+                        
                         foreach ($works as $work) {
-                            $isTaskDone = ($work->status === 'published' || $work->status === 'completed' || !empty($work->social_media_links) || !empty($work->social_media_proof));
+                            $lowStatus = strtolower($work->status ?? '');
+                            $isTaskDone = (in_array($lowStatus, $doneStatuses) || !empty($work->social_media_proof));
                             if (!$isTaskDone) {
                                 $allTasksDone = false;
                                 break;
@@ -1660,28 +1744,54 @@ class KpiService
                         $completedAt = $work->published_time ?? ($work->accepted_at ?? ($work->approved_at ?? $work->updated_at));
                     }
                 } elseif ($roleKey === 'promotion_shooting') {
-                    $work = $data['promotion_work'] ?? \App\Models\PromotionWork::where('episode_id', $episodeId)->first();
-                    if ($work) {
-                        // REFINED: For music promotion shooting (BTS/Photos), 
-                        // it is only completed if they have uploaded the files (links/paths not empty)
-                        $hasFiles = !empty($work->file_links) || !empty($work->file_paths);
-                        
-                        $isMusic = ($episode->program?->category === 'Music' || $episode->program?->category === 'Musik');
-                        
-                        if ($isMusic) {
-                            // Strictly require files for music promotion shooting to count as completed
-                            $isCompleted = $hasFiles;
-                        } else {
-                            // Status 'done' or 'published' counts as completed, or if still in progress/editing but files are uploaded
-                            $isCompleted = (in_array($work->status, ['published', 'done']) || (in_array($work->status, ['shooting', 'editing']) && $hasFiles));
+                    // Use promotion_work_list (plural) - Track M stores data in 'promotion_work_list'
+                    $promWorks = $data['promotion_work_list'] ?? [];
+                    // Find the first BTS-type work (bts_video or bts_photo)
+                    $work = null;
+                    foreach ($promWorks as $pw) {
+                        if (in_array($pw->work_type ?? '', ['bts_video', 'bts_photo'])) {
+                            $work = $pw;
+                            break;
                         }
-                        
+                    }
+                    if (!$work) {
+                        $work = \App\Models\PromotionWork::where('episode_id', $episodeId)
+                            ->whereIn('work_type', ['bts_video', 'bts_photo'])
+                            ->first();
+                    }
+                    if ($work) {
+                        // Completed when: BTS file/link exists (any), OR status is done/completed/published/editing/approved
+                        $fileLinks = is_array($work->file_links) ? $work->file_links : (json_decode($work->file_links ?? '[]', true) ?: []);
+                        $filePaths = is_array($work->file_paths) ? $work->file_paths : (json_decode($work->file_paths ?? '[]', true) ?: []);
+                        $allFiles = array_merge($fileLinks, $filePaths);
+                        $hasBTSFile = false;
+                        foreach ($allFiles as $f) {
+                            if (is_array($f) && ($f['type'] ?? '') === 'bts_video') {
+                                $hasBTSFile = true;
+                                break;
+                            }
+                        }
+                        $hasAnyFile = !empty($allFiles);
+                        $doneStatuses = ['editing', 'published', 'done', 'completed', 'approved', 'disetujui'];
+                        $isCompleted = $hasBTSFile || $hasAnyFile || in_array(strtolower($work->status ?? ''), $doneStatuses);
                         $completedAt = $work->updated_at;
                     }
-                } elseif ($roleKey === 'promotion') {
-                    $work = $data['promotion_work'] ?? \App\Models\PromotionWork::where('episode_id', $episodeId)->first();
+                } elseif ($roleKey === 'editor_promosi') {
+                    // EDITOR PROMOSI logic: Editing Highlights & BTS
+                    $promWorks = $data['promotion_work_list'] ?? [];
+                    // Find highlight/editor tasks
+                    $editorTypes = ['highlight_ig', 'highlight_facebook', 'highlight_tv', 'iklan_episode_tv', 'bts_video'];
+                    $work = null;
+                    foreach ($promWorks as $pw) {
+                        if (in_array($pw->work_type ?? '', $editorTypes)) {
+                            $work = $pw; // Take first matching editor task
+                            break;
+                        }
+                    }
                     if ($work) {
-                        $isCompleted = ($work->status === 'published' || !empty($work->social_media_proof));
+                        $lowStatus = strtolower($work->status ?? '');
+                        $doneStatuses = ['editing', 'published', 'done', 'completed', 'approved', 'disetujui'];
+                        $isCompleted = in_array($lowStatus, $doneStatuses);
                         $completedAt = $work->updated_at;
                     }
                 } elseif ($roleKey === 'quality_control') {
@@ -1714,13 +1824,66 @@ class KpiService
                     $pointsNotDone = -5;
                     
                     // Specific deadline rules for Music
-                    if (in_array($roleKey, ['promotion_shooting', 'production_crew'])) {
-                        // Use Production Date for Syuting/Crew
-                        if ($episode->production_date) {
-                            $deadlineDate = $episode->production_date;
+                    if ($roleKey === 'editor_promosi' || $roleKey === 'promotion_shooting' || $roleKey === 'production_crew') {
+                         // MATERI PROMOSI logic: Use Shooting/Production Schedule (Target: Apr 21)
+                         $shootingDate = null;
+                         
+                         // Priority 1: Use actual task shooting date from ANY promotion work
+                         if (!empty($data['promotion_work_list'])) {
+                             foreach ($data['promotion_work_list'] as $work) {
+                                  // For shooting roles, prioritize BTS-type tasks' shooting date
+                                  $isBtsType = in_array($work->work_type, ['bts_video', 'bts_photo']);
+                                  if ($isBtsType && !empty($work->shooting_date)) {
+                                      $shootingDate = $work->shooting_date;
+                                      break;
+                                  }
+                             }
+                         }
+                         
+                         // Priority 2: Try to find from Editor Promosi records if list exists
+                         if (empty($shootingDate) && !empty($data['editor_promosi_list'])) {
+                             foreach ($data['editor_promosi_list'] as $work) {
+                                  if (!empty($work->shooting_date)) {
+                                      $shootingDate = $work->shooting_date;
+                                      break;
+                                  }
+                             }
+                         }
+
+                         // Priority 3: Fallback ONLY if no task-specific date exists
+                         if (empty($shootingDate)) {
+                             $shootingDate = $episode->production_date;
+                         }
+
+                         if ($shootingDate) {
+                             $deadlineDate = Carbon::parse($shootingDate);
+                         } else if ($episode->air_date) {
+                             $deadlineDate = $episode->air_date->copy()->subDays(7);
+                         }
+                    } else if ($roleKey === 'promotion' || $roleKey === 'promosi') {
+                        // SHARE KONTEN logic: Follows Air Date (usually same day)
+                        $deadlineDate = $episode->air_date ?? now();
+                        
+                        // FIX: If there is a shooting date in April/later, don't let sharing deadline be Jan/Feb
+                        // This prevents early-year defaults from marking new tasks as "Failed"
+                        $candidateShootingDate = null;
+                        if (!empty($data['promotion_work_list'])) {
+                            foreach ($data['promotion_work_list'] as $work) {
+                                if (!empty($work->shooting_date)) {
+                                    $dt = Carbon::parse($work->shooting_date);
+                                    if (!$candidateShootingDate || $dt->gt($candidateShootingDate)) {
+                                        $candidateShootingDate = $dt;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if ($candidateShootingDate && $deadlineDate->lt($candidateShootingDate)) {
+                             // Set deadine to Air Date OR 7 days after shooting if air date is clearly wrong (before shooting)
+                             $deadlineDate = $candidateShootingDate->copy()->addDays(7);
                         }
                     } else if ($episode->air_date) {
-                        // Use Air Date minus offset (e.g. 6 days) for QC/Promosi/Design
+                        // Use Air Date minus offset (e.g. 1-6 days) for QC/Design/Editor/Broadcasting
                         $daysBefore = \App\Constants\WorkflowStep::getDeadlineDaysForRole($roleKey, 'musik');
                         $deadlineDate = $episode->air_date->copy()->subDays($daysBefore);
                     }
@@ -1789,6 +1952,19 @@ class KpiService
                         $waitingCount++;
                     }
                 }
+                // Music Modernization: Add Quality Points if available (from QC score)
+                $qualityPoints = 0;
+                if ($isMusicRole && !empty($data['qc_work'])) {
+                    $qc = $data['qc_work'];
+                    // Search for quality score - Usually stored in QualityControlWork
+                    if (isset($qc->quality_score) && $qc->quality_score > 0) {
+                        // Map 0-100 score to points (e.g. 80-100 = 2 pts, 60-79 = 1 pt)
+                        // OR if it's already a 1-5 scale, use it direct.
+                        // Based on business logic for Music, quality points are extra points.
+                        $qualityPoints = ($qc->quality_score > 5) ? round($qc->quality_score / 20) : $qc->quality_score;
+                    }
+                }
+
                 // Add to items
                 $items[] = [
                     'episode_id' => $episodeId,
@@ -1799,12 +1975,14 @@ class KpiService
                     'deadline' => $deadlineDate ? Carbon::parse($deadlineDate)->toIso8601String() : null,
                     'completed_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
                     'status' => $status,
-                    'points' => (float)$points,
-                    'max_points' => (int)$setting->points_on_time,
+                    'points' => (float)$points + $qualityPoints,
+                    'speed_points' => (float)$points,
+                    'quality_points' => (float)$qualityPoints,
+                    'max_points' => (int)$setting->points_on_time + 5, // 5 is max quality score
                     'program_type' => 'musik',
                 ];
-                $totalPoints += $points;
-                $maxPoints += $setting->points_on_time;
+                $totalPoints += ($points + $qualityPoints);
+                $maxPoints += ($setting->points_on_time + 5);
             }
         }
     }

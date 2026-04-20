@@ -58,12 +58,12 @@ class QualityControlController extends Controller
                 $category = $request->qc_category;
                 if ($category === 'video') {
                     $query->whereIn('qc_type', ['main_episode']);
-                } elseif ($category === 'design') {
-                    $query->whereIn('qc_type', ['thumbnail_yt', 'thumbnail_bts', 'graphics_ig', 'graphics_facebook']);
+                } else if ($category === 'design') {
+                    $query->whereIn('qc_type', ['thumbnail_yt', 'thumbnail_bts', 'graphics_ig', 'graphics_facebook', 'poster']);
                 } elseif ($category === 'promosi') {
                     $query->whereIn('qc_type', [
                         'bts_video', 'advertisement_tv', 'highlight_ig', 'highlight_facebook', 'highlight_tv',
-                        'thumbnail_yt', 'thumbnail_bts', 'website_content', 'tiktok', 'reels_facebook', 'promotion'
+                        'thumbnail_yt', 'thumbnail_bts', 'website_content', 'tiktok', 'reels_facebook', 'promotion', 'poster'
                     ]);
                 }
             }
@@ -454,8 +454,8 @@ class QualityControlController extends Controller
                 ->groupBy('qc_type')
                 ->pluck('count', 'qc_type');
 
-            $designTypes = ['thumbnail_yt', 'thumbnail_bts', 'graphics_ig', 'graphics_facebook'];
-            $promosiTypes = ['bts_video', 'advertisement_tv', 'highlight_ig', 'highlight_facebook', 'highlight_tv', 'thumbnail_yt', 'thumbnail_bts', 'website_content', 'tiktok', 'reels_facebook', 'promotion'];
+            $designTypes = ['thumbnail_yt', 'thumbnail_bts', 'graphics_ig', 'graphics_facebook', 'poster'];
+            $promosiTypes = ['bts_video', 'advertisement_tv', 'highlight_ig', 'highlight_facebook', 'highlight_tv', 'thumbnail_yt', 'thumbnail_bts', 'website_content', 'tiktok', 'reels_facebook', 'promotion', 'poster'];
             $videoTypes = ['main_episode'];
 
             $stats = [
@@ -1208,56 +1208,74 @@ class QualityControlController extends Controller
                 }, $work->editor_promosi_file_locations ?? []))));
             }
 
+            $broadcastingNotifications = [];
             foreach ($broadcastingUsers as $broadcastingUser) {
-                Notification::create([
+                $broadcastingNotifications[] = [
                     'user_id' => $broadcastingUser->id,
                     'type' => 'broadcasting_work_assigned',
                     'title' => 'Terima File materi dari QC (Manager Broadcasting) & Terima thumbnail dari QC Promosi',
                     'message' => $broadcastMessage,
                     'episode_id' => $work->episode_id,
-                    'data' => $broadcastData,
-                ]);
+                    'data' => json_encode($broadcastData),
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ];
+            }
+            if (!empty($broadcastingNotifications)) {
+                Notification::insert($broadcastingNotifications);
             }
         }
 
         // Notify Promosi – Terima Link YouTube/Website nanti setelah Broadcasting selesai
         if ($hasEditorPromosiFiles) {
             $promosiUsers = \App\Models\User::whereIn('role', ['Promotion', 'Promosi'])->get();
+            $promosiNotifications = [];
             foreach ($promosiUsers as $promosiUser) {
-                Notification::create([
+                $promosiNotifications[] = [
                     'user_id' => $promosiUser->id,
                     'type' => 'qc_approved_editor_promosi_ready',
                     'title' => 'QC Promosi Disetujui – Siap Terima Link',
                     'message' => "QC telah menyetujui file dari Editor Promosi untuk Episode #{$episode->episode_number}. Setelah Broadcasting selesai: Terima Link YouTube, Terima Link Website, Share ke Facebook/IG/WA.",
                     'episode_id' => $work->episode_id,
-                    'data' => [
+                    'data' => json_encode([
                         'episode_id' => $work->episode_id,
                         'qc_work_id' => $work->id,
                         'broadcasting_work_id' => $broadcastingWork->id ?? null,
                         'editor_promosi_work_types' => array_values(array_unique(array_filter(array_map(function ($f) {
                             return $f['work_type'] ?? null;
                         }, $work->editor_promosi_file_locations ?? [])))),
-                    ],
-                ]);
+                    ]),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+            if (!empty($promosiNotifications)) {
+                Notification::insert($promosiNotifications);
             }
         }
 
         // Notify Produksi – Baca Hasil QC
         $produksiUsers = \App\Models\User::whereIn('role', ['Production', 'Produksi'])->get();
+        $produksiNotifications = [];
         foreach ($produksiUsers as $produksiUser) {
-            Notification::create([
+            $produksiNotifications[] = [
                 'user_id' => $produksiUser->id,
                 'type' => 'qc_approved_produksi_notification',
                 'title' => 'QC Disetujui – Hasil QC Tersedia',
                 'message' => "QC telah menyetujui materi untuk Episode #{$episode->episode_number}. Silakan baca hasil QC.",
                 'episode_id' => $work->episode_id,
-                'data' => [
+                'data' => json_encode([
                     'episode_id' => $work->episode_id,
                     'qc_work_id' => $work->id,
                     'quality_score' => $work->quality_score ?? null,
                     'qc_notes' => $work->qc_notes ?? null,
-                ],
-            ]);
+                ]),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+        if (!empty($produksiNotifications)) {
+            Notification::insert($produksiNotifications);
         }
     }
 
@@ -1417,16 +1435,83 @@ class QualityControlController extends Controller
                     }
                 }
 
+                // Jika ada file dari Desain Grafis, update status MusicWork dan berikan feedback detail
+                if (!empty($work->design_grafis_file_locations)) {
+                    $checklist = $work->qc_checklist ?? [];
+                    
+                    foreach ($work->design_grafis_file_locations as $designFile) {
+                        if (isset($designFile['music_work_id'])) {
+                            $musicWork = \App\Models\MusicWork::find($designFile['music_work_id']);
+                            if ($musicWork) {
+                                // Find specific feedback for this work item from the checklist
+                                $specificFeedback = null;
+                                foreach ($checklist as $item) {
+                                    $itemType = $item['work_type'] ?? null;
+                                    $itemLabel = $item['file_label'] ?? $item['item_name'] ?? '';
+                                    
+                                    // Match by music_work_id OR label
+                                    $matchById = isset($item['music_work_id']) && $item['music_work_id'] == $designFile['music_work_id'];
+                                    $matchByType = ($itemType && $itemType === $designFile['work_type']);
+                                    
+                                    if ($matchById || $matchByType) {
+                                        if (($item['status'] ?? '') === 'fail') {
+                                            $specificFeedback = $item['notes'] ?? null;
+                                        }
+                                        break;
+                                    }
+                                }
+
+                                $fullNotes = $notes;
+                                if ($specificFeedback) {
+                                    $fullNotes = "[FAILED] Checklist Feedback: " . $specificFeedback . "\n\nGeneral Notes: " . $notes;
+                                }
+
+                                $musicWork->update([
+                                    'status' => 'revision_needed',
+                                    'review_notes' => $fullNotes,
+                                    'qc_feedback' => $specificFeedback ?? $notes,
+                                    'reviewed_at' => now(),
+                                    'reviewed_by' => $user->id
+                                ]);
+                            }
+                        }
+                    }
+                }
+
                 // Jika ada file dari Editor Promosi, notifikasi ke Editor Promosi dan update status
                 if ($hasEditorPromosiFiles) {
+                    $checklist = $work->qc_checklist ?? [];
+                    
                     // Update PromotionWork status menjadi rejected/editing (kembali ke Editor Promosi untuk revisi)
                     foreach ($work->editor_promosi_file_locations as $editorPromosiFile) {
                         if (isset($editorPromosiFile['promotion_work_id'])) {
                             $promotionWork = \App\Models\PromotionWork::find($editorPromosiFile['promotion_work_id']);
                             if ($promotionWork) {
+                                // Find specific feedback for this work type from the checklist
+                                $specificFeedback = null;
+                                foreach ($checklist as $item) {
+                                    $itemType = $item['work_type'] ?? null;
+                                    $itemLabel = $item['file_label'] ?? $item['item_name'] ?? '';
+                                    
+                                    // Match by work_type OR if the label contains the base label
+                                    if (($itemType && $itemType === $editorPromosiFile['work_type']) || 
+                                        ($itemLabel && str_contains(strtolower($itemLabel), strtolower($editorPromosiFile['work_type'] ?? ''))) ) {
+                                        if (($item['status'] ?? '') === 'fail') {
+                                            $specificFeedback = $item['notes'] ?? null;
+                                        }
+                                        break;
+                                    }
+                                }
+
+                                $fullNotes = $notes;
+                                if ($specificFeedback) {
+                                    $fullNotes = "[FAILED] Checklist Feedback: " . $specificFeedback . "\n\nGeneral Notes: " . $notes;
+                                }
+
                                 $promotionWork->update([
                                     'status' => 'editing', // Kembali ke Editor Promosi untuk revisi (status: editing)
-                                    'review_notes' => $notes,
+                                    'review_notes' => $fullNotes,
+                                    'qc_feedback' => $specificFeedback ?? $notes,
                                     'reviewed_by' => $user->id,
                                     'reviewed_at' => now()
                                 ]);

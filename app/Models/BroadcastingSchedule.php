@@ -29,7 +29,13 @@ class BroadcastingSchedule extends Model
         'uploaded_at',
         'published_at',
         'upload_notes',
-        'error_message'
+        'error_message',
+        'approved_by',
+        'approved_at',
+        'approval_notes',
+        'rejected_by',
+        'rejected_at',
+        'rejection_reason'
     ];
 
     protected $casts = [
@@ -62,6 +68,22 @@ class BroadcastingSchedule extends Model
     public function uploadedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
+    /**
+     * Relationship dengan User yang approve (Distribution Manager)
+     */
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    /**
+     * Relationship dengan User yang reject (Distribution Manager)
+     */
+    public function rejectedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
     }
 
     /**

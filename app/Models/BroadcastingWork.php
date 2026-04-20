@@ -105,6 +105,22 @@ class BroadcastingWork extends Model
     }
 
     /**
+     * Relationship dengan User yang approve (Distribution Manager)
+     */
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    /**
+     * Relationship dengan User yang reject (Distribution Manager)
+     */
+    public function rejectedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
+    }
+
+    /**
      * Scope untuk work yang preparing
      */
     public function scopePreparing($query)

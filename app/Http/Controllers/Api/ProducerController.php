@@ -2003,10 +2003,18 @@ class ProducerController extends Controller
                         ], 403);
                     }
 
-                    if ($item->status !== 'submitted') {
+                    // Flexible Check: Allow rejection if status is 'submitted' 
+                    // OR if status is 'in_progress'/'pending' but already has a final file link/path
+                    $hasFile = !empty($item->final_file_path) || !empty($item->final_file_link);
+                    $isSubmitted = $item->status === 'submitted';
+                    $canReject = $isSubmitted || ($hasFile && in_array($item->status, ['in_progress', 'pending', 'revision_needed']));
+
+                    if (!$canReject) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Only submitted editing works can be rejected'
+                            'message' => $hasFile 
+                                ? "Status work ini adalah '{$item->status}', harap sampaikan ke Sound Engineer untuk klik Submit atau coba lagi nanti."
+                                : "Hanya editing work yang sudah di-submit atau memiliki file yang bisa di-reject."
                         ], 400);
                     }
 
