@@ -704,21 +704,58 @@ class ManagerProgramController extends Controller
         try {
             $program = Program::findOrFail($programId);
         
-            // Get semua episode untuk program ini (eager load required data)
-            // Optimize: Fetch ALL once and group in PHP to avoid N+1 in loops
+            // Get all episodes for this program
             $allEpisodes = Episode::where('program_id', $programId)
                 ->whereNull('deleted_at')
                 ->whereNotNull('air_date')
+                ->orderBy('air_date', 'asc')
                 ->get();
 
-            // Get unique years
-            $years = $allEpisodes->map(function ($episode) {
+            // Find all episodes with episode_number 1 (cycle starts)
+            $cycleStartYears = $allEpisodes->filter(function ($episode) {
+                return $episode->episode_number == 1;
+            })->map(function ($episode) {
                 return \Carbon\Carbon::parse($episode->air_date)->year;
-            })->unique()->sortDesc()->values()->map(function ($year) use ($allEpisodes) {
-                // Filter episodes for this year from the already fetched collection
-                $yearEpisodes = $allEpisodes->filter(function ($episode) use ($year) {
-                    return \Carbon\Carbon::parse($episode->air_date)->year == $year;
-                });
+            })->unique()->sortDesc()->values();
+
+            // Fallback if no episode 1 is found (use the first episode's year)
+            if ($cycleStartYears->isEmpty() && $allEpisodes->isNotEmpty()) {
+                $cycleStartYears = collect([\Carbon\Carbon::parse($allEpisodes->first()->air_date)->year]);
+            }
+
+            $years = $cycleStartYears->map(function ($year) use ($allEpisodes) {
+                // Determine the boundaries for this cycle
+                // A cycle belongs to $year if its episode 1 airs in $year
+                // All episodes from that episode 1 until the next episode 1 (exclusive) belong to this cycle
+                
+                // Find the episode 1 that started this cycle
+                $cycleStartEp = $allEpisodes->filter(function ($e) use ($year) {
+                    return $e->episode_number == 1 && \Carbon\Carbon::parse($e->air_date)->year == $year;
+                })->first();
+
+                if (!$cycleStartEp) {
+                    // Fallback to simpler filtering if exact cycle start not found
+                    $yearEpisodes = $allEpisodes->filter(function ($episode) use ($year) {
+                        return \Carbon\Carbon::parse($episode->air_date)->year == $year;
+                    });
+                } else {
+                    // All episodes starting from this episode 1 until the NEXT episode 1
+                    $nextCycleStart = $allEpisodes->filter(function ($e) use ($cycleStartEp) {
+                        return $e->episode_number == 1 && \Carbon\Carbon::parse($e->air_date)->greaterThan(\Carbon\Carbon::parse($cycleStartEp->air_date));
+                    })->first();
+
+                    $yearEpisodes = $allEpisodes->filter(function ($e) use ($cycleStartEp, $nextCycleStart) {
+                        $airDate = \Carbon\Carbon::parse($e->air_date);
+                        $startAt = \Carbon\Carbon::parse($cycleStartEp->air_date);
+                        
+                        if ($nextCycleStart) {
+                            $endAt = \Carbon\Carbon::parse($nextCycleStart->air_date);
+                            return $airDate->greaterThanOrEqualTo($startAt) && $airDate->lessThan($endAt);
+                        }
+                        
+                        return $airDate->greaterThanOrEqualTo($startAt);
+                    });
+                }
                 
                 return [
                     'year' => (int)$year,
@@ -776,26 +813,64 @@ class ManagerProgramController extends Controller
                 ->orderBy('episode_number', 'asc')
                 ->get();
             
-            // Group by year
-            $groupedByYear = $episodes->groupBy(function ($episode) {
-                return \Carbon\Carbon::parse($episode->air_date)->year;
-            })->map(function ($yearEpisodes, $year) {
-                return [
-                    'year' => (int)$year,
-                    'episodes' => $yearEpisodes->values(),
-                    'count' => $yearEpisodes->count(),
-                    'first_episode_number' => $yearEpisodes->min('episode_number'),
-                    'last_episode_number' => $yearEpisodes->max('episode_number'),
-                    'first_air_date' => $yearEpisodes->min('air_date') ? \Carbon\Carbon::parse($yearEpisodes->min('air_date'))->format('Y-m-d') : null,
-                    'last_air_date' => $yearEpisodes->max('air_date') ? \Carbon\Carbon::parse($yearEpisodes->max('air_date'))->format('Y-m-d') : null
-                ];
-            })->sortByDesc('year')->values();
+            // Group into Cycles (Batches)
+            // A cycle starts with episode_number 1. 
+            // All subsequent episodes until the next episode 1 belong to the cycle of the previous episode 1.
+            $groupedByCycle = [];
+            $currentCycleYear = null;
             
-            // Filter by year jika ada parameter
+            foreach ($episodes as $episode) {
+                // Every time we hit episode 1, we start a new Cycle
+                if ($episode->episode_number == 1) {
+                    $currentCycleYear = \Carbon\Carbon::parse($episode->air_date)->year;
+                }
+                
+                // Fallback for episodes before the first episode 1 (if any)
+                if ($currentCycleYear === null) {
+                    $currentCycleYear = \Carbon\Carbon::parse($episode->air_date)->year;
+                }
+                
+                if (!isset($groupedByCycle[$currentCycleYear])) {
+                    $groupedByCycle[$currentCycleYear] = [
+                        'year' => $currentCycleYear,
+                        'episodes' => [],
+                        'count' => 0,
+                        'first_episode_number' => null,
+                        'last_episode_number' => null,
+                        'first_air_date' => null,
+                        'last_air_date' => null
+                    ];
+                }
+                
+                $groupedByCycle[$currentCycleYear]['episodes'][] = $episode;
+                $groupedByCycle[$currentCycleYear]['count']++;
+                
+                // Update aggregate info
+                $num = $episode->episode_number;
+                if ($groupedByCycle[$currentCycleYear]['first_episode_number'] === null || $num < $groupedByCycle[$currentCycleYear]['first_episode_number']) {
+                    $groupedByCycle[$currentCycleYear]['first_episode_number'] = $num;
+                }
+                if ($groupedByCycle[$currentCycleYear]['last_episode_number'] === null || $num > $groupedByCycle[$currentCycleYear]['last_episode_number']) {
+                    $groupedByCycle[$currentCycleYear]['last_episode_number'] = $num;
+                }
+                
+                $airDate = \Carbon\Carbon::parse($episode->air_date);
+                $airDateStr = $airDate->format('Y-m-d');
+                if ($groupedByCycle[$currentCycleYear]['first_air_date'] === null || $airDateStr < $groupedByCycle[$currentCycleYear]['first_air_date']) {
+                    $groupedByCycle[$currentCycleYear]['first_air_date'] = $airDateStr;
+                }
+                if ($groupedByCycle[$currentCycleYear]['last_air_date'] === null || $airDateStr > $groupedByCycle[$currentCycleYear]['last_air_date']) {
+                    $groupedByCycle[$currentCycleYear]['last_air_date'] = $airDateStr;
+                }
+            }
+            
+            $groupedByYear = collect($groupedByCycle)->sortByDesc('year')->values();
+            
+            // Filter by year if parameter is present
             if ($request->has('year')) {
-                $selectedYear = $request->get('year');
+                $selectedYear = (int)$request->get('year');
                 $groupedByYear = $groupedByYear->filter(function ($yearData) use ($selectedYear) {
-                    return $yearData['year'] == $selectedYear;
+                    return $yearData['year'] === $selectedYear;
                 })->values();
             }
             
@@ -1371,7 +1446,7 @@ class ManagerProgramController extends Controller
             // Approved if status is beyond song_approved
             $songAppr = $music && in_array($music->status, ['song_approved', 'arrangement_in_progress', 'arrangement_submitted', 'arrangement_rejected', 'arrangement_approved', 'approved']);
             $workflowSteps[] = $buildStep(
-                'song_proposal_approval', 'Producer (Approve Song Proposal)', $songAppr,
+                'song_proposal_approval', 'Approve Song Proposal', $songAppr,
                 $songAppr ? 'completed' : ($music && $music->status === 'song_rejected' ? 'rejected' : 'pending'),
                 $music && $music->status === 'song_rejected' ? 'Ditolak: ' . $music->rejection_reason : (!$music ? 'Menunggu usulan.' : 'Menunggu review Producer.'),
                 null, $dlProdSong, $music?->reviewed_at, $music?->reviewedBy?->name,
@@ -1395,7 +1470,7 @@ class ManagerProgramController extends Controller
             // 5. Producer (Approve Arrangement)
             $arrAppr = $music && in_array($music->status, ['arrangement_approved', 'approved']);
             $workflowSteps[] = $buildStep(
-                'arrangement_approval', 'Producer (Approve Arrangement)', $arrAppr,
+                'arrangement_approval', 'Approve Arrangement', $arrAppr,
                 $arrAppr ? 'completed' : ($music && in_array($music->status, ['arrangement_rejected', 'rejected']) ? 'rejected' : 'pending'),
                 $music && in_array($music->status, ['arrangement_rejected', 'rejected']) ? 'Ditolak: ' . $music->rejection_reason : (!$arrSubmitted ? 'Menunggu link.' : 'Menunggu review Producer.'),
                 null, $dlProdArr, $music?->reviewed_at, $music?->reviewedBy?->name,
@@ -1420,7 +1495,7 @@ class ManagerProgramController extends Controller
 
             // 7. Producer (Approve Creative)
             $workflowSteps[] = $buildStep(
-                'producer_creative_approval', 'Producer (Approve Creative)', $creativeDone,
+                'producer_creative_approval', 'Approve Creative', $creativeDone,
                 $creativeDone ? 'completed' : ($creative ? ($creative->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 $creative && $creative->status === 'rejected' ? 'Ditolak: ' . $creative->rejection_reason : (!$creative ? 'Menunggu output kreatif.' : 'Menunggu review Producer.'),
                 null, $dlProdCreative, $creative?->reviewed_at, $creative?->reviewedBy?->name,
@@ -1546,7 +1621,7 @@ class ManagerProgramController extends Controller
             // 17. Producer Final Review (Cek File Kurang)
             $finalReviewDone = $editorDone && $designDone;
             $workflowSteps[] = $buildStep(
-                'producer_final_review', 'Producer Final Review', $finalReviewDone,
+                'producer_final_review', 'Final Review', $finalReviewDone,
                 $finalReviewDone ? 'completed' : ($editorDone ? 'pending' : 'blocked'),
                 !$editorDone ? 'Menunggu Editor selesai.' : 'Final review oleh Producer (Cek file/ulang).',
                 null, $dlProducer, $editor?->updated_at, $editor?->reviewedBy?->name,
@@ -1565,7 +1640,7 @@ class ManagerProgramController extends Controller
             $qc = $episode->qualityControls->sortByDesc('created_at')->first();
             $qcDone = $qc && in_array($qc->status, ['approved', 'completed']);
             $workflowSteps[] = $buildStep(
-                'quality_control', 'Editor QC Approval (Producer)', $qcDone,
+                'quality_control', 'Editor QC Approval', $qcDone,
                 $qcDone ? 'completed' : ($editorDone ? ($qc && $qc->status === 'rejected' ? 'rejected' : 'pending') : 'blocked'),
                 !$editorDone ? 'Menunggu review Producer & PM.' : ($qc && $qc->status === 'rejected' ? 'Ditolak: ' . $qc->qc_notes : 'Pengecekan kualitas teknis aset promo dan desain.'),
                 ['qc_notes' => $qc?->qc_notes], $dlQC, $qc?->updated_at, $qc?->createdBy?->name,
@@ -1809,6 +1884,95 @@ class ManagerProgramController extends Controller
     }
     
 
+
+    /**
+     * Get archived programs (closed, cancelled, or soft-deleted)
+     */
+    public function getArchivedPrograms(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram', 'Distribution Manager'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 403);
+        }
+
+        try {
+            // Get programs that are closed, cancelled, OR soft-deleted
+            // but managed by this user
+            $programs = Program::withTrashed()
+                ->where('manager_program_id', $user->id)
+                ->where(function($query) {
+                    $query->whereIn('status', ['closed', 'cancelled'])
+                          ->orWhereNotNull('deleted_at');
+                })
+                ->with(['productionTeam'])
+                ->withCount('episodes')
+                ->latest()
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $programs,
+                'message' => 'Archived programs retrieved successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting archived programs: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve archived programs'
+            ], 500);
+        }
+    }
+
+    /**
+     * Reactivate a closed or soft-deleted program
+     */
+    public function reactivateProgram(Request $request, int $programId): JsonResponse
+    {
+        $user = auth()->user();
+        
+        if (!in_array($user->role, ['Manager Program', 'Program Manager', 'managerprogram'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only Manager Program can reactivate programs'
+            ], 403);
+        }
+
+        try {
+            $program = Program::withTrashed()->findOrFail($programId);
+            
+            // Restore if soft-deleted
+            if ($program->trashed()) {
+                $program->restore();
+            }
+            
+            // Set status to draft
+            $program->update([
+                'status' => 'draft',
+                'rejection_notes' => 'Program reactivated from history by ' . $user->name . ' at ' . now(),
+                'rejected_by' => null,
+                'rejected_at' => null
+            ]);
+            
+            // Create activity log or notification
+            Log::info("Program #{$programId} reactivated by user #{$user->id}");
+
+            return response()->json([
+                'success' => true,
+                'data' => $program,
+                'message' => 'Program reactivated successfully. It is now in Draft status.'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error reactivating program: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to reactivate program'
+            ], 500);
+        }
+    }
 
     /**
      * Manually close program
@@ -3985,5 +4149,98 @@ class ManagerProgramController extends Controller
             ], 500);
         }
     }
-}
+    /**
+     * Get integrated calendar events for Music Programs (Syuting & Tayang)
+     * Digunakan untuk kalender di dashboard utama
+     */
+    public function getMusicCalendarEvents(Request $request): JsonResponse
+    {
+        try {
+            $year = $request->get('year', date('Y'));
+            $events = [];
 
+            // Gunakan rentang tanggal agar lebih stabil daripada whereYear
+            \Log::info('getMusicCalendarEvents called', ['year' => $year]);
+            $startDate = "{$year}-01-01 00:00:00";
+            $endDate = "{$year}-12-31 23:59:59";
+
+            // 1. Ambil SEMUA Episode Musik untuk tahun tersebut (Jadwal Tayang)
+            // Filter: BUKAN 'rejected' dan BUKAN 'inactive'
+            $activeProgramIds = \App\Models\Program::where(function($q) {
+                    $q->where('category', 'musik')
+                      ->orWhere('category', 'music')
+                      ->orWhere('category', 'Music Program');
+                })
+                ->where(function($q) {
+                    $q->where('status', 'NOT LIKE', '%reject%')
+                      ->where('status', 'NOT LIKE', '%inactive%')
+                      ->where('status', 'NOT LIKE', '%nonactive%')
+                      ->where('status', 'NOT LIKE', '%non-active%')
+                      ->where('status', 'NOT LIKE', '%nonaktif%')
+                      ->where('status', 'NOT LIKE', '%non-aktif%')
+                      ->where('status', 'NOT LIKE', '%archived%')
+                      ->where('status', 'NOT LIKE', '%cancel%')
+                      ->where('status', 'NOT LIKE', '%closed%')
+                      ->where('status', '!=', 'Reject')
+                      ->where('status', '!=', 'Rejected')
+                      ->where('status', '!=', 'inactive')
+                      ->where('status', '!=', 'non-active')
+                      ->where('status', '!=', 'cancelled')
+                      ->where('status', '!=', 'closed');
+                })
+                ->pluck('id');
+
+            $episodes = \App\Models\Episode::whereIn('program_id', $activeProgramIds)
+                ->whereBetween('air_date', [$startDate, $endDate])
+                ->whereNull('deleted_at')
+                ->with(['program'])
+                ->get();
+
+            foreach ($episodes as $ep) {
+                $airDt = \Carbon\Carbon::parse($ep->air_date);
+                $events[] = [
+                    'id' => 'ep-' . $ep->id,
+                    'date' => $airDt->format('Y-m-d'),
+                    'title' => "Tayang: " . ($ep->program->name ?? 'Music Program'),
+                    'description' => "Episode " . ($ep->episode_number ?? '') . " - " . ($ep->title ?? ''),
+                    'type' => 'tayang',
+                    'start_time' => $airDt->format('H:i'),
+                    'location' => 'Music Broadcast',
+                    'program_name' => $ep->program->name ?? 'N/A'
+                ];
+            }
+
+            // 2. Ambil SEMUA Jadwal Syuting & Recording Musik (MusicSchedule)
+            // Filter: BUKAN 'rejected' dan BUKAN 'inactive'
+            $schedules = \App\Models\MusicSchedule::whereHas('musicSubmission.episode', function($q) use ($activeProgramIds) {
+                    $q->whereIn('program_id', $activeProgramIds);
+                })
+                ->whereBetween('scheduled_datetime', [$startDate, $endDate])
+                ->where('status', '!=', 'cancelled')
+                ->with(['musicSubmission.episode.program'])
+                ->get();
+
+            foreach ($schedules as $item) {
+                $effDt = $item->getEffectiveDatetime();
+                $events[] = [
+                    'id' => 'ms-' . $item->id,
+                    'date' => $effDt->format('Y-m-d'),
+                    'title' => ($item->schedule_type === 'recording' ? 'Rekaman: ' : 'Syuting: ') . ($item->musicSubmission->episode->program->name ?? 'Music Program'),
+                    'description' => "Episode " . ($item->musicSubmission->episode->episode_number ?? '') . " - Song: " . ($item->musicSubmission->song_title ?? ''),
+                    'type' => 'syuting',
+                    'start_time' => $effDt->format('H:i'),
+                    'location' => $item->location,
+                    'program_name' => $item->musicSubmission->episode->program->name ?? 'N/A'
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $events
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error fetching music calendar events: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+}

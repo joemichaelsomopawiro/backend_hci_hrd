@@ -89,6 +89,17 @@ class EpisodeController extends Controller
                     $query->whereRaw('LOWER(assigned_to_role) = ?', [strtolower($request->assigned_to_role)]);
                 }
                 
+                // Filter: Only from active programs (Strict: Active/Approved/In Production OR Producer Accepted)
+                if ($request->has('only_active_programs') && ($request->only_active_programs === 'true' || $request->only_active_programs === true || $request->only_active_programs === 1)) {
+                    $query->whereHas('program', function($q) {
+                        $q->where(function($sub) {
+                               $sub->whereIn('status', ['active', 'approved', 'in_production', 'draft'])
+                                   ->orWhere('producer_accepted', true);
+                           })
+                          ->whereNotIn('status', ['closed', 'cancelled', 'rejected', 'inactive']);
+                    });
+                }
+
                 // Search
                 if ($request->has('search')) {
                     $search = $request->search;
@@ -817,7 +828,7 @@ class EpisodeController extends Controller
             }
             $workflowSteps['song_proposal_approval'] = [
                 'step_key' => 'song_proposal_approval',
-                'step_name' => 'Producer (Approve Song Proposal)',
+                'step_name' => 'Approve Song Proposal',
                 'status' => $songApprovalStatus,
                 'rejection_reason' => $musicArrangement->rejection_reason ?? null,
                 'review_notes' => $musicArrangement->review_notes ?? null,
@@ -865,7 +876,7 @@ class EpisodeController extends Controller
             }
             $workflowSteps['arrangement_approval'] = [
                 'step_key' => 'arrangement_approval',
-                'step_name' => 'Producer (Approve Arrangement)',
+                'step_name' => 'Approve Arrangement',
                 'status' => $arrApprovalStatus,
                 'rejection_reason' => $musicArrangement->rejection_reason ?? null,
                 'review_notes' => $musicArrangement->review_notes ?? null,
@@ -908,7 +919,7 @@ class EpisodeController extends Controller
             }
             $workflowSteps['producer_creative_approval'] = [
                 'step_key' => 'producer_creative_approval',
-                'step_name' => 'Producer (Approve Creative Concept)',
+                'step_name' => 'Approve Creative Concept',
                 'status' => $creativeApprStatus,
                 'rejection_reason' => $creativeWork->rejection_reason ?? null,
                 'review_notes' => $creativeWork->review_notes ?? null,
@@ -1012,7 +1023,7 @@ class EpisodeController extends Controller
             $qcWork = $episode->qualityControls()->latest()->first();
             $workflowSteps['quality_control'] = [
                 'step_key' => 'quality_control',
-                'step_name' => 'Editor QC Approval (Producer)',
+                'step_name' => 'Editor QC Approval',
                 'status' => $qcWork ? (in_array($qcWork->status, ['approved', 'completed']) ? 'completed' : ($qcWork->status === 'rejected' ? 'rejected' : $qcWork->status)) : 'pending',
                 'rejection_reason' => ($qcWork && $qcWork->status === 'rejected') ? $qcWork->qc_notes : null,
                 'review_notes' => ($qcWork && $qcWork->status === 'approved') ? $qcWork->qc_notes : null,

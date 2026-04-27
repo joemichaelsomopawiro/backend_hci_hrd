@@ -61,7 +61,21 @@ class ProductionTeam extends Model
      */
     public function hasAllRequiredRoles(): bool
     {
-        $requiredRoles = ['creative', 'musik_arr', 'sound_eng', 'production', 'editor', 'art_set_design'];
+        $requiredRoles = [
+            'Sound Engineer',
+            'Music Arranger',
+            'Producer',
+            'Creative',
+            'Produksi',
+            'Editor',
+            'Editor Promosi',
+            'Design Grafis',
+            'Art & Set Design',
+            'Manager Distribusi',
+            'QC',
+            'Broadcasting',
+            'Promosi'
+        ];
         $existingRoles = $this->members()->where('is_active', true)->pluck('role')->toArray();
         
         return count(array_intersect($requiredRoles, $existingRoles)) === count($requiredRoles);
@@ -72,7 +86,21 @@ class ProductionTeam extends Model
      */
     public function getMissingRoles(): array
     {
-        $requiredRoles = ['creative', 'musik_arr', 'sound_eng', 'production', 'editor', 'art_set_design'];
+        $requiredRoles = [
+            'Sound Engineer',
+            'Music Arranger',
+            'Producer',
+            'Creative',
+            'Produksi',
+            'Editor',
+            'Editor Promosi',
+            'Design Grafis',
+            'Art & Set Design',
+            'Manager Distribusi',
+            'QC',
+            'Broadcasting',
+            'Promosi'
+        ];
         $existingRoles = $this->members()->where('is_active', true)->pluck('role')->toArray();
         
         return array_diff($requiredRoles, $existingRoles);
@@ -131,15 +159,7 @@ class ProductionTeam extends Model
             
         if (!$member) return false;
         
-        // Check if this is the last member for this role
-        $roleCount = $this->members()
-            ->where('role', $role)
-            ->where('is_active', true)
-            ->count();
-            
-        if ($roleCount <= 1) {
-            throw new \Exception("Cannot remove the last member for role: {$role}");
-        }
+        // Removed restriction on removing the last member of a role to align with Regular Program flexibility
         
         return $member->update([
             'is_active' => false,

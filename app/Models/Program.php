@@ -185,7 +185,7 @@ class Program extends Model
     }
 
     /**
-     * Generate 52 episodes untuk program (1 tahun = 52 minggu)
+     * Generate 53 episodes untuk program (1 tahun = 52-53 minggu)
      * Episode 1 = Sabtu pertama di tahun program
      * Setiap episode tayang setiap Sabtu (mingguan)
      * @param bool $regenerate Jika true, akan hapus episode yang sudah ada dulu
@@ -206,28 +206,34 @@ class Program extends Model
             });
         }
 
-        // Detect Sabtu pertama di tahun program (dari start_date)
-        $startDate = Carbon::parse($this->start_date);
-        $year = $startDate->year;
-        $firstSaturday = Carbon::createFromDate($year, 1, 1, 'UTC')->setTime(0, 0, 0);
-
-        if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
-            $dayOfWeek = $firstSaturday->dayOfWeek;
-            $daysToAdd = (6 - $dayOfWeek + 7) % 7;
-            if ($daysToAdd === 0) $daysToAdd = 7;
-            $firstSaturday->addDays($daysToAdd);
+        // Siapkan air_time
+        $airTime = $this->air_time;
+        if ($airTime instanceof \Carbon\Carbon) {
+            $hour = $airTime->hour;
+            $minute = $airTime->minute;
+        } else {
+            $timeParts = explode(':', (string)($airTime ?? '00:00'));
+            $hour = isset($timeParts[0]) ? (int)$timeParts[0] : 0;
+            $minute = isset($timeParts[1]) ? (int)$timeParts[1] : 0;
         }
+
+        $startDate = Carbon::parse($this->start_date)->setTime($hour, $minute, 0);
+        $targetDayOfWeek = $startDate->dayOfWeek;
+        $year = $startDate->year;
+        
+        // Episode 1 dimulai tepat pada start_date (dengan air_time)
+        $firstOccurrence = $startDate->copy();
 
         $episodesToInsert = [];
         $currentUserId = auth()->id() ?? 1;
 
-        // Generate 52 episode data
-        for ($i = 1; $i <= 52; $i++) {
-            $airDate = $firstSaturday->copy();
+        // Generate 53 episode data
+        for ($i = 1; $i <= 53; $i++) {
+            $airDate = $firstOccurrence->copy();
             if ($i > 1) {
                 $airDate->addWeeks($i - 1);
             }
-            $airDate->utc()->setTime(0, 0, 0);
+            // Gunakan air_time yang sudah di-set di firstOccurrence
             $productionDate = $airDate->copy()->subDays(7);
             $productionDate->utc()->setTime(0, 0, 0);
 
@@ -288,33 +294,36 @@ class Program extends Model
     }
 
     /**
-     * Generate 52 episodes untuk tahun pertama program
+     * Generate 53 episodes untuk tahun pertama program
      * Dipanggil saat program pertama kali dibuat
-     * OPTIMIZED: Bulk insert deadlines to avoid N+1 (208 queries → 53 queries)
+     * OPTIMIZED: Bulk insert deadlines to avoid N+1 (212 queries → 54 queries)
      */
     public function generateYearlyEpisodes()
     {
-        // Calculate first Saturday from start_date
-        $firstSaturday = Carbon::parse($this->start_date);
-        if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
-            // Jika start_date bukan Sabtu, cari Sabtu berikutnya
-            $firstSaturday->next(Carbon::SATURDAY);
+        // Siapkan air_time
+        $airTime = $this->air_time;
+        if ($airTime instanceof \Carbon\Carbon) {
+            $hour = $airTime->hour;
+            $minute = $airTime->minute;
+        } else {
+            $timeParts = explode(':', (string)($airTime ?? '00:00'));
+            $hour = isset($timeParts[0]) ? (int)$timeParts[0] : 0;
+            $minute = isset($timeParts[1]) ? (int)$timeParts[1] : 0;
         }
+
+        // Episode 1 dimulai tepat pada start_date (dengan air_time)
+        $firstOccurrence = Carbon::parse($this->start_date)->setTime($hour, $minute, 0);
 
         $deadlinesToInsert = [];
         $currentUserId = auth()->id() ?? 1;
 
-        // Generate 52 episode (1 tahun = 52 minggu)
-        for ($i = 1; $i <= 52; $i++) {
-            // Episode 1 = Sabtu pertama, Episode 2 = Sabtu berikutnya (7 hari kemudian), dst
-            // Copy dulu, baru add weeks untuk menghindari mutation
-            $airDate = $firstSaturday->copy();
+        // Generate 53 episode (1 tahun = 52-53 minggu)
+        for ($i = 1; $i <= 53; $i++) {
+            // Episode 1 = start_date, Episode 2 = 7 hari kemudian, dst
+            $airDate = $firstOccurrence->copy();
             if ($i > 1) {
                 $airDate->addWeeks($i - 1);
             }
-            // Pastikan timezone UTC dan time 00:00:00 untuk konsistensi
-            $airDate->utc()->setTime(0, 0, 0);
-
             // Production date = 7 hari sebelum tayang
             $productionDate = $airDate->copy()->subDays(7);
             $productionDate->utc()->setTime(0, 0, 0);
@@ -371,7 +380,7 @@ class Program extends Model
     }
 
     /**
-     * Generate 52 episodes untuk tahun tertentu
+     * Generate 53 episodes untuk tahun tertentu
      * Episode number RESET ke 1 setiap tahun baru (seperti jatah cuti)
      * @param int $year Tahun yang akan di-generate
      * @param int|null $targetDayOfWeek Hari tayang (0=Minggu, 6=Sabtu). Jika null, ambil dari start_date.
@@ -425,8 +434,19 @@ class Program extends Model
         $currentUserId = auth()->id() ?? 1;
         $deadlinesToInsert = [];
 
-        // Generate 52 episode untuk tahun tersebut (Episode 1-52)
-        for ($i = 0; $i < 52; $i++) {
+        // Siapkan air_time
+        $airTimeSource = $this->air_time;
+        if ($airTimeSource instanceof \Carbon\Carbon) {
+            $hour = $airTimeSource->hour;
+            $minute = $airTimeSource->minute;
+        } else {
+            $timeParts = explode(':', (string)($airTimeSource ?? '00:00'));
+            $hour = isset($timeParts[0]) ? (int)$timeParts[0] : 0;
+            $minute = isset($timeParts[1]) ? (int)$timeParts[1] : 0;
+        }
+
+        // Generate 53 episode untuk tahun tersebut (Episode 1-53)
+        for ($i = 0; $i < 53; $i++) {
             $episodeNumber = $startEpisodeNumber + $i; // Episode 1, 2, 3, ..., 52
 
             // Hitung air_date: Episode pertama = hari pertama ditemukan, berikutnya setiap 7 hari
@@ -434,7 +454,7 @@ class Program extends Model
             if ($i > 0) {
                 $airDate->addWeeks($i);
             }
-            $airDate->utc()->setTime(0, 0, 0);
+            $airDate->setTime($hour, $minute, 0);
 
             // Production date = 7 hari sebelum tayang
             $productionDate = $airDate->copy()->subDays(7);
@@ -494,8 +514,7 @@ class Program extends Model
 
         return [
             'success' => true,
-            'message' => "Berhasil generate 52 episode untuk tahun {$year} (Episode 1-52)",
-            'year' => $year,
+            'message' => "Berhasil generate 53 episode untuk program '{$this->name}'",
             'generated_count' => count($generatedEpisodes)
         ];
     }
@@ -555,22 +574,22 @@ class Program extends Model
             ->whereNull('deleted_at')
             ->count();
 
-        // Cari Sabtu pertama di tahun berikutnya
-        $firstSaturday = Carbon::createFromDate($nextYear, 1, 1, 'UTC');
-        $firstSaturday->setTime(0, 0, 0);
+        // Cari hari pertama di tahun berikutnya yang sesuai dengan hari tayang program
+        $targetDayOfWeek = Carbon::parse($this->start_date)->dayOfWeek;
+        $firstOccurrence = Carbon::createFromDate($nextYear, 1, 1)->setTime(0, 0, 0);
 
-        if ($firstSaturday->dayOfWeek !== Carbon::SATURDAY) {
-            $dayOfWeek = $firstSaturday->dayOfWeek;
-            $daysToAdd = (6 - $dayOfWeek + 7) % 7;
+        if ($firstOccurrence->dayOfWeek !== $targetDayOfWeek) {
+            $dayOfWeek = $firstOccurrence->dayOfWeek;
+            $daysToAdd = ($targetDayOfWeek - $dayOfWeek + 7) % 7;
             if ($daysToAdd === 0)
                 $daysToAdd = 7;
-            $firstSaturday->addDays($daysToAdd);
+            $firstOccurrence->addDays($daysToAdd);
         }
 
         return [
             'needs_generation' => $existingEpisodes === 0 && $nextYear <= $currentYear + 1,
             'next_year' => $nextYear,
-            'first_saturday' => $firstSaturday->format('Y-m-d'),
+            'first_occurrence' => $firstOccurrence->format('Y-m-d'),
             'last_episode_date' => $lastAirDate->format('Y-m-d'),
             'last_episode_number' => $lastEpisode->episode_number,
             'existing_episodes_next_year' => $existingEpisodes,

@@ -23,6 +23,13 @@ class ProgramWorkflowService
     public function createProgram(array $data): Program
     {
         return DB::transaction(function () use ($data) {
+            // Auto-approve for Music Programs (skipping draft/approval workflow)
+            if (isset($data['category']) && in_array(strtolower($data['category']), ['musik', 'music', 'music program'])) {
+                $data['status'] = 'approved';
+                $data['approved_at'] = now();
+                $data['approved_by'] = auth()->id() ?? $data['manager_program_id'] ?? 1;
+            }
+
             // Create program
             $program = Program::create($data);
             

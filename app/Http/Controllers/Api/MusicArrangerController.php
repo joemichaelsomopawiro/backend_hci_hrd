@@ -34,7 +34,8 @@ class MusicArrangerController extends Controller
             }
             
             $isProgramManager = ProgramManagerAuthorization::isProgramManager($user);
-            $userRole = strtolower($user->role);
+            $primaryRole = $user->mapBackendRoleToFrontendSlug($user->role);
+            $assignedRoles = method_exists($user, 'getAssignedMusicWorkflowRoles') ? $user->getAssignedMusicWorkflowRoles() : [$primaryRole];
             
             if (!$user || !MusicProgramAuthorization::canUserPerformTask($user, null, 'Music Arranger')) {
                 return response()->json([
@@ -51,10 +52,15 @@ class MusicArrangerController extends Controller
                 'soundEngineerHelper'
             ]);
 
-            // Music Arranger hanya bisa melihat miliknya sendiri
-            // Creative dan Producer bisa melihat semua aransemen yang relevan
-            if ($userRole === 'music arranger' && !$isProgramManager) {
-                $query->where('created_by', $user->id);
+            // Normal user (non-manager/non-producer) can only see their own work
+            $isTechnicalUser = !ProgramManagerAuthorization::isProgramManager($user) && 
+                              !MusicProgramAuthorization::hasProducerAccess($user);
+
+            if ($isTechnicalUser) {
+                // If they have the Music Arranger role (primary or assigned), limit to their own work
+                if (in_array('music_arranger', $assignedRoles)) {
+                    $query->where('created_by', $user->id);
+                }
             }
 
             // MAPPING STATUS: Frontend 'approved' -> Backend 'arrangement_approved'

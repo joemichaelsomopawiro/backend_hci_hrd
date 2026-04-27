@@ -97,15 +97,7 @@ class ProductionTeamService
                 throw new \Exception("Member not found");
             }
             
-            // Check if this is the last member for this role
-            $roleCount = $team->members()
-                ->where('role', $role)
-                ->where('is_active', true)
-                ->count();
-                
-            if ($roleCount <= 1) {
-                throw new \Exception("Cannot remove the last member for role: {$role}");
-            }
+            // Removed restriction on removing the last member of a role to align with Regular Program flexibility
             
             $result = $team->removeMember($userId, $role);
             
@@ -172,7 +164,21 @@ class ProductionTeamService
     public function getTeamStatistics(ProductionTeam $team): array
     {
         $totalMembers = $team->members()->where('is_active', true)->count();
-        $requiredRoles = ['creative', 'musik_arr', 'sound_eng', 'production', 'editor', 'art_set_design'];
+        $requiredRoles = [
+            'Sound Engineer',
+            'Music Arranger',
+            'Producer',
+            'Creative',
+            'Produksi',
+            'Editor',
+            'Editor Promosi',
+            'Design Grafis',
+            'Art & Set Design',
+            'Manager Distribusi',
+            'QC',
+            'Broadcasting',
+            'Promosi'
+        ];
         $existingRoles = $team->members()->where('is_active', true)->pluck('role')->toArray();
         $missingRoles = array_diff($requiredRoles, $existingRoles);
         $hasAllRoles = count($missingRoles) === 0;
@@ -249,17 +255,36 @@ class ProductionTeamService
     {
         // Slug tim (frontend) -> nama role/jabatan (users.role ATAU employees.jabatan_saat_ini), Inggris + Indonesia
         $roleMapping = [
+            'Sound Engineer' => ['Sound Engineer'],
+            'sound_engineer' => ['Sound Engineer'],
+            'sound_eng' => ['Sound Engineer'],
+            'Music Arranger' => ['Music Arranger'],
+            'music_arranger' => ['Music Arranger'],
+            'musik_arr' => ['Music Arranger'],
+            'Producer' => ['Producer'],
+            'producer' => ['Producer'],
+            'Creative' => ['Creative', 'Kreatif'],
             'creative' => ['Creative', 'Kreatif'],
             'kreatif' => ['Creative', 'Kreatif'],
-            'musik_arr' => ['Music Arranger', 'Musik Arranger'],
-            'music_arranger' => ['Music Arranger', 'Musik Arranger'],
-            'sound_eng' => ['Sound Engineer'],
-            'sound_engineer' => ['Sound Engineer'],
-            'editor' => ['Editor'],
-            'producer' => ['Producer'],
+            'Produksi' => ['Production', 'Produksi'],
             'production' => ['Production', 'Produksi'],
             'produksi' => ['Production', 'Produksi'],
-            'art_set_design' => ['Art & Set Properti'],
+            'Editor' => ['Editor'],
+            'editor' => ['Editor'],
+            'Editor Promosi' => ['Editor Promosi'],
+            'editor_promosi' => ['Editor Promosi'],
+            'Design Grafis' => ['Design Grafis'],
+            'design_grafis' => ['Design Grafis'],
+            'Art & Set Design' => ['Art & Set Design', 'Art & Set Properti'],
+            'art_set_design' => ['Art & Set Design', 'Art & Set Properti'],
+            'Manager Distribusi' => ['Manager Distribusi'],
+            'manager_distribusi' => ['Manager Distribusi'],
+            'QC' => ['QC'],
+            'qc' => ['QC'],
+            'Broadcasting' => ['Broadcasting'],
+            'broadcasting' => ['Broadcasting'],
+            'Promosi' => ['Promosi'],
+            'promosi' => ['Promosi'],
         ];
 
         if ($role === 'all' || $role === 'any' || $role === 'others') {

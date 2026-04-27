@@ -139,18 +139,26 @@ class MusicProgramAuthorization
             return true;
         }
 
-        // 6. Episode-specific team assignment check (for Production / Vocal tasks)
-        // If the user doesn't have the global role, they might still be assigned to this specific episode's team.
+        // 6. Episode-specific team assignment check (Paket Plus support)
+        // Check if the user is assigned the specific REQUIRED role for this task in the episode's production team.
         if ($work && isset($work->episode_id)) {
             $epId = (int) $work->episode_id;
             
-            // Allow if assigned to ANY tech team for this episode (setting, shooting, recording)
-            $isAssigned = \App\Models\ProductionTeamMember::where('user_id', $user->id)
-                ->whereHas('assignment', function ($q) use ($epId) {
-                    $q->where('episode_id', $epId)->where('status', '!=', 'cancelled');
-                })->exists();
-                
-            if ($isAssigned) return true;
+            // Check if user has the specific mapped role for this episode
+            if (method_exists($user, 'hasRoleInEpisodeTeam') && $user->hasRoleInEpisodeTeam($epId, $primaryRole)) {
+                return true;
+            }
+
+            // Fallback for generic assignment if role-specific check isn't strictly required
+            // (e.g. general production tasks where any crew member can help)
+            if (in_array($primaryRole, ['production', 'art_set_properti'])) {
+                $isAssigned = \App\Models\ProductionTeamMember::where('user_id', $user->id)
+                    ->whereHas('assignment', function ($q) use ($epId) {
+                        $q->where('episode_id', $epId)->where('status', '!=', 'cancelled');
+                    })->exists();
+                    
+                if ($isAssigned) return true;
+            }
         }
 
         // 7. Check for Task Reassignments (Backup/Substitution System)

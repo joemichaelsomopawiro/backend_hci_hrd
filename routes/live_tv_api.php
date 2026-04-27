@@ -113,6 +113,8 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     Route::post('/programs/{programId}/generate-episodes-for-year', [ManagerProgramController::class, 'generateEpisodesForYear'])->middleware('throttle:sensitive');
     Route::get('/programs/{programId}/check-next-year-episodes', [ManagerProgramController::class, 'checkNextYearEpisodes'])->middleware('throttle:60,1');
     Route::post('/programs/{programId}/close', [ManagerProgramController::class, 'closeProgram'])->middleware('throttle:sensitive');
+    Route::post('/programs/{programId}/reactivate', [ManagerProgramController::class, 'reactivateProgram'])->middleware('throttle:sensitive');
+    Route::get('/programs/archived', [ManagerProgramController::class, 'getArchivedPrograms'])->middleware('throttle:60,1');
     Route::put('/programs/{programId}/broadcast-day', [ManagerProgramController::class, 'updateBroadcastDayFromEpisode'])->middleware('throttle:sensitive'); // Ubah hari tayang dari episode X ke depan
     
     // Performance & Views Tracking (NEW)
@@ -136,6 +138,8 @@ Route::prefix('manager-program')->middleware(['auth:sanctum', 'throttle:api'])->
     
     // Schedule Interference (Override Authority)
     Route::get('/schedules', [ManagerProgramController::class, 'getAllSchedules'])->middleware('throttle:60,1');
+    Route::get('/calendar-events', [ManagerProgramController::class, 'getMusicCalendarEvents'])->middleware('throttle:60,1');
+
     Route::post('/schedules/{scheduleId}/cancel', [ManagerProgramController::class, 'cancelSchedule'])->middleware('throttle:sensitive');
     Route::post('/schedules/{scheduleId}/reschedule', [ManagerProgramController::class, 'reschedule'])->middleware('throttle:sensitive');
     

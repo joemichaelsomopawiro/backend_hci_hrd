@@ -75,6 +75,51 @@ Route::get('/clear-cache', function () {
 // All routes without authentication
 Route::get('/employees', [EmployeeController::class, 'index']);
 Route::get('/employees/roles', [EmployeeController::class, 'getRoles']); // Endpoint untuk get roles
+Route::get('/public-music-calendar', [\App\Http\Controllers\Api\ManagerProgramController::class, 'getMusicCalendarEvents']);
+
+// TEMP DIAGNOSTIC: Dump actual program statuses for debugging calendar filter
+Route::get('/debug-music-programs', function() {
+    $allPrograms = \App\Models\Program::select('id', 'name', 'category', 'status', 'producer_accepted')
+        ->orderBy('id')
+        ->get();
+    
+    $musicPrograms = $allPrograms->filter(function($p) {
+        return in_array(strtolower($p->category ?? ''), ['musik', 'music', 'music program']);
+    });
+    
+    $activeIds = \App\Models\Program::where(function($q) {
+            $q->where('category', 'musik')
+              ->orWhere('category', 'music')
+              ->orWhere('category', 'Music Program');
+        })
+        ->where(function($q) {
+            $q->where('status', 'NOT LIKE', '%reject%')
+              ->where('status', 'NOT LIKE', '%inactive%')
+              ->where('status', 'NOT LIKE', '%nonactive%')
+              ->where('status', 'NOT LIKE', '%non-active%')
+              ->where('status', 'NOT LIKE', '%nonaktif%')
+              ->where('status', 'NOT LIKE', '%non-aktif%')
+              ->where('status', 'NOT LIKE', '%archived%')
+              ->where('status', 'NOT LIKE', '%cancel%')
+              ->where('status', 'NOT LIKE', '%closed%')
+              ->where('status', '!=', 'Reject')
+              ->where('status', '!=', 'Rejected')
+              ->where('status', '!=', 'inactive')
+              ->where('status', '!=', 'non-active')
+              ->where('status', '!=', 'cancelled')
+              ->where('status', '!=', 'closed');
+        })
+        ->pluck('id');
+
+    return response()->json([
+        'all_programs' => $allPrograms,
+        'music_programs' => $musicPrograms->values(),
+        'active_music_program_ids_after_filter' => $activeIds,
+        'total_all' => $allPrograms->count(),
+        'total_music' => $musicPrograms->count(),
+        'total_active_after_filter' => $activeIds->count(),
+    ]);
+});
 Route::get('/employees/deleted', [EmployeeController::class, 'getDeletedEmployees']); // Get soft-deleted employees
 Route::get('/employees/{id}', [EmployeeController::class, 'show']);
 Route::post('/employees', [EmployeeController::class, 'store']);

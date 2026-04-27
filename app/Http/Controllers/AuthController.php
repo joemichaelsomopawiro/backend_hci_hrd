@@ -251,6 +251,7 @@ class AuthController extends Controller
                     'has_recording_assignment' => $user->hasMusicTeamAssignment('recording'),
                     'has_production_assignment' => $user->hasProductionAssignment(),
                     'assigned_program_name' => $user->getAssignedProgramName(),
+                    'assigned_roles' => $user->getAssignedMusicWorkflowRoles(),
                 ],
                 'token' => $token,
                 'token_type' => 'Bearer',
@@ -357,6 +358,7 @@ class AuthController extends Controller
         $userData['has_recording_assignment'] = $user->hasMusicTeamAssignment('recording');
         $userData['has_production_assignment'] = $user->hasProductionAssignment();
         $userData['assigned_program_name'] = $user->getAssignedProgramName();
+        $userData['assigned_roles'] = $user->getAssignedMusicWorkflowRoles();
 
         return response()->json([
             'success' => true,
@@ -493,6 +495,7 @@ class AuthController extends Controller
                         'has_recording_assignment' => $user->hasMusicTeamAssignment('recording'),
                         'has_production_assignment' => $user->hasProductionAssignment(),
                         'assigned_program_name' => $user->getAssignedProgramName(),
+                        'assigned_roles' => $user->getAssignedMusicWorkflowRoles(),
                     ]
                 ]
             ]);

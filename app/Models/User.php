@@ -185,4 +185,107 @@ class User extends Authenticatable
             ->whereIn('role', ['produksi', 'setting_syuting', 'production', 'setting', 'syuting'])
             ->exists();
     }
+    /**
+     * Get all unique music workflow roles assigned to this user across all teams.
+     * Returns an array of frontend-compatible role slugs.
+     */
+    public function getAssignedMusicWorkflowRoles(): array
+    {
+        // 1. Dapatkan role utama
+        $primaryRole = $this->role;
+        $primarySlug = $this->mapBackendRoleToFrontendSlug($primaryRole);
+
+        // 2. Dapatkan role dari penugasan tim produksi
+        $teamRoles = $this->productionTeamMembers()
+            ->where('is_active', true)
+            ->whereHas('assignment', function ($q) {
+                $q->where('status', '!=', 'cancelled');
+            })
+            ->pluck('role')
+            ->unique();
+
+        $assignedSlugs = [$primarySlug];
+        foreach ($teamRoles as $role) {
+            $slug = $this->mapBackendRoleToFrontendSlug($role);
+            if ($slug && !in_array($slug, $assignedSlugs)) {
+                $assignedSlugs[] = $slug;
+            }
+        }
+
+        return array_values(array_filter($assignedSlugs));
+    }
+
+    /**
+     * Check if user is assigned a specific role (slug) for a specific episode
+     */
+    public function hasRoleInEpisodeTeam(int $episodeId, string $roleSlug): bool
+    {
+        // Get all roles for this episode
+        $teamRoles = $this->productionTeamMembers()
+            ->where('is_active', true)
+            ->whereHas('assignment', function ($q) use ($episodeId) {
+                $q->where('episode_id', $episodeId)->where('status', '!=', 'cancelled');
+            })
+            ->pluck('role');
+
+        foreach ($teamRoles as $role) {
+            if ($this->mapBackendRoleToFrontendSlug($role) === $roleSlug) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Helper to map various backend role strings to consistent frontend slugs
+     */
+    private function mapBackendRoleToFrontendSlug(string $role): string
+    {
+        $role = strtolower(trim($role));
+        
+        $mapping = [
+            'program manager' => 'program_manager',
+            'program_manager' => 'program_manager',
+            'producer' => 'producer',
+            'music arranger' => 'music_arranger',
+            'music_arranger' => 'music_arranger',
+            'musik_arr' => 'music_arranger',
+            'musik_arr_song' => 'music_arranger',
+            'sound engineer' => 'sound_engineer',
+            'sound_engineer' => 'sound_engineer',
+            'sound_eng' => 'sound_engineer',
+            'creative' => 'creative',
+            'kreatif' => 'creative',
+            'producer_creative' => 'creative',
+            'production' => 'production',
+            'produksi' => 'production',
+            'tim_setting_coord' => 'production',
+            'tim_syuting_coord' => 'production',
+            'editor' => 'editor',
+            'art_set_design' => 'art_set_properti',
+            'art_set_properti' => 'art_set_properti',
+            'art set properti' => 'art_set_properti',
+            'graph design' => 'design_grafis',
+            'design_grafis' => 'design_grafis',
+            'graphic design' => 'design_grafis',
+            'promotion' => 'promosi',
+            'promosi' => 'promosi',
+            'broadcasting' => 'broadcasting',
+            'quality control' => 'quality_control',
+            'quality_control' => 'quality_control',
+            'qc' => 'quality_control',
+            'social_media' => 'social_media',
+            'social media' => 'social_media',
+            'editor_promotion' => 'editor_promosi',
+            'editor_promosi' => 'editor_promosi',
+            'distribution manager' => 'distribution_manager',
+            'distribution_manager_qc' => 'distribution_manager',
+            'broadcast_dist' => 'distribution_manager',
+            'general affairs' => 'general_affairs',
+            'general_affairs' => 'general_affairs',
+        ];
+
+        return $mapping[$role] ?? str_replace(' ', '_', $role);
+    }
 }
